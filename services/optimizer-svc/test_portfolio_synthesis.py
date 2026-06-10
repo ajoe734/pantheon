@@ -226,6 +226,92 @@ class TestPortfolioSynthesis(unittest.TestCase):
         self.assertEqual(log.synthesis_method, SynthesisMethod.COMMITTEE_OVERRIDE.value)
         self.assertEqual(log.sponsor_persona_id, None)
 
+    def test_homogeneity_correlation_review_escalates_to_committee(self) -> None:
+        referrals: list[CommitteeReferral] = []
+        synthesizer = PortfolioSynthesizer(
+            committee_escalation_fn=referrals.append,
+        )
+
+        result, log = synthesizer.synthesize_with_log(
+            [
+                make_proposal(
+                    metadata={
+                        "strategy_family": "mega_cap_momentum",
+                        "signal_correlations": {"proposal-002": 0.92},
+                        "correlation_bucket": "high",
+                    },
+                ),
+                make_proposal(
+                    proposal_id="proposal-002",
+                    persona_id="persona-beta",
+                    target_weights={"AAPL": 0.6, "MSFT": 0.4},
+                    metadata={
+                        "strategy_family": "mega_cap_momentum",
+                        "correlation_bucket": "high",
+                    },
+                ),
+            ],
+            capital_pool_id="pool-001",
+            scope_ref="live",
+        )
+
+        self.assertIsInstance(result, CommitteeReferral)
+        self.assertEqual(result.trigger_reason, "homogeneity_correlation_review")
+        self.assertEqual(referrals, [result])
+        self.assertEqual(log.committee_ref, result.referral_id)
+        self.assertEqual(log.synthesis_method, SynthesisMethod.COMMITTEE_OVERRIDE.value)
+
+    def test_risk_policy_correlation_veto_precedes_homogeneity_committee(self) -> None:
+        referrals: list[CommitteeReferral] = []
+        policy = PoolRiskPolicy(
+            risk_policy={
+                "risk_policy_id": "risk-main",
+                "max_signal_correlation": 0.9,
+            }
+        )
+        synthesizer = PortfolioSynthesizer(
+            pool_risk_policy=policy,
+            committee_escalation_fn=referrals.append,
+        )
+
+        with self.assertRaises(SynthesisError):
+            synthesizer.synthesize(
+                [
+                    make_proposal(
+                        conviction=0.95,
+                        metadata={
+                            "strategy_family": "mega_cap_momentum",
+                            "signal_correlation": 0.95,
+                            "correlation_bucket": "high",
+                        },
+                    ),
+                    make_proposal(
+                        proposal_id="proposal-002",
+                        persona_id="persona-beta",
+                        conviction=0.96,
+                        directions=["short"],
+                        target_weights={"AAPL": 0.6, "MSFT": 0.4},
+                        metadata={
+                            "strategy_family": "mega_cap_momentum",
+                            "signal_correlation": 0.95,
+                            "correlation_bucket": "high",
+                        },
+                    ),
+                ],
+                capital_pool_id="pool-001",
+                scope_ref="live",
+            )
+
+        self.assertEqual(referrals, [])
+        log = synthesizer.last_conflict_resolution_log
+        self.assertIsNotNone(log)
+        assert log is not None
+        self.assertEqual(log.rejected_reason, "all_proposals_vetoed")
+        self.assertEqual(
+            [record.reason for record in log.vetoed_proposals],
+            [VetoReason.POOL_RISK_POLICY.value, VetoReason.POOL_RISK_POLICY.value],
+        )
+
     def test_high_risk_first_canary_deployment_escalates(self) -> None:
         synthesizer = PortfolioSynthesizer()
 

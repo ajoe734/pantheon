@@ -2569,7 +2569,7 @@ def discussion_planning_needs_materialization(config: dict[str, Any], planning_s
         for task in list(status.get(tasks_path) or [])
         if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
     }
-    resolver = TaskResolver(task_map)
+    resolver = task_resolver_for_config(config, task_map)
     session_id = str(planning_state.get("session_id") or "").strip()
 
     for payload in proposed:
@@ -7673,7 +7673,11 @@ def render_sidecar_template(value: str, variables: dict[str, str]) -> str:
     return rendered
 
 
-def task_phase_priority(task: dict[str, Any], task_map: dict[str, dict[str, Any]], dependency_done_statuses: set[str]) -> int:
+def task_phase_priority(
+    task: dict[str, Any],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
+    dependency_done_statuses: set[str],
+) -> int:
     status = str(task.get("status") or "").lower()
     if status == "in_progress":
         return 0
@@ -7681,7 +7685,7 @@ def task_phase_priority(task: dict[str, Any], task_map: dict[str, dict[str, Any]
         return 1
     if status == "review_approved":
         return 2
-    if status == "todo" and dependencies_satisfied(task, task_map, dependency_done_statuses):
+    if status == "todo" and dependencies_satisfied(task, task_lookup, dependency_done_statuses):
         return 3
     if status == "todo":
         return 4
@@ -7806,7 +7810,7 @@ def agent_has_dispatchable_primary_work(
     config: dict[str, Any],
     status: dict[str, Any],
     agent_name: str,
-    task_map: dict[str, dict[str, Any]],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
 ) -> bool:
     settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
@@ -7824,9 +7828,9 @@ def agent_has_dispatchable_primary_work(
             return True
         if task.get("owner") != agent_name:
             continue
-        if task_status == "in_progress" and dependencies_satisfied(task, task_map, dependency_done_statuses):
+        if task_status == "in_progress" and dependencies_satisfied(task, task_lookup, dependency_done_statuses):
             return True
-        if task_status == "todo" and dependencies_satisfied(task, task_map, dependency_done_statuses):
+        if task_status == "todo" and dependencies_satisfied(task, task_lookup, dependency_done_statuses):
             return True
     return False
 
@@ -7917,6 +7921,7 @@ def eligible_idle_agents_for_sidecars(
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
     task_map = task_index_from_status(config, status)
+    task_resolver = task_resolver_for_config(config, task_map)
     owner_field = config.get("schema", {}).get("assignee_field", "owner")
     agents: list[str] = []
     for agent_id, agent in (config.get("agents", {}) or {}).items():
@@ -7932,7 +7937,7 @@ def eligible_idle_agents_for_sidecars(
             continue
         if count_open_sidecars_for_agent(status, display_name) >= max_active_sidecars_per_agent:
             continue
-        if agent_has_dispatchable_primary_work(config, status, display_name, task_map):
+        if agent_has_dispatchable_primary_work(config, status, display_name, task_resolver):
             continue
         if not agent_within_target_workload_for_assignment(
             status,
@@ -7957,7 +7962,7 @@ def build_catalog_sidecar_candidates(
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
-    resolver = TaskResolver(task_map)
+    resolver = task_resolver_for_config(config, task_map)
     templates = load_sidecar_catalog(config)
     candidates: list[dict[str, Any]] = []
     for template in templates:
@@ -8017,7 +8022,7 @@ def build_catalog_sidecar_candidates(
                     "artifacts": artifact_targets,
                     "reviewer": reviewer,
                     "mutates_canonical": bool(template.get("mutates_canonical", False)),
-                    "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
+                    "priority": task_phase_priority(parent, resolver, dependency_done_statuses),
                 }
             )
     return candidates
@@ -8031,7 +8036,7 @@ def build_dynamic_sidecar_candidates(
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
-    resolver = TaskResolver(task_map)
+    resolver = task_resolver_for_config(config, task_map)
     candidates: list[dict[str, Any]] = []
     for parent in status.get("tasks", []) or []:
         if task_is_sidecar(parent):
@@ -8046,7 +8051,7 @@ def build_dynamic_sidecar_candidates(
         if signature in existing_signatures:
             continue
         parent_status = str(parent.get("status") or "").lower()
-        if kind in {"review_packet", "acceptance_packet"} and parent_status == "todo" and not dependencies_satisfied(parent, task_map, dependency_done_statuses):
+        if kind in {"review_packet", "acceptance_packet"} and parent_status == "todo" and not dependencies_satisfied(parent, resolver, dependency_done_statuses):
             continue
         activation_dependencies = [
             dep_id
@@ -8083,7 +8088,7 @@ def build_dynamic_sidecar_candidates(
                 "artifacts": [sidecar_support_artifact(parent_id, sidecar_id)],
                 "reviewer": reviewer,
                 "mutates_canonical": False,
-                "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
+                "priority": task_phase_priority(parent, resolver, dependency_done_statuses),
             }
         )
     return candidates
@@ -8150,6 +8155,22 @@ def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
     statuses.update(str(value).lower() for value in settings.get("finalize_statuses", []))
     statuses.update(str(value).lower() for value in settings.get("owned_statuses", []))
     return statuses
+
+
+def status_root_for_config(config: dict[str, Any]) -> Path:
+    try:
+        return config_path(config, "status_file", "ai-status.json").parent
+    except KeyError:
+        return THIS_DIR.parent
+
+
+def task_resolver_for_config(
+    config: dict[str, Any],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
+) -> TaskResolver:
+    if isinstance(task_lookup, TaskResolver):
+        return task_lookup
+    return TaskResolver(task_lookup, status_root=status_root_for_config(config))
 
 
 def _task_resolver(task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> TaskResolver:
@@ -8394,6 +8415,7 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
     dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
     task_status = str(task.get("status") or "").lower()
+    resolver = task_resolver_for_config(config, task_map)
 
     eligible = False
     if reason == REASON_REVIEW_READY:
@@ -8401,14 +8423,14 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     elif reason == REASON_OWNED_FINALIZE:
         eligible = task_status in finalize_statuses and task.get(owner_field) == target_agent
     elif reason == REASON_OWNED_IN_PROGRESS:
-        eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, resolver, dependency_done_statuses)
     elif reason == REASON_OWNED_READY:
-        eligible = task_status == "todo" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        eligible = task_status == "todo" and task.get(owner_field) == target_agent and dependencies_satisfied(task, resolver, dependency_done_statuses)
 
     if not eligible:
         return None
 
-    return str(build_dispatch_event(task, target_agent, reason, task_map).get("key") or "")
+    return str(build_dispatch_event(task, target_agent, reason, resolver).get("key") or "")
 
 def dispatch_priority_for_task(
     config: dict[str, Any],
@@ -8588,6 +8610,7 @@ def higher_priority_ready_task_exists(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     current_task = task_map.get(current_task_id)
+    task_resolver = task_resolver_for_config(config, task_map)
     higher_priority_task_ids: set[str] = set()
     slot_count = len(logical_worker_slot_ids(config, logical_agent_id))
     urgent_priority_cutoff = dispatch_reason_priority(REASON_OWNED_FINALIZE)
@@ -8615,13 +8638,13 @@ def higher_priority_ready_task_exists(
         elif (
             task_status == "in_progress"
             and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
+            and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
         ):
             candidate_priority = 2
         elif (
             task_status == "todo"
             and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
+            and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
         ):
             candidate_priority = 3
 
@@ -8741,7 +8764,7 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
     return None
 
 
-def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[str, dict[str, Any]]) -> str:
+def ready_dispatch_signature(task: dict[str, Any], reason: str, task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
     return json.dumps(
         {
             "task_id": task.get("id"),
@@ -8751,14 +8774,19 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
             "reviewer": task.get("reviewer"),
             "last_update": task.get("last_update"),
             "depends_on": list(task.get("depends_on", []) or []),
-            "dependency_signature": task_dependency_signature(task, task_map),
+            "dependency_signature": task_dependency_signature(task, task_lookup),
         },
         sort_keys=True,
         ensure_ascii=True,
     )
 
 
-def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, task_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def build_dispatch_event(
+    task: dict[str, Any],
+    target_agent: str,
+    reason: str,
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     task_payload = {
         "id": task.get("id"),
         "artifacts": list(task.get("artifacts", []) or []),
@@ -8774,7 +8802,7 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
     ):
         if key in task:
             task_payload[key] = task.get(key)
-    signature = ready_dispatch_signature(task, reason, task_map)
+    signature = ready_dispatch_signature(task, reason, task_lookup)
     return {
         "key": f"dispatcher:{target_agent}:{task.get('id')}:{reason}:{signature}",
         "task_id": task.get("id"),
@@ -8849,6 +8877,7 @@ def dispatch_ready_tasks(
 
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
     task_map = {task.get(task_id_field): task for task in tasks}
+    task_resolver = task_resolver_for_config(config, task_map)
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = [str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])]
@@ -8882,6 +8911,7 @@ def dispatch_ready_tasks(
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
+        task_resolver = task_resolver_for_config(config, task_map)
         failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
         failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
 
@@ -8929,7 +8959,7 @@ def dispatch_ready_tasks(
             available_agent_slots = min(available_agent_slots, max(0, quota_limit - quota_used))
             if available_agent_slots <= 0:
                 continue
-        target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_map)
+        target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_resolver)
 
         candidates: list[tuple[int, int, dict[str, Any], str]] = []
         helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
@@ -8963,10 +8993,10 @@ def dispatch_ready_tasks(
             elif task_status in finalize_statuses and task_owner == target_agent:
                 reason = "owned_finalize_dispatch"
                 priority = 1
-            elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+            elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_resolver, dependency_done_statuses):
                 reason = "owned_in_progress_dispatch"
                 priority = 2
-            elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+            elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_resolver, dependency_done_statuses):
                 reason = "owned_ready_dispatch"
                 priority = 3
 
@@ -8984,7 +9014,7 @@ def dispatch_ready_tasks(
             )
             helper_claim_candidate = (
                 (not disable_helper_claims_for_failure_loops or task_id not in failure_loop_task_ids)
-                and dependencies_satisfied(task, task_map, dependency_done_statuses)
+                and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
                 and task_id not in active_task_ids
                 and task_id not in pending_task_ids
                 and sidecar_claim_allowed
@@ -9035,7 +9065,7 @@ def dispatch_ready_tasks(
             if is_sidecar_task and target_has_primary_work:
                 priority += SIDECAR_READY_PRIORITY_OFFSET
 
-            event = build_dispatch_event(task, target_agent, reason, task_map)
+            event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if event["key"] in pending_event_keys:
                 continue
             candidates.append((priority, index, task, reason))
@@ -9044,7 +9074,7 @@ def dispatch_ready_tasks(
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
         for _, _, task, reason in candidates[:per_occurrence_limit]:
-            event = build_dispatch_event(task, target_agent, reason, task_map)
+            event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if queue_delivery_event(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
@@ -9116,10 +9146,11 @@ def dispatch_ready_tasks(
                 task.update(persisted_task)
                 task_map = dict(task_map)
                 task_map[task_id] = task
+                task_resolver = task_resolver_for_config(config, task_map)
             else:
                 task["last_update"] = utc_now()
 
-            event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
+            event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_resolver)
             if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
@@ -9224,6 +9255,7 @@ def dispatch_chair_review(
     seen = state.setdefault("seen_event_keys", {})
     status = load_status(config)
     task_map = task_index_from_status(config, status)
+    task_resolver = task_resolver_for_config(config, task_map)
     rotation = chair_rotation_state(state)
     start_index = int(rotation.get("current_index") or 0) % len(candidates)
 
@@ -9243,7 +9275,7 @@ def dispatch_chair_review(
                 approval_triage_requested
                 and settings.get("bypass_primary_work_for_pending_approvals", True)
             )
-            and agent_has_dispatchable_primary_work(config, status, agent_name, task_map)
+            and agent_has_dispatchable_primary_work(config, status, agent_name, task_resolver)
         ):
             continue
         if failure_loop_count:
@@ -9439,13 +9471,14 @@ def dispatch_underutilization_sidecars(
 
         status = load_status(config)
         task_map = task_index_from_status(config, status)
+        task_resolver = task_resolver_for_config(config, task_map)
         sidecar_task = next((task for task in status.get("tasks", []) if task.get("id") == candidate["sidecar_id"]), None)
         if not sidecar_task:
             continue
 
         state.setdefault("tasks", {})[candidate["sidecar_id"]] = snapshot_task(sidecar_task, config.get("schema", {}))
 
-        event = build_dispatch_event(sidecar_task, selected_owner, "owned_ready_dispatch", task_map)
+        event = build_dispatch_event(sidecar_task, selected_owner, "owned_ready_dispatch", task_resolver)
         if event["key"] in pending_event_keys:
             continue
         if queue_delivery_event(config, event):

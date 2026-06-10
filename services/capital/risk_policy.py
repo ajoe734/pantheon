@@ -81,6 +81,9 @@ class RiskPolicy:
     forbidden_asset_classes: tuple[str, ...] = ()
     allowed_strategy_families: tuple[str, ...] = ()
     forbidden_strategy_families: tuple[str, ...] = ()
+    max_strategy_family_concentration: Mapping[str, float] | float | None = None
+    max_target_overlap: float | None = None
+    max_signal_correlation: float | None = None
     allowed_stages: tuple[str, ...] = ()
     max_canary_capital_scale_pct: float | None = None
     max_canary_gross_scale_pct: float | None = None
@@ -126,6 +129,13 @@ class RiskPolicy:
             forbidden_asset_classes=_string_tuple(payload.get("forbidden_asset_classes")),
             allowed_strategy_families=_string_tuple(payload.get("allowed_strategy_families")),
             forbidden_strategy_families=_string_tuple(payload.get("forbidden_strategy_families")),
+            max_strategy_family_concentration=_normalize_limit_map(
+                payload.get("max_strategy_family_concentration")
+            ),
+            max_target_overlap=_optional_float(payload.get("max_target_overlap")),
+            max_signal_correlation=_optional_float(
+                payload.get("max_signal_correlation", payload.get("max_pairwise_correlation"))
+            ),
             allowed_stages=_string_tuple(payload.get("allowed_stages")),
             max_canary_capital_scale_pct=_optional_float(payload.get("max_canary_capital_scale_pct")),
             max_canary_gross_scale_pct=_optional_float(payload.get("max_canary_gross_scale_pct")),
@@ -154,6 +164,9 @@ class RiskPolicyEvaluationContext:
     turnover: float | None = None
     asset_classes: tuple[str, ...] = ()
     strategy_family: str | None = None
+    strategy_family_concentration: Mapping[str, float] = field(default_factory=dict)
+    target_overlap: float | None = None
+    signal_correlation: float | None = None
     sector_exposures: Mapping[str, float] = field(default_factory=dict)
     factor_exposures: Mapping[str, float] = field(default_factory=dict)
     liquidity: Mapping[str, Any] = field(default_factory=dict)
@@ -183,6 +196,24 @@ class RiskPolicyEvaluationContext:
             turnover=_optional_float(payload.get("turnover")),
             asset_classes=_string_tuple(payload.get("asset_classes", metadata.get("asset_classes"))),
             strategy_family=_first_text_or_none(payload, "strategy_family"),
+            strategy_family_concentration=_numeric_mapping(
+                payload.get(
+                    "strategy_family_concentration",
+                    payload.get("strategy_family_concentrations", metadata.get("strategy_family_concentration")),
+                )
+            ),
+            target_overlap=_optional_float(
+                payload.get("target_overlap", metadata.get("target_overlap"))
+            ),
+            signal_correlation=_optional_float(
+                payload.get(
+                    "signal_correlation",
+                    payload.get(
+                        "max_pairwise_correlation",
+                        metadata.get("signal_correlation", metadata.get("max_pairwise_correlation")),
+                    ),
+                )
+            ),
             sector_exposures=_numeric_mapping(payload.get("sector_exposures")),
             factor_exposures=_numeric_mapping(payload.get("factor_exposures")),
             liquidity=_mapping(payload.get("liquidity")),
@@ -309,6 +340,24 @@ class RiskPolicyEvaluator:
         self._check_asset_classes(resolved_policy, resolved_context, checks)
         self._check_strategy_family(resolved_policy, resolved_context, checks)
         self._check_target_weights(resolved_policy, resolved_context, checks)
+        self._check_exposure_map(
+            "strategy_family_concentration",
+            resolved_policy.max_strategy_family_concentration,
+            resolved_context.strategy_family_concentration,
+            checks,
+        )
+        self._check_scalar_limit(
+            "target_overlap",
+            resolved_policy.max_target_overlap,
+            resolved_context.target_overlap,
+            checks,
+        )
+        self._check_scalar_limit(
+            "signal_correlation",
+            resolved_policy.max_signal_correlation,
+            resolved_context.signal_correlation,
+            checks,
+        )
         self._check_scalar_limit("gross_exposure", resolved_policy.gross_limit, resolved_context.gross_exposure, checks)
         self._check_scalar_limit("net_exposure", resolved_policy.net_limit, resolved_context.net_exposure, checks)
         self._check_scalar_limit("leverage", resolved_policy.max_leverage, resolved_context.leverage, checks)

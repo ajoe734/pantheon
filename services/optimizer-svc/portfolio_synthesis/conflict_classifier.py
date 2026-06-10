@@ -11,6 +11,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import math
 from typing import Any, Mapping, Sequence
 
 from .models import PersonaAllocationProposal, SynthesisError
@@ -26,6 +27,8 @@ class AllocationConflictType(str, Enum):
     HORIZON = "horizon_conflict"
     RISK_POSTURE = "risk_posture_conflict"
     REGIME = "regime_conflict"
+    HOMOGENEITY = "homogeneity_conflict"
+    CORRELATION = "correlation_conflict"
     SPONSOR_AMBIGUITY = "sponsor_ambiguity"
 
 
@@ -81,6 +84,26 @@ RISK_ON_LABELS = {"risk_on", "leverage", "levered", "aggressive", "add_leverage"
 RISK_OFF_LABELS = {"risk_off", "de_risk", "defensive", "reduce_risk", "flat"}
 HORIZON_METADATA_KEYS = ("horizon", "time_horizon", "holding_period", "investment_horizon")
 REGIME_METADATA_KEYS = ("regime_label", "regime", "market_regime", "regime_view")
+STRATEGY_FAMILY_METADATA_KEYS = ("strategy_family", "strategy_family_ref", "strategy")
+CORRELATION_BUCKET_METADATA_KEYS = (
+    "correlation_bucket",
+    "signal_correlation_bucket",
+    "portfolio_correlation_bucket",
+)
+SIGNAL_CORRELATION_METADATA_KEYS = (
+    "signal_correlation",
+    "portfolio_correlation",
+    "max_pairwise_correlation",
+    "correlation",
+)
+CORRELATION_MAPPING_KEYS = (
+    "signal_correlations",
+    "proposal_correlations",
+    "pairwise_correlations",
+    "correlations",
+)
+HIGH_CORRELATION_BUCKETS = {"high", "very_high", "extreme", "highly_correlated"}
+DEFAULT_EXCLUDED_OVERLAP_TARGETS = {"cash", "usd", "usdc", "usdt"}
 
 
 def classify_allocation_conflicts(
@@ -91,6 +114,9 @@ def classify_allocation_conflicts(
     weight_spread_threshold: float = 0.05,
     high_conviction_threshold: float = 0.7,
     sponsor_ambiguity_ratio: float = 0.05,
+    strategy_family_concentration_threshold: float = 0.65,
+    target_overlap_threshold: float = 0.8,
+    high_correlation_threshold: float = 0.8,
     is_high_importance_pool: bool = False,
 ) -> AllocationConflictReport:
     """Classify conflicts among proposals for one capital pool and scope.
@@ -167,6 +193,13 @@ def classify_allocation_conflicts(
         add_conflict=add_conflict,
     )
     _classify_regime_conflicts(proposal_list, add_conflict=add_conflict)
+    _classify_homogeneity_correlation_conflicts(
+        proposal_list,
+        strategy_family_concentration_threshold=strategy_family_concentration_threshold,
+        target_overlap_threshold=target_overlap_threshold,
+        high_correlation_threshold=high_correlation_threshold,
+        add_conflict=add_conflict,
+    )
 
     sponsor_candidates = _sponsor_candidates(proposal_list)
     primary_sponsor_persona_id: str | None = None
@@ -212,6 +245,9 @@ def classify_allocation_conflicts(
             "weight_spread_threshold": weight_spread_threshold,
             "high_conviction_threshold": high_conviction_threshold,
             "sponsor_ambiguity_ratio": sponsor_ambiguity_ratio,
+            "strategy_family_concentration_threshold": strategy_family_concentration_threshold,
+            "target_overlap_threshold": target_overlap_threshold,
+            "high_correlation_threshold": high_correlation_threshold,
             "is_high_importance_pool": is_high_importance_pool,
         },
     )
@@ -359,6 +395,82 @@ def _classify_regime_conflicts(
     )
 
 
+def _classify_homogeneity_correlation_conflicts(
+    proposals: Sequence[PersonaAllocationProposal],
+    *,
+    strategy_family_concentration_threshold: float,
+    target_overlap_threshold: float,
+    high_correlation_threshold: float,
+    add_conflict: Any,
+) -> None:
+    if len(proposals) < 2:
+        return
+
+    total_effective_weight = sum(float(proposal.effective_weight) for proposal in proposals)
+    grouped: dict[str, list[PersonaAllocationProposal]] = {}
+    for proposal in proposals:
+        family = _strategy_family(proposal)
+        if family:
+            grouped.setdefault(family, []).append(proposal)
+
+    for family, family_proposals in grouped.items():
+        if len(family_proposals) < 2:
+            continue
+
+        concentration = _strategy_family_concentration(
+            family_proposals,
+            all_proposals=proposals,
+            total_effective_weight=total_effective_weight,
+        )
+        pairwise = _pairwise_homogeneity_metrics(family_proposals)
+        high_overlap = pairwise["max_target_overlap"] >= target_overlap_threshold
+        high_numeric_correlation = (
+            pairwise["max_signal_correlation"] is not None
+            and pairwise["max_signal_correlation"] >= high_correlation_threshold
+        )
+        high_bucket = bool(pairwise["high_correlation_bucket"])
+        concentrated = concentration >= strategy_family_concentration_threshold
+        committee_trigger = (
+            "homogeneity_correlation_review"
+            if concentrated and (high_overlap or high_numeric_correlation or high_bucket)
+            else None
+        )
+        severity = ConflictSeverity.COMMITTEE if committee_trigger else ConflictSeverity.WARNING
+        proposal_ids = [proposal.proposal_id for proposal in family_proposals]
+        base_details = {
+            "strategy_family": family,
+            "family_proposal_ids": proposal_ids,
+            "strategy_family_concentration": concentration,
+            "strategy_family_concentration_threshold": strategy_family_concentration_threshold,
+            "max_target_overlap": pairwise["max_target_overlap"],
+            "target_overlap_threshold": target_overlap_threshold,
+            "max_signal_correlation": pairwise["max_signal_correlation"],
+            "high_correlation_threshold": high_correlation_threshold,
+            "correlation_buckets": pairwise["correlation_buckets"],
+            "max_overlap_pair": pairwise["max_overlap_pair"],
+            "max_correlation_pair": pairwise["max_correlation_pair"],
+        }
+
+        add_conflict(
+            AllocationConflictType.HOMOGENEITY,
+            severity,
+            proposal_ids,
+            "Proposals concentrate the capital pool in duplicate strategy-family exposure.",
+            committee_trigger=committee_trigger if high_overlap else None,
+            details=base_details,
+        )
+
+        if high_numeric_correlation or high_bucket:
+            add_conflict(
+                AllocationConflictType.CORRELATION,
+                severity,
+                proposal_ids,
+                "Proposals cite highly correlated signals within the same strategy family.",
+                committee_trigger=committee_trigger,
+                details=base_details,
+            )
+
+
 def _sponsor_candidates(proposals: Sequence[PersonaAllocationProposal]) -> list[dict[str, Any]]:
     raw = {proposal.proposal_id: float(proposal.effective_weight) for proposal in proposals}
     total = sum(raw.values())
@@ -413,12 +525,165 @@ def _group_by_metadata_value(
     return grouped
 
 
+def _strategy_family(proposal: PersonaAllocationProposal) -> str | None:
+    return _metadata_value(proposal.metadata, STRATEGY_FAMILY_METADATA_KEYS)
+
+
+def _strategy_family_concentration(
+    family_proposals: Sequence[PersonaAllocationProposal],
+    *,
+    all_proposals: Sequence[PersonaAllocationProposal],
+    total_effective_weight: float,
+) -> float:
+    if total_effective_weight > 0.0:
+        return sum(float(proposal.effective_weight) for proposal in family_proposals) / total_effective_weight
+    return len(family_proposals) / len(all_proposals)
+
+
+def _pairwise_homogeneity_metrics(proposals: Sequence[PersonaAllocationProposal]) -> dict[str, Any]:
+    max_target_overlap = 0.0
+    max_signal_correlation: float | None = None
+    max_overlap_pair: list[str] = []
+    max_correlation_pair: list[str] = []
+    correlation_buckets: dict[str, str] = {}
+    high_correlation_bucket = False
+
+    for index, left in enumerate(proposals):
+        for right in proposals[index + 1 :]:
+            pair = [left.proposal_id, right.proposal_id]
+            overlap = _target_overlap(left, right)
+            if overlap > max_target_overlap:
+                max_target_overlap = overlap
+                max_overlap_pair = pair
+
+            correlation = _pairwise_signal_correlation(left, right)
+            if correlation is not None and (
+                max_signal_correlation is None or correlation > max_signal_correlation
+            ):
+                max_signal_correlation = correlation
+                max_correlation_pair = pair
+
+            bucket = _pairwise_correlation_bucket(left, right)
+            if bucket:
+                correlation_buckets["|".join(pair)] = bucket
+                if bucket in HIGH_CORRELATION_BUCKETS:
+                    high_correlation_bucket = True
+
+    return {
+        "max_target_overlap": max_target_overlap,
+        "max_signal_correlation": max_signal_correlation,
+        "max_overlap_pair": max_overlap_pair,
+        "max_correlation_pair": max_correlation_pair,
+        "correlation_buckets": correlation_buckets,
+        "high_correlation_bucket": high_correlation_bucket,
+    }
+
+
+def _target_overlap(
+    left: PersonaAllocationProposal,
+    right: PersonaAllocationProposal,
+) -> float:
+    left_weights = _material_target_weights(left)
+    right_weights = _material_target_weights(right)
+    if not left_weights or not right_weights:
+        return 0.0
+
+    common = set(left_weights) & set(right_weights)
+    if not common:
+        return 0.0
+
+    overlap = sum(min(left_weights[target], right_weights[target]) for target in common)
+    denominator = max(sum(left_weights.values()), sum(right_weights.values()))
+    if denominator <= 0.0:
+        return 0.0
+    return overlap / denominator
+
+
+def _material_target_weights(proposal: PersonaAllocationProposal) -> dict[str, float]:
+    excluded_targets = set(DEFAULT_EXCLUDED_OVERLAP_TARGETS)
+    metadata_exclusions = proposal.metadata.get("homogeneity_excluded_targets")
+    if isinstance(metadata_exclusions, str):
+        excluded_targets.add(metadata_exclusions.strip().lower())
+    elif isinstance(metadata_exclusions, (list, tuple, set)):
+        excluded_targets.update(str(target).strip().lower() for target in metadata_exclusions)
+
+    return {
+        target_ref: float(weight)
+        for target_ref, weight in proposal.target_weights.items()
+        if float(weight) > 0.0 and target_ref.strip().lower() not in excluded_targets
+    }
+
+
+def _pairwise_signal_correlation(
+    left: PersonaAllocationProposal,
+    right: PersonaAllocationProposal,
+) -> float | None:
+    mapped = _mapped_correlation(left, right)
+    if mapped is None:
+        mapped = _mapped_correlation(right, left)
+    if mapped is not None:
+        return mapped
+
+    scalar_values = [
+        value
+        for value in (
+            _metadata_float(left.metadata, SIGNAL_CORRELATION_METADATA_KEYS),
+            _metadata_float(right.metadata, SIGNAL_CORRELATION_METADATA_KEYS),
+        )
+        if value is not None
+    ]
+    return max(scalar_values) if scalar_values else None
+
+
+def _mapped_correlation(
+    source: PersonaAllocationProposal,
+    target: PersonaAllocationProposal,
+) -> float | None:
+    for key in CORRELATION_MAPPING_KEYS:
+        raw = source.metadata.get(key)
+        if not isinstance(raw, Mapping):
+            continue
+        for target_key in (target.proposal_id, target.persona_id):
+            value = _optional_float(raw.get(target_key))
+            if value is not None:
+                return value
+    return None
+
+
+def _pairwise_correlation_bucket(
+    left: PersonaAllocationProposal,
+    right: PersonaAllocationProposal,
+) -> str | None:
+    buckets = [
+        bucket
+        for bucket in (
+            _metadata_value(left.metadata, CORRELATION_BUCKET_METADATA_KEYS),
+            _metadata_value(right.metadata, CORRELATION_BUCKET_METADATA_KEYS),
+        )
+        if bucket
+    ]
+    if not buckets:
+        return None
+    for bucket in buckets:
+        if bucket in HIGH_CORRELATION_BUCKETS:
+            return bucket
+    return buckets[0]
+
+
 def _metadata_value(metadata: Mapping[str, Any], keys: Sequence[str]) -> str | None:
     for key in keys:
         value = metadata.get(key)
         normalized = _normalize_label(value)
         if normalized:
             return normalized
+    return None
+
+
+def _metadata_float(metadata: Mapping[str, Any], keys: Sequence[str]) -> float | None:
+    for key in keys:
+        value = _optional_float(metadata.get(key))
+        if value is not None:
+            return value
     return None
 
 
@@ -449,6 +714,18 @@ def _truthy(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y"}
     return bool(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return numeric
 
 
 def _ordered_unique(values: Sequence[str]) -> list[str]:

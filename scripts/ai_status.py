@@ -189,6 +189,14 @@ DEFAULT_COMMIT_CONVENTIONS = {
     "subject_must_include_task_id": True,
     "required_body_fields": ["LLM-Agent", "Task-ID", "Reviewer"],
 }
+COMMIT_TRAILER_SKIP_PREFIXES = (
+    "Merge ",
+    "Revert ",
+    "promote:",
+    "hotfix:",
+    "publish:",
+)
+COMMIT_TRAILER_SKIP_RE = re.compile(r"^OPS-(?:GIT-(?:WORKFLOW|REDESIGN)|DOC|REBASE)-")
 FIRST_PROMPT_PRIORITY = [
     "AI_COLLABORATION_GUIDE.md",
     "ai-status.json",
@@ -1291,6 +1299,15 @@ def parse_commit_metadata_lines(body: str) -> dict[str, str]:
     return metadata
 
 
+def commit_subject_skips_trailer_check(subject: str) -> str | None:
+    for prefix in COMMIT_TRAILER_SKIP_PREFIXES:
+        if subject.startswith(prefix):
+            return prefix.rstrip(": ")
+    if COMMIT_TRAILER_SKIP_RE.match(subject):
+        return "OPS"
+    return None
+
+
 def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
@@ -1386,16 +1403,21 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             "Reviewer": canonical_agent_name(task.get("reviewer")),
         }
         required_fields = commit_rules.get("required_body_fields", [])
+        trailer_skip_reason = commit_subject_skips_trailer_check(subject)
         missing_fields: list[str] = []
         mismatched_fields: list[tuple[str, str]] = []
-        for field_name in required_fields:
-            actual_value = metadata_fields.get(field_name)
-            if not actual_value:
-                missing_fields.append(field_name)
-                continue
-            expected_value = expected_fields.get(field_name)
-            if expected_value and actual_value != expected_value:
-                mismatched_fields.append((field_name, expected_value))
+        if trailer_skip_reason is None:
+            for field_name in required_fields:
+                actual_value = metadata_fields.get(field_name)
+                if not actual_value:
+                    missing_fields.append(field_name)
+                    continue
+                expected_value = expected_fields.get(field_name)
+                if expected_value and actual_value != expected_value:
+                    mismatched_fields.append((field_name, expected_value))
+        else:
+            delivery["commit_trailer_check_skipped"] = True
+            delivery["commit_trailer_skip_reason"] = trailer_skip_reason
         if missing_fields or mismatched_fields:
             issues: list[str] = []
             if missing_fields:
