@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-SEED-004",
+  "archived_at": "2026-06-10T00:04:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-SEED-004",
+    "title": "Persist StrategySpecSeed and materialize seeds from evidence bundles",
+    "summary_zh": "把現有 StrategySpecSeedBuilder 接到持久化 store 和 materialization API，完成 EvidenceBundle -> StrategySpecSeed -> review/promote 的第一段端到端流程。",
+    "phase": "EPIC DATASTRAT / Strategy seed store and materializer",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-REG-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md",
+      "services/source_ingestion/strategy_seed_builder.py",
+      "services/research/strategy_spec/conversion.py"
+    ],
+    "acceptance": [
+      "Add StrategySpecSeedStore with JSONL dev implementation",
+      "Add API or service command for materializing one evidence bundle into one idempotent seed",
+      "Seed record stores required_data backend_hint feature_hints label_hints license allowed_use confidence and lineage",
+      "Rejected sources cannot create seeds",
+      "Seed metadata cannot request direct execution broker live runtime or order routing",
+      "Tests cover idempotency lineage rejection and no direct execution route"
+    ],
+    "next": "Closeout: 19/19 tests pass; StrategySpecSeedStore JSONL + SeedMaterializationService delivered; idempotency, lineage, rejection guard, no-direct-execution-route invariant all met; PR #1252 merged into dev.",
+    "last_update": "2026-06-10T00:04:38Z",
+    "auto_created_by": "codex_data_strategy_source_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過：19/19 測試通過；idempotency、lineage 持久化、rejection guard、no-direct-execution-route invariant 全數符合驗收標準。",
+      "後續追蹤：DATASTRAT-REG-002 registry split facade 需在 review 通過後繼續接上"
+    ],
+    "review_file": "/tmp/datastrat-seed-004-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-10T00:04:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-seed-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "d7238d97235a6cacd532d7ddc73c0a319fdd465c",
+      "commit_subject": "DATASTRAT-SEED-004: anchor strategy-seed-store-and-materializer",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "StrategySpecSeedStore (JSONL), SeedMaterializationService,",
+        "Not changing": "StrategySpecSeedBuilder (library), conversion.py (library),",
+        "Composes with": "DATASTRAT-REG-002 registry split layer for",
+        "LLM-Agent": "Claude",
+        "Task-ID": "DATASTRAT-SEED-004",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/source_ingestion/tests/test_strategy_seed_store.py services/source_ingestion/tests/test_strategy_seed_builder.py -v — 19 passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a852d5af8f2a989e8c051e1a3f413e420949b691",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-SEED-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned DATASTRAT-SEED-004 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:49Z",
+      "resolved_at": "2026-06-09T14:40:42Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEED-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned DATASTRAT-SEED-004 away from unavailable lane Codex (disabled, sidecar-only, or auth-down); reviewer Codex -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-09T14:40:42Z",
+      "resolved_at": "2026-06-09T23:36:25Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEED-004",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-09T23:36:25Z",
+      "resolved_at": "2026-06-09T23:36:35Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEED-004",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Anchor commit d7238d97. Please review: StrategySpecSeedStore + SeedMaterializationService + 14 tests. All acceptance criteria covered: idempotent materialization, lineage storage, rejected source guard, no direct execution route guard. Run: python3 -m pytest services/source_ingestion/tests/test_strategy_seed_store.py services/source_ingestion/tests/test_strategy_seed_builder.py -v",
+      "status": "done",
+      "created_at": "2026-06-09T23:41:15Z",
+      "resolved_at": "2026-06-09T23:47:15Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEED-004",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: 19/19 tests pass, all acceptance criteria met. Returning to owner for closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T23:47:15Z",
+      "resolved_at": "2026-06-10T00:04:39Z"
+    }
+  ],
+  "blockers": []
+}
