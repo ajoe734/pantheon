@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Require consultation handoff for high-risk allocation approval
-- Status: in_progress
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Codex
-- Next: Fixed both PR #1263 blocking findings: schema enum updated + mismatch rejection added; 110 tests pass; branch refreshed against dev; awaiting reviewer re-check
+- Next: Reviewer re-check approved: PR #1263 fixes schema enum and mismatched consultation handoff refs; local validation passed (110 consultation/governance/registry tests, 7 BFF committee tests). Owner must finalize through PR merge and done closeout.
 
 ## Summary
 把 consultation/committee memo 與 sponsor decision handoff 變成 allocation approval 的硬門檻，而不是旁路資料。
