@@ -133,6 +133,59 @@ def on_postmortem_published(
     return _build_proposal(postmortem, action, cooldown)
 
 
+def build_evolution_learn_feedback_writeback(
+    evolution_outcome: Dict[str, Any],
+    *,
+    sponsor_persona_id: str,
+    contributing_persona_ids: List[str],
+    summary: Optional[str] = None,
+    contributor_feedback: Optional[List[Dict[str, Any]]] = None,
+    proposal_ids: Optional[List[str]] = None,
+    proposal_ids_by_persona: Optional[Dict[str, List[str]]] = None,
+) -> Dict[str, Any]:
+    """Build a memory-service Learn feedback payload from an approved evolution outcome."""
+    if not isinstance(evolution_outcome, dict):
+        raise PostmortemBridgeError("evolution_outcome must be a dict")
+    decision_id = str(
+        evolution_outcome.get("evolution_decision_id")
+        or evolution_outcome.get("decision_id")
+        or evolution_outcome.get("proposal_id")
+        or ""
+    ).strip()
+    if not decision_id:
+        raise PostmortemBridgeError("evolution_decision_id is required for Learn feedback writeback")
+    feedback_summary = summary or str(evolution_outcome.get("rationale") or "").strip()
+    if not feedback_summary:
+        raise PostmortemBridgeError("summary or rationale is required for Learn feedback writeback")
+    evidence_refs = list(evolution_outcome.get("evidence_refs") or [])
+    evidence_refs.insert(0, {"ref_type": "evolution_decision", "ref_id": decision_id})
+    if evolution_outcome.get("source_postmortem_id"):
+        evidence_refs.append(
+            {
+                "ref_type": "postmortem",
+                "ref_id": evolution_outcome.get("source_postmortem_id"),
+            }
+        )
+    return {
+        "source_event_type": "evolution_decision_approved",
+        "source_event_id": decision_id,
+        "write_authority": "evolution-svc",
+        "sponsor_persona_id": sponsor_persona_id,
+        "contributing_persona_ids": list(contributing_persona_ids),
+        "summary": feedback_summary,
+        "headline": f"Evolution Learn feedback for {decision_id}",
+        "body": feedback_summary,
+        "evidence_refs": evidence_refs,
+        "contributor_feedback": list(contributor_feedback or []),
+        "proposal_ids": list(proposal_ids or []),
+        "proposal_ids_by_persona": dict(proposal_ids_by_persona or {}),
+        "tags": [
+            "evolution",
+            str(evolution_outcome.get("proposed_action") or evolution_outcome.get("action_type") or ""),
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

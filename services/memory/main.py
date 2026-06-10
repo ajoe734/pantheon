@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -18,6 +18,11 @@ from .institutional_memory_store import (
     InstitutionalMemoryError,
     InstitutionalMemoryStore,
     build_institutional_memory_store,
+)
+from .learn_feedback_writeback import (
+    LearnFeedbackUnauthorizedError,
+    LearnFeedbackWritebackError,
+    write_learn_feedback,
 )
 from .persona_memory_store import (
     PersonaMemoryEntry,
@@ -160,6 +165,29 @@ async def store_persona_entry(payload: Dict[str, Any]):
 @app.post("/api/memory/writebacks/persona", status_code=201)
 async def writeback_persona_entry(payload: Dict[str, Any]):
     return _store_persona_payload(payload)
+
+
+@app.post("/api/memory/writebacks/learn-feedback", status_code=201)
+async def writeback_learn_feedback(payload: Dict[str, Any], response: Response):
+    try:
+        result = write_learn_feedback(
+            payload,
+            persona_store=_persona_store(),
+            institutional_store=_store(),
+        )
+    except LearnFeedbackUnauthorizedError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "learn_feedback_writeback_unauthorized", "message": str(exc)},
+        ) from exc
+    except (LearnFeedbackWritebackError, InstitutionalMemoryError, PersonaMemoryError, TypeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "invalid_learn_feedback_writeback", "message": str(exc)},
+        ) from exc
+    if not result.get("created"):
+        response.status_code = 200
+    return result
 
 
 @app.get("/api/memory/entries")

@@ -336,6 +336,47 @@ class FeedbackStoreAdapter:
             "conflict_markers": self._lineage_conflict_markers(telemetry_event),
         }
 
+    def build_learn_feedback_writeback_payload(
+        self,
+        telemetry_event: dict[str, Any],
+        *,
+        sponsor_persona_id: str,
+        contributing_persona_ids: list[str],
+        summary: str,
+        contributor_feedback: Optional[list[dict[str, Any]]] = None,
+        proposal_ids: Optional[list[str]] = None,
+        proposal_ids_by_persona: Optional[dict[str, list[str]]] = None,
+    ) -> dict[str, Any]:
+        """Build a memory-service Learn feedback payload from runtime telemetry."""
+        if telemetry_event.get("event_type") not in TELEMETRY_EVENT_TYPES:
+            raise ValueError(f"Unsupported telemetry event_type: {telemetry_event.get('event_type')!r}")
+        event_id = str(telemetry_event.get("event_id") or "").strip()
+        if not event_id:
+            raise ValueError("telemetry_event.event_id is required for Learn feedback writeback")
+        lineage = self.build_lineage_record(telemetry_event)
+        return {
+            "source_event_type": "runtime_telemetry_outcome",
+            "source_event_id": event_id,
+            "write_authority": "telemetry-svc",
+            "sponsor_persona_id": sponsor_persona_id,
+            "contributing_persona_ids": list(contributing_persona_ids),
+            "summary": summary,
+            "headline": f"Runtime telemetry Learn feedback for {event_id}",
+            "body": summary,
+            "runtime_telemetry_evidence": [
+                {
+                    "ref_type": "telemetry_event",
+                    "ref_id": event_id,
+                    "event_type": telemetry_event.get("event_type"),
+                    "lineage": lineage,
+                }
+            ],
+            "contributor_feedback": list(contributor_feedback or []),
+            "proposal_ids": list(proposal_ids or []),
+            "proposal_ids_by_persona": dict(proposal_ids_by_persona or {}),
+            "tags": ["runtime_telemetry", str(telemetry_event.get("event_type") or "")],
+        }
+
     def query_lineage_records(
         self,
         target_type: Optional[str] = None,

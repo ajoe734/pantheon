@@ -361,6 +361,48 @@ def validate_postmortem(pm: Postmortem) -> List[str]:
     return errors
 
 
+def build_postmortem_learn_feedback_writeback(
+    postmortem: Postmortem | Dict[str, Any],
+    *,
+    sponsor_persona_id: str,
+    contributing_persona_ids: List[str],
+    summary: Optional[str] = None,
+    contributor_feedback: Optional[List[Dict[str, Any]]] = None,
+    proposal_ids: Optional[List[str]] = None,
+    proposal_ids_by_persona: Optional[Dict[str, List[str]]] = None,
+) -> Dict[str, Any]:
+    """Build a memory-service Learn feedback payload from a published postmortem."""
+    payload = postmortem.to_dict() if isinstance(postmortem, Postmortem) else dict(postmortem)
+    postmortem_id = str(payload.get("postmortem_id") or "").strip()
+    if not postmortem_id:
+        raise IncidentError("postmortem_id is required for Learn feedback writeback")
+    feedback_summary = summary or str(payload.get("root_cause") or payload.get("title") or "").strip()
+    if not feedback_summary:
+        raise IncidentError("summary or postmortem root_cause is required for Learn feedback writeback")
+    evidence_refs = [
+        {"ref_type": "postmortem", "ref_id": postmortem_id},
+        {"ref_type": "incident", "ref_id": payload.get("incident_id")},
+        {"ref_type": "runtime_binding", "ref_id": payload.get("binding_id")},
+        {"ref_type": "trace", "ref_id": payload.get("trace_id")},
+    ]
+    evidence_refs = [ref for ref in evidence_refs if ref.get("ref_id")]
+    return {
+        "source_event_type": "postmortem_published",
+        "source_event_id": postmortem_id,
+        "write_authority": "incident-svc",
+        "sponsor_persona_id": sponsor_persona_id,
+        "contributing_persona_ids": list(contributing_persona_ids),
+        "summary": feedback_summary,
+        "headline": f"Postmortem Learn feedback for {postmortem_id}",
+        "body": feedback_summary,
+        "evidence_refs": evidence_refs,
+        "contributor_feedback": list(contributor_feedback or []),
+        "proposal_ids": list(proposal_ids or []),
+        "proposal_ids_by_persona": dict(proposal_ids_by_persona or {}),
+        "tags": ["postmortem", str(payload.get("deployment_stage") or "")],
+    }
+
+
 # ---------------------------------------------------------------------------
 # IncidentStore — in-memory write-guarded store
 # ---------------------------------------------------------------------------

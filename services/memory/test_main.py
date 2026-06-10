@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import unittest
 from pathlib import Path
@@ -54,6 +55,45 @@ def _persona_payload(memory_id: str = "pmem-11111111-1111-1111-1111-111111111111
         "write_authority": "incident-svc",
         "relevance_scope": "persona_and_committee",
         "reuse_count": 0,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _learn_feedback_payload(source_event_id: str = "TEL-2026-0609-001", **overrides):
+    payload = {
+        "source_event_type": "runtime_telemetry_outcome",
+        "source_event_id": source_event_id,
+        "write_authority": "telemetry-svc",
+        "sponsor_persona_id": "persona-sponsor",
+        "contributing_persona_ids": ["persona-alpha", "persona-beta"],
+        "summary": "Runtime fill telemetry showed beta should reduce overlap with alpha during regime breaks.",
+        "headline": "Runtime telemetry learn feedback",
+        "body": "Fill and slippage evidence showed correlated exposure during a regime break.",
+        "written_at": "2026-06-09T03:00:00Z",
+        "runtime_telemetry_evidence": [
+            {
+                "ref_type": "telemetry_event",
+                "ref_id": "fill-001",
+                "event_type": "fill_observation",
+                "runtime_binding_id": "rb-001",
+            }
+        ],
+        "contributor_feedback": [
+            {
+                "persona_id": "persona-alpha",
+                "proposal_id": "pap-alpha-001",
+                "summary": "Alpha proposal held up, but its fill evidence should inform future sizing.",
+                "tags": ["alpha", "fill"],
+            },
+            {
+                "persona_id": "persona-beta",
+                "proposal_id": "pap-beta-001",
+                "summary": "Beta proposal should cut overlap when alpha already covers the factor.",
+                "tags": ["beta", "overlap"],
+            },
+        ],
+        "tags": ["mpos", "runtime"],
     }
     payload.update(overrides)
     return payload
@@ -145,6 +185,96 @@ class TestMemoryService(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422, response.text)
         self.assertEqual(response.json()["detail"]["error"], "invalid_persona_entry")
+
+    def test_learn_feedback_writeback_creates_persona_and_sponsor_memory(self) -> None:
+        response = self.client.post("/api/memory/writebacks/learn-feedback", json=_learn_feedback_payload())
+
+        self.assertEqual(response.status_code, 201, response.text)
+        payload = response.json()
+        self.assertTrue(payload["created"])
+        self.assertEqual(len(payload["persona_memory_ids"]), 2)
+        self.assertTrue(payload["institutional_entry_id"].startswith("mem-"))
+
+        persona_records = json.loads(self.persona_store_path.read_text(encoding="utf-8"))
+        self.assertEqual({record["persona_id"] for record in persona_records}, {"persona-alpha", "persona-beta"})
+        alpha_record = next(record for record in persona_records if record["persona_id"] == "persona-alpha")
+        self.assertEqual(alpha_record["source_event_type"], "runtime_telemetry_outcome")
+        self.assertEqual(alpha_record["write_authority"], "telemetry-svc")
+        self.assertEqual(alpha_record["memory_type"], "risk_observation")
+        alpha_structured = alpha_record["content"]["structured_payload"]
+        self.assertEqual(alpha_structured["proposal_ids"], ["pap-alpha-001"])
+        self.assertEqual(alpha_structured["runtime_telemetry_evidence"][0]["ref_id"], "fill-001")
+
+        institutional_records = json.loads(self.store_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(institutional_records), 1)
+        institutional_record = institutional_records[0]
+        self.assertEqual(
+            institutional_record["contributing_persona_ids"],
+            ["persona-sponsor", "persona-alpha", "persona-beta"],
+        )
+        institutional_structured = institutional_record["content"]["structured_payload"]
+        self.assertEqual(institutional_structured["sponsor_persona_id"], "persona-sponsor")
+        self.assertEqual(set(institutional_structured["proposal_ids"]), {"pap-alpha-001", "pap-beta-001"})
+
+    def test_learn_feedback_writeback_replay_is_idempotent_by_source_event(self) -> None:
+        first = self.client.post("/api/memory/writebacks/learn-feedback", json=_learn_feedback_payload())
+        second = self.client.post("/api/memory/writebacks/learn-feedback", json=_learn_feedback_payload())
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertFalse(second.json()["created"])
+        self.assertEqual(second.json()["persona_memory_ids"], first.json()["persona_memory_ids"])
+        self.assertEqual(second.json()["institutional_entry_id"], first.json()["institutional_entry_id"])
+        self.assertEqual(len(json.loads(self.persona_store_path.read_text(encoding="utf-8"))), 2)
+        self.assertEqual(len(json.loads(self.store_path.read_text(encoding="utf-8"))), 1)
+
+    def test_learn_feedback_writeback_requires_persona_attribution(self) -> None:
+        invalid = _learn_feedback_payload(contributing_persona_ids=[], contributor_feedback=[])
+
+        response = self.client.post("/api/memory/writebacks/learn-feedback", json=invalid)
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["detail"]["error"], "invalid_learn_feedback_writeback")
+        self.assertIn("contributing persona", response.json()["detail"]["message"])
+
+    def test_learn_feedback_writeback_rejects_unauthorized_authority(self) -> None:
+        invalid = _learn_feedback_payload(
+            source_event_type="postmortem_published",
+            write_authority="telemetry-svc",
+        )
+
+        response = self.client.post("/api/memory/writebacks/learn-feedback", json=invalid)
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["detail"]["error"], "learn_feedback_writeback_unauthorized")
+
+    def test_learn_feedback_writeback_accepts_postmortem_and_evolution_outcomes(self) -> None:
+        cases = [
+            {
+                "source_event_type": "postmortem_published",
+                "source_event_id": "PM-2026-0609-001",
+                "write_authority": "incident-svc",
+                "evidence_refs": [{"ref_type": "postmortem", "ref_id": "PM-2026-0609-001"}],
+            },
+            {
+                "source_event_type": "evolution_decision_approved",
+                "source_event_id": "EVO-2026-0609-001",
+                "write_authority": "evolution-svc",
+                "evidence_refs": [{"ref_type": "evolution_decision", "ref_id": "EVO-2026-0609-001"}],
+            },
+        ]
+        for case in cases:
+            payload = _learn_feedback_payload(
+                source_event_id=case["source_event_id"],
+                source_event_type=case["source_event_type"],
+                write_authority=case["write_authority"],
+                runtime_telemetry_evidence=[],
+                evidence_refs=case["evidence_refs"],
+            )
+            with self.subTest(source_event_type=case["source_event_type"]):
+                response = self.client.post("/api/memory/writebacks/learn-feedback", json=payload)
+                self.assertEqual(response.status_code, 201, response.text)
+                self.assertTrue(response.json()["created"])
 
     def test_retrieve_fails_closed_when_governance_authz_unconfigured(self) -> None:
         self.client.post("/api/memory/entries", json=_payload())

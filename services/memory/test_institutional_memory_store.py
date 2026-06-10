@@ -236,7 +236,7 @@ class TestInstitutionalMemoryStore(unittest.TestCase):
         active = make_entry(
             entry_id="mem-00000000-0000-0000-0000-00000000000e",
             source_event_id="PM-active",
-            expires_at="2026-05-18T00:00:00Z",
+            expires_at="2027-05-18T00:00:00Z",
         )
         store = InstitutionalMemoryStore()
         store.create(expired)
