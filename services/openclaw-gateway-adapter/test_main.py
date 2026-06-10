@@ -336,6 +336,58 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["data"][0]["provider"], "codex_cli")
 
+    def test_assistant_skill_authorize_allows_sa_sd_descriptor(self):
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(allowed_tools=["assistant.sa_sd.generate"]),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-skill-1",
+        )
+        with patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/skills/assistant.sa_sd.generate/authorize",
+                json={
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                    "session_id": "conv-1",
+                    "request_type": "assistant_dev_docs_generate",
+                },
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-skill-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"]["status"], "allowed")
+        self.assertEqual(body["data"]["skill_id"], "assistant.sa_sd.generate")
+        self.assertEqual(
+            body["data"]["descriptor"]["handler_ref"],
+            "bff.route:POST /bff/assistant/dev-docs/generate",
+        )
+        entries = bridge._audit.read()  # noqa: SLF001 - test asserts route admission audit.
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["request_type"], "assistant_dev_docs_generate")
+        self.assertEqual(entries[0]["outcome"], "allowed")
+
+    def test_assistant_skill_authorize_fails_closed_when_skill_not_allowlisted(self):
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(allowed_tools=[]),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+        )
+        with patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/skills/assistant.sa_sd.generate/authorize",
+                json={
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error_code"], "BRIDGE_SKILL_DENIED")
+
     def test_assistant_codex_reauth_starts_device_flow(self):
         fake_payload = {
             "reauth_session_id": "codex_reauth_1",

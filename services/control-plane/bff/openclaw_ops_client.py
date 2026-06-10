@@ -167,6 +167,52 @@ class OpenClawOpsClient:
             headers=headers,
         )
 
+    def authorize_assistant_skill(
+        self,
+        *,
+        skill_id: str,
+        operator_id: str,
+        mode: Optional[str] = None,
+        operator_role: Optional[str] = None,
+        confirmed: bool = False,
+        confirm_token: Optional[str] = None,
+        control_mode: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        request_type: str = "assistant_skill_authorize",
+        audit_extra: Optional[Dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        body: Dict[str, Any] = {
+            "request_type": request_type,
+            "confirmed": confirmed,
+        }
+        if mode:
+            body["mode"] = mode
+        if operator_role:
+            body["operator_role"] = operator_role
+        if confirm_token:
+            body["confirm_token"] = confirm_token
+        if control_mode is not None:
+            body["control_mode"] = control_mode
+        if session_id:
+            body["session_id"] = session_id
+        if audit_extra:
+            body["audit_extra"] = audit_extra
+        headers: Dict[str, str] = {"X-Operator-Id": operator_id}
+        if operator_role:
+            headers["X-Operator-Role"] = operator_role
+        if mode:
+            headers["X-Assistant-Mode"] = mode
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        return self._request(
+            "POST",
+            f"/api/openclaw-adapter/assistant/skills/{urllib.parse.quote(skill_id, safe='')}/authorize",
+            body=body,
+            headers=headers,
+            expected_status={200},
+        )
+
     def list_invocation_audit(
         self,
         *,

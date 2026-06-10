@@ -1570,9 +1570,13 @@ def _refresh_reused_worker_worktree(
         classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
         if classification == "real":
             index_split_paths = _staged_index_split_paths_matching_head(worktree_path)
-            if not _restore_reused_index_split(worktree_path, index_split_paths):
-                return False, "skipped_dirty_worktree"
-            index_restored = True
+            if index_split_paths and _restore_reused_index_split(worktree_path, index_split_paths):
+                index_restored = True
+            # No restorable staged index-split (or a failed restore) is NOT fatal:
+            # fall through to re-classify and anchor genuine task WIP below instead
+            # of hard-blocking dispatch forever. The previous early return here made
+            # the auto-anchor unreachable for plain unstaged real dirt -- the common
+            # case (a superseded run leaves modified-but-unstaged task files).
             status_proc = subprocess.run(
                 ["git", "status", "--porcelain", "--untracked-files=all"],
                 cwd=worktree_path,

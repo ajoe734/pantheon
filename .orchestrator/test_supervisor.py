@@ -7037,6 +7037,41 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             self.assertEqual(supervisor._staged_index_split_paths_matching_head(repo), [])
 
 
+    def test_refresh_reused_worktree_anchors_unstaged_real_dirt(self) -> None:
+        # Regression: a reused worktree with plain *unstaged* real dirt (no staged
+        # index-split) must auto-anchor, not hard-block. The original gate
+        # early-returned skipped_dirty_worktree before the anchor could run, so a
+        # superseded run that left modified-but-unstaged task files jammed the
+        # owning agent forever (MPOS-P1-VERIFY-001 incident).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            origin = Path(tmpdir) / "origin.git"
+            subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+            repo = self._init_git_repo(tmpdir)
+            subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=repo, check=True)
+            (repo / "svc.py").write_text("base\n", encoding="utf-8")
+            self._commit_all(repo, "initial")
+            subprocess.run(["git", "branch", "-M", "dev"], cwd=repo, check=True)
+            subprocess.run(["git", "push", "-q", "origin", "dev"], cwd=repo, check=True)
+            subprocess.run(["git", "checkout", "-q", "-b", "task/OPS-GATEFIX-001"], cwd=repo, check=True)
+            # Modified-but-unstaged real change (the common superseded-run residue).
+            (repo / "svc.py").write_text("unstaged worker WIP\n", encoding="utf-8")
+
+            ok, detail = supervisor._refresh_reused_worker_worktree(
+                repo, repo, "origin/dev",
+                task_id="OPS-GATEFIX-001", branch="task/OPS-GATEFIX-001",
+            )
+
+            self.assertTrue(ok, detail)
+            self.assertTrue(detail.startswith("autoanchored_"), detail)
+            status = subprocess.run(
+                ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True, check=True
+            )
+            self.assertEqual(status.stdout, "")
+            body = subprocess.run(
+                ["git", "log", "-1", "--format=%B"], cwd=repo, capture_output=True, text=True, check=True
+            ).stdout
+            self.assertIn("Task-ID: OPS-GATEFIX-001", body)
+
     def test_anchor_commit_task_wip_commits_real_dirt_on_task_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = self._init_git_repo(tmpdir)
