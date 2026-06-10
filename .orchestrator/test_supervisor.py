@@ -14,6 +14,22 @@ import supervisor
 
 
 class RuntimeConfigTests(unittest.TestCase):
+    def test_load_provider_report_can_skip_refresh_for_one_shot_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            provider_report_path = root / "provider_capabilities.json"
+            provider_report_path.write_text(json.dumps({"providers": {"copilot": {"auth_ready": True}}}), encoding="utf-8")
+            config = {
+                "supervisor": {"auto_refresh_provider_capabilities": True},
+                "paths": {"provider_capabilities": str(provider_report_path)},
+            }
+
+            with mock.patch.object(supervisor, "build_provider_capabilities") as build_provider_capabilities:
+                report = supervisor.load_provider_report(config, refresh=False)
+
+        self.assertEqual(report["providers"]["copilot"]["auth_ready"], True)
+        build_provider_capabilities.assert_not_called()
+
     def test_codex_quota_groups_allow_four_concurrent_slots(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
@@ -116,6 +132,12 @@ class DetectWorkerFailureTests(unittest.TestCase):
             supervisor.detect_worker_failure(worker),
             "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
         )
+
+    def test_detects_copilot_monthly_quota_failure(self) -> None:
+        line = '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}'
+        worker = self._worker_for_log(line + "\n")
+
+        self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_detects_claude_auth_failure_from_cli_log(self) -> None:
         worker = self._worker_for_log(
@@ -8007,6 +8029,74 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             streak = state["provider_guardrails"]["task_failure_streaks"]["OPS-LEASE-003:gemini"]
             self.assertEqual(streak["last_failure_kind"], "quota_terminal")
             self.assertIn("capacity", worker["last_error"].lower())
+
+    def test_reconcile_runtime_uses_log_failure_for_copilot_monthly_quota(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            config["providers"]["copilot"] = {"delivery_mode": "copilot_local"}
+            config["agents"]["copilot"] = {"id": "copilot", "display_name": "Copilot", "provider": "copilot"}
+            (root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "MPOS-P1-PER-002",
+                                "status": "in_progress",
+                                "owner": "Copilot",
+                                "reviewer": "Codex",
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps({"event_id": "evt-copilot", "task_id": "MPOS-P1-PER-002", "target_agent": "copilot"})
+                + "\n",
+                encoding="utf-8",
+            )
+            log_path = root / "copilot-quota.log"
+            log_path.write_text(
+                '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}\n',
+                encoding="utf-8",
+            )
+            state = {
+                "queue": {"events": {"evt-copilot": {"status": "started", "run_id": "copilot-run-dead"}}},
+                "provider_guardrails": {"dispatch_pauses": {}},
+                "workers": {
+                    "copilot-run-dead": {
+                        "run_id": "copilot-run-dead",
+                        "status": "running",
+                        "provider": "copilot",
+                        "agent_id": "copilot",
+                        "task_id": "MPOS-P1-PER-002",
+                        "queue_event_id": "evt-copilot",
+                        "pid": 987654,
+                        "log_path": str(log_path),
+                    }
+                },
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_failure_evidence", return_value="evidence/copilot.json"),
+                mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value="Claude"),
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertTrue(changed)
+            worker = state["workers"]["copilot-run-dead"]
+            self.assertEqual(worker["status"], "reassigned")
+            self.assertEqual(worker["reassigned_to"], "Claude")
+            self.assertEqual(state["queue"]["events"]["evt-copilot"]["status"], "completed")
+            pause = state["provider_guardrails"]["dispatch_pauses"]["copilot"]
+            self.assertEqual(pause["pause_kind"], "quota_terminal")
+            self.assertEqual(pause["worker_run_id"], "copilot-run-dead")
+            streak = state["provider_guardrails"]["task_failure_streaks"]["MPOS-P1-PER-002:copilot"]
+            self.assertEqual(streak["last_failure_kind"], "quota_terminal")
+            self.assertIn("monthly quota", worker["last_error"].lower())
 
     def test_quota_group_cap_blocks_second_slot(self) -> None:
         config = {
