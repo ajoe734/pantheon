@@ -273,6 +273,12 @@ class OpenClawOpsClient:
             headers["X-Trace-Id"] = trace_id
         body = dict(payload or {})
         body.setdefault("provider", normalized)
+        operator_role = str(body.get("operator_role") or body.get("operatorRole") or "").strip()
+        if operator_role:
+            headers["X-Operator-Role"] = operator_role
+        mode = str(body.get("mode") or "").strip()
+        if mode:
+            headers["X-Assistant-Mode"] = mode
         return self._request(
             "POST",
             f"/api/openclaw-adapter/assistant/providers/{urllib.parse.quote(normalized)}/reauth",

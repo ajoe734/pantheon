@@ -270,8 +270,9 @@ def test_tool_workflow_bridge_denies_user_mode_even_when_tool_is_allowed(tmp_pat
             argv=["git", "status", "-sb"],
         )
 
-    assert exc_info.value.details["policy_layer"] == "assistant_command_policy"
+    assert exc_info.value.details["policy_layer"] == "assistant_skill_descriptor_policy"
     assert exc_info.value.details["policy_class"] == "mode_denied"
     entries = audit.read(session_id="s1")
     assert entries[0]["event_type"] == "assistant.command.denied"
+    assert entries[0]["policy_layer"] == "assistant_skill_descriptor_policy"
     assert entries[0]["policy_class"] == "mode_denied"

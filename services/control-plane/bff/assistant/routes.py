@@ -48,6 +48,7 @@ from .models import (
     OrchestratorStatusResponse,
 )
 from .orchestrator_status import read_orchestrator_status
+from .redaction import RedactionError, redact_assistant_payload
 from .tool_contracts import (
     ASSISTANT_TOOL_ALLOWLIST,
     ToolNotAllowedError,
@@ -518,7 +519,11 @@ def create_assistant_router(
         request_payload = dict(payload or {})
         provider = str(request_payload.get("provider") or "codex").strip().lower() or "codex"
         request_payload["provider"] = provider
+        request_payload["mode"] = str(control_status.get("mode") or "")
+        request_payload["operator_role"] = _operator_role_from_identity(identity)
+        request_payload["confirmed"] = True
         request_payload["control_mode"] = {
+            "active": True,
             "mode": control_status.get("mode"),
             "activation_id": control_status.get("activation_id") or control_status.get("activationId"),
         }
@@ -526,14 +531,24 @@ def create_assistant_router(
         actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
         started = provider_reauth(request_payload, actor_id, trace_id)
         if isinstance(started, dict) and isinstance(started.get("data"), dict):
+            safe_data = _sanitize_provider_reauth_payload(
+                started["data"],
+                mode=str(control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
+                bff_error=bff_error,
+            )
             return {
-                "data": started["data"],
+                "data": safe_data,
                 "meta": {
                     "openclawAdapterStatus": started.get("status"),
                     "openclaw_adapter_status": started.get("status"),
                 },
             }
-        return {"data": started}
+        safe_started = _sanitize_provider_reauth_payload(
+            started,
+            mode=str(control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
+            bff_error=bff_error,
+        )
+        return {"data": safe_started}
 
     @router.get("/provider/reauth/{session_id}")
     async def get_assistant_provider_reauth_status(
@@ -556,14 +571,25 @@ def create_assistant_router(
         actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
         status = provider_reauth_status(provider, session_id, actor_id)
         if isinstance(status, dict) and isinstance(status.get("data"), dict):
+            safe_data = _sanitize_provider_reauth_payload(
+                status["data"],
+                mode=AssistantMode.KERNEL_DEBUG.value,
+                bff_error=bff_error,
+            )
             return {
-                "data": status["data"],
+                "data": safe_data,
                 "meta": {
                     "openclawAdapterStatus": status.get("status"),
                     "openclaw_adapter_status": status.get("status"),
                 },
             }
-        return {"data": status}
+        return {
+            "data": _sanitize_provider_reauth_payload(
+                status,
+                mode=AssistantMode.KERNEL_DEBUG.value,
+                bff_error=bff_error,
+            )
+        }
 
     @router.post("/dev-docs/generate", status_code=201)
     async def generate_assistant_dev_docs(
@@ -1044,6 +1070,44 @@ def _require_kernel_repair_control(
             "The active control-mode activation does not include assistant.kernel.repair",
             field="capabilities",
             required_capability="assistant.kernel.repair",
+        )
+
+
+def _operator_role_from_identity(identity: Any) -> str:
+    roles = {str(role) for role in (getattr(identity, "roles", []) or [])}
+    if "admin" in roles:
+        return "admin"
+    if "operator" in roles:
+        return "operator"
+    if "approver" in roles or "capability_admin" in roles:
+        return "approver"
+    if "reviewer" in roles:
+        return "reviewer"
+    return "viewer"
+
+
+def _sanitize_provider_reauth_payload(
+    payload: Any,
+    *,
+    mode: str,
+    bff_error: Optional[BffErrorFactory],
+) -> Any:
+    try:
+        return redact_assistant_payload(
+            payload,
+            mode=mode,
+            stage="provider_reauth_response",
+            allow_kernel_override=False,
+        ).value
+    except RedactionError as exc:
+        _raise_error(
+            bff_error,
+            502,
+            ErrorCode.PRECONDITION_FAILED,
+            "Assistant provider reauth response failed redaction",
+            str(exc),
+            field="provider_reauth",
+            reason="redaction_failed",
         )
 
 
