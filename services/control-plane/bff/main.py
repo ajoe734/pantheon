@@ -31,6 +31,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+_PERSONA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "persona"))
+if _PERSONA_SERVICE_DIR not in sys.path:
+    sys.path.insert(0, _PERSONA_SERVICE_DIR)
 
 from services.foundation import (  # noqa: E402
     ActorRef,
@@ -50,6 +53,11 @@ from services.foundation import (  # noqa: E402
     foundation_id,
 )
 from services.foundation.health import register_fastapi_health_routes  # noqa: E402
+from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore  # noqa: E402
+from persona_strategy_discovery import (  # noqa: E402
+    PersonaStrategyDiscoveryService,
+    extract_persona_strategy_profile,
+)
 
 from models import (
     ActionCommandStatus,
@@ -22749,6 +22757,364 @@ def _list_persona_records() -> List[Dict[str, Any]]:
     return items
 
 
+_PERSONA_STRATEGY_MATCH_ALLOWED_ACTIONS = frozenset({
+    "create_research_ticket",
+    "promote_seed_candidate",
+})
+_PERSONA_STRATEGY_MATCH_FORBIDDEN_ACTION_TERMS = frozenset({
+    "deploy",
+    "deployment",
+    "broker",
+    "live",
+    "order",
+    "runtime",
+    "execute",
+    "execution",
+})
+
+
+def _load_strategy_seed_match_candidates(
+    *,
+    snapshot_at: str,
+) -> Tuple[List[Any], Dict[str, Any]]:
+    try:
+        store = StrategySpecSeedStore()
+        seeds = store.list_all()
+        path_exists = store.path.exists()
+        surface: Dict[str, Any] = {
+            "status": "ok" if path_exists else "degraded",
+            "source": "strategy_spec_seed_store" if path_exists else "strategy_spec_seed_store_missing",
+            "path": str(store.path),
+        }
+        if not path_exists:
+            surface["note"] = "StrategySpecSeed store file is absent; matching will use StrategySpec candidates only."
+            surface["staleness"] = {"served_from": "empty_dev_store", "last_known_at": snapshot_at}
+        return list(seeds), surface
+    except Exception as exc:  # pragma: no cover - exercised by corrupt local stores.
+        log.warning("StrategySpecSeed store unavailable for persona discovery: %s", exc)
+        return [], {
+            "status": "unavailable",
+            "source": "strategy_spec_seed_store",
+            "message": str(exc),
+            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        }
+
+
+def _list_strategy_spec_match_candidates(
+    *,
+    include_retired: bool,
+    snapshot_at: str,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    try:
+        summaries = read_store.list_strategy_specs(
+            include_retired=include_retired,
+            include_fixture_pack=False,
+        ) or []
+        for summary in summaries:
+            strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip()
+            if not strategy_id:
+                continue
+            detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
+            if detail:
+                items.append(detail)
+    except Exception as exc:  # pragma: no cover - defensive read composition.
+        log.warning("StrategySpec read surface unavailable for persona discovery: %s", exc)
+        return [], {
+            "status": "unavailable",
+            "source": read_store.dataset_source("strategy_specs"),
+            "message": str(exc),
+            "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
+        }
+
+    surface = _dataset_surface_status(
+        "strategy_specs",
+        snapshot_at=snapshot_at,
+        has_data=read_store.dataset_source("strategy_specs") != "missing",
+    )
+    return items, surface
+
+
+def _persona_strategy_discovery_payload(
+    persona_id: str,
+    *,
+    include_retired: bool,
+    include_blocked: bool,
+    snapshot_at: str,
+    discovery_session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    _ensure_persona_exists(persona_id)
+    persona = read_store.get_persona(persona_id)
+    if persona is None:
+        overlay = _PERSONA_BFF_OVERLAY.get(persona_id) or {}
+        persona = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": overlay.get("name") or persona_id,
+            "mandate": overlay.get("archetype") or overlay.get("name") or persona_id,
+            "strategy_family": overlay.get("archetype"),
+            "lifecycle_state": overlay.get("state") or "draft",
+            "status": overlay.get("state") or "draft",
+            "metadata": {
+                "archetype": overlay.get("archetype"),
+                "risk_level": overlay.get("risk"),
+                "market_scope": overlay.get("marketScope"),
+                "asset_classes": overlay.get("assetClasses"),
+            },
+        }
+    route_policy = read_store.get_route_policy_for_persona(persona_id) or {}
+    capability_snapshot = read_store.get_capability_snapshot_for_persona(persona_id) or {}
+    profile = extract_persona_strategy_profile(
+        persona,
+        route_policy=route_policy,
+        capability_snapshot=capability_snapshot,
+    )
+    seeds, seed_surface = _load_strategy_seed_match_candidates(snapshot_at=snapshot_at)
+    strategy_specs, strategy_spec_surface = _list_strategy_spec_match_candidates(
+        include_retired=include_retired,
+        snapshot_at=snapshot_at,
+    )
+    matches = PersonaStrategyDiscoveryService().match_candidates(
+        profile,
+        strategy_seeds=seeds,
+        strategy_specs=strategy_specs,
+        created_at=snapshot_at,
+        discovery_session_id=discovery_session_id,
+        include_blocked=include_blocked,
+    )
+    match_payloads = [match.to_dict() for match in matches]
+    return {
+        "profile": profile.to_dict(),
+        "matches": match_payloads,
+        "surfaces": {
+            "persona_strategy_profile": _dataset_surface_status(
+                "personas",
+                snapshot_at=snapshot_at,
+                has_data=True,
+            ),
+            "strategy_spec_seeds": seed_surface,
+            "strategy_specs": strategy_spec_surface,
+        },
+        "candidate_counts": {
+            "strategy_spec_seeds": len(seeds),
+            "strategy_specs": len(strategy_specs),
+            "total_matches": len(match_payloads),
+        },
+    }
+
+
+def _persona_strategy_matches_response(
+    persona_id: str,
+    *,
+    include_retired: bool,
+    include_blocked: bool,
+    page_token: Optional[str],
+    page_size: int,
+    discovery_session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    snapshot_at = utc_now()
+    payload = _persona_strategy_discovery_payload(
+        persona_id,
+        include_retired=include_retired,
+        include_blocked=include_blocked,
+        snapshot_at=snapshot_at,
+        discovery_session_id=discovery_session_id,
+    )
+    matches = payload["matches"]
+    page_items, next_page_token = _page_slice(matches, page_token, page_size)
+    return {
+        "data": page_items,
+        "items": page_items,
+        "profile": payload["profile"],
+        "page_info": {
+            "next_page_token": next_page_token,
+            "page_size": page_size,
+            "total": len(matches),
+            "has_more": next_page_token is not None,
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": payload["surfaces"],
+            "candidate_counts": payload["candidate_counts"],
+            "research_only": True,
+            "execution_route": "none",
+        },
+    }
+
+
+def _strategy_discovery_page_size(value: Any) -> int:
+    try:
+        page_size = int(value or 20)
+    except (TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "page_size must be an integer",
+            "Persona strategy discovery page_size must be an integer from 1 to 100.",
+            precondition_failed="page_size",
+        ) from exc
+    if page_size < 1 or page_size > 100:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "page_size must be between 1 and 100",
+            "Persona strategy discovery page_size must be an integer from 1 to 100.",
+            precondition_failed="page_size",
+        )
+    return page_size
+
+
+def _strategy_match_action_type(payload: Mapping[str, Any]) -> str:
+    action = str(
+        payload.get("action")
+        or payload.get("type")
+        or payload.get("recommended_action")
+        or ""
+    ).strip()
+    if not action:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "strategy match action is required",
+            "Set action to create_research_ticket or promote_seed_candidate.",
+            precondition_failed="action",
+        )
+    normalized = action.lower().replace("-", "_")
+    if (
+        normalized not in _PERSONA_STRATEGY_MATCH_ALLOWED_ACTIONS
+        or any(term in normalized for term in _PERSONA_STRATEGY_MATCH_FORBIDDEN_ACTION_TERMS)
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "Strategy match action cannot deploy or execute",
+            (
+                "Persona strategy discovery actions are limited to research ticket "
+                "creation or seed-candidate promotion review."
+            ),
+            precondition_failed="action",
+        )
+    return normalized
+
+
+def _find_persona_strategy_match(persona_id: str, match_id: str, *, snapshot_at: str) -> Dict[str, Any]:
+    payload = _persona_strategy_discovery_payload(
+        persona_id,
+        include_retired=False,
+        include_blocked=True,
+        snapshot_at=snapshot_at,
+    )
+    for match in payload["matches"]:
+        if str(match.get("match_id") or "") == match_id:
+            return match
+    raise _bff_error(
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+        "Persona strategy match not found",
+        f"Match {match_id} does not exist for persona {persona_id}",
+    )
+
+
+def _persona_strategy_match_action_response(
+    *,
+    persona_id: str,
+    match_id: str,
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+    resolved_key: str,
+) -> Dict[str, Any]:
+    action = _strategy_match_action_type(payload)
+    snapshot_at = utc_now()
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /api/v1/personas/{persona_id}/strategy-matches/{match_id}/actions",
+            "persona_id": persona_id,
+            "match_id": match_id,
+            "action": action,
+            "payload": payload,
+        }
+    )
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+
+    match = _find_persona_strategy_match(persona_id, match_id, snapshot_at=snapshot_at)
+    blockers = list(((match.get("metadata") or {}).get("blockers") or []))
+    if blockers and action != "create_research_ticket":
+        raise _bff_error(
+            422,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "Blocked strategy match cannot be promoted",
+            f"Hard blockers must be resolved first: {', '.join(blockers)}",
+            precondition_failed="blockers",
+        )
+    if action == "promote_seed_candidate" and match.get("matched_object_type") != "strategy_spec_seed":
+        raise _bff_error(
+            422,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "Only StrategySpecSeed matches can be promoted as seed candidates",
+            "Use create_research_ticket for StrategySpec matches.",
+            precondition_failed="matched_object_type",
+        )
+
+    if action == "create_research_ticket":
+        ticket = read_store.create_research_ticket(
+            title=str(payload.get("title") or f"Research persona strategy match {match_id}"),
+            description=str(
+                payload.get("description")
+                or (
+                    f"Evaluate {match.get('matched_object_type')} {match.get('matched_object_id')} "
+                    f"for persona {persona_id}. Score: {match.get('score')}."
+                )
+            ),
+            priority=str(payload.get("priority") or "normal"),
+            owner=str(payload.get("owner") or persona_id),
+            actor_id=identity.operator_id,
+            created_at=snapshot_at,
+        )
+        result = {
+            "data": {
+                "action": action,
+                "status": "research_ticket_created",
+                "match_id": match_id,
+                "persona_id": persona_id,
+                "ticket": ticket,
+                "deployment_authority": "none",
+                "registry_write_performed": False,
+            },
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "research_only": True,
+                "execution_route": "none",
+            },
+        }
+    else:
+        promotion_request_id = f"seed-promotion-{match_id}-{uuid.uuid4().hex[:8]}"
+        result = {
+            "data": {
+                "action": action,
+                "status": "queued",
+                "promotion_request_id": promotion_request_id,
+                "match_id": match_id,
+                "persona_id": persona_id,
+                "matched_object_id": match.get("matched_object_id"),
+                "registry_write_performed": False,
+                "deployment_authority": "none",
+                "next": "Submit the seed candidate to StrategySpec review before any deployment gate.",
+            },
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "research_only": True,
+                "execution_route": "none",
+            },
+        }
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {
+        "request_hash": request_hash,
+        "result": result,
+    }
+    return result
+
+
 def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
     for key in keys:
         value = record.get(key)
@@ -34549,6 +34915,103 @@ async def bff_get_persona_route_policy(
             snapshot_at=snapshot_at,
         ),
     }
+
+
+@app.get("/api/v1/personas/{persona_id}/strategy-matches")
+@app.get("/bff/personas/{persona_id}/strategy-matches")
+async def bff_get_persona_strategy_matches(
+    persona_id: str,
+    include_retired: bool = False,
+    include_blocked: bool = True,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: explainable Persona strategy discovery matches.
+
+    This is a research-only read surface.  It can recommend research tickets,
+    seed-candidate promotion review, or rapid eval requests; it never grants
+    deployment, broker, runtime, or order-routing authority.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _persona_strategy_matches_response(
+        persona_id,
+        include_retired=include_retired,
+        include_blocked=include_blocked,
+        page_token=page_token,
+        page_size=page_size,
+    )
+
+
+@app.post("/api/v1/personas/{persona_id}/strategy-discovery", status_code=202)
+@app.post("/bff/personas/{persona_id}/strategy-discovery", status_code=202)
+async def bff_start_persona_strategy_discovery(
+    persona_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: create a transient research-only discovery session view."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /api/v1/personas/{persona_id}/strategy-discovery",
+            "persona_id": persona_id,
+            "payload": payload,
+        }
+    )
+    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    discovery_session_id = f"psd-{hashlib.sha256(resolved_key.encode('utf-8')).hexdigest()[:12]}"
+    response = _persona_strategy_matches_response(
+        persona_id,
+        include_retired=bool(payload.get("include_retired", False)),
+        include_blocked=bool(payload.get("include_blocked", True)),
+        page_token=None,
+        page_size=_strategy_discovery_page_size(payload.get("page_size")),
+        discovery_session_id=discovery_session_id,
+    )
+    response["discovery_session"] = {
+        "session_id": discovery_session_id,
+        "status": "candidate",
+        "research_only": True,
+        "execution_route": "none",
+    }
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {
+        "request_hash": request_hash,
+        "result": response,
+    }
+    return response
+
+
+@app.post("/api/v1/personas/{persona_id}/strategy-matches/{match_id}/actions", status_code=202)
+@app.post("/bff/personas/{persona_id}/strategy-matches/{match_id}/actions", status_code=202)
+async def bff_persona_strategy_match_action(
+    persona_id: str,
+    match_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: research-only action for a Persona strategy match."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    return _persona_strategy_match_action_response(
+        persona_id=persona_id,
+        match_id=match_id,
+        payload=payload,
+        identity=identity,
+        resolved_key=resolved_key,
+    )
 
 
 @app.get("/bff/personas/{persona_id}/activity")
