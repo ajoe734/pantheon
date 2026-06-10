@@ -12,8 +12,19 @@ Covers:
 - Pool-scoped list: GET /api/registry/pools/{pool}/allocation-policy-artifacts
 - Type guard: GET 404 for non-allocation-policy registry_id
 - Validation errors for missing required fields
+
+MPOS-P1-CONSULT-001: Consultation gate for high-risk allocation_policy approvals.
 """
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_GOVERNANCE_DIR = str(
+    Path(__file__).resolve().parents[2] / "services" / "control-plane" / "governance"
+)
+if _GOVERNANCE_DIR not in sys.path:
+    sys.path.insert(0, _GOVERNANCE_DIR)
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +32,18 @@ from fastapi.testclient import TestClient
 from .models import ArtifactState, ArtifactType
 from .service import app
 from .storage import reset_store
+
+from approval_decision import (
+    ActorRole,
+    ApprovalDecision,
+    ConsultationGateError,
+    DecisionOutcome,
+    EvidenceRef,
+    EvidenceRefType,
+    RiskLevel,
+    TargetType,
+    consultation_gate_required,
+)
 
 
 # -- Fixtures -----------------------------------------------------------------
@@ -342,3 +365,117 @@ class TestAllocationPolicyValidation:
             json=_register_payload(version="not-a-semver"),
         )
         assert resp.status_code == 400
+
+
+# -- Consultation gate -------------------------------------------------------
+# MPOS-P1-CONSULT-001: high-risk allocation_policy approvals require committee
+# memo + service handoff evidence. These tests confirm the gate in
+# ApprovalDecision.decide() is enforced for the allocation_policy target type.
+
+class TestAllocationPolicyConsultationGate:
+    """consultation gate: high-risk allocation_policy requires committee + handoff evidence."""
+
+    def _make_decision(self, risk_level: RiskLevel = RiskLevel.HIGH) -> ApprovalDecision:
+        d = ApprovalDecision.create_proposed(
+            decision_id=f"gate-test-{risk_level.value}",
+            target_type=TargetType.ALLOCATION_POLICY,
+            target_id="artifact-gate-001",
+            target_version="1.0.0",
+            risk_level=risk_level,
+        )
+        role = (
+            ActorRole.GOVERNANCE_COMMITTEE
+            if risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+            else ActorRole.GOVERNANCE_REVIEWER
+        )
+        d.accept_review(role, "reviewer-001")
+        return d
+
+    def _full_evidence(self) -> list[EvidenceRef]:
+        return [
+            EvidenceRef(ref_type=EvidenceRefType.COMMITTEE_MEMO, ref_id="memo-gate-001"),
+            EvidenceRef(ref_type=EvidenceRefType.SERVICE_HANDOFF, ref_id="gh-gate-001"),
+        ]
+
+    def test_gate_required_for_high_risk(self):
+        assert consultation_gate_required(TargetType.ALLOCATION_POLICY, RiskLevel.HIGH) is True
+
+    def test_gate_required_for_critical_risk(self):
+        assert consultation_gate_required(TargetType.ALLOCATION_POLICY, RiskLevel.CRITICAL) is True
+
+    def test_gate_not_required_for_medium_risk(self):
+        assert consultation_gate_required(TargetType.ALLOCATION_POLICY, RiskLevel.MEDIUM) is False
+
+    def test_approve_with_full_evidence(self):
+        d = self._make_decision(RiskLevel.HIGH)
+        d.decide(
+            DecisionOutcome.APPROVED,
+            rationale="Approved with committee memo and gate handoff.",
+            evidence_refs=self._full_evidence(),
+        )
+        assert d.decision == DecisionOutcome.APPROVED
+
+    def test_approve_with_conditions(self):
+        d = self._make_decision(RiskLevel.HIGH)
+        d.decide(
+            DecisionOutcome.APPROVED_WITH_CONDITIONS,
+            rationale="Approved with paper-only constraint.",
+            conditions=["Paper stage only for 72 h."],
+            evidence_refs=self._full_evidence(),
+        )
+        assert d.decision == DecisionOutcome.APPROVED_WITH_CONDITIONS
+        assert d.conditions == ["Paper stage only for 72 h."]
+
+    def test_reject_with_full_evidence(self):
+        d = self._make_decision(RiskLevel.HIGH)
+        d.decide(
+            DecisionOutcome.REJECTED,
+            rationale="Rejected due to concentration risk.",
+            evidence_refs=self._full_evidence(),
+        )
+        assert d.decision == DecisionOutcome.REJECTED
+
+    def test_missing_committee_memo_raises(self):
+        d = self._make_decision(RiskLevel.HIGH)
+        with pytest.raises(ConsultationGateError, match="committee_memo"):
+            d.decide(
+                DecisionOutcome.APPROVED,
+                rationale="Missing committee memo.",
+                evidence_refs=[
+                    EvidenceRef(ref_type=EvidenceRefType.SERVICE_HANDOFF, ref_id="gh-gate-001")
+                ],
+            )
+
+    def test_missing_service_handoff_raises(self):
+        d = self._make_decision(RiskLevel.HIGH)
+        with pytest.raises(ConsultationGateError, match="service_handoff"):
+            d.decide(
+                DecisionOutcome.APPROVED,
+                rationale="Missing service handoff.",
+                evidence_refs=[
+                    EvidenceRef(ref_type=EvidenceRefType.COMMITTEE_MEMO, ref_id="memo-gate-001")
+                ],
+            )
+
+    def test_stale_handoff_raises(self):
+        d = self._make_decision(RiskLevel.HIGH)
+        stale_evidence = [
+            EvidenceRef(ref_type=EvidenceRefType.COMMITTEE_MEMO, ref_id="memo-gate-001"),
+            EvidenceRef(
+                ref_type=EvidenceRefType.SERVICE_HANDOFF,
+                ref_id="gh-gate-001",
+                storage_ref={"issued_at": "2026-01-01T00:00:00Z"},
+            ),
+        ]
+        from approval_decision import validate_consultation_gate
+        with pytest.raises(ConsultationGateError, match="stale"):
+            validate_consultation_gate(stale_evidence, now_iso="2026-06-10T00:00:00Z")
+
+    def test_no_evidence_at_all_raises(self):
+        d = self._make_decision(RiskLevel.HIGH)
+        with pytest.raises(ConsultationGateError, match="committee_memo"):
+            d.decide(
+                DecisionOutcome.APPROVED,
+                rationale="No evidence provided.",
+                evidence_refs=[],
+            )
