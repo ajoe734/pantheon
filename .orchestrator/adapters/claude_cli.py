@@ -10,6 +10,9 @@ from common import (
     apply_claude_oauth_token_file,
     claude_auth_ready as shared_claude_auth_ready,
     config_path,
+    delivery_runtime_env,
+    delivery_workspace_root,
+    preserve_github_cli_auth_env,
     new_runtime_id,
     runtime_log_path,
     shell_quote,
@@ -39,7 +42,8 @@ def _runtime_settings(config: dict | None = None, provider_id: str | None = None
 
 
 def _spawn_env(config: dict | None = None, provider_id: str | None = None) -> dict[str, str]:
-    env = dict(os.environ)
+    base_env = dict(os.environ)
+    env = dict(base_env)
     runtime = _runtime_settings(config, provider_id)
     home = str(runtime.get("home") or "").strip()
     if home:
@@ -49,6 +53,7 @@ def _spawn_env(config: dict | None = None, provider_id: str | None = None) -> di
         if value is None:
             continue
         env[str(key)] = os.path.expanduser(str(value))
+    preserve_github_cli_auth_env(env, base_env)
     apply_claude_oauth_token_file(env, runtime)
     return env
 
@@ -150,6 +155,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
 
         provider = _provider_settings(self.config, provider_id)
         runtime = provider.get("runtime", {})
+        workspace_root = delivery_workspace_root(self.config, request.metadata)
         output_format = runtime.get("output_format", "stream-json")
         command = [
             runtime.get("cli") or cli,
@@ -178,6 +184,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
 
         run_id = new_runtime_id(provider_id)
         log_path = runtime_log_path(provider_id, request.agent_id)
+        env.update(delivery_runtime_env(self.config, request.metadata))
         env.update(
             {
                 "ORCH_RUN_ID": run_id,
@@ -191,7 +198,7 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
         )
         process, _ = spawn_background_process(
             command,
-            cwd=config_path(self.config, "status_file").parents[0],
+            cwd=workspace_root,
             log_path=log_path,
             env=env,
         )

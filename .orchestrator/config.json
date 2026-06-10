@@ -51,7 +51,9 @@
     "pause_on_capacity_failure": true,
     "pause_on_auth_failure": true,
     "capacity_pause_seconds": 900,
-    "auth_pause_seconds": 900
+    "auth_pause_seconds": 900,
+    "quota_terminal_pause_seconds": 900,
+    "quota_terminal_hint_max_seconds": 3600
   },
   "worker_tree_guard": {
     "enabled": false,
@@ -74,6 +76,18 @@
       "docs-site/**"
     ],
     "auto_restore_enabled": false
+  },
+  "worker_worktrees": {
+    "enabled": true,
+    "root": "/tmp/pantheon-worker-worktrees",
+    "base_ref": "origin/dev",
+    "reuse_existing": true,
+    "execution_reasons": [
+      "owned_ready_dispatch",
+      "owned_in_progress_dispatch",
+      "owned_finalize_dispatch",
+      "review_ready_dispatch"
+    ]
   },
   "worker_retry": {
     "enabled": true,
@@ -815,6 +829,7 @@
       "done"
     ],
     "worker_terminal_statuses": [
+      "review",
       "done",
       "review_approved"
     ],

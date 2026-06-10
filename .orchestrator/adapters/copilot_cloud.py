@@ -8,6 +8,7 @@ from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, Deli
 from common import (
     command_exists,
     config_path,
+    delivery_runtime_env,
     new_runtime_id,
     run_command,
     runtime_log_path,
@@ -136,6 +137,7 @@ class CopilotCloudAdapter(BaseAdapter):
         run_id = new_runtime_id("copilot-cloud")
         log_path = runtime_log_path("copilot-cloud", request.agent_id)
         env = os.environ.copy()
+        env.update(delivery_runtime_env(self.config, request.metadata))
         env.update(
             {
                 "ORCH_RUN_ID": run_id,

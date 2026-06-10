@@ -15,6 +15,61 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ai_status
 
 
+class StatusRootRoutingTests(unittest.TestCase):
+    def test_load_local_coordination_payload_tolerates_missing_yaml(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-no-yaml-") as temp_dir:
+            root = Path(temp_dir)
+            (root / "payload.yaml").write_text("status: done\n", encoding="utf-8")
+            (root / "payload.json").write_text('{"status": "done"}\n', encoding="utf-8")
+
+            with (
+                mock.patch.object(ai_status, "ROOT", root),
+                mock.patch.object(ai_status, "yaml", None),
+                mock.patch.object(ai_status, "YAML_ERROR_TYPES", ()),
+            ):
+                self.assertIsNone(ai_status.load_local_coordination_payload("payload.yaml"))
+                self.assertEqual(
+                    {"status": "done"},
+                    ai_status.load_local_coordination_payload("payload.json"),
+                )
+
+    def test_load_config_routes_runtime_paths_to_status_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-routing-") as temp_dir:
+            root = Path(temp_dir)
+            code_root = root / "code"
+            status_root = root / "status"
+            config_file = code_root / ".orchestrator" / "config.json"
+            config_file.parent.mkdir(parents=True)
+            config_file.write_text(
+                json.dumps(
+                    {
+                        "paths": {
+                            "status_file": "ai-status.json",
+                            "activity_log": "ai-activity-log.jsonl",
+                            "state_file": ".orchestrator/state.json",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_root / "ai-status.json"),
+                mock.patch.object(ai_status, "LOG_FILE", status_root / "ai-activity-log.jsonl"),
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", status_root / "current-work.md"),
+                mock.patch.object(ai_status, "DOCS_SITE_DIR", status_root / "docs-site"),
+                mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", status_root / ".orchestrator" / "state.json"),
+                mock.patch.object(ai_status, "APPROVAL_QUEUE_FILE", status_root / ".orchestrator" / "approval-queue.json"),
+            ):
+                config = ai_status.load_config()
+
+        self.assertEqual(config["paths"]["status_file"], str(status_root / "ai-status.json"))
+        self.assertEqual(config["paths"]["activity_log"], str(status_root / "ai-activity-log.jsonl"))
+        self.assertEqual(config["paths"]["state_file"], str(status_root / ".orchestrator" / "state.json"))
+        self.assertEqual(config["paths"]["event_queue"], str(status_root / ".orchestrator" / "event-queue.jsonl"))
+
+
 class ReviewApprovedWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = {
@@ -391,6 +446,50 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertEqual(title, "[Sidecar] [Auto] [Parent APP-001] Prepare APP-001 BFF handoff packet")
 
 
+class RuntimeWorkerLivenessTests(unittest.TestCase):
+    def test_pid_is_alive_rejects_zombie_processes(self) -> None:
+        with mock.patch.object(ai_status, "proc_pid_state", return_value="Z"):
+            self.assertFalse(ai_status.pid_is_alive(1234))
+
+    def test_normalize_runtime_workers_marks_zombie_running_worker_stale(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "TASK-001",
+                    "title": "Review stale runtime",
+                    "summary_zh": "確認 zombie worker 不會被 dashboard 當成 live。",
+                    "owner": "Codex",
+                    "reviewer": "Gemini2",
+                    "status": "review_approved",
+                    "depends_on": [],
+                    "next": "Owner finalize",
+                    "last_update": "2026-05-17T11:00:00Z",
+                }
+            ]
+        }
+        orchestrator_state = {
+            "workers": {
+                "gemini2-run": {
+                    "task_id": "TASK-001",
+                    "provider": "gemini2",
+                    "logical_agent_id": "gemini2",
+                    "status": "running",
+                    "pid": 1234,
+                    "last_event_at": "2026-05-17T11:03:15Z",
+                    "request_snapshot": {"reason": "review_ready_dispatch"},
+                }
+            }
+        }
+
+        with mock.patch.object(ai_status, "proc_pid_state", return_value="Z"):
+            workers = ai_status.normalize_runtime_workers(state, orchestrator_state)
+
+        self.assertEqual(workers[0]["bucket"], "stale")
+        self.assertFalse(workers[0]["is_live_runtime"])
+        self.assertFalse(workers[0]["pid_alive"])
+        self.assertEqual(workers[0]["pid_state"], "Z")
+
+
 class PortableStateRenderingTests(unittest.TestCase):
     def test_default_canonical_document_layers_exclude_review_and_session_records(self) -> None:
         layers = ai_status.default_canonical_document_layers()
@@ -682,6 +781,61 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("| `DEMO-002` | Codex | Claude | Please review before 2026-04-10 10:20:00. | pending | 2026-04-10 10:05:00 |", content)
         self.assertIn("Reviewer checked the handoff at 2026-04-10 10:30:00.", content)
         self.assertIn("- 2026-04-10 10:10:00 Codex: `DEMO-002` Paused until 2026-04-10 10:40:00.", content)
+
+    def test_write_current_work_tolerates_structured_log_entries_without_message(self) -> None:
+        state = {
+            "updated_at": "2026-05-17T16:24:00Z",
+            "objective": "Keep generated status views robust.",
+            "sprint": "2026-05-17-status-sync",
+            "canonical_document_layers": {
+                "L0 Collaboration & State": [
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-status.json",
+                    "ai-activity-log.jsonl",
+                ],
+            },
+            "agents": [],
+            "tasks": [],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+        logs = [
+            {
+                "ts": "2026-05-17T16:24:21Z",
+                "agent": "Codex2",
+                "type": "worker_commit",
+                "task_id": "OODA-E2E-002",
+                "commit": "abcdef1234567890",
+                "scope": ["tests/e2e/test_demo.py"],
+            }
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="ai-status-current-work-structured-log-") as temp_dir:
+            output_path = Path(temp_dir) / "current-work.md"
+            with (
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
+                mock.patch.object(
+                    ai_status,
+                    "load_archive_index",
+                    return_value={
+                        "updated_at": None,
+                        "counts": {"total": 0, "completed": 0, "superseded": 0},
+                        "recent_terminal_ids": [],
+                    },
+                ),
+                mock.patch.object(ai_status, "recent_terminal_summaries", return_value=[]),
+            ):
+                ai_status.write_current_work(state, logs)
+
+            content = output_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "- 2026-05-18 00:24:21 Codex2: `OODA-E2E-002` "
+            "worker_commit: commit abcdef123456; scope `tests/e2e/test_demo.py`",
+            content,
+        )
 
     def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
         state = {

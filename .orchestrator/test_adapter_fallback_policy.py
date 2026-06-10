@@ -54,7 +54,15 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             fake_process = mock.Mock(pid=1234)
 
             with (
-                mock.patch.dict(os.environ, {"OPENAI_API_KEY_CODEX2": "codex2-key"}, clear=False),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "OPENAI_API_KEY_CODEX2": "codex2-key",
+                        "CODEX_THREAD_ID": "parent-thread",
+                        "CODEX_SESSION_ID": "parent-session",
+                    },
+                    clear=False,
+                ),
                 mock.patch("adapters.codex.command_exists", return_value="codex"),
                 mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
             ):
@@ -69,6 +77,84 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["ORCH_REASON"], "review_ready_dispatch")
         self.assertEqual(env["OPENAI_API_KEY"], "codex2-key")
         self.assertEqual(env["CODEX_HOME"], os.path.expanduser("~/.codex2"))
+        self.assertNotIn("CODEX_THREAD_ID", env)
+        self.assertNotIn("CODEX_SESSION_ID", env)
+
+    def test_codex_without_api_key_env_does_not_inherit_parent_openai_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "agents": {
+                    "codex2": {
+                        "id": "codex2",
+                        "display_name": "Codex2",
+                        "provider": "codex2",
+                        "adapter": "codex",
+                    }
+                },
+                "providers": {
+                    "codex2": {
+                        "codex": {
+                            "cli": "codex",
+                            "codex_home": "~/.codex2",
+                        }
+                    }
+                },
+            }
+            request = DeliveryRequest(agent_id="codex2", provider="codex2", delivery_mode="codex", message="wake")
+            adapter = CodexAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch.dict(os.environ, {"OPENAI_API_KEY": "parent-key", "CODEX_THREAD_ID": "parent-thread"}, clear=False),
+                mock.patch("adapters.codex.command_exists", return_value="codex"),
+                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["CODEX_HOME"], os.path.expanduser("~/.codex2"))
+        self.assertNotIn("OPENAI_API_KEY", env)
+        self.assertNotIn("CODEX_THREAD_ID", env)
+
+    def test_codex_uses_request_workspace_and_status_root_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "worktree"
+            status_root = root / "status-root"
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex", "adapter": "codex"}},
+                "providers": {"codex": {"codex": {"cli": "codex"}}},
+            }
+            request = DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                metadata={
+                    "workspace_path": str(workspace),
+                    "status_root": str(status_root),
+                },
+            )
+            adapter = CodexAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch("adapters.codex.command_exists", return_value="codex"),
+                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, root / "codex.log")) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.command[result.command.index("-C") + 1], str(workspace))
+        self.assertEqual(spawn.call_args.kwargs["cwd"], workspace)
+        env = spawn.call_args.kwargs["env"]
+        self.assertEqual(env["PANTHEON_WORKTREE_ROOT"], str(workspace))
+        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(status_root))
+        self.assertEqual(env["ORCH_WORKSPACE_PATH"], str(workspace))
 
     def test_claude_can_disable_inbox_fallback(self) -> None:
         config = {
@@ -91,41 +177,56 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(result.mode, "claude_cli")
 
     def test_claude_alias_uses_provider_specific_home_env(self) -> None:
-        config = {
-            "agents": {
-                "claude2": {
-                    "id": "claude2",
-                    "display_name": "Claude2",
-                    "provider": "claude2",
-                    "adapter": "claude_cli",
-                }
-            },
-            "paths": {"status_file": "ai-status.json", "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"},
-            "providers": {
-                "claude2": {
-                    "allow_inbox_fallback": False,
-                    "runtime": {
-                        "cli": ".orchestrator/bin/claude",
-                        "home": "~/.claude2",
-                        "output_format": "stream-json",
-                        "include_hook_events": True,
-                    },
-                }
-            },
-        }
-        request = DeliveryRequest(agent_id="claude2", provider="claude2", delivery_mode="claude_cli", message="wake")
-        adapter = ClaudeCLIAdapter(config=config, provider_capabilities={"providers": {"claude": {"supports_auto_approve": True}}})
-        fake_process = mock.Mock(pid=1234)
-        with (
-            mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
-            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
-            mock.patch("adapters.claude_cli.spawn_background_process", return_value=(fake_process, Path("/tmp/claude2.log"))) as spawn,
-        ):
-            result = adapter.deliver(request)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            gh_config = root / ".config" / "gh"
+            gh_config.mkdir(parents=True)
+            config = {
+                "agents": {
+                    "claude2": {
+                        "id": "claude2",
+                        "display_name": "Claude2",
+                        "provider": "claude2",
+                        "adapter": "claude_cli",
+                    }
+                },
+                "paths": {
+                    "status_file": "ai-status.json",
+                    "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+                },
+                "providers": {
+                    "claude2": {
+                        "allow_inbox_fallback": False,
+                        "runtime": {
+                            "cli": ".orchestrator/bin/claude",
+                            "home": "~/.claude2",
+                            "output_format": "stream-json",
+                            "include_hook_events": True,
+                        },
+                    }
+                },
+            }
+            request = DeliveryRequest(agent_id="claude2", provider="claude2", delivery_mode="claude_cli", message="wake")
+            adapter = ClaudeCLIAdapter(
+                config=config,
+                provider_capabilities={"providers": {"claude": {"supports_auto_approve": True}}},
+            )
+            fake_process = mock.Mock(pid=1234)
+            with (
+                mock.patch.dict(os.environ, {"HOME": str(root)}, clear=False),
+                mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
+                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+                mock.patch(
+                    "adapters.claude_cli.spawn_background_process",
+                    return_value=(fake_process, Path("/tmp/claude2.log")),
+                ) as spawn,
+            ):
+                result = adapter.deliver(request)
 
         self.assertTrue(result.ok)
         env = spawn.call_args.kwargs["env"]
-        self.assertEqual(env["HOME"], os.path.expanduser("~/.claude2"))
+        self.assertEqual(env["HOME"], str(root / ".claude2"))
+        self.assertEqual(env["GH_CONFIG_DIR"], str(gh_config))
         self.assertEqual(env["ORCH_PROVIDER"], "claude2")
         self.assertIn("--permission-mode", result.command)
 
@@ -217,6 +318,10 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 message="wake",
                 task_id="T-GEMINI2",
                 reason="owned_ready_dispatch",
+                metadata={
+                    "workspace_path": str(root / "task-worktree"),
+                    "status_root": str(root / "supervisor-root"),
+                },
             )
             adapter = GeminiAdapter(config=config, provider_capabilities={})
             fake_process = mock.Mock(pid=1234)
@@ -237,6 +342,8 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertIn("--approval-mode", result.command)
         self.assertEqual(result.command[result.command.index("--approval-mode") + 1], "yolo")
         self.assertIn("--include-directories", result.command)
+        self.assertEqual(result.command[result.command.index("--include-directories") + 1], str(root / "task-worktree"))
+        self.assertEqual(spawn.call_args.kwargs["cwd"], root / "task-worktree")
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["AI_NAME"], "Gemini2")
         self.assertEqual(env["ORCH_AGENT_ID"], "gemini2")
@@ -246,6 +353,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["GEMINI_CLI_TRUST_WORKSPACE"], "true")
         self.assertEqual(env["ORCH_TASK_ID"], "T-GEMINI2")
         self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
+        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(root / "supervisor-root"))
 
     def test_copilot_can_disable_inbox_fallback(self) -> None:
         config = {

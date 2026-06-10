@@ -3,7 +3,23 @@ from __future__ import annotations
 import os
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from common import agent_config_for, command_exists, config_path, new_runtime_id, runtime_log_path, spawn_background_process
+from common import (
+    agent_config_for,
+    command_exists,
+    delivery_runtime_env,
+    delivery_workspace_root,
+    new_runtime_id,
+    runtime_log_path,
+    spawn_background_process,
+)
+
+
+CODEX_INHERITED_SESSION_ENV = (
+    "CODEX_THREAD_ID",
+    "CODEX_SESSION_ID",
+    "CODEX_CONVERSATION_ID",
+    "CODEX_PARENT_THREAD_ID",
+)
 
 
 class CodexAdapter(BaseAdapter):
@@ -61,11 +77,12 @@ class CodexAdapter(BaseAdapter):
         agent_cfg = agent_config_for(self.config, request.agent_id)
         display_name = str(agent_cfg.get("display_name") or request.agent_id)
         cli = codex_settings.get("cli") or "codex"
+        workspace_root = delivery_workspace_root(self.config, request.metadata)
         command = [
             cli,
             "exec",
             "-C",
-            str(config_path(self.config, "status_file").parents[0]),
+            str(workspace_root),
             "-c",
             f'ask_for_approval="{codex_settings.get("ask_for_approval", "never")}"',
             "-s",
@@ -78,6 +95,9 @@ class CodexAdapter(BaseAdapter):
 
         # Build env: inherit current environment, then apply overrides.
         spawn_env: dict[str, str] = dict(os.environ)
+        spawn_env.update(delivery_runtime_env(self.config, request.metadata))
+        for key in CODEX_INHERITED_SESSION_ENV:
+            spawn_env.pop(key, None)
         spawn_env["AI_NAME"] = display_name
         spawn_env["ORCH_AGENT_ID"] = request.agent_id
         spawn_env["ORCH_PROVIDER"] = request.provider
@@ -89,10 +109,13 @@ class CodexAdapter(BaseAdapter):
         api_key_env = codex_settings.get("api_key_env", "").strip()
         codex_home = codex_settings.get("codex_home", "").strip()
 
-        if api_key_env and api_key_env != "OPENAI_API_KEY":
-            api_key_value = os.environ.get(api_key_env, "")
-            if api_key_value:
-                spawn_env["OPENAI_API_KEY"] = api_key_value
+        if api_key_env:
+            if api_key_env != "OPENAI_API_KEY":
+                api_key_value = os.environ.get(api_key_env, "")
+                if api_key_value:
+                    spawn_env["OPENAI_API_KEY"] = api_key_value
+        else:
+            spawn_env.pop("OPENAI_API_KEY", None)
         if codex_home:
             spawn_env["CODEX_HOME"] = os.path.expanduser(codex_home)
 
@@ -100,7 +123,7 @@ class CodexAdapter(BaseAdapter):
         log_path = runtime_log_path("codex", request.agent_id)
         process, _ = spawn_background_process(
             command,
-            cwd=config_path(self.config, "status_file").parents[0],
+            cwd=workspace_root,
             log_path=log_path,
             env=spawn_env,
         )

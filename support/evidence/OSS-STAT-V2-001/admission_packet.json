@@ -1,0 +1,780 @@
+{
+  "can_proceed": true,
+  "candidate_artifact": {
+    "artifact_state": "draft",
+    "artifact_type": "signal_snapshot",
+    "checksum": "sha256:7f7049632dc13a004e88dfd484832389495c3a2c2172d2035b29ef89d94a0a7b",
+    "deployment_summary": {
+      "current_stage": "none"
+    },
+    "evaluation_summary": {
+      "best_p_value": 0.0055868352,
+      "best_pair_id": "TWSE_0004/TWSE_0044",
+      "cointegrated_pair_count": 10,
+      "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+      "evaluation_kind": "production_rolling_engle_granger",
+      "pair_count": 10
+    },
+    "lineage": {
+      "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+      "parent_registry_ids": [
+        "qlib-tw-cross-sectional-alpha-spec-v1"
+      ],
+      "source_dataset_refs": [
+        "dataset:tw-equity-ohlcv-top50-2024-daily"
+      ],
+      "source_run_ids": [
+        "MGMT-QLIB-001",
+        "OSS-STAT-V2-001"
+      ],
+      "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1"
+    },
+    "metadata": {
+      "artifact_payload_checksum": "sha256:7f7049632dc13a004e88dfd484832389495c3a2c2172d2035b29ef89d94a0a7b",
+      "created_at": "2026-05-17T16:45:00Z",
+      "framework": "statsmodels",
+      "registry_write_authority": "registry_service_only",
+      "registry_write_performed": false,
+      "rolling_window": 504,
+      "signal_payload": {
+        "artifact_type": "signal_snapshot",
+        "backend_id": "statsmodels_production_cointegration",
+        "code_version": "pantheon:services/research/statsmodels@OSS-STAT-V2-001",
+        "cointegration_summary": {
+          "best_p_value": 0.0055868352,
+          "best_pair_id": "TWSE_0004/TWSE_0044",
+          "cointegrated_pair_count": 10,
+          "cointegration_threshold": 0.05,
+          "max_abs_spread_zscore_top_n": 1.627148,
+          "median_p_value": 0.0087646259,
+          "pair_count": 10,
+          "top_n": 10
+        },
+        "created_at": "2026-05-17T16:45:00Z",
+        "dataset": {
+          "data_frequency": "daily",
+          "dataset_id": "dataset:tw-equity-ohlcv-top50-2024-daily",
+          "history_end": "2026-01-05",
+          "history_start": "2024-01-02",
+          "history_years": 2.0096,
+          "manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+          "manifest_required_min_daily_periods": 504,
+          "manifest_required_min_history_years": 2.0,
+          "manifest_required_min_instruments": 50,
+          "min_periods_per_instrument": 525,
+          "num_instruments": 50,
+          "ohlcv_fields": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "production_scale_satisfied": true,
+          "source_dataset_refs": [
+            "dataset:tw-equity-ohlcv-top50-2024-daily"
+          ],
+          "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+          "strategy_id": "tw-cross-sectional-equity-alpha"
+        },
+        "downstream_scope": {
+          "broker_session_opened": false,
+          "capital_binding": "none",
+          "cpu_only": true,
+          "deployment_stage": "none",
+          "gpu_required": false,
+          "order_route": "none",
+          "registry_write_authority": "registry_service_only",
+          "registry_write_performed": false,
+          "signal_snapshot_only": true,
+          "training_performed_in_this_task": false
+        },
+        "lineage": {
+          "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+          "parent_registry_ids": [
+            "qlib-tw-cross-sectional-alpha-spec-v1"
+          ],
+          "source_dataset_refs": [
+            "dataset:tw-equity-ohlcv-top50-2024-daily"
+          ],
+          "source_run_ids": [
+            "MGMT-QLIB-001",
+            "OSS-STAT-V2-001"
+          ],
+          "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1"
+        },
+        "pair_universe": {
+          "label": "twse_large_cap_pairs",
+          "pair_count": 10,
+          "pairs": [
+            "TWSE_0004/TWSE_0044",
+            "TWSE_0004/TWSE_0013",
+            "TWSE_0013/TWSE_0027",
+            "TWSE_0013/TWSE_0044",
+            "TWSE_0033/TWSE_0041",
+            "TWSE_0039/TWSE_0046",
+            "TWSE_0004/TWSE_0027",
+            "TWSE_0010/TWSE_0023",
+            "TWSE_0013/TWSE_0049",
+            "TWSE_0039/TWSE_0045"
+          ]
+        },
+        "pairs": [
+          {
+            "cointegrated": true,
+            "half_life": 12.846852,
+            "instrument_a": "TWSE_0004",
+            "instrument_b": "TWSE_0044",
+            "observations": 504,
+            "p_value": 0.0055868352,
+            "pair_id": "TWSE_0004/TWSE_0044",
+            "rank": 1,
+            "spread_zscore": -0.234007,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 9.516768,
+            "instrument_a": "TWSE_0013",
+            "instrument_b": "TWSE_0027",
+            "observations": 504,
+            "p_value": 0.0059011896,
+            "pair_id": "TWSE_0013/TWSE_0027",
+            "rank": 2,
+            "spread_zscore": -1.330021,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 12.588772,
+            "instrument_a": "TWSE_0013",
+            "instrument_b": "TWSE_0049",
+            "observations": 504,
+            "p_value": 0.0066459874,
+            "pair_id": "TWSE_0013/TWSE_0049",
+            "rank": 3,
+            "spread_zscore": -0.502006,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 14.31774,
+            "instrument_a": "TWSE_0004",
+            "instrument_b": "TWSE_0027",
+            "observations": 504,
+            "p_value": 0.0079285276,
+            "pair_id": "TWSE_0004/TWSE_0027",
+            "rank": 4,
+            "spread_zscore": 0.280314,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 11.124632,
+            "instrument_a": "TWSE_0013",
+            "instrument_b": "TWSE_0044",
+            "observations": 504,
+            "p_value": 0.007955024,
+            "pair_id": "TWSE_0013/TWSE_0044",
+            "rank": 5,
+            "spread_zscore": -0.547821,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 13.539216,
+            "instrument_a": "TWSE_0004",
+            "instrument_b": "TWSE_0013",
+            "observations": 504,
+            "p_value": 0.0095742278,
+            "pair_id": "TWSE_0004/TWSE_0013",
+            "rank": 6,
+            "spread_zscore": -0.282095,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 12.468254,
+            "instrument_a": "TWSE_0033",
+            "instrument_b": "TWSE_0041",
+            "observations": 504,
+            "p_value": 0.0182112909,
+            "pair_id": "TWSE_0033/TWSE_0041",
+            "rank": 7,
+            "spread_zscore": -1.627148,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 46.840885,
+            "instrument_a": "TWSE_0039",
+            "instrument_b": "TWSE_0046",
+            "observations": 504,
+            "p_value": 0.0223595898,
+            "pair_id": "TWSE_0039/TWSE_0046",
+            "rank": 8,
+            "spread_zscore": -0.030616,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 40.923214,
+            "instrument_a": "TWSE_0039",
+            "instrument_b": "TWSE_0045",
+            "observations": 504,
+            "p_value": 0.0257636116,
+            "pair_id": "TWSE_0039/TWSE_0045",
+            "rank": 9,
+            "spread_zscore": 0.003546,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 16.18866,
+            "instrument_a": "TWSE_0010",
+            "instrument_b": "TWSE_0023",
+            "observations": 504,
+            "p_value": 0.0381546525,
+            "pair_id": "TWSE_0010/TWSE_0023",
+            "rank": 10,
+            "spread_zscore": -0.195644,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          }
+        ],
+        "rolling_window": 504,
+        "rolling_window_unit": "daily_periods",
+        "safety_assertions": {
+          "artifact_state_request_limited_to_candidate": true,
+          "cpu_only": true,
+          "deployment_stage_remains_none": true,
+          "no_broker_session": true,
+          "no_capital_binding": true,
+          "no_gpu": true,
+          "no_order_route": true,
+          "no_registry_write": true,
+          "research_only_not_direct_action": true
+        },
+        "schema_version": "1.0",
+        "snapshot_id": "signal-snapshot:statsmodels_production_cointegration:2.0.0",
+        "task_id": "OSS-STAT-V2-001",
+        "test": "engle_granger",
+        "top_cointegrated_pairs": [
+          {
+            "cointegrated": true,
+            "half_life": 12.846852,
+            "instrument_a": "TWSE_0004",
+            "instrument_b": "TWSE_0044",
+            "observations": 504,
+            "p_value": 0.0055868352,
+            "pair_id": "TWSE_0004/TWSE_0044",
+            "rank": 1,
+            "spread_zscore": -0.234007,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 9.516768,
+            "instrument_a": "TWSE_0013",
+            "instrument_b": "TWSE_0027",
+            "observations": 504,
+            "p_value": 0.0059011896,
+            "pair_id": "TWSE_0013/TWSE_0027",
+            "rank": 2,
+            "spread_zscore": -1.330021,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 12.588772,
+            "instrument_a": "TWSE_0013",
+            "instrument_b": "TWSE_0049",
+            "observations": 504,
+            "p_value": 0.0066459874,
+            "pair_id": "TWSE_0013/TWSE_0049",
+            "rank": 3,
+            "spread_zscore": -0.502006,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 14.31774,
+            "instrument_a": "TWSE_0004",
+            "instrument_b": "TWSE_0027",
+            "observations": 504,
+            "p_value": 0.0079285276,
+            "pair_id": "TWSE_0004/TWSE_0027",
+            "rank": 4,
+            "spread_zscore": 0.280314,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 11.124632,
+            "instrument_a": "TWSE_0013",
+            "instrument_b": "TWSE_0044",
+            "observations": 504,
+            "p_value": 0.007955024,
+            "pair_id": "TWSE_0013/TWSE_0044",
+            "rank": 5,
+            "spread_zscore": -0.547821,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 13.539216,
+            "instrument_a": "TWSE_0004",
+            "instrument_b": "TWSE_0013",
+            "observations": 504,
+            "p_value": 0.0095742278,
+            "pair_id": "TWSE_0004/TWSE_0013",
+            "rank": 6,
+            "spread_zscore": -0.282095,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 12.468254,
+            "instrument_a": "TWSE_0033",
+            "instrument_b": "TWSE_0041",
+            "observations": 504,
+            "p_value": 0.0182112909,
+            "pair_id": "TWSE_0033/TWSE_0041",
+            "rank": 7,
+            "spread_zscore": -1.627148,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 46.840885,
+            "instrument_a": "TWSE_0039",
+            "instrument_b": "TWSE_0046",
+            "observations": 504,
+            "p_value": 0.0223595898,
+            "pair_id": "TWSE_0039/TWSE_0046",
+            "rank": 8,
+            "spread_zscore": -0.030616,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 40.923214,
+            "instrument_a": "TWSE_0039",
+            "instrument_b": "TWSE_0045",
+            "observations": 504,
+            "p_value": 0.0257636116,
+            "pair_id": "TWSE_0039/TWSE_0045",
+            "rank": 9,
+            "spread_zscore": 0.003546,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          },
+          {
+            "cointegrated": true,
+            "half_life": 16.18866,
+            "instrument_a": "TWSE_0010",
+            "instrument_b": "TWSE_0023",
+            "observations": 504,
+            "p_value": 0.0381546525,
+            "pair_id": "TWSE_0010/TWSE_0023",
+            "rank": 10,
+            "spread_zscore": -0.195644,
+            "window_end_date": "2026-01-05",
+            "window_start_date": "2024-01-31"
+          }
+        ]
+      },
+      "test": "engle_granger"
+    },
+    "producer_run_id": "signal-snapshot:statsmodels_production_cointegration:2.0.0",
+    "registry_id": "statsmodels-production-cointegration-tw-cross-sectional-equity-alpha-2.0.0",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.signal_snapshot"
+    },
+    "strategy_id": "tw-cross-sectional-equity-alpha",
+    "version": "2.0.0"
+  },
+  "cointegration_summary": {
+    "best_p_value": 0.0055868352,
+    "best_pair_id": "TWSE_0004/TWSE_0044",
+    "cointegrated_pair_count": 10,
+    "cointegration_threshold": 0.05,
+    "max_abs_spread_zscore_top_n": 1.627148,
+    "median_p_value": 0.0087646259,
+    "pair_count": 10,
+    "top_n": 10
+  },
+  "depends_on_tasks": [
+    "OSS-STAT-001",
+    "MGMT-QLIB-001"
+  ],
+  "downstream_scope": {
+    "broker_session_opened": false,
+    "capital_binding": "none",
+    "cpu_only": true,
+    "deployment_stage": "none",
+    "gpu_required": false,
+    "order_route": "none",
+    "registry_admission_packet_only": true,
+    "registry_write_authority": "registry_service_only",
+    "registry_write_performed": false,
+    "training_performed_in_this_task": false
+  },
+  "environment": "paper",
+  "gate_results": [
+    {
+      "gate": "production_dataset_floor",
+      "min_periods_per_instrument": 525,
+      "num_instruments": 50,
+      "source_ref": "support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+      "status": "passed"
+    },
+    {
+      "best_p_value": 0.0055868352,
+      "best_pair_id": "TWSE_0004/TWSE_0044",
+      "cointegrated_pair_count": 10,
+      "gate": "rolling_engle_granger",
+      "pair_count": 10,
+      "rolling_window": 504,
+      "source_ref": "signal_snapshot.pairs",
+      "status": "passed"
+    },
+    {
+      "artifact_state": "draft",
+      "checksum": "sha256:7f7049632dc13a004e88dfd484832389495c3a2c2172d2035b29ef89d94a0a7b",
+      "gate": "signal_snapshot_projection",
+      "source_ref": "signal_snapshot.registry_entry",
+      "status": "passed"
+    },
+    {
+      "gate": "lineage_refs",
+      "source_dataset_refs": [
+        "dataset:tw-equity-ohlcv-top50-2024-daily"
+      ],
+      "source_ref": "signal_snapshot.registry_entry.lineage",
+      "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+      "status": "passed"
+    },
+    {
+      "deployment_stage": "none",
+      "gate": "safety_fail_closed",
+      "order_route": "none",
+      "registry_write_performed": false,
+      "source_ref": "signal_snapshot.safety_assertions",
+      "status": "passed"
+    }
+  ],
+  "generated_at": "2026-05-17T16:45:00Z",
+  "generated_by": "Codex2 / OSS-STAT-V2-001",
+  "lineage": {
+    "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+    "parent_registry_ids": [
+      "qlib-tw-cross-sectional-alpha-spec-v1"
+    ],
+    "source_dataset_refs": [
+      "dataset:tw-equity-ohlcv-top50-2024-daily"
+    ],
+    "source_run_ids": [
+      "MGMT-QLIB-001",
+      "OSS-STAT-V2-001"
+    ],
+    "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1"
+  },
+  "missing_evidence": [],
+  "operator_approval_recorded": false,
+  "operator_required": false,
+  "packet_id": "prp-oss-stat-v2-001-statsmodels-production-cointegration-tw-cross-sectional-equity-alpha-2.0.0",
+  "production_dataset": {
+    "data_frequency": "daily",
+    "dataset_id": "dataset:tw-equity-ohlcv-top50-2024-daily",
+    "history_end": "2026-01-05",
+    "history_start": "2024-01-02",
+    "history_years": 2.0096,
+    "manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+    "manifest_required_min_daily_periods": 504,
+    "manifest_required_min_history_years": 2.0,
+    "manifest_required_min_instruments": 50,
+    "min_periods_per_instrument": 525,
+    "num_instruments": 50,
+    "ohlcv_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ],
+    "production_scale_satisfied": true,
+    "source_dataset_refs": [
+      "dataset:tw-equity-ohlcv-top50-2024-daily"
+    ],
+    "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "strategy_id": "tw-cross-sectional-equity-alpha"
+  },
+  "provided_evidence": [
+    {
+      "description": "Production TWSE OHLCV dataset manifest bound to the statsmodels run.",
+      "key": "mgmt_qlib_001_dataset_manifest_bound",
+      "path": "support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+      "ref_type": "dataset_manifest",
+      "source_task_id": "MGMT-QLIB-001",
+      "status": "passed"
+    },
+    {
+      "description": "Engle-Granger checks completed for 10 pairs with 10 pairs below p<0.05.",
+      "key": "production_cointegration_completed",
+      "path": "services/research/statsmodels/production_cointegration.py",
+      "ref_type": "signal_snapshot_builder",
+      "source_task_id": "OSS-STAT-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Top-10 signal_snapshot pairs include best pair TWSE_0004/TWSE_0044 at p=0.0055868352.",
+      "key": "top_n_cointegrated_pairs_present",
+      "path": "services/research/statsmodels/production_cointegration.py",
+      "ref_type": "cointegration_gate",
+      "source_task_id": "OSS-STAT-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Draft signal_snapshot projection includes checksum, storage_ref, and registry id.",
+      "key": "signal_snapshot_ref_registered",
+      "path": "services/research/statsmodels/production_cointegration.py",
+      "ref_type": "signal_snapshot_projection",
+      "source_task_id": "OSS-STAT-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Lineage links dataset refs, StrategySpec id, source task ids, and manifest id.",
+      "key": "lineage_refs_present",
+      "path": "services/research/statsmodels/registry_admission_packet.py",
+      "ref_type": "lineage_check",
+      "source_task_id": "OSS-STAT-V2-001",
+      "status": "passed"
+    },
+    {
+      "description": "Registry write, broker session, order route, capital binding, and deployment remain disabled.",
+      "key": "fail_closed_research_only",
+      "path": "services/research/statsmodels/registry_admission_packet.py",
+      "ref_type": "safety_assertions",
+      "source_task_id": "OSS-STAT-V2-001",
+      "status": "passed"
+    }
+  ],
+  "reason": "Production statsmodels Engle-Granger signal_snapshot is ready for registry candidate review. This packet performs no registry write and grants no paper/canary/live deployment authority.",
+  "registry_request": {
+    "approval_scope": "candidate_admission_review_only",
+    "artifact_type": "signal_snapshot",
+    "current_artifact_state": "draft",
+    "deployment_stage": "none",
+    "registry_id": "statsmodels-production-cointegration-tw-cross-sectional-equity-alpha-2.0.0",
+    "registry_write_authority": "registry_service_only",
+    "registry_write_performed": false,
+    "request_type": "artifact_state_transition",
+    "requested_artifact_state": "candidate",
+    "requested_transition": "draft_to_candidate",
+    "strategy_id": "tw-cross-sectional-equity-alpha",
+    "version": "2.0.0"
+  },
+  "required_evidence": [
+    "mgmt_qlib_001_dataset_manifest_bound",
+    "production_cointegration_completed",
+    "top_n_cointegrated_pairs_present",
+    "signal_snapshot_ref_registered",
+    "lineage_refs_present",
+    "fail_closed_research_only"
+  ],
+  "risk_owner_approval_recorded": false,
+  "risk_owner_required": false,
+  "safety_assertions": {
+    "artifact_state_request_limited_to_candidate": true,
+    "cpu_only": true,
+    "deployment_stage_remains_none": true,
+    "no_broker_session": true,
+    "no_capital_binding": true,
+    "no_gpu": true,
+    "no_order_route": true,
+    "no_registry_write": true,
+    "research_only_not_direct_action": true
+  },
+  "schema_version": "PromotionReadinessPacket.v1",
+  "signal_snapshot_ref": {
+    "artifact_name": "signal_snapshot",
+    "artifact_ref": "statsmodels-production-cointegration-tw-cross-sectional-equity-alpha-2.0.0@2.0.0",
+    "artifact_state": "draft",
+    "artifact_type": "signal_snapshot",
+    "checksum": "sha256:7f7049632dc13a004e88dfd484832389495c3a2c2172d2035b29ef89d94a0a7b",
+    "deployment_stage": "none",
+    "registry_id": "statsmodels-production-cointegration-tw-cross-sectional-equity-alpha-2.0.0",
+    "source_dataset_refs": [
+      "dataset:tw-equity-ohlcv-top50-2024-daily"
+    ],
+    "source_run_id": "signal-snapshot:statsmodels_production_cointegration:2.0.0",
+    "source_strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+    "storage_ref": {
+      "backend": "inline",
+      "path": "$.signal_snapshot"
+    },
+    "strategy_id": "tw-cross-sectional-equity-alpha",
+    "version": "2.0.0"
+  },
+  "signal_snapshot_summary": {
+    "backend_id": "statsmodels_production_cointegration",
+    "checksum": "sha256:7f7049632dc13a004e88dfd484832389495c3a2c2172d2035b29ef89d94a0a7b",
+    "rolling_window": 504,
+    "snapshot_id": "signal-snapshot:statsmodels_production_cointegration:2.0.0",
+    "task_id": "OSS-STAT-V2-001"
+  },
+  "source_task_id": "OSS-STAT-V2-001",
+  "target_id": "statsmodels-production-cointegration-tw-cross-sectional-equity-alpha-2.0.0",
+  "target_type": "artifact",
+  "top_cointegrated_pairs": [
+    {
+      "cointegrated": true,
+      "half_life": 12.846852,
+      "instrument_a": "TWSE_0004",
+      "instrument_b": "TWSE_0044",
+      "observations": 504,
+      "p_value": 0.0055868352,
+      "pair_id": "TWSE_0004/TWSE_0044",
+      "rank": 1,
+      "spread_zscore": -0.234007,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    },
+    {
+      "cointegrated": true,
+      "half_life": 9.516768,
+      "instrument_a": "TWSE_0013",
+      "instrument_b": "TWSE_0027",
+      "observations": 504,
+      "p_value": 0.0059011896,
+      "pair_id": "TWSE_0013/TWSE_0027",
+      "rank": 2,
+      "spread_zscore": -1.330021,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    },
+    {
+      "cointegrated": true,
+      "half_life": 12.588772,
+      "instrument_a": "TWSE_0013",
+      "instrument_b": "TWSE_0049",
+      "observations": 504,
+      "p_value": 0.0066459874,
+      "pair_id": "TWSE_0013/TWSE_0049",
+      "rank": 3,
+      "spread_zscore": -0.502006,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    },
+    {
+      "cointegrated": true,
+      "half_life": 14.31774,
+      "instrument_a": "TWSE_0004",
+      "instrument_b": "TWSE_0027",
+      "observations": 504,
+      "p_value": 0.0079285276,
+      "pair_id": "TWSE_0004/TWSE_0027",
+      "rank": 4,
+      "spread_zscore": 0.280314,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    },
+    {
+      "cointegrated": true,
+      "half_life": 11.124632,
+      "instrument_a": "TWSE_0013",
+      "instrument_b": "TWSE_0044",
+      "observations": 504,
+      "p_value": 0.007955024,
+      "pair_id": "TWSE_0013/TWSE_0044",
+      "rank": 5,
+      "spread_zscore": -0.547821,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    },
+    {
+      "cointegrated": true,
+      "half_life": 13.539216,
+      "instrument_a": "TWSE_0004",
+      "instrument_b": "TWSE_0013",
+      "observations": 504,
+      "p_value": 0.0095742278,
+      "pair_id": "TWSE_0004/TWSE_0013",
+      "rank": 6,
+      "spread_zscore": -0.282095,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    },
+    {
+      "cointegrated": true,
+      "half_life": 12.468254,
+      "instrument_a": "TWSE_0033",
+      "instrument_b": "TWSE_0041",
+      "observations": 504,
+      "p_value": 0.0182112909,
+      "pair_id": "TWSE_0033/TWSE_0041",
+      "rank": 7,
+      "spread_zscore": -1.627148,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    },
+    {
+      "cointegrated": true,
+      "half_life": 46.840885,
+      "instrument_a": "TWSE_0039",
+      "instrument_b": "TWSE_0046",
+      "observations": 504,
+      "p_value": 0.0223595898,
+      "pair_id": "TWSE_0039/TWSE_0046",
+      "rank": 8,
+      "spread_zscore": -0.030616,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    },
+    {
+      "cointegrated": true,
+      "half_life": 40.923214,
+      "instrument_a": "TWSE_0039",
+      "instrument_b": "TWSE_0045",
+      "observations": 504,
+      "p_value": 0.0257636116,
+      "pair_id": "TWSE_0039/TWSE_0045",
+      "rank": 9,
+      "spread_zscore": 0.003546,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    },
+    {
+      "cointegrated": true,
+      "half_life": 16.18866,
+      "instrument_a": "TWSE_0010",
+      "instrument_b": "TWSE_0023",
+      "observations": 504,
+      "p_value": 0.0381546525,
+      "pair_id": "TWSE_0010/TWSE_0023",
+      "rank": 10,
+      "spread_zscore": -0.195644,
+      "window_end_date": "2026-01-05",
+      "window_start_date": "2024-01-31"
+    }
+  ]
+}
