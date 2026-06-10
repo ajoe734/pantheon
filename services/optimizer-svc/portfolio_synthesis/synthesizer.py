@@ -125,6 +125,12 @@ class PoolRiskPolicy:
                 target_weights=dict(proposal.target_weights),
                 asset_classes=tuple(proposal.metadata.get("asset_classes", [])),
                 strategy_family=proposal.metadata.get("strategy_family"),
+                strategy_family_concentration=proposal.metadata.get("strategy_family_concentration", {}),
+                target_overlap=proposal.metadata.get("target_overlap"),
+                signal_correlation=proposal.metadata.get(
+                    "signal_correlation",
+                    proposal.metadata.get("max_pairwise_correlation", proposal.metadata.get("correlation")),
+                ),
                 gross_exposure=proposal.metadata.get("gross_exposure"),
                 net_exposure=proposal.metadata.get("net_exposure"),
                 leverage=proposal.metadata.get("leverage"),
