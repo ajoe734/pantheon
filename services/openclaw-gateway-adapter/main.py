@@ -678,6 +678,23 @@ class AssistantProviderInvokeRequest(BaseModel):
     attachments: Optional[List[Dict[str, Any]]] = None
 
 
+class AssistantSkillAuthorizeRequest(BaseModel):
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
+    session_id: Optional[str] = None
+    sessionId: Optional[str] = None
+    request_type: Optional[str] = None
+    requestType: Optional[str] = None
+    audit_extra: Optional[Dict[str, Any]] = None
+    auditExtra: Optional[Dict[str, Any]] = None
+
+
 class AssistantProviderReauthRequest(BaseModel):
     provider: str = "codex"
     mode: Optional[str] = None
@@ -784,6 +801,43 @@ def list_assistant_providers(auth_probe: bool = False) -> Dict[str, Any]:
             _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe),
         ],
     }
+
+
+@app.post("/api/openclaw-adapter/assistant/skills/{skill_id}/authorize")
+def authorize_assistant_skill(
+    skill_id: str,
+    req: AssistantSkillAuthorizeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "skill_authorization_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for assistant skill authorization.",
+            },
+        )
+    try:
+        result = _BRIDGE.authorize_assistant_skill(
+            skill_id=skill_id,
+            operator_id=x_operator_id.strip(),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
+            trace_id=x_trace_id,
+            session_id=req.session_id or req.sessionId,
+            request_type=req.request_type or req.requestType or "assistant_skill_authorize",
+            audit_extra=req.audit_extra or req.auditExtra,
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    return JSONResponse(status_code=200, content={"status": "ok", "data": result})
 
 
 @app.post("/api/openclaw-adapter/assistant/providers/{provider}/reauth")

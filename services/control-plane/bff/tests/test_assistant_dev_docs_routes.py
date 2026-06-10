@@ -65,7 +65,25 @@ def _context_pack(session_id: str, request: Any, actor: Any) -> dict[str, Any]:
     }
 
 
-def _make_client(tmp_path, *, active_control: bool) -> tuple[TestClient, InMemoryTranscriptStore]:
+def _allow_skill(skill_id: str, payload: dict[str, Any], operator_id: str, trace_id: str | None) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "data": {
+            "status": "allowed",
+            "skillId": skill_id,
+            "operatorId": operator_id,
+            "traceId": trace_id,
+            "payload": payload,
+        },
+    }
+
+
+def _make_client(
+    tmp_path,
+    *,
+    active_control: bool,
+    skill_authorizer: Any = _allow_skill,
+) -> tuple[TestClient, InMemoryTranscriptStore]:
     identity = _DevDocsIdentity()
     control_store = ControlModeStore(storage_path="off", initial_passphrase=CONTROL_PHRASE)
     transcript_store = InMemoryTranscriptStore()
@@ -79,6 +97,7 @@ def _make_client(tmp_path, *, active_control: bool) -> tuple[TestClient, InMemor
         control_mode_store=control_store,
         dev_docs_repo_root=str(tmp_path),
         bridge_key_store={"assistant-bridge-dev": b"test-dev-bridge-key"},
+        authorize_assistant_skill=skill_authorizer,
     )
     app = FastAPI()
     app.include_router(router)
@@ -133,6 +152,27 @@ def test_dev_docs_generate_requires_active_control_mode(tmp_path, monkeypatch) -
 
     assert response.status_code == 409
     assert response.json()["detail"]["error"]["details"]["field"] == "control_mode"
+
+
+def test_dev_docs_generate_requires_openclaw_skill_authorizer(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    client, transcript_store = _make_client(tmp_path, active_control=True, skill_authorizer=None)
+    _seed_turns(transcript_store, "conv-dev-docs-no-skill")
+
+    response = client.post(
+        "/bff/assistant/dev-docs/generate",
+        json={
+            "conversationId": "conv-dev-docs-no-skill",
+            "featureSummary": "Generate SA/SD from Management AI conversation",
+            "affectedModules": ["assistant", "management_ai"],
+        },
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 503
+    details = response.json()["detail"]["error"]["details"]
+    assert details["field"] == "openclaw_skill_authorizer"
+    assert details["required_skill"] == "assistant.sa_sd.generate"
 
 
 def test_dev_docs_generate_archives_and_emits_signed_task_packet(tmp_path, monkeypatch) -> None:

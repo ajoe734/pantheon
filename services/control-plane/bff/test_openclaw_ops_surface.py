@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
+from openclaw_ops_client import OpenClawOpsClient
 
 
 OPERATOR_AUTH = "Bearer op-2:operator"
@@ -257,6 +258,50 @@ def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) 
     _, _, headers, _ = tool_call
     assert headers["X-operator-id"] == "op-2"
     assert headers["X-operator-role"] == "operator"
+
+
+def test_openclaw_ops_client_authorizes_assistant_skill(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", BASE_URL)
+    recorder = _Recorder({
+        (
+            "POST",
+            f"{BASE_URL}/api/openclaw-adapter/assistant/skills/assistant.sa_sd.generate/authorize",
+        ): {
+            "status": "ok",
+            "data": {
+                "status": "allowed",
+                "skill_id": "assistant.sa_sd.generate",
+            },
+        }
+    })
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
+        result = OpenClawOpsClient(timeout_seconds=1.5).authorize_assistant_skill(
+            skill_id="assistant.sa_sd.generate",
+            operator_id="op-2",
+            mode="kernel_debug",
+            operator_role="operator",
+            control_mode={"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+            session_id="conv-1",
+            request_type="assistant_dev_docs_generate",
+            audit_extra={"archive": True},
+            trace_id="trace-1",
+        )
+
+    assert result["data"]["status"] == "allowed"
+    method, url, headers, body = recorder.calls[0]
+    assert method == "POST"
+    assert url.endswith("/api/openclaw-adapter/assistant/skills/assistant.sa_sd.generate/authorize")
+    assert headers["X-operator-id"] == "op-2"
+    assert headers["X-operator-role"] == "operator"
+    assert headers["X-assistant-mode"] == "kernel_debug"
+    assert headers["X-trace-id"] == "trace-1"
+    assert body["mode"] == "kernel_debug"
+    assert body["operator_role"] == "operator"
+    assert body["control_mode"]["activation_id"] == "act-1"
+    assert body["session_id"] == "conv-1"
+    assert body["request_type"] == "assistant_dev_docs_generate"
+    assert body["audit_extra"] == {"archive": True}
 
 
 def test_openclaw_ops_surface_degrades_when_adapter_is_not_configured(monkeypatch) -> None:
