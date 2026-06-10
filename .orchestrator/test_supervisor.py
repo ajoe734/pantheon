@@ -45,8 +45,10 @@ class RuntimeConfigTests(unittest.TestCase):
         ready_dispatcher = config["ready_dispatcher"]
 
         self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 1)
+        # Raised 1 -> 2 (OPS-CLAUDE2-CONCURRENCY) so Claude2 is not a single-worker
+        # bottleneck when the dependency-chain tail is owned solely by Claude2.
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 2)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 2)
 
     def test_antigravity_workers_are_in_dispatcher_pool(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
@@ -6960,6 +6962,55 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             (repo / "new.txt").write_text("new\n", encoding="utf-8")
             subprocess.run(["git", "add", "new.txt"], cwd=repo, check=True)
             self.assertEqual(supervisor._staged_index_split_paths_matching_head(repo), [])
+
+
+    def test_anchor_commit_task_wip_commits_real_dirt_on_task_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._init_git_repo(tmpdir)
+            (repo / "svc.py").write_text("base\n", encoding="utf-8")
+            self._commit_all(repo, "initial")
+            subprocess.run(["git", "checkout", "-q", "-b", "task/OPS-ANCHOR-001"], cwd=repo, check=True)
+            # Real task WIP a superseded run left uncommitted.
+            (repo / "svc.py").write_text("worker WIP\n", encoding="utf-8")
+            (repo / "new_module.py").write_text("created by worker\n", encoding="utf-8")
+
+            ok, detail = supervisor._anchor_commit_task_wip(repo, "OPS-ANCHOR-001", "task/OPS-ANCHOR-001")
+
+            self.assertTrue(ok, detail)
+            # Worktree is now clean (the dirty-tree lease block precondition).
+            status = subprocess.run(
+                ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True, check=True
+            )
+            self.assertEqual(status.stdout, "")
+            # The WIP is preserved as a commit carrying the required trailers.
+            body = subprocess.run(
+                ["git", "log", "-1", "--format=%B"], cwd=repo, capture_output=True, text=True, check=True
+            ).stdout
+            self.assertTrue(body.startswith("OPS-ANCHOR-001: anchor"))
+            self.assertIn("LLM-Agent: supervisor", body)
+            self.assertIn("Task-ID: OPS-ANCHOR-001", body)
+            self.assertIn("Reviewer: local", body)
+
+    def test_anchor_commit_task_wip_refuses_when_branch_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._init_git_repo(tmpdir)
+            (repo / "svc.py").write_text("base\n", encoding="utf-8")
+            self._commit_all(repo, "initial")
+            subprocess.run(["git", "checkout", "-q", "-b", "task/OTHER-999"], cwd=repo, check=True)
+            (repo / "svc.py").write_text("dirty\n", encoding="utf-8")
+            head_before = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+            ).stdout.strip()
+
+            ok, detail = supervisor._anchor_commit_task_wip(repo, "OPS-ANCHOR-001", "task/OPS-ANCHOR-001")
+
+            self.assertFalse(ok)
+            self.assertTrue(detail.startswith("branch_mismatch"), detail)
+            # No commit was made on the wrong branch; dirt is left for the caller to block.
+            head_after = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+            ).stdout.strip()
+            self.assertEqual(head_before, head_after)
 
 
 class WorkerReassignmentTests(unittest.TestCase):
