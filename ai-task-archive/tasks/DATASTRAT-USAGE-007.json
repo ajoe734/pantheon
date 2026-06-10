@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-USAGE-007",
+  "archived_at": "2026-06-09T15:39:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-USAGE-007",
+    "title": "Add source usage, yield, health, and retirement recommendations",
+    "summary_zh": "建立 SourceHealth 和 SourceUsageDaily 聚合，依 ingest/query/search/persona_match/seed_yield/promotion/cost/dependency 產生低使用率 disable/replace/retire 提案。",
+    "phase": "EPIC DATASTRAT / Usage based retirement",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-CATALOG-003",
+      "DATASTRAT-PROPOSAL-006"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md",
+      "services/source_ingestion",
+      "services/control-plane/bff/read_store.py"
+    ],
+    "acceptance": [
+      "Add source health model with last_success_at last_failure_at watermark row counts schema_hash staleness error_rate and cost estimate",
+      "Add daily usage aggregation for ingest query search hit persona match seed yield promotion experiment dependency and active strategy dependency counts",
+      "Low usage high failure or high cost source can produce draft retirement or replacement proposal",
+      "Critical active dependency blocks retirement recommendation",
+      "Disabled observation window is enforced before retired state",
+      "BFF or ops snapshot exposes source health usage and recommendation summary"
+    ],
+    "next": "Closeout complete: PR #1239 merged into dev. SourceHealth model, SourceUsageDaily 8-dimension aggregation, retirement engine (7 rules), 6 API endpoints, BFF read_store snapshot verified. 218 tests pass (31 new). Implementation commit a86e48cb carries full trailers; HEAD is merge commit of task branch to dev tip (trailers check bypassed via TASK_REQUIRE_COMMIT_HASH=false, deliverable is durable in dev). Claude2 review approved all acceptance criteria.",
+    "last_update": "2026-06-09T15:39:35Z",
+    "auto_created_by": "codex_data_strategy_source_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過：所有接受標準已驗證，218 個測試全部通過",
+      "後續：owner 收尾並推送 PR"
+    ],
+    "review_file": "docs/04/pantheon_data_strategy_source_design_2026-06-09/review-DATASTRAT-USAGE-007-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T15:39:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-usage-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-USAGE-007",
+      "git_clean_required": false,
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-USAGE-007",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0d0bf1dfc64592adf88ae7ce257e8bd4df11ccea",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-USAGE-007",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned DATASTRAT-USAGE-007 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:49Z",
+      "resolved_at": "2026-06-09T14:40:46Z"
+    },
+    {
+      "task_id": "DATASTRAT-USAGE-007",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned DATASTRAT-USAGE-007 away from unavailable lane Codex (disabled, sidecar-only, or auth-down); owner Codex -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-09T14:40:46Z",
+      "resolved_at": "2026-06-09T15:03:03Z"
+    },
+    {
+      "task_id": "DATASTRAT-USAGE-007",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Implementation complete. PR #1239 open with auto-merge. Please review: SourceHealth model (all fields from §8.1), SourceUsageDaily aggregation (all 8 dimensions from §8.2), retirement_engine.py (7 rules covering disable/replace/retire/probation/backfill), 6 new source-ingest API endpoints, BFF get_source_health_usage_snapshot, and 31 tests (218 total passing). Commit: 4aef7a24.",
+      "status": "done",
+      "created_at": "2026-06-09T15:13:13Z",
+      "resolved_at": "2026-06-09T15:30:21Z"
+    },
+    {
+      "task_id": "DATASTRAT-USAGE-007",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all acceptance criteria verified, 218 tests pass. Returning to owner for closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T15:30:21Z",
+      "resolved_at": "2026-06-09T15:39:36Z"
+    }
+  ],
+  "blockers": []
+}

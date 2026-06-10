@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-06-09 23:28:12
+Last updated: 2026-06-10 08:45:22
 
 ## Objective
 
@@ -55,11 +55,15 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-06-09 22:58:57
-- Terminal tasks archived: `1429` total, `1406` completed, `23` superseded
+- Archive updated: 2026-06-10 08:45:22
+- Terminal tasks archived: `1433` total, `1410` completed, `23` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
+| `DATASTRAT-PERSONA-005` | EPIC DATASTRAT / Persona strategy discovery | Implement Persona strategy discovery deterministic matching | Codex | completed | 2026-06-10 08:45:22 | `ai-task-archive/tasks/DATASTRAT-PERSONA-005.json` |
+| `DATASTRAT-SEED-004` | EPIC DATASTRAT / Strategy seed store and materializer | Persist StrategySpecSeed and materialize seeds from evidence bundles | Claude | completed | 2026-06-10 08:04:38 | `ai-task-archive/tasks/DATASTRAT-SEED-004.json` |
+| `DATASTRAT-USAGE-007` | EPIC DATASTRAT / Usage based retirement | Add source usage, yield, health, and retirement recommendations | Claude | completed | 2026-06-09 23:39:35 | `ai-task-archive/tasks/DATASTRAT-USAGE-007.json` |
+| `MPOS-P1-ART-001` | EPIC MPOS / P1 governance risk and artifact integration | Wire AllocationPolicyArtifact into registry governance and deployment path | Claude2 | completed | 2026-06-09 23:23:47 | `ai-task-archive/tasks/MPOS-P1-ART-001.json` |
 | `DATASTRAT-PROPOSAL-006` | EPIC DATASTRAT / LLM proposal governance | Add governed LLM source-change proposal workflow | Claude | completed | 2026-06-09 22:58:57 | `ai-task-archive/tasks/DATASTRAT-PROPOSAL-006.json` |
 | `DATASTRAT-CATALOG-003` | EPIC DATASTRAT / Financial data source catalog | Add initial financial data source catalog and active-universe scheduling policy | Codex | completed | 2026-06-09 22:27:40 | `ai-task-archive/tasks/DATASTRAT-CATALOG-003.json` |
 | `DATASTRAT-REG-002` | EPIC DATASTRAT / Registry split layer | Implement registry split layer for data sources and strategy seed sources | Claude | completed | 2026-06-09 21:54:58 | `ai-task-archive/tasks/DATASTRAT-REG-002.json` |
@@ -76,10 +80,6 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 | `ASST-SKILL-005` | EPIC ASST-SKILL / Provider re-auth skill | Add provider re-auth as device-flow skill assistant.provider.reauth | Codex | completed | 2026-06-09 14:25:15 | `ai-task-archive/tasks/ASST-SKILL-005.json` |
 | `ASST-SKILL-003` | EPIC ASST-SKILL / FE generic renderer | Frontend generic renderer: surfaces driven by the effective skill catalog | Codex | completed | 2026-06-09 12:40:16 | `ai-task-archive/tasks/ASST-SKILL-003.json` |
 | `ASST-SKILL-002` | EPIC ASST-SKILL / SA-SD pilot (template) | Pilot: migrate SA/SD button to governed skill assistant.sa_sd.generate | Codex | completed | 2026-06-09 08:58:25 | `ai-task-archive/tasks/ASST-SKILL-002.json` |
-| `ASST-SKILL-001` | EPIC ASST-SKILL / Descriptor + catalog foundation | Define assistant-skill descriptor schema and effective-catalog resolver | Codex | completed | 2026-06-08 22:44:07 | `ai-task-archive/tasks/ASST-SKILL-001.json` |
-| `OPS-RTEL-001` | Runtime Telemetry Hardening | Telemetry durability bootstrap | Codex | completed | 2026-06-07 22:42:02 | `ai-task-archive/tasks/OPS-RTEL-001.json` |
-| `MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732` | Ops / live bridge smoke | Live smoke: Management AI DevTaskPacket reaches supervisor bridge | Codex | completed | 2026-06-07 22:39:47 | `ai-task-archive/tasks/MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732.json` |
-| `OPS-RTEL-003` | Runtime Telemetry Hardening | Paper monitoring session stale reaper | Codex2 | completed | 2026-06-06 21:58:14 | `ai-task-archive/tasks/OPS-RTEL-003.json` |
 
 ## Task Board
 
