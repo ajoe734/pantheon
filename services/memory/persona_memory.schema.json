@@ -60,6 +60,7 @@
       "type": "string",
       "enum": [
         "session_end",
+        "runtime_telemetry_outcome",
         "postmortem_published",
         "evolution_decision_approved",
         "consultation_closed",
@@ -82,6 +83,7 @@
       "type": "string",
       "enum": [
         "persona-memory-svc",
+        "telemetry-svc",
         "incident-svc",
         "evolution-svc",
         "trainer-svc",

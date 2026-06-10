@@ -52,6 +52,7 @@ class PersonaMemoryType(str, Enum):
 
 class PersonaSourceEventType(str, Enum):
     SESSION_END = "session_end"
+    RUNTIME_TELEMETRY_OUTCOME = "runtime_telemetry_outcome"
     POSTMORTEM_PUBLISHED = "postmortem_published"
     EVOLUTION_DECISION_APPROVED = "evolution_decision_approved"
     CONSULTATION_CLOSED = "consultation_closed"
@@ -62,6 +63,7 @@ class PersonaSourceEventType(str, Enum):
 
 class PersonaWriteAuthority(str, Enum):
     PERSONA_MEMORY_SVC = "persona-memory-svc"
+    TELEMETRY_SVC = "telemetry-svc"
     INCIDENT_SVC = "incident-svc"
     EVOLUTION_SVC = "evolution-svc"
     TRAINER_SVC = "trainer-svc"
@@ -75,6 +77,12 @@ class PersonaRelevanceScope(str, Enum):
 
 
 _WRITEBACK_RULES: dict[str, set[tuple[str, str]]] = {
+    PersonaWriteAuthority.TELEMETRY_SVC.value: {
+        (
+            PersonaSourceEventType.RUNTIME_TELEMETRY_OUTCOME.value,
+            PersonaMemoryType.RISK_OBSERVATION.value,
+        ),
+    },
     PersonaWriteAuthority.INCIDENT_SVC.value: {
         (
             PersonaSourceEventType.POSTMORTEM_PUBLISHED.value,
@@ -295,6 +303,25 @@ class PersonaMemoryStore:
         if active_only:
             entries = [entry for entry in entries if entry.is_active]
         return sorted(entries, key=_entry_sort_key, reverse=True)
+
+    def find_by_source_event(
+        self,
+        *,
+        source_event_type: str,
+        source_event_id: str,
+        persona_id: Optional[str] = None,
+        write_authority: Optional[str] = None,
+        active_only: bool = False,
+    ) -> List[PersonaMemoryEntry]:
+        entries = self.list(persona_id=persona_id, active_only=active_only)
+        matches = [
+            entry
+            for entry in entries
+            if entry.source_event_type == source_event_type
+            and entry.source_event_id == source_event_id
+            and (write_authority is None or entry.write_authority == write_authority)
+        ]
+        return sorted(matches, key=lambda entry: (entry.persona_id, entry.memory_id))
 
     def mark_reused(self, memory_id: str, count: int = 1) -> PersonaMemoryEntry:
         if count <= 0:
