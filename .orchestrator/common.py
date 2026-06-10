@@ -17,7 +17,7 @@ import urllib.request
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from task_archive import TaskResolver
 
@@ -181,6 +181,78 @@ def config_path(config: dict[str, Any], key: str, default: str | None = None) ->
     if path is None:
         raise KeyError(f"Missing config path for {key}")
     return path
+
+
+def repo_root_for_config(config: dict[str, Any]) -> Path:
+    return config_path(config, "status_file").parents[0]
+
+
+def _expand_workspace_path(value: Any, *, base: Path) -> Path:
+    path = Path(os.path.expanduser(str(value)))
+    if not path.is_absolute():
+        path = base / path
+    return path.resolve()
+
+
+def delivery_workspace_root(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> Path:
+    repo_root = repo_root_for_config(config)
+    raw_path = (metadata or {}).get("workspace_path")
+    if raw_path:
+        return _expand_workspace_path(raw_path, base=repo_root)
+    return repo_root
+
+
+def delivery_status_root(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> Path:
+    repo_root = repo_root_for_config(config)
+    raw_path = (metadata or {}).get("status_root")
+    if raw_path:
+        return _expand_workspace_path(raw_path, base=repo_root)
+    return repo_root
+
+
+def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:
+    workspace_root = delivery_workspace_root(config, metadata)
+    status_root = delivery_status_root(config, metadata)
+    return {
+        "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+        "PANTHEON_STATUS_ROOT": str(status_root),
+        "ORCH_WORKSPACE_PATH": str(workspace_root),
+    }
+
+
+def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:
+    source = env or os.environ
+    configured = str(source.get("GH_CONFIG_DIR") or "").strip()
+    if configured:
+        return Path(os.path.expanduser(configured))
+    xdg_config_home = str(source.get("XDG_CONFIG_HOME") or "").strip()
+    if xdg_config_home:
+        return Path(os.path.expanduser(xdg_config_home)) / "gh"
+    home = str(source.get("HOME") or str(Path.home())).strip() or str(Path.home())
+    return Path(os.path.expanduser(home)) / ".config" / "gh"
+
+
+def preserve_github_cli_auth_env(env: dict[str, str], source_env: Mapping[str, str] | None = None) -> None:
+    if env.get("GH_CONFIG_DIR"):
+        env["GH_CONFIG_DIR"] = os.path.expanduser(str(env["GH_CONFIG_DIR"]))
+        return
+    config_dir = github_cli_config_dir(source_env)
+    if config_dir.exists():
+        env["GH_CONFIG_DIR"] = str(config_dir)
+
+
+def is_github_cli_auth_failure(reason: str | None) -> bool:
+    normalized = compact_whitespace(reason).lower()
+    if not normalized:
+        return False
+    markers = (
+        "github cli is not authenticated",
+        "gh cli is not authenticated",
+        "gh is not authenticated",
+        "you are not logged into any github hosts",
+        "to log in, run: gh auth login",
+    )
+    return any(marker in normalized for marker in markers)
 
 
 def run_command(
@@ -454,22 +526,69 @@ def new_runtime_id(prefix: str) -> str:
     return f"{prefix}-{stamp}-{uuid.uuid4().hex[:8]}"
 
 
+def worker_runtime_paths(config: dict[str, Any], run_id: str) -> dict[str, Path]:
+    safe_run_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(run_id or "worker")).strip("-") or "worker"
+    try:
+        root = config_path(config, "state_file").parent / "worker-runtime"
+    except KeyError:
+        try:
+            root = config_path(config, "status_file").parent / ".orchestrator" / "worker-runtime"
+        except KeyError:
+            root = ORCHESTRATOR_DIR / "worker-runtime"
+    return {
+        "heartbeat_path": root / "heartbeats" / f"{safe_run_id}.json",
+        "status_path": root / "status" / f"{safe_run_id}.json",
+    }
+
+
 def spawn_background_process(
     command: list[str],
     *,
     cwd: Path | None = None,
     log_path: Path,
     env: dict[str, str] | None = None,
+    run_id: str | None = None,
+    heartbeat_path: Path | None = None,
+    status_path: Path | None = None,
+    heartbeat_interval_seconds: int = 15,
+    runner_enabled: bool = True,
 ) -> tuple[subprocess.Popen[str], Path]:
     ensure_parent(log_path)
+    command_to_spawn = list(command)
+    spawn_env = env
+    if runner_enabled and run_id:
+        if heartbeat_path is None:
+            heartbeat_path = log_path.with_suffix(log_path.suffix + ".heartbeat.json")
+        if status_path is None:
+            status_path = log_path.with_suffix(log_path.suffix + ".status.json")
+        ensure_parent(heartbeat_path)
+        ensure_parent(status_path)
+        spawn_env = dict(env or os.environ)
+        spawn_env["ORCH_RUN_ID"] = str(run_id)
+        spawn_env["ORCH_HEARTBEAT_PATH"] = str(heartbeat_path)
+        spawn_env["ORCH_RUNNER_STATUS_PATH"] = str(status_path)
+        command_to_spawn = [
+            sys.executable,
+            str(ORCHESTRATOR_DIR / "worker_runner.py"),
+            "--run-id",
+            str(run_id),
+            "--heartbeat-path",
+            str(heartbeat_path),
+            "--status-path",
+            str(status_path),
+            "--heartbeat-interval-seconds",
+            str(max(1, int(heartbeat_interval_seconds or 15))),
+            "--",
+            *command,
+        ]
     handle = log_path.open("w", encoding="utf-8")
     process = subprocess.Popen(
-        command,
+        command_to_spawn,
         cwd=str(cwd or ROOT),
         stdout=handle,
         stderr=subprocess.STDOUT,
         text=True,
-        env=env,
+        env=spawn_env,
         start_new_session=True,
     )
     return process, log_path
@@ -595,6 +714,8 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
         return {"kind": "unknown", "summary": f"{provider_label} failure", "detail": ""}
 
     lowered = raw.lower()
+    if is_github_cli_auth_failure(raw):
+        return {"kind": "tool_auth", "summary": "GitHub CLI auth unavailable", "detail": raw[: max(420, limit)]}
     if "you have no quota" in lowered:
         return {"kind": "quota", "summary": "402 You have no quota", "detail": raw[: max(420, limit)]}
     if "credit balance is too low" in lowered or "billing_error" in lowered:

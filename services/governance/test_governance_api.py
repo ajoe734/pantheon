@@ -76,6 +76,22 @@ def test_authz_allows_institutional_memory_retrieval_for_operator():
     }
 
 
+def test_authz_allows_persona_memory_retrieval_for_operator():
+    r = client.post("/api/governance/authz/check", json={
+        "action": "memory.retrieve",
+        "actor_id": "op-1",
+        "actor_roles": ["operator"],
+        "resource": {"scope": "persona", "persona_id": "persona-alpha"},
+        "context": {"session_id": "sess-1"},
+    })
+    assert r.status_code == 200
+    assert r.json() == {
+        "allowed": True,
+        "reason": "authorized",
+        "policy_version": "governance-authz.v1",
+    }
+
+
 def test_authz_rejects_cross_persona_session_memory_retrieval():
     r = client.post("/api/governance/authz/check", json={
         "action": "memory.retrieve",

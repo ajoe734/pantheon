@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "CBL-003-V2",
+  "archived_at": "2026-05-20T05:25:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CBL-003-V2",
+    "title": "Conflict resolution log gate",
+    "summary_zh": "ConflictResolutionLog schema + gate; binding cannot be enabled while open conflicts exist.",
+    "phase": "Phase 8 / EPIC-CAPITAL-BINDING-LIVE",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "CBL-001-V2"
+    ],
+    "artifacts": [
+      "services/capital/binding_live/conflict_resolution_log.py",
+      "tests/capital/test_conflict_resolution_log.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalization complete: ConflictResolutionLog live gate merged via PR #329 (merge 5c61cfc8a4223f669b8cf1154fead9662fa8b1b2). Validation rerun: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/capital/test_conflict_resolution_log.py -q (5 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/capital -q (17 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/capital/binding_live/conflict_resolution_log.py tests/capital/test_conflict_resolution_log.py; git diff --check origin/dev...HEAD. GitHub PR #329 checks passed and branch HEAD is merged to origin/dev.",
+    "last_update": "2026-05-20T05:25:12Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：ConflictResolutionLog 欄位、open_conflicts fail-closed gate、C2 readiness 合成與 capital_pool mismatch 檢查符合 CBL-003-V2 acceptance；未修改 L1 canonical docs。",
+      "Reviewer validation passed: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/capital/test_conflict_resolution_log.py -q (5 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/capital -q (17 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/capital/binding_live/conflict_resolution_log.py tests/capital/test_conflict_resolution_log.py; git diff --check origin/dev...HEAD."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T05:25:12Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/cbl-003-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/CBL-003-V2",
+      "git_clean_required": false,
+      "commit": "89b53fe10020340cce011042910bf61574258dae",
+      "commit_subject": "CBL-003-V2: add conflict resolution live gate",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "CBL-003-V2",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest tests/capital/test_binding_live_readiness.py tests/capital/test_conflict_resolution_log.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/CBL-003-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0b15848d2129df4378f2a43fd0a192d823a21f38",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CBL-003-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-05-20T04:55:18Z",
+      "resolved_at": "2026-05-20T04:55:30Z"
+    },
+    {
+      "task_id": "CBL-003-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "CBL-003-V2 implementation merged via PR #329 (merge 5c61cfc8a4223f669b8cf1154fead9662fa8b1b2). Please review services/capital/binding_live/conflict_resolution_log.py and tests/capital/test_conflict_resolution_log.py. Local validation passed: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/capital/test_conflict_resolution_log.py -q (5 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/capital -q (17 passed); PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/capital/binding_live/conflict_resolution_log.py tests/capital/test_conflict_resolution_log.py; git diff --check origin/dev...HEAD. GitHub checks on PR #329 passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator.",
+      "status": "done",
+      "created_at": "2026-05-20T05:14:13Z",
+      "resolved_at": "2026-05-20T05:20:20Z"
+    },
+    {
+      "task_id": "CBL-003-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: ConflictResolutionLog schema and live-binding fail-closed gate meet acceptance; local reviewer validation passed. Returning to Codex2 for owner finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T05:20:20Z",
+      "resolved_at": "2026-05-20T05:25:13Z"
+    }
+  ],
+  "blockers": []
+}

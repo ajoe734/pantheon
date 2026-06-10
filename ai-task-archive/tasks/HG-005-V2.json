@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "HG-005-V2",
+  "archived_at": "2026-05-19T18:13:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HG-005-V2",
+    "title": "Human gate audit log projection (AuditAction)",
+    "summary_zh": "Project every HumanGateDecision state change (submit / revoke / expire) into AuditAction immutable log. Audit entry includes trace_id and correlation_id. Cross-cutting concern not absorbed by EP5-003/004.",
+    "phase": "Phase 8 / EPIC-HG",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "EP5-003-V2"
+    ],
+    "artifacts": [
+      "services/audit/projections/human_gate.py",
+      "tests/audit/test_human_gate_projection.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Implementation PR #266 merged at 804b2350dce4878c03a4b9d847d69d53a9fb2abb; closeout evidence PR #271 merged at 97b18fb89f91920a7a5f7f7bb5b684c1ca42fea9; validation passed: pytest -q tests/audit/test_human_gate_projection.py; pytest -q tests/audit/test_human_gate_projection.py tests/governance/test_signoff_api.py services/foundation/tests/test_primitives.py.",
+    "last_update": "2026-05-19T18:13:05Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：HumanGateDecision submit/revoke/expire projection emits foundation AuditAction with trace_id/correlation_id, state refs, target metadata, and deterministic payload checksum.",
+      "驗證通過：pytest -q tests/audit/test_human_gate_projection.py；pytest -q tests/audit/test_human_gate_projection.py tests/governance/test_signoff_api.py services/foundation/tests/test_primitives.py。",
+      "未修改 L1 canonical docs；review scope limited to services/audit/projections/human_gate.py and tests/audit/test_human_gate_projection.py。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T18:13:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/hg-005-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HG-005-V2",
+      "git_clean_required": false,
+      "commit": "6a377c502412e06af7a38e2f03f2c0ed1a14c7ec",
+      "commit_subject": "HG-005-V2: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "HG-005-V2",
+        "Reviewer": "Codex2",
+        "Verified": "pytest -q tests/audit/test_human_gate_projection.py; pytest -q tests/audit/test_human_gate_projection.py tests/governance/test_signoff_api.py services/foundation/tests/test_primitives.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HG-005-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "97b18fb89f91920a7a5f7f7bb5b684c1ca42fea9",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HG-005-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: human gate AuditAction projection is merged via PR #266 (merge 804b2350dce4878c03a4b9d847d69d53a9fb2abb; implementation commit 18d77775). Artifacts: services/audit/projections/human_gate.py and tests/audit/test_human_gate_projection.py. Verification: pytest -q tests/audit/test_human_gate_projection.py; pytest -q tests/audit/test_human_gate_projection.py tests/governance/test_signoff_api.py services/foundation/tests/test_primitives.py. GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance.",
+      "status": "done",
+      "created_at": "2026-05-19T18:00:33Z",
+      "resolved_at": "2026-05-19T18:05:14Z"
+    },
+    {
+      "task_id": "HG-005-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2. Owner Codex should run task-closeout finalization and mark done after merged-delivery checks.",
+      "status": "done",
+      "created_at": "2026-05-19T18:05:14Z",
+      "resolved_at": "2026-05-19T18:13:06Z"
+    }
+  ],
+  "blockers": []
+}

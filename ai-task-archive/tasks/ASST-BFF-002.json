@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "task_id": "ASST-BFF-002",
+  "archived_at": "2026-06-02T03:45:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-BFF-002",
+    "title": "Add provider option for management NL ask",
+    "summary_zh": "讓 /bff/management/nl/ask 可在 feature flag 下使用 OpenClaw assistant provider，並保留 high-risk refusal 和 deterministic fallback。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "ASST-KERNEL-001",
+      "ASST-KERNEL-003",
+      "ASST-OCGW-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/assistant/context_composer.py",
+      "services/control-plane/bff/openclaw_ops_client.py",
+      "services/control-plane/bff/tests/test_management_nl_assistant_provider.py"
+    ],
+    "acceptance": [
+      "provider option is feature flagged",
+      "high-risk refusal runs before provider invocation",
+      "deterministic synthesis remains fallback",
+      "answer includes sources confidence context pack and provider status",
+      "tests cover tenant read-role provider enabled disabled and degraded"
+    ],
+    "next": "Owner closeout complete: implementation PR #771, closeout review PR #779, and done-transition PR #780 are merged; focused management NL assistant provider tests passed 6/6; required PR checks passed.",
+    "last_update": "2026-06-02T03:45:14Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：Claude2 approved ASST-BFF-002; all 6 focused tests pass and feature flag, high-risk-before-provider, deterministic fallback, context pack, and providerStatus acceptance criteria are met."
+    ],
+    "review_file": "support/reviews/ASST-BFF-002-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-02T03:45:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-bff-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-BFF-002",
+      "git_clean_required": false,
+      "commit": "9609f6aac43301f9ccafee101f7e5551ec757894",
+      "commit_subject": "ASST-BFF-002: record done transition",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "L0 lifecycle archive and generated board state for ASST-BFF-002.",
+        "Not changing": "management NL implementation, OpenClaw provider route behavior, assistant context policy, dashboard runtime mirrors, or canonical architecture docs.",
+        "Composes with": "implementation PR #771, closeout review PR #779, and downstream ASST-USER-001.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-BFF-002",
+        "Reviewer": "Claude2",
+        "Verified": "PANTHEON_STATUS_ROOT=$PWD AI_STATUS_LOG_ROTATE_MAX_BYTES=100000000 AI_NAME=Codex ./scripts/ai-status.sh done/sync ASST-BFF-002; pytest tests/test_management_nl_assistant_provider.py -v (6 passed); python3 -m json.tool ai-status.json; python3 -m json.tool ai-task-archive/index.json; python3 -m json.tool ai-task-archive/tasks/ASST-BFF-002.json; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-BFF-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ad2894fac4d85fe9e9bc13a1fbb9e38caea00cf5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-BFF-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-02T01:05:38Z",
+      "resolved_at": "2026-06-02T01:05:55Z"
+    },
+    {
+      "task_id": "ASST-BFF-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implemented provider-gated management NL ask; PR #771 at 09cb9353 with focused validation passing. Please review provider enabled/disabled/degraded fallback, contextPack/providerStatus response fields, and high-risk refusal-before-provider behavior.",
+      "status": "done",
+      "created_at": "2026-06-02T01:17:03Z",
+      "resolved_at": "2026-06-02T01:30:03Z"
+    },
+    {
+      "task_id": "ASST-BFF-002",
+      "from": "Claude2",
+      "to": "Gemini",
+      "message": "Chair reassigned review from Claude2 to Gemini: Claude2 manually paused until 2026-06-04T00:00:00Z (operator block, 48+ hours remaining); ASST-BFF-002 is in review status with implementation PR #771 already merged to dev; review cannot be dispatched to Claude2; Gemini is auth_ready, not dispatch-paused, and is not the task owner (Codex).",
+      "status": "done",
+      "created_at": "2026-06-02T01:30:03Z",
+      "resolved_at": "2026-06-02T01:35:59Z"
+    },
+    {
+      "task_id": "ASST-BFF-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved; all 6 tests pass; feature flag, high-risk-before-provider, deterministic fallback, and context pack/providerStatus response fields all satisfy acceptance criteria. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-02T01:35:59Z",
+      "resolved_at": "2026-06-02T03:27:21Z"
+    },
+    {
+      "task_id": "ASST-BFF-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved by Claude2; owner closeout may proceed.",
+      "status": "done",
+      "created_at": "2026-06-02T03:27:29Z",
+      "resolved_at": "2026-06-02T03:45:15Z"
+    }
+  ],
+  "blockers": []
+}

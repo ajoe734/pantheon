@@ -1,0 +1,70 @@
+{
+  "approved_at": null,
+  "approver": null,
+  "artifact_state": "draft",
+  "artifact_type": "model_artifact",
+  "checksum": "sha256:ee6e46da2779c38b7397607af7c3ab83bce5f31920bdc6ace92332fa937353c4",
+  "created_at": "2026-05-18T03:17:52Z",
+  "deployment_summary": {
+    "current_stage": "none"
+  },
+  "evaluation_summary": {
+    "algorithm": "ppo",
+    "annual_return": 0.298749,
+    "backend": "finrl_stocktradingenv_sb3_ppo",
+    "device": "cpu",
+    "fit_mode": "upstream_finrl_stocktradingenv_stable_baselines3_ppo",
+    "framework_import_ready": true,
+    "max_drawdown": 0.000794,
+    "num_instruments": 5,
+    "num_periods": 200,
+    "num_steps": 200,
+    "portfolio_value_final": 1229274.5372105,
+    "portfolio_value_initial": 1000000.0,
+    "sharpe": 16.39,
+    "stable_baselines3_version": "2.8.0",
+    "stock_trading_env_used": true,
+    "torch_cuda_available": false,
+    "torch_version": "2.12.0+cpu",
+    "total_trades": 787,
+    "total_training_steps": 1024
+  },
+  "lineage": {
+    "source_dataset_refs": [
+      "twse-ohlcv-offline-sample-2024-001"
+    ],
+    "source_run_ids": [
+      "finrl-ppo-45ee425fc508"
+    ],
+    "source_strategy_spec_id": "strategy-spec:twse-ppo-offline-v1"
+  },
+  "metadata": {
+    "action_labels": [
+      "hold",
+      "buy_small",
+      "sell_small",
+      "buy_large",
+      "sell_large"
+    ],
+    "algorithm": "ppo",
+    "data_frequency": "daily",
+    "dataset_checksum": "sha256:d48d181772c181e9464ee26091a60686819dd651834fc9e00c2652152ed31117",
+    "decision_focus": "exit_timing",
+    "framework": "finrl",
+    "framework_version": "0.3.7",
+    "model_family": "rl_policy",
+    "num_steps": 197,
+    "observation_dim": 7,
+    "training_backend": "finrl_stocktradingenv_sb3_ppo"
+  },
+  "producer_run_id": "finrl-ppo-45ee425fc508",
+  "registry_id": "finrl-policy-twse-ppo-strategy-001-1.0.0",
+  "rollback_target": null,
+  "storage_ref": {
+    "backend": "object_store",
+    "path": "research/finrl/offline/twse-ppo-strategy-001/1.0.0/artifact.json"
+  },
+  "strategy_id": "twse-ppo-strategy-001",
+  "trained_policy_ref": "research/finrl/offline/twse-ppo-strategy-001/1.0.0/artifact.json",
+  "version": "1.0.0"
+}

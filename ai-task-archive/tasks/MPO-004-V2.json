@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "MPO-004-V2",
+  "archived_at": "2026-05-20T17:05:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPO-004-V2",
+    "title": "Bridge: multi-persona artifact → EP5ProofPacket sponsor lineage",
+    "summary_zh": "Wire MPO-003 synthesis output into EP5ProofPacket so canary readiness can reference sponsor persona, conflict log, and synthesized memo refs. Required for blueprint §17 acceptance #9 closure.",
+    "phase": "Phase 8 / EPIC-MPO",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MPO-003-V2"
+    ],
+    "artifacts": [
+      "services/governance/ep5_proof/persona_lineage.py",
+      "tests/governance/test_persona_lineage.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 blueprint section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized after review approval. PR #374 merged to dev at merge commit 2eff04787e2a290893142477be5464681986e284; task commit 3e0622e5c04b0708d35d126f522d6ee244e86d67 carries LLM-Agent/Task-ID/Reviewer trailers. Verified: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/governance/ep5_proof/persona_lineage.py services/governance/ep5_proof/packet_generator.py tests/governance/test_persona_lineage.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/governance/test_persona_lineage.py -q (6 passed); git diff --check -- services/governance/ep5_proof/persona_lineage.py services/governance/ep5_proof/packet_generator.py tests/governance/test_persona_lineage.py.",
+    "last_update": "2026-05-20T17:05:34Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-v3-blueprint-residual-2026-05-20",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：persona_lineage bridge 能從 MPO-003 full packet 擷取 sponsor persona、conflict log ref、synthesized memo ref 並嵌入 EP5 PromotionReadinessPacket extensions/evidence。",
+      "審查通過：sponsor mismatch 與 open conflicts 皆 fail-closed；未修改 L1 canonical docs。",
+      "驗證通過：py_compile、test_persona_lineage、test_ep5_proof_generator、test_ep5_dry_run、test_observation_report、git diff --check。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T17:05:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpo-004-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPO-004-V2",
+      "git_clean_required": false,
+      "commit": "3e0622e5c04b0708d35d126f522d6ee244e86d67",
+      "commit_subject": "MPO-004-V2: anchor persona lineage bridge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "EP5 proof persona lineage bridge from MPO-003 packet into PromotionReadinessPacket extensions/evidence.",
+        "Not changing": "MPO-003 synthesis generation, sponsor resolver semantics, live broker/runtime dispatch, canonical architecture docs.",
+        "Composes with": "Codex2 review of MPO-004-V2 and downstream blueprint §17 acceptance #9 canary readiness closure.",
+        "Verified": "git diff --check -- services/governance/ep5_proof/persona_lineage.py services/governance/ep5_proof/packet_generator.py tests/governance/test_persona_lineage.py",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MPO-004-V2",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPO-004-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2eff04787e2a290893142477be5464681986e284",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPO-004-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Implementation anchored at 3e0622e5c04b0708d35d126f522d6ee244e86d67. Added EP5 persona_lineage bridge from MPO-003 packet into PromotionReadinessPacket extensions/evidence; focused tests pass. Please review services/governance/ep5_proof/persona_lineage.py, services/governance/ep5_proof/packet_generator.py, and tests/governance/test_persona_lineage.py.",
+      "status": "done",
+      "created_at": "2026-05-20T16:53:49Z",
+      "resolved_at": "2026-05-20T16:59:25Z"
+    },
+    {
+      "task_id": "MPO-004-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2. Persona lineage bridge matches task scope and focused validation passed; returning to Codex for formal closeout.",
+      "status": "done",
+      "created_at": "2026-05-20T16:59:25Z",
+      "resolved_at": "2026-05-20T17:05:34Z"
+    }
+  ],
+  "blockers": []
+}

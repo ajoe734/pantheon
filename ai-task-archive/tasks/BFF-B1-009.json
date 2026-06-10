@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-009",
+  "archived_at": "2026-05-23T06:47:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-009",
+    "title": "Confirm-token lifecycle 5 endpoints",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#14-confirm-token-lifecycle;services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "POST /bff/confirm-tokens issues token;GET /bff/confirm-tokens/{tokenId} returns state;POST /bff/confirm-tokens/{tokenId}/redeem marks redeemed;POST /bff/command-confirmations and GET /bff/command-confirmations/{token} mirror lifecycle;Expired tokens return typed 410 not raw 500"
+    ],
+    "next": "Finalized BFF-B1-009 after Claude approval. Implementation PR #419 was already merged; closeout PR #427 merged at ea9a9ce8 with task brief and review artifact recorded. Focused confirm-token/OpenAPI/command-bridge/governance pytest slices and whitespace checks passed.",
+    "last_update": "2026-05-23T06:47:57Z",
+    "review_notes_zh": [
+      "審查通過：五個 confirm-token 端點實作完整，typed 410 expiry 覆蓋所有路徑，focused tests 全數通過，PR #419 已合併"
+    ],
+    "review_file": "support/reviews/BFF-B1-009-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T06:47:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-009",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-009",
+      "git_clean_required": false,
+      "commit": "2e6d34098234a5241dee8a51b84aa7c13e39c5cb",
+      "commit_subject": "BFF-B1-009: merge dev for closeout PR",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-B1-009",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_confirm_token_lifecycle.py -v; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable -q; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_final_command_execution_bridge.py::test_confirm_token_create_read_redeem_delete_are_command_store_backed services/control-plane/bff/test_final_command_execution_bridge.py::test_confirm_token_server_generated_id_replays_on_same_key_retry -q; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py::test_bff_governance_review_routes_and_approval_evidence -q; git diff --check; git diff --cached --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-009",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ea9a9ce826429f344b309588b1d26bc251d9b6c3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-009",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-23T06:06:03Z",
+      "resolved_at": "2026-05-23T06:06:17Z"
+    },
+    {
+      "task_id": "BFF-B1-009",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Implementation merged in PR #419 (merge f721b2c): confirm-token lifecycle routes, command-confirmations GET/POST mirror, typed 410 expiry, spec §14, focused tests passing. Ready for Claude review.",
+      "status": "done",
+      "created_at": "2026-05-23T06:25:43Z",
+      "resolved_at": "2026-05-23T06:30:32Z"
+    },
+    {
+      "task_id": "BFF-B1-009",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: all 6 acceptance criteria verified, focused tests pass, typed 410 expiry confirmed on all 4 paths. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-23T06:30:32Z",
+      "resolved_at": "2026-05-23T06:47:58Z"
+    }
+  ],
+  "blockers": []
+}

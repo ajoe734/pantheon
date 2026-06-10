@@ -13,6 +13,7 @@ Canonical Data Plane object definitions for Pantheon.
 | NormalizedDataset | `models/dataset_lineage.py` | `schemas/normalized_dataset.schema.json` |
 | FeatureDataset | `models/dataset_lineage.py` | `schemas/feature_dataset.schema.json` |
 | DatasetVersion | `models/dataset_lineage.py` | `schemas/dataset_version.schema.json` |
+| TwBrokerTop | `taiwan_reference.py` | `schemas/tw_broker_top.schema.json` |
 
 ## Design Decisions
 
@@ -57,7 +58,7 @@ Six canonical source classes are defined per `DATA_SOURCE_SCOPE_MATRIX.md`:
 ## Verification
 
 ```bash
-# Unit tests (47 tests)
+# Unit tests (55 tests)
 python3 -m unittest discover -s services/data-plane/tests -p 'test_*.py' -v
 
 # Smoke test (47 checks, including jsonschema validation)

@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "BFF-MGMT-DELTA-012",
+  "archived_at": "2026-05-24T15:29:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-MGMT-DELTA-012",
+    "title": "GET /bff/management/intervention-stream",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA / EPIC-BFF-DELTA-MGMT-LIVE",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts"
+    ],
+    "acceptance": [
+      "Path registered; intervention events stream per persona last 24h;Anonymous 401 authenticated 200; envelope canonical; CORS preflight 204;pytest case intervention_stream"
+    ],
+    "next": "Closeout complete: implementation PR #551 merged at 5f566016; closeout artifact PR #552 merged at 69610bc6; validation git diff --check origin/dev..HEAD and pytest BFF delta/auth suite 96 passed, 3 existing read_store datetime.utcnow warnings.",
+    "last_update": "2026-05-24T15:29:43Z",
+    "review_notes_zh": [
+      "審查通過：intervention-stream 路由實作完整，合成邏輯正確分離 v5 interventions 與 audit 事件，不引入新資料來源，不改動 write path；focused 測試 31 通過，廣域 BFF delta/auth suite 93 通過，無回歸。"
+    ],
+    "review_file": "support/reviews/BFF-MGMT-DELTA-012-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-24T15:29:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-mgmt-delta-012",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-MGMT-DELTA-012",
+      "git_clean_required": false,
+      "commit": "ccd30df07f6afd041d4e9229efbda38d0fcce84f",
+      "commit_subject": "BFF-MGMT-DELTA-012: add closeout artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/reviews/, .orchestrator/task-briefs/",
+        "Not changing": "backend route, TS client, tests, audit docs, write paths",
+        "Composes with": "PR #551 implementation merge and closeout PR into dev",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-MGMT-DELTA-012",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/control-plane/bff/test_bff_management_delta_routes.py services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -q (96 passed, 3 warnings)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-MGMT-DELTA-012",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "69610bc6c62acadfdc488c087910483422fd66e6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-MGMT-DELTA-012",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation merged via PR #551 (merge commit 5f566016). Validation: git diff --check origin/dev..HEAD before push; focused route/live-wiring suite 31 passed; broader BFF delta/auth suite 93 passed, both with 3 existing read_store datetime.utcnow warnings. Ready for reviewer approval/final closeout.",
+      "status": "done",
+      "created_at": "2026-05-24T15:16:28Z",
+      "resolved_at": "2026-05-24T15:19:34Z"
+    },
+    {
+      "task_id": "BFF-MGMT-DELTA-012",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 9 acceptance criteria satisfied, 93 tests passing, no regressions. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-05-24T15:19:34Z",
+      "resolved_at": "2026-05-24T15:29:43Z"
+    }
+  ],
+  "blockers": []
+}

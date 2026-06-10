@@ -58,7 +58,8 @@ def _detect_repo_root() -> Path:
 
 
 ROOT = _detect_repo_root()
-ACTIVITY_LOG = ROOT / "ai-activity-log.jsonl"
+STATUS_ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT") or ROOT).resolve()
+ACTIVITY_LOG = STATUS_ROOT / "ai-activity-log.jsonl"
 
 
 def _git(*args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -84,6 +85,31 @@ def _build_env(index_file: str | None) -> dict[str, str]:
     return env
 
 
+def _default_index_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("GIT_INDEX_FILE", None)
+    return env
+
+
+def _should_refresh_default_index(index_file: str | None) -> bool:
+    if not index_file:
+        return False
+    try:
+        return STATUS_ROOT.resolve() != ROOT.resolve()
+    except OSError:
+        return False
+
+
+def _refresh_default_index_after_private_commit(index_file: str | None) -> str | None:
+    """Sync an isolated worker worktree's normal index after a private-index commit."""
+    if not _should_refresh_default_index(index_file):
+        return None
+    proc = _git("read-tree", "HEAD", env=_default_index_env(), check=False)
+    if proc.returncode != 0:
+        return (proc.stderr or proc.stdout or "git read-tree HEAD failed").strip()
+    return None
+
+
 def _normalize_paths(paths: list[str]) -> list[str]:
     normalized: list[str] = []
     for raw in paths:
@@ -102,8 +128,58 @@ def _staged_paths(env: dict[str, str]) -> list[str]:
     return sorted(p for p in out.splitlines() if p)
 
 
+def _is_ignored_path(path: str, env: dict[str, str]) -> bool:
+    return _git(
+        "check-ignore",
+        "--no-index",
+        "-q",
+        "--",
+        path,
+        env=env,
+        check=False,
+    ).returncode == 0
+
+
+def _stage_scope(scope: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
+    normal_scope: list[str] = []
+    forced_files: list[str] = []
+    for path in scope:
+        path_on_disk = ROOT / path
+        if _is_ignored_path(path, env):
+            if path_on_disk.is_dir():
+                return subprocess.CompletedProcess(
+                    ["git", "add", "--", path],
+                    returncode=2,
+                    stdout="",
+                    stderr=(
+                        "Refusing to force-add ignored directory scope "
+                        f"{path!r}. Pass explicit file paths for ignored "
+                        "task artifacts instead.\n"
+                    ),
+                )
+            forced_files.append(path)
+        else:
+            normal_scope.append(path)
+
+    if normal_scope:
+        proc = _git("add", "--", *normal_scope, env=env, check=False)
+        if proc.returncode != 0:
+            return proc
+    if forced_files:
+        proc = _git("add", "-f", "--", *forced_files, env=env, check=False)
+        if proc.returncode != 0:
+            return proc
+    return subprocess.CompletedProcess(
+        ["git", "add", "--", *scope],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+
+
 def _append_audit(payload: dict) -> None:
     try:
+        ACTIVITY_LOG.parent.mkdir(parents=True, exist_ok=True)
         with ACTIVITY_LOG.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except OSError as exc:
@@ -148,8 +224,11 @@ def main() -> int:
     # Step 2: stage only the declared scope. Use --intent-to-add for untracked
     # files? No — `git add` handles new files just fine. We add each entry
     # explicitly so a typo surfaces immediately.
-    add_args = ["add", "--"] + scope
-    proc = _git(*add_args, env=env, check=False)
+    # Some tracked task artifacts live under repo-ignored mirror paths such as
+    # execute-plans/. Force-add only ignored file paths named explicitly in
+    # --scope; never force-add directory scopes because that can sweep ignored
+    # build artifacts into the commit.
+    proc = _stage_scope(scope, env)
     if proc.returncode != 0:
         print("git add failed:")
         print(proc.stderr, file=sys.stderr)
@@ -211,6 +290,9 @@ def main() -> int:
         return commit_proc.returncode
     sys.stdout.write(commit_proc.stdout)
     sys.stderr.write(commit_proc.stderr)
+    refresh_error = _refresh_default_index_after_private_commit(args.index_file)
+    if refresh_error:
+        print(f"warning: could not refresh default index after private-index commit: {refresh_error}", file=sys.stderr)
 
     # Step 5: record audit entry.
     head_sha = _git("rev-parse", "HEAD", env=env).stdout.strip()
@@ -219,10 +301,13 @@ def main() -> int:
         "agent": args.llm_agent or "unknown",
         "type": "worker_commit",
         "task_id": args.task_id,
+        "message": f"Worker commit {head_sha[:12]} recorded {len(staged)} staged file(s) for {args.task_id}.",
         "commit": head_sha,
         "scope": scope,
         "staged": staged,
         "index_file": args.index_file or None,
+        "default_index_refreshed": bool(args.index_file and not refresh_error and _should_refresh_default_index(args.index_file)),
+        "default_index_refresh_error": refresh_error,
     }
     _append_audit(audit)
     return 0

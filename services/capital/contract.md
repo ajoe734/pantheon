@@ -9,11 +9,15 @@ Task: `BP5-SVC-006`
 It turns the canonical governance objects into a real API surface:
 
 - `CapitalPool`
+- `RiskPolicy`
+- `RiskPolicyEvaluation`
 - `PersonaCapitalBinding`
 
 The service owns:
 
 - governed write paths for pools and bindings
+- the executable RiskPolicy evaluator contract consumed by optimizer,
+  promotion/deployment, and runtime-manager gates
 - append-only audit logging for pool/binding mutations
 - read paths used by runtime-manager, persona flows, and BFF projections
 
@@ -50,6 +54,7 @@ underlying JSON stores directly.
 
 ### Governance support
 
+- `RiskPolicyEvaluator.evaluate(policy, context)` (Python contract)
 - `GET    /api/capital/write-authority`
 - `GET    /api/capital/audit`
 - `GET    /health`
@@ -59,14 +64,20 @@ underlying JSON stores directly.
 1. `PersonaCapitalBinding` writes must reference an existing `CapitalPool`.
 2. Archived pools reject new bindings.
 3. Binding activation requires the referenced pool to be `active`.
-4. Binding admissibility is computed from:
+4. `risk_policy_ref` must resolve to an executable `RiskPolicy` before a target
+   can progress into optimizer synthesis, DeploymentPlan creation, promotion,
+   RuntimeBinding creation, or runtime launch.
+5. `RiskPolicyEvaluator` returns a `RiskPolicyEvaluation` with one of:
+   `allowed`, `allowed_with_conditions`, or `rejected`. Rejected evaluations
+   are hard vetoes and must fail closed before downstream writes.
+6. Binding admissibility is computed from:
    - binding status
    - effective validity window
    - role deployment ceiling
    - `allowed_deployment_scope`
    - pool governance status
-5. Only one active `live_owner` binding may exist per pool.
-6. BFF/runtime read models consume the service's persisted snapshots:
+7. Only one active `live_owner` binding may exist per pool.
+8. BFF/runtime read models consume the service's persisted snapshots:
    - `capital_pools.json`
    - `persona_capital_bindings.json`
 

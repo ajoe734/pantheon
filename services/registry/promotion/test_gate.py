@@ -34,7 +34,7 @@ class TestPromotionGate(unittest.TestCase):
         self.assertEqual(promoted["lifecycle_state"], "candidate")
         self.assertIn("promoted_at", promoted)
 
-    def test_live_promotion_accepts_legacy_rollback_fields(self):
+    def test_live_promotion_via_canonical_canary_path(self):
         paper_entry = build_candidate_entry()
         paper_entry["lifecycle_state"] = "paper"
         paper_entry["evaluation_summary"] = {
@@ -47,11 +47,13 @@ class TestPromotionGate(unittest.TestCase):
             "rollback_target_registry_id": "reg-strat-001-0.9.0",
         }
 
-        promoted = self.gate.promote(paper_entry, PromotionState.LIVE)
+        canary_entry = self.gate.promote(paper_entry, PromotionState.CANARY)
+        self.assertEqual(canary_entry["lifecycle_state"], "canary")
 
+        promoted = self.gate.promote(canary_entry, PromotionState.LIVE)
         self.assertEqual(promoted["lifecycle_state"], "live")
 
-    def test_live_promotion_rejects_without_rollback_registry_reference(self):
+    def test_paper_to_live_skip_is_forbidden(self):
         paper_entry = build_candidate_entry()
         paper_entry["lifecycle_state"] = "paper"
         paper_entry["evaluation_summary"] = {
@@ -60,10 +62,26 @@ class TestPromotionGate(unittest.TestCase):
         }
         paper_entry["approver"] = "risk-committee"
         paper_entry["rollback_target"] = "0.9.0"
-        paper_entry["metadata"] = {}
+        paper_entry["metadata"] = {
+            "rollback_target_registry_id": "reg-strat-001-0.9.0",
+        }
 
         with self.assertRaises(PromotionError):
             self.gate.promote(paper_entry, PromotionState.LIVE)
+
+    def test_live_promotion_rejects_without_rollback_registry_reference(self):
+        canary_entry = build_candidate_entry()
+        canary_entry["lifecycle_state"] = "canary"
+        canary_entry["evaluation_summary"] = {
+            "risk_review_passed": True,
+            "sharpe_ratio": 1.4,
+        }
+        canary_entry["approver"] = "risk-committee"
+        canary_entry["rollback_target"] = "0.9.0"
+        canary_entry["metadata"] = {}
+
+        with self.assertRaises(PromotionError):
+            self.gate.promote(canary_entry, PromotionState.LIVE)
 
     def test_build_execution_projection_returns_canonical_keys_and_metadata(self):
         live_entry = build_candidate_entry()

@@ -1,0 +1,10 @@
+# Pantheon staging-live BFF — Caddy reverse proxy (HTTPS termination + ACME).
+#
+# Rendered and deployed by deploy/caddy/sync-caddy.sh — DO NOT hand-edit the
+# copy on the VM. __BFF_HOST__ is replaced with the env's sslip.io hostname at
+# deploy time so a project/IP cutover updates the cert SNI automatically.
+#
+# Upstream is the operator-bff service on the staging-control VM.
+__BFF_HOST__ {
+	reverse_proxy 127.0.0.1:38001
+}

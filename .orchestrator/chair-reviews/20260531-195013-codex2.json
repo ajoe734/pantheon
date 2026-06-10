@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "ASST-OCGW-001 is the only runnable root and Gemini is quota-blocked.",
+  "blocked_by": [
+    "ASST-OCGW-001: Gemini worker gemini-20260531T195014Z-3dca0f60 failed with TerminalQuotaError/429 while provider guardrail dispatch_pauses is empty."
+  ],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-001",
+    "SUP-GEMINI-QUOTA-GUARDRAIL"
+  ]
+}

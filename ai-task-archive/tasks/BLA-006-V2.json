@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "BLA-006-V2",
+  "archived_at": "2026-05-19T18:56:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BLA-006-V2",
+    "title": "Broker credential vault readiness spec",
+    "summary_zh": "BrokerCredentialReadiness schema + vault readiness spec per Part B5.",
+    "phase": "Phase 8 / EPIC-BROKER-LIVE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BLA-001-V2"
+    ],
+    "artifacts": [
+      "services/broker/live_activation/credential_readiness.py",
+      "docs/operations/broker_credential_vault_readiness.md",
+      "tests/broker/test_credential_readiness.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: PR #282 merged into dev at 14af7f38c5245fd1d2e824c9ed19ac03c24e86d2; task HEAD a0e466744387676e7bd6b5579df83fa97631f340 delivered BrokerCredentialReadiness.v1 validator, operations spec, tests, and owner closeout evidence. Verified py_compile, tests/broker -q (34 passed), git diff --check, and GitHub Branch CI Gate checks.",
+    "last_update": "2026-05-19T18:56:41Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：PR #282 的三檔 task patch 僅新增 BrokerCredentialReadiness.v1 validator、operations spec、pytest；未修改 L1 canonical docs，未加入 vault/broker/live side effect。",
+      "Reviewer 驗證：PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/broker -q => 34 passed；py_compile credential_readiness.py/test_credential_readiness.py => passed；git diff --check origin/dev...HEAD => passed；gh pr checks 282 => Commit trailers / Runtime mirror guard / Smoke acceptance all pass。",
+      "Owner closeout 注意：review 後 origin/dev 已前進，PR closeout 前請依 task-closeout-finalization refresh/merge current dev if GitHub reports branch behind。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T18:56:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bla-006-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BLA-006-V2",
+      "git_clean_required": false,
+      "commit": "a0e466744387676e7bd6b5579df83fa97631f340",
+      "commit_subject": "BLA-006-V2: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BLA-006-V2",
+        "Reviewer": "Codex2",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/broker/live_activation/credential_readiness.py tests/broker/test_credential_readiness.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/broker -q (34 passed); git diff --check origin/dev...HEAD"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BLA-006-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "14af7f38c5245fd1d2e824c9ed19ac03c24e86d2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BLA-006-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: draft PR #282 adds BrokerCredentialReadiness.v1 validator, docs/operations/broker_credential_vault_readiness.md, and tests/broker/test_credential_readiness.py. Task-owned commit 18329e01695157c534ebd0ae477871876c4a471c; branch also merged latest origin/dev at a4a675f4. Validation: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/broker -q => 34 passed; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/broker/live_activation/credential_readiness.py tests/broker/test_credential_readiness.py => passed; git diff --check origin/dev..HEAD => passed. Untracked .orchestrator/task-briefs/bla_006_v2.md is task context only and was intentionally excluded from the implementation commit.",
+      "status": "done",
+      "created_at": "2026-05-19T18:39:44Z",
+      "resolved_at": "2026-05-19T18:42:03Z"
+    },
+    {
+      "task_id": "BLA-006-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review: draft PR #282 is refreshed against latest origin/dev. Branch HEAD fcfdcab11daec4cff710b869d49f9a82a46ae065; task-owned commit 18329e01695157c534ebd0ae477871876c4a471c. Added BrokerCredentialReadiness.v1 fail-closed validator, docs/operations/broker_credential_vault_readiness.md, and tests/broker/test_credential_readiness.py. Local validation: PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/broker -q => 34 passed; py_compile credential_readiness.py/test_credential_readiness.py => passed; git diff --check origin/dev..HEAD => passed. GitHub checks on PR #282: Commit trailers, Runtime mirror guard, and Smoke acceptance all passed. Untracked .orchestrator/task-briefs/bla_006_v2.md remains task context only and is intentionally excluded from the implementation commit.",
+      "status": "done",
+      "created_at": "2026-05-19T18:42:03Z",
+      "resolved_at": "2026-05-19T18:48:23Z"
+    },
+    {
+      "task_id": "BLA-006-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: BrokerCredentialReadiness.v1 scope, docs, and tests satisfy BLA-006-V2 acceptance; returned to Codex for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-05-19T18:48:23Z",
+      "resolved_at": "2026-05-19T18:56:41Z"
+    }
+  ],
+  "blockers": []
+}

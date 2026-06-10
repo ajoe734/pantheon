@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle workers and runnable assistant backlog exist; only two active OCGW lanes need targeted repair.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-003",
+    "ASST-OCGW-004"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [
+    {
+      "task_id": "ASST-OCGW-003",
+      "role": "reviewer",
+      "from": "Claude",
+      "to": "Codex2",
+      "reason": "Claude has 2 failed reviewer dispatches on ASST-OCGW-003; last failure at 2026-06-01T11:05:01Z was a session limit, and Codex2 is the listed fallback target and not the owner."
+    }
+  ],
+  "recommended_focus": [
+    "ASST-OCGW-004",
+    "ASST-OCGW-003",
+    "OPS-ARCHIVE-AUTO-COMMIT-20260531T165903Z"
+  ]
+}

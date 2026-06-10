@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No runnable execution backlog exists; the only active non-done tasks are non-dispatchable human gates.",
+  "blocked_by": [
+    "No runnable execution backlog exists; the only active non-done tasks are non-dispatchable human_gate entries: PROD-WRITES-001-V2 and LIVE-SCALE-001-V2."
+  ],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "SUP-PUBLISH-WAVE-DISCIPLINE-20260522",
+    "OPS-BRANCH-CLEANUP-20260522",
+    "publish-promote-merge-conflict-triage",
+    "nightly-publish-cut-repair",
+    "gate-condition-audit-PROD-WRITES-LIVE-SCALE"
+  ]
+}

@@ -8,11 +8,13 @@ from adapters.file_inbox import FileInboxAdapter
 from common import (
     agent_config_for,
     command_exists,
-    config_path,
+    delivery_runtime_env,
+    delivery_workspace_root,
     load_json,
     new_runtime_id,
     runtime_log_path,
     spawn_background_process,
+    worker_runtime_paths,
 )
 
 
@@ -195,6 +197,7 @@ class GeminiAdapter(BaseAdapter):
         cli = _configured_gemini_cli(self.config, provider_id) or gemini_settings.get("cli") or "gemini"
         agent_cfg = agent_config_for(self.config, request.agent_id)
         display_name = str(agent_cfg.get("display_name") or request.agent_id)
+        workspace_root = delivery_workspace_root(self.config, request.metadata)
         command = [cli]
         model = str(gemini_settings.get("model") or "").strip()
         if model:
@@ -208,7 +211,7 @@ class GeminiAdapter(BaseAdapter):
             command.extend(["--approval-mode", approval_mode])
         include_directories = gemini_settings.get("include_directories")
         if include_directories:
-            root = config_path(self.config, "status_file").parents[0]
+            root = workspace_root
             paths = [str(root)] if include_directories is True else include_directories
             if isinstance(paths, (str, os.PathLike)):
                 paths = [paths]
@@ -217,6 +220,7 @@ class GeminiAdapter(BaseAdapter):
                 command.extend(["--include-directories", str(expanded if expanded.is_absolute() else root / expanded)])
 
         spawn_env: dict[str, str] = dict(os.environ)
+        spawn_env.update(delivery_runtime_env(self.config, request.metadata))
         spawn_env.update(_provider_env(self.config, provider_id))
         spawn_env["AI_NAME"] = display_name
         spawn_env["ORCH_AGENT_ID"] = request.agent_id
@@ -231,11 +235,15 @@ class GeminiAdapter(BaseAdapter):
 
         run_id = new_runtime_id(provider_id)
         log_path = runtime_log_path(provider_id, request.agent_id)
+        runtime_paths = worker_runtime_paths(self.config, run_id)
         process, _ = spawn_background_process(
             command,
-            cwd=config_path(self.config, "status_file").parents[0],
+            cwd=workspace_root,
             log_path=log_path,
             env=spawn_env,
+            run_id=run_id,
+            heartbeat_path=runtime_paths["heartbeat_path"],
+            status_path=runtime_paths["status_path"],
         )
 
         return DeliveryResult(
@@ -250,4 +258,8 @@ class GeminiAdapter(BaseAdapter):
             log_path=str(log_path),
             pid=process.pid,
             run_id=run_id,
+            metadata={
+                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
+                "runner_status_path": str(runtime_paths["status_path"]),
+            },
         )

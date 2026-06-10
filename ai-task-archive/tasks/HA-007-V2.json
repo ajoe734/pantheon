@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "HA-007-V2",
+  "archived_at": "2026-05-19T18:42:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "HA-007-V2",
+    "title": "Multi-replica dev PoC",
+    "summary_zh": "Stand up BFF in 3-replica dev configuration and smoke-test idempotency, audit, and SSE across replicas.",
+    "phase": "Phase 8 / EPIC-BFF-HA",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "HA-001-V2",
+      "HA-003-V2"
+    ],
+    "artifacts": [
+      "services/bff/ha/multi_replica_poc.md",
+      "scripts/bff/run_multi_replica_smoke.sh",
+      "tests/bff/test_multi_replica_smoke.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Closeout complete: delivery PR #267 and closeout PR #281 merged into dev; owner verification passed (pytest 4 passed, multi-replica smoke smoke_passed true with fail-closed SSE replay).",
+    "last_update": "2026-05-19T18:42:43Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：PoC 文件正確宣告 dev-only 邊界；smoke script 涵蓋全部 6 個 smoke row，不含 docker compose；pytest 整合測試以真實 BFF module 驗證跨副本 idempotency/audit store 與 SSE fail-closed 隔離；scope 符合 HA-007-V2 acceptance，未動 L1/compose/production LB。"
+    ],
+    "review_file": "services/bff/ha/multi_replica_poc.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T18:42:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ha-007-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/HA-007-V2",
+      "git_clean_required": false,
+      "commit": "6acee661626ed8f7a1651a7995a2354d04563d3b",
+      "commit_subject": "HA-007-V2: refresh closeout after HA-006 merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "HA-007-V2",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; python3 -m pytest -q tests/bff/test_multi_replica_smoke.py (4 passed); PANTHEON_BFF_PYTHON=/tmp/ha-007-v2-venv/bin/python PANTHEON_BFF_BASE_PORT=19251 PANTHEON_BFF_MULTI_REPLICA_OUTPUT_DIR=/tmp/ha-007-v2-closeout-smoke ./scripts/bff/run_multi_replica_smoke.sh (smoke_passed true)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/HA-007-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "73c7417828af53dc85b891f1fdb581a4684d0901",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-007-V2",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review: PR #267 merged to dev at 66340ff696a63b930498639a24af449fa409d671. Artifacts cover services/bff/ha/multi_replica_poc.md, scripts/bff/run_multi_replica_smoke.sh, tests/bff/test_multi_replica_smoke.py, and task brief. Validation passed: pytest -q tests/bff/test_multi_replica_smoke.py; 3-replica HTTP smoke with PANTHEON_BFF_PYTHON=/tmp/ha-007-v2-venv/bin/python and output /tmp/ha-007-v2-smoke8. Scope intentionally does not modify L1, compose, production LB, or shared SSE fanout implementation.",
+      "status": "done",
+      "created_at": "2026-05-19T18:02:52Z",
+      "resolved_at": "2026-05-19T18:24:49Z"
+    },
+    {
+      "task_id": "HA-007-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: artifacts cover all acceptance rows, PoC scope is correctly bounded, cross-replica idempotency/audit and SSE fail-closed are verified by integration tests. Returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-05-19T18:24:49Z",
+      "resolved_at": "2026-05-19T18:42:44Z"
+    }
+  ],
+  "blockers": []
+}

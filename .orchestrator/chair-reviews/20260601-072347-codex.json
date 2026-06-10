@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "decision": "deny_sidecars",
+  "sidecar_approved": false,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "ASST-OCGW-002 is blocked on dirty push/PR closeout and gates the useful assistant backlog.",
+  "blocked_by": [
+    "ASST-OCGW-002 is blocked since 2026-06-01T00:47:46Z after Gemini2 could not push/open the PR; Codex2 had already handled review.",
+    "The ASST-OCGW-002 worktree is ahead 3, behind 55, dirty, and has no origin task branch, so there is no safe chair blind-push approval.",
+    "Downstream assistant todos depend on ASST-OCGW-002 directly or transitively, and the last underutilization pass found no sidecar catalog or dynamic fallback candidate."
+  ],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "OPS-ASST-OCGW-002-CLOSEOUT-PUSH-REPAIR-20260601",
+    "OPS-CHAIR-PR-BASE-HYGIENE-20260601",
+    "OPS-PUBLISH-PROMOTE-MERGE-REPAIR-20260601"
+  ]
+}

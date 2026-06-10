@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "ASST-SKILL-005",
+  "archived_at": "2026-06-09T06:25:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-SKILL-005",
+    "title": "Add provider re-auth as device-flow skill assistant.provider.reauth",
+    "summary_zh": "新增 assistant.provider.reauth skill：以 service-user CODEX_HOME 執行 codex login --device-auth，安全回傳 verification_uri/user_code，背景追蹤登入完成並重新 probe readiness。",
+    "phase": "EPIC ASST-SKILL / Provider re-auth skill",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASST-SKILL-003"
+    ],
+    "artifacts": [
+      "docs/decisions/assistant-capability-skill-catalog-ownership.md;services/openclaw-gateway-adapter/assistant_codex_provider.py;services/openclaw-gateway-adapter/assistant_credential_mounts.py;services/openclaw-gateway-adapter/main.py;services/control-plane/bff/assistant"
+    ],
+    "acceptance": [
+      "Spike proves codex login --device-auth verification_uri and user_code can be captured headlessly;assistant.provider.reauth is a governed skill gated by kernel mode and control-mode passphrase;Surface carries only verification_uri user_code and poll status and never provider credential material;Token is written by the provider CLI into the service-user mount only;On success the adapter re-probes readiness and upstream returns to healthy;Tests cover start poll cancel expiry and credential-non-exposure"
+    ],
+    "next": "Closed out provider reauth skill after PR #1188 merged into dev at a2e8b55b2e48e35b4c2ca08a798046ef0b435865; reviewed delivery PR #1183 remains merged at fabc64ae954994e9dd7f0cfb5f3614a0773c13ac.",
+    "last_update": "2026-06-09T06:25:15Z",
+    "auto_created_by": "dispatch_assistant_skill_catalog_2026-06-08",
+    "review_notes_zh": [
+      "審查通過：device-auth 欄位嚴格限制，無憑證洩漏；BFF 正確要求 kernel_debug/kernel_repair 控制模式；背景重新探測就緒狀態正確",
+      "後續追蹤：可補充 timeout 情境測試（非阻礙）"
+    ],
+    "review_file": ".orchestrator/reviews/asst_skill_005_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T06:25:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-skill-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-SKILL-005",
+      "git_clean_required": false,
+      "commit": "306cd52523fe3cc0979ba3f1ddfda9c724212a4a",
+      "commit_subject": "ASST-SKILL-005: clean closeout artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "ASST-SKILL-005",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; check_commit_trailers origin/dev..HEAD."
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-SKILL-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a2e8b55b2e48e35b4c2ca08a798046ef0b435865",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-SKILL-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #1183 open for review: provider reauth device-flow skill, adapter/BFF routes, descriptor, docs, and focused tests are ready.",
+      "status": "done",
+      "created_at": "2026-06-09T05:11:07Z",
+      "resolved_at": "2026-06-09T05:18:32Z"
+    },
+    {
+      "task_id": "ASST-SKILL-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: credential isolation, kernel gate, and device-flow field restriction are all correct. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T05:18:32Z",
+      "resolved_at": "2026-06-09T06:25:16Z"
+    }
+  ],
+  "blockers": []
+}

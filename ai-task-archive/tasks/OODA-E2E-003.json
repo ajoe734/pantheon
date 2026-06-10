@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "OODA-E2E-003",
+  "archived_at": "2026-05-19T12:18:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OODA-E2E-003",
+    "title": "OODA E2E #3: ExperimentRun → CandidateArtifact admission test",
+    "summary_zh": "OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。",
+    "phase": "Sprint 8 / EPIC-OODA-E2E",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "EXP-005",
+      "REG-002"
+    ],
+    "artifacts": [
+      "tests/e2e/test_experiment_run_to_admission.py",
+      "tests/e2e/fixtures/experiment_run_for_admission.json"
+    ],
+    "acceptance": [
+      "test loads fixture ExperimentRun and calls writeback service to register CandidateArtifact",
+      "asserts artifact registered with artifact_state=candidate not draft and not approved",
+      "asserts lineage refs include experiment_run_id and source_strategy_spec_id",
+      "test attempts admission gate (registry → candidate) and asserts gate passes for valid input and rejects for malformed evaluation_summary",
+      "pytest -q -x exit 0"
+    ],
+    "next": "Codex2 final closeout complete after PR #206 merged; verified pytest registry_writeback plus OODA e2e admission tests (9 passed in 1.07s).",
+    "last_update": "2026-05-19T12:18:25Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T12:18:25Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ooda-e2e-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OODA-E2E-003",
+      "git_clean_required": false,
+      "commit": "f79a2cf27ea1f18166d329da5bb5995cf2ab0b9d",
+      "commit_subject": "OODA-E2E-003: finalize Codex2 closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "OODA-E2E-003 task brief state and closeout evidence.",
+        "Not changing": "production writeback implementation, registry service, tests, or fixture.",
+        "Composes with": "merged PR #203 and the final done transition.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OODA-E2E-003",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest -q services/research/experiments/test_registry_writeback.py tests/e2e/test_experiment_run_to_admission.py (9 passed in 1.07s)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OODA-E2E-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "917a7a7faef3df4761574f1f157adce11d97886e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OODA-E2E-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All 9 tests pass (4 e2e + 5 writeback unit tests). PR #203 open with auto-merge. Please review tests/e2e/test_experiment_run_to_admission.py, tests/e2e/fixtures/experiment_run_for_admission.json, and support/evidence/OODA-E2E-003/closeout.md. All acceptance criteria verified.",
+      "status": "done",
+      "created_at": "2026-05-19T11:55:21Z",
+      "resolved_at": "2026-05-19T12:01:13Z"
+    },
+    {
+      "task_id": "OODA-E2E-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review passed locally, but checking lifecycle transition.",
+      "status": "done",
+      "created_at": "2026-05-19T12:01:13Z",
+      "resolved_at": "2026-05-19T12:06:53Z"
+    },
+    {
+      "task_id": "OODA-E2E-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Claude to Codex2 after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-05-19T12:06:53Z",
+      "resolved_at": "2026-05-19T12:18:26Z"
+    }
+  ],
+  "blockers": []
+}

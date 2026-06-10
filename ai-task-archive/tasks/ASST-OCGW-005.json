@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "task_id": "ASST-OCGW-005",
+  "archived_at": "2026-06-02T04:06:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-OCGW-005",
+    "title": "Add credential refresh smoke and runbook",
+    "summary_zh": "補 OpenClaw gateway account-login credential refresh smoke/runbook，判斷 .codex/.claude mount 需 ro 或 rw 並定義過期重登 degraded 行為。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "ASST-OCGW-003",
+      "ASST-OCGW-004"
+    ],
+    "artifacts": [
+      "scripts/openclaw-assistant-provider-smoke.sh",
+      "docs/runbooks/openclaw-assistant-credential-refresh.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md",
+      "services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py"
+    ],
+    "acceptance": [
+      "smoke checks no-op health and tiny non-interactive invocation",
+      "runbook documents host-refresh container-refresh and degraded modes",
+      "expired auth produces degraded provider status",
+      "no secret contents appear in logs",
+      "ro or rw requirement is recorded per provider"
+    ],
+    "next": "PR #783 merged into dev at 317145d6 after owner closeout commits c1d31c01 and d672bc5a; PR #775 sanitized Claude invoke metadata and PR #777 review approval were already merged. Owner closeout verified git diff --check, bash -n scripts/openclaw-assistant-provider-smoke.sh, pytest credential mounts (8 passed), pytest Claude provider plus adapter main (76 passed), and py_compile assistant_claude_provider.py main.py. Local worker worktree still has uncommitted generated task brief drift only; it was excluded from PR scope because task briefs are materialized context and this copy is stale relative to ai-status.sh show.",
+    "last_update": "2026-06-02T04:06:04Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：原始實作補齊 credential refresh smoke/runbook 與 degraded auth 行為；review 發現 Claude invoke response 會外洩 raw config_dir path，已在 PR #775 follow-up commit eadb75ad 修正為 sanitized claude_config 並補 regression test。",
+      "本地驗證通過：focused pytest 84 passed、adapter tests 66 passed、py_compile、compileall、bash -n、git diff --check。"
+    ],
+    "review_file": ".orchestrator/reviews/ASST-OCGW-005-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-02T04:06:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-ocgw-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-OCGW-005",
+      "git_clean_required": false,
+      "commit": "d672bc5a3360d34da3fc1d6b363830a7453bc7ae",
+      "commit_subject": "ASST-OCGW-005: refresh closeout branch",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped owner finalization evidence after refreshing over origin/dev.",
+        "Not changing": "assistant provider runtime behavior, credential mount validation, smoke script behavior, runbook semantics, canonical architecture docs, ai-status lifecycle state before scripts/ai-status.sh done, or unrelated task state.",
+        "Composes with": "implementation PR #773, sanitized metadata PR #775, review approval PR #777, owner closeout PR #783, and the final scripts/ai-status.sh done archive.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "ASST-OCGW-005",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-OCGW-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "317145d66841d2df229e35efc15e85194eaf095c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-OCGW-005",
+      "from": "Gemini",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Gemini is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-02T01:33:33Z",
+      "resolved_at": "2026-06-02T01:33:38Z"
+    },
+    {
+      "task_id": "ASST-OCGW-005",
+      "from": "Codex2",
+      "to": "Gemini",
+      "message": "PR #773 merged into dev at be40fd94e6a69c5f29d3a68d5e62db1a4ae3d013. Local validation passed: pytest gateway-adapter tests + test_main, compileall, bash -n smoke, diff --check. Please review and approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-02T01:48:46Z",
+      "resolved_at": "2026-06-02T02:00:26Z"
+    },
+    {
+      "task_id": "ASST-OCGW-005",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Gemini to Codex after repeated Gemini capacity/429: Capacity / rate limit failure",
+      "status": "done",
+      "created_at": "2026-06-02T02:00:26Z",
+      "resolved_at": "2026-06-02T03:31:18Z"
+    },
+    {
+      "task_id": "ASST-OCGW-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after PR #775 follow-up fix sanitized Claude invoke metadata; Codex2 owner must finalize after PR #775 merges.",
+      "status": "done",
+      "created_at": "2026-06-02T03:31:18Z",
+      "resolved_at": "2026-06-02T04:06:04Z"
+    }
+  ],
+  "blockers": []
+}

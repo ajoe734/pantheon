@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "task_id": "POST-EVO-BRIDGE",
+  "archived_at": "2026-05-19T12:12:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "POST-EVO-BRIDGE",
+    "title": "Postmortem -> EvolutionDecisionProposal auto-trigger bridge",
+    "summary_zh": "POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。",
+    "phase": "Sprint 7 / EPIC-EVOLUTION-FOLLOWUP",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "POST-001",
+      "EVO-001"
+    ],
+    "artifacts": [
+      "services/evolution/postmortem_bridge.py",
+      "services/evolution/test_postmortem_bridge.py",
+      "services/evolution/postmortem_bridge_contract.md"
+    ],
+    "acceptance": [
+      "postmortem_bridge.py exposes on_postmortem_published(postmortem) returning EvolutionDecisionProposal or None",
+      "proposal emitted when postmortem.severity in (high critical) or corrective_action_required is true",
+      "proposal payload includes source_postmortem_id evidence_refs proposed_action (rollback retrain revalidate redeploy retire) and cooldown_window_hours",
+      "bridge never writes to governance store only returns proposal dict for governance to admit",
+      "test covers 5 scenarios: low-severity skip",
+      "high-severity rollback",
+      "critical-severity freeze",
+      "corrective-flag retrain",
+      "malformed-input fail-fast",
+      "test passes pytest -q exit 0",
+      "no live runtime mutation"
+    ],
+    "next": "Owner closeout complete. 19 tests pass (pytest -q). All 3 artifacts durable: postmortem_bridge.py, test_postmortem_bridge.py, postmortem_bridge_contract.md. PR #204 merged into dev.",
+    "last_update": "2026-05-19T12:12:14Z",
+    "review_notes_zh": [
+      "審查通過：POST-EVO-BRIDGE bridge artifact matches acceptance; pytest 19 passed and py_compile clean. Non-blocking closeout note: contract status line should be reconciled by owner finalization if needed."
+    ],
+    "review_file": "support/evidence/POST-EVO-BRIDGE/review_notes.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T12:12:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/post-evo-bridge",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/POST-EVO-BRIDGE",
+      "git_clean_required": false,
+      "commit": "8d661336e842d6dd5a6e36f3fb2d09051a8860ca",
+      "commit_subject": "POST-EVO-BRIDGE: finalize owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "All 3 artifacts verified": "postmortem_bridge.py, test_postmortem_bridge.py,",
+        "Owned layer": "task-brief state promotion to review_approved + activity log",
+        "Not changing": "service implementation or test code (already durable)",
+        "Composes with": "dev via PR auto-merge",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "POST-EVO-BRIDGE",
+        "Reviewer": "Codex2",
+        "Verified": "pytest services/evolution/test_postmortem_bridge.py -q → 19 passed, exit 0"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/POST-EVO-BRIDGE",
+      "ahead": 0,
+      "behind": 40,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0bbf08afa7947f6238ed74d8de37d9a3d1d85e3b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "POST-EVO-BRIDGE",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "All acceptance criteria met. Artifacts: services/evolution/postmortem_bridge.py + test_postmortem_bridge.py (19 passed) + postmortem_bridge_contract.md. Verification: pytest -q exit 0, py_compile clean. Prior Codex2 review notes exist at support/evidence/POST-EVO-BRIDGE/review_notes.md (approved 2026-05-17). Please formally approve via scripts/ai-status.sh approve.",
+      "status": "done",
+      "created_at": "2026-05-19T11:52:55Z",
+      "resolved_at": "2026-05-19T11:53:09Z"
+    },
+    {
+      "task_id": "POST-EVO-BRIDGE",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "All acceptance criteria met. Artifacts: services/evolution/postmortem_bridge.py + test_postmortem_bridge.py (19 passed, exit 0) + postmortem_bridge_contract.md. Verified: pytest -q exit 0, py_compile clean. Prior Codex2 review notes exist at support/evidence/POST-EVO-BRIDGE/review_notes.md (approved 2026-05-17). Please formally approve via scripts/ai-status.sh approve.",
+      "status": "done",
+      "created_at": "2026-05-19T11:54:21Z",
+      "resolved_at": "2026-05-19T11:58:19Z"
+    },
+    {
+      "task_id": "POST-EVO-BRIDGE",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review approved by Codex2; focused validation passed (pytest 19 passed, py_compile clean). Returning to Claude2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T11:58:19Z",
+      "resolved_at": "2026-05-19T12:12:15Z"
+    }
+  ],
+  "blockers": []
+}

@@ -34,15 +34,22 @@ def _isolated_action_adapter() -> Iterator[TestClient]:
             bff_main.command_store = original_command_store
 
 
-def test_bff_actions_openapi_uses_canonical_type_id_action_template() -> None:
+def test_bff_actions_openapi_exposes_frontend_and_generic_action_templates() -> None:
     bff_main.app.openapi_schema = None
     schema = bff_main.app.openapi()
 
     assert "/bff/actions/{type}/{id}/{action}" in schema["paths"]
-    assert "/bff/actions/{entityType}/{entityId}/{actionId}" not in schema["paths"]
-    parameters = schema["paths"]["/bff/actions/{type}/{id}/{action}"]["post"]["parameters"]
-    path_params = [param["name"] for param in parameters if param.get("in") == "path"]
-    assert path_params == ["type", "id", "action"]
+    assert "/bff/actions/{entityType}/{entityId}/{actionId}" in schema["paths"]
+    generic = schema["paths"]["/bff/actions/{type}/{id}/{action}"]["post"]
+    named = schema["paths"]["/bff/actions/{entityType}/{entityId}/{actionId}"]["post"]
+    generic_path_params = [param["name"] for param in generic["parameters"] if param.get("in") == "path"]
+    named_path_params = [param["name"] for param in named["parameters"] if param.get("in") == "path"]
+    assert generic_path_params == ["type", "id", "action"]
+    assert named_path_params == ["entityType", "entityId", "actionId"]
+    assert generic["operationId"] == "submit_bff_action_generic"
+    assert named["operationId"] == "submit_bff_action_named"
+    assert generic["deprecated"] is True
+    assert named["deprecated"] is True
 
 
 def test_bff_actions_adapter_records_final_command_foundation_context() -> None:
@@ -98,6 +105,51 @@ def test_bff_actions_adapter_records_final_command_foundation_context() -> None:
             audit["foundation"]["audit_action"]["metadata"]["source_route"]
             == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
         )
+
+
+def test_bff_actions_named_facade_accepts_x_idempotency_alias() -> None:
+    with _isolated_action_adapter() as client:
+        headers = {
+            **{key: value for key, value in OPERATOR_HEADERS.items() if key != "Idempotency-Key"},
+            "X-Idempotency-Key": "bff-b1-008-action-alias",
+        }
+        response = client.post(
+            "/bff/actions/strategy/stg-bff-008/submit_review",
+            headers=headers,
+            json={"reason": "submit strategy review through named action facade"},
+        )
+
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["status"] == "accepted"
+        assert body["data"]["command"] == "StrategyAction"
+        assert body["meta"]["idempotency"]["idempotencyKey"] == "bff-b1-008-action-alias"
+
+        records = bff_main.command_store._get_all_commands()
+        assert len(records) == 1
+        foundation = records[0]["foundation"]
+        assert foundation["admission_route"] == "POST /bff/v1/commands"
+        assert foundation["source_route"] == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
+        assert foundation["idempotency_record"]["idempotency_key"] == "bff-b1-008-action-alias"
+        assert foundation["trace_context"]["correlation_id"] == "corr-bff-consol-019"
+
+
+def test_bff_actions_named_facade_rejects_body_idempotency_key() -> None:
+    with _isolated_action_adapter() as client:
+        response = client.post(
+            "/bff/actions/strategy/stg-bff-008/submit_review",
+            headers=OPERATOR_HEADERS,
+            json={
+                "idempotencyKey": "body-key-must-not-be-used",
+                "reason": "body idempotency key must fail closed",
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert detail["error"]["code"] == "INVALID_REQUEST"
+        assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
+        assert bff_main.command_store._get_all_commands() == []
 
 
 def test_bff_actions_adapter_requires_idempotency_key() -> None:

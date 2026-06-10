@@ -4,6 +4,16 @@ Priority: P0
 
 Owner lane: cross-repo acceptance / release handoff
 
+## Superseded Dev Hosting Note - 2026-06-08
+
+This task remains a historical record for the old Lovable-hosted frontend
+cutover path. It is not the current Pantheon dev frontend hosting rule.
+
+Current dev FE work must build and serve `ajoe734/execute-plans` from
+Pantheon-owned dev infrastructure. Do not wait for Lovable publish state when
+validating Pantheon dev FE. Use
+`docs/frontend/execute-plans-dev-hosting.md`.
+
 Repo:
 
 - `/home/lupin/code/execute-plans`

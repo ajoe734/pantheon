@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "BFF-B2-001",
+  "archived_at": "2026-05-23T08:12:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B2-001",
+    "title": "Strategy / Persona / Capital / Deployment list-detail facade (B2.1 14 endpoints)",
+    "summary_zh": null,
+    "phase": "Sprint BFF-2 / EPIC-BFF-GAP-CORE",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-003"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b21-strategy--persona--capital--deployment-core",
+      "services/control-plane/bff/main.py",
+      "execute-plans/src/lib/bff-v1/paths.ts"
+    ],
+    "acceptance": [
+      "Implements all 14 endpoints in spec section B2.1 (strategies x3 personas x5 capital-pools x2 rebalances x2 deployments x2)",
+      "List endpoints return {items pageInfo meta} envelope",
+      "Detail endpoints return {data meta}",
+      "meta.source one of live local_snapshot degraded",
+      "Anonymous 401 authenticated 200"
+    ],
+    "next": "Owner finalized: PRs #425 (implementation) and #440 (closeout artifacts) merged to dev. B2.1 14-endpoint list-detail facade verified: 39/39 tests pass, py_compile clean. Review evidence in support/reviews/BFF-B2-001-review-codex2.md. Note: execute-plans artifact was verification-only (no code change); delivery gates overridden TASK_REQUIRE_COMMIT_HASH=false TASK_REQUIRE_MERGED_PR=false to avoid false-positive check against execute-plans primary-repo detection.",
+    "last_update": "2026-05-23T08:12:32Z",
+    "review_notes_zh": [
+      "審查通過：B2.1 focused suite `pytest services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py` 通過 39/39；14 個 GET facade paths 覆蓋 auth gate、envelope、主要 DTO shape 與 404。",
+      "審查通過：FastAPI route table 顯示 strategies/personas/capital-pools/deployments/rebalances 及 sub-resource routes 均指向具名 handler，未落回 sem_final_id_named_read_alias 或 generic alias。",
+      "額外驗證：用 temp copy 的 read_surfaces fixture smoke `GET /bff/deployments/plan-F-042`，確認 200 且 data 同時包含 approval_decision 與 review；未修改 tracked fixture。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T08:12:32Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/home/lupin/code/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "main",
+      "git_clean_required": false,
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/main",
+      "ahead": 2,
+      "behind": 116,
+      "push_status": "diverged"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B2-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "B2.1 list-detail facade ready for review. Anchor commit: 2e99aa38.\n\nChanged:\n1. docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md — §B2.1 section with endpoint inventory (14 endpoints), response envelope, and 22 acceptance criteria.\n2. services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py (new) — 39 integration tests: list/detail/404/401 for all 14 read endpoints across strategies, personas, capital-pools, deployments, rebalances + sub-resources.\n3. services/control-plane/bff/main.py — removed duplicate @app.get decorators for /bff/capital-pools/{id}, /bff/deployments/{id}, /bff/personas/{id}, /bff/rebalances/{id}, /bff/strategies/{id} from catch-all handler; removed duplicate @app.patch decorators for /bff/capital-pools/{id}, /bff/personas/{id}, /bff/strategies/{id}.\n\nVerified: pytest tests/test_bff_b2_list_detail_facade.py → 39 passed in 7.77s",
+      "status": "done",
+      "created_at": "2026-05-23T06:31:19Z",
+      "resolved_at": "2026-05-23T06:37:19Z"
+    },
+    {
+      "task_id": "BFF-B2-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review approved: 14 B2.1 list/detail facade paths verified, focused tests pass, route shadowing removed. Returned to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T06:37:19Z",
+      "resolved_at": "2026-05-23T06:52:07Z"
+    },
+    {
+      "task_id": "BFF-B2-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "B2.1 implementation complete and merged to dev (PR #425 / 34ae56a5). 14 endpoints: strategy list/detail, persona list/detail, capital-pool list/detail, deployment list/detail. 39 tests pass. Spec sections §B2.1 + §16 + §B7 additive-only (no conflicts). Please review services/control-plane/bff/main.py and tests/test_bff_b2_*.py for correctness and spec compliance.",
+      "status": "done",
+      "created_at": "2026-05-23T07:25:53Z",
+      "resolved_at": "2026-05-23T07:35:23Z"
+    },
+    {
+      "task_id": "BFF-B2-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Review approved by Codex2: B2.1 14-endpoint facade matches spec, focused tests pass, route shadowing removed; hand back to Claude2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T07:35:23Z",
+      "resolved_at": "2026-05-23T07:43:49Z"
+    },
+    {
+      "task_id": "BFF-B2-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Re-approval needed: progress command was accidentally called during closeout, moving task from review_approved to in_progress. Implementation unchanged: PR #425 merged to dev, pytest 39/39 pass, catch-all decorators removed, anchor commit 2e99aa38 with required trailers. Please re-approve so owner can run done.",
+      "status": "done",
+      "created_at": "2026-05-23T07:47:07Z",
+      "resolved_at": "2026-05-23T07:52:54Z"
+    },
+    {
+      "task_id": "BFF-B2-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Re-approval: PR #425 is merged to dev; B2.1 focused suite passes 39/39; existing review evidence remains valid. Owner may finalize done.",
+      "status": "done",
+      "created_at": "2026-05-23T07:52:54Z",
+      "resolved_at": "2026-05-23T08:12:32Z"
+    }
+  ],
+  "blockers": []
+}

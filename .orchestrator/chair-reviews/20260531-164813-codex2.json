@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Low utilization with runnable assistant gateway support work and no approvals, pauses, or global blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-KERNEL-003"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-001",
+    "ASST-KERNEL-003",
+    "OPS-WORKTREE-REFRESH-001",
+    "OPS-TASK-BRANCH-RETIREMENT-20260531"
+  ]
+}

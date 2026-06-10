@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No active dispatch, approval, or provider blocker; idle capacity can take sidecars once a real parent wave is opened.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-PUBLISH-DISCIPLINE-REPAIR: fix nightly publish release-discipline failures and missing delivery metadata for OSS-STAT-001-SIDECAR-ACCEPTANCE, LOVABLE-STRICT-PUBLISH, and OSS-QUANTLIB-V2-001; rerun scripts/git/nightly_publish.sh check.",
+    "ORCH-STALE-BRIEFS-CLEANUP: reconcile stale in_progress/review_approved task briefs with ai-status and ai-task-archive so old materialized context is not read as live board state.",
+    "OPS-BRANCH-RETIREMENT: delete the 39 task/BFF-* branches verified merged into origin/dev; inspect EP5-002-V2 and OSS-FINRL-V2-001 trailing commits before any deletion.",
+    "P1-WAVE-PLANNING: open the next GOV-DEPLOY/RUNTIME parent wave before generating sidecars; no active parent tasks exist now."
+  ]
+}

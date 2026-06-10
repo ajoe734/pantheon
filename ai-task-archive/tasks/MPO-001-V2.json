@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "MPO-001-V2",
+  "archived_at": "2026-05-20T15:39:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPO-001-V2",
+    "title": "Multi-persona sponsor resolution service (Pantheon scope)",
+    "summary_zh": "Implements sponsor resolver per blueprint §11 MPO-001. Accepts N persona proposals from MGMT-SYN PersonaAllocationProposal store, detects conflicts via existing conflict classifier, produces sponsor-resolved proposal, requires sponsor persona, outputs conflict_resolution_log. Pantheon-scope only — does NOT re-implement MGMT-SYN allocation logic; consumes MGMT-SYN-005 output as input.",
+    "phase": "Phase 8 / EPIC-MPO",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/governance/multi_persona/sponsor_resolver.py",
+      "services/governance/multi_persona/conflict_resolution_log.py",
+      "tests/governance/test_sponsor_resolver.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 blueprint section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: implementation PR #367 and closeout evidence PR #369 merged to dev; focused sponsor resolver and adjacent optimizer verification passed.",
+    "last_update": "2026-05-20T15:39:41Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-v3-blueprint-residual-2026-05-20",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：PR #367 修正 source-vetoed proposal 仍造成 live-binding open_conflicts 的回歸；resolver 仍保留全量 classified_conflicts 作 audit，但 hard-vetoed proposal 相關 committee conflicts 不再阻塞 live-binding gate。驗證通過：PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/governance/test_sponsor_resolver.py -q；PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/governance/multi_persona/sponsor_resolver.py services/governance/multi_persona/conflict_resolution_log.py tests/governance/test_sponsor_resolver.py；PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py services/optimizer-svc/test_allocation_conflict_classifier.py tests/governance/test_sponsor_resolver.py -q；git diff --check HEAD^1 HEAD。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T15:39:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpo-001-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPO-001-V2",
+      "git_clean_required": false,
+      "commit": "eb358d4e73c81129bfc197f1f4bee7427441554e",
+      "commit_subject": "MPO-001-V2: record owner closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped owner closeout evidence for sponsor resolver PR #367.",
+        "Not changing": "sponsor resolver implementation, canonical L1 docs, or status lifecycle state.",
+        "Composes with": "PR #367 merged implementation and Codex2 review approval.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MPO-001-V2",
+        "Reviewer": "Codex2",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/governance/multi_persona/sponsor_resolver.py services/governance/multi_persona/conflict_resolution_log.py tests/governance/test_sponsor_resolver.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/governance/test_sponsor_resolver.py -q; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/optimizer-svc/test_portfolio_synthesis.py services/optimizer-svc/test_persona_allocation_proposal_store.py services/optimizer-svc/test_allocation_conflict_classifier.py tests/governance/test_sponsor_resolver.py -q; git diff --check HEAD^1 HEAD"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPO-001-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "071a374db822c70fd6c4432c3218e8f4ecd30594",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPO-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #360 merged into dev at merge commit 088a5dd06784c4bd304e2dea40f5bb2e878637c7. Implementation commit b3603e97 adds governance multi_persona sponsor resolver, conflict_resolution_log model, and focused tests. Validation: tests/governance/test_sponsor_resolver.py plus adjacent MGMT-SYN classifier/synthesis/artifact tests all pass; GitHub Commit trailers, Runtime mirror guard, Smoke acceptance all pass. Please review/approve so owner can run done closeout.",
+      "status": "done",
+      "created_at": "2026-05-20T14:46:47Z",
+      "resolved_at": "2026-05-20T14:52:19Z"
+    },
+    {
+      "task_id": "MPO-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review failed: sponsor_resolver trusts source_conflict_resolution_log.committee_ref without validating that the source log matches the artifact/proposals. An unrelated source log can close open committee conflicts and be recorded as source_conflict_resolution_log_id. Please validate source log capital_pool_id, scope_ref, proposal_ids, sponsor_persona_id, synthesis_method/log linkage before committee_ref or source weights/veto data are accepted, and add regression coverage for mismatched source log fail-closed behavior.",
+      "status": "done",
+      "created_at": "2026-05-20T14:52:19Z",
+      "resolved_at": "2026-05-20T14:52:19Z"
+    },
+    {
+      "task_id": "MPO-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #365 merged; source conflict log validation added with fail-closed regression coverage. Reviewer follow-up requested for MPO-001-V2.",
+      "status": "done",
+      "created_at": "2026-05-20T15:02:09Z",
+      "resolved_at": "2026-05-20T15:12:42Z"
+    },
+    {
+      "task_id": "MPO-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review blocked: sponsor_resolver classifies all source proposals as open even when MGMT-SYN source_conflict_resolution_log hard-vetoed a conflicting proposal. Repro: two high-conviction long/short proposals, pap-beta vetoed by PoolRiskPolicy(forbidden_strategy_families), MGMT-SYN emits single_proposal artifact, but resolve_sponsor still opens direction_conflict and sponsor_ambiguity. Required change: treat source vetoed_proposals as resolved/closed for open_conflicts, or classify only unresolved/surviving proposals for the live-binding gate, with regression coverage.",
+      "status": "done",
+      "created_at": "2026-05-20T15:12:42Z",
+      "resolved_at": "2026-05-20T15:12:42Z"
+    },
+    {
+      "task_id": "MPO-001-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Source-veto regression fix merged in PR #367 (eb105a2cc33a59b3c509e2c4b1e51386317c8e63); pytest tests/governance/test_sponsor_resolver.py passed; ready for Codex2 review.",
+      "status": "done",
+      "created_at": "2026-05-20T15:23:52Z",
+      "resolved_at": "2026-05-20T15:32:13Z"
+    },
+    {
+      "task_id": "MPO-001-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: source-veto regression fixed in PR #367; focused sponsor resolver and adjacent optimizer tests pass. Returning to Codex for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-20T15:32:13Z",
+      "resolved_at": "2026-05-20T15:39:42Z"
+    }
+  ],
+  "blockers": []
+}

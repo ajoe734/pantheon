@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity remains and sidecar pressure is low; ASST-OCGW-002 is the only unsafe parent while closeout repair is active.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-OCGW-002"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-OCGW-002",
+    "ASST-KERNEL-006",
+    "OPS-ARCHIVE-AUTO-COMMIT-20260531T165903Z",
+    "OPS-CHAIR-PR-CLEANUP"
+  ]
+}

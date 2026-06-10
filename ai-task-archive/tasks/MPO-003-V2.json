@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MPO-003-V2",
+  "archived_at": "2026-05-20T16:41:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPO-003-V2",
+    "title": "Multi-persona OODA E2E packet (≥2 personas + sponsor-resolved allocation)",
+    "summary_zh": "End-to-end test per blueprint §11 MPO-002. At least 2 personas, shared StrategySpec pool, sponsor-selected allocation proposal via MPO-001-V2, conflict log non-null, persona registry health gate enforced via MPO-002-V2, governance review receives synthesized memo. Produces evidence packet linked from EP5 readiness.",
+    "phase": "Phase 8 / EPIC-MPO",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MPO-001-V2",
+      "MPO-002-V2"
+    ],
+    "artifacts": [
+      "tests/e2e/test_multi_persona_ooda_packet.py",
+      "support/evidence/MPO-003-V2/full_packet.json",
+      "support/evidence/MPO-003-V2/closure_summary.md"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 blueprint section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized: E2E test 1 passed (0.29s), all 5 acceptance gates true. PR #372 merged to dev. Task commit 001dc4f6 carries LLM-Agent/Task-ID/Reviewer trailers. Artifacts verified: test_multi_persona_ooda_packet.py, full_packet.json, closure_summary.md.",
+    "last_update": "2026-05-20T16:41:11Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-v3-blueprint-residual-2026-05-20",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：E2E 測試 1 passed，全 5 個 acceptance gate 均為 true；sponsor 已解析，weight_conflict 分類衝突非 null，health gate 正確排除 suspended persona，governance memo 非空。返回 owner Claude 收尾。"
+    ],
+    "review_file": "support/reviews/MPO-003-V2-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T16:41:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpo-003-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPO-003-V2",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 2,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPO-003-V2",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "530d65fb541767fd9fc875fb14ba83f5a91a2077",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPO-003-V2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "E2E test + evidence packet ready for review. PR #370 open with auto-merge. Test: 1 passed. All 5 acceptance gates true: ≥2 personas, sponsor resolved, classified_conflicts non-null (weight_conflict), health gate enforced (suspended excluded), governance memo non-empty.",
+      "status": "done",
+      "created_at": "2026-05-20T15:49:39Z",
+      "resolved_at": "2026-05-20T15:50:54Z"
+    },
+    {
+      "task_id": "MPO-003-V2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Ready for review. PR #370 merged. Test: 1 passed. All 5 acceptance gates verified. Evidence packet at support/evidence/MPO-003-V2/.",
+      "status": "done",
+      "created_at": "2026-05-20T15:50:54Z",
+      "resolved_at": "2026-05-20T15:58:06Z"
+    },
+    {
+      "task_id": "MPO-003-V2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all 5 acceptance gates verified, test 1 passed in 0.28s. Returning to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-05-20T15:58:06Z",
+      "resolved_at": "2026-05-20T16:41:12Z"
+    }
+  ],
+  "blockers": []
+}

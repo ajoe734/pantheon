@@ -75,6 +75,8 @@ class EvidenceRefType(str, Enum):
     TELEMETRY_SUMMARY = "telemetry_summary"
     AUDIT_LOG_ENTRY = "audit_log_entry"
     MANUAL_REVIEW_TICKET = "manual_review_ticket"
+    COMMITTEE_MEMO = "committee_memo"
+    SERVICE_HANDOFF = "service_handoff"
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +104,93 @@ class OwnerMatrix:
     def minimum_roles_for(risk: RiskLevel) -> List[ActorRole]:
         """Return the list of authorized roles for a given risk level."""
         return list(OWNER_MATRIX.get(risk, []))
+
+
+# ---------------------------------------------------------------------------
+# Consultation Gate
+# ---------------------------------------------------------------------------
+
+CONSULTATION_GATE_TARGET_TYPES = frozenset({TargetType.ALLOCATION_POLICY})
+CONSULTATION_GATE_RISK_LEVELS = frozenset({RiskLevel.HIGH, RiskLevel.CRITICAL})
+CONSULTATION_HANDOFF_MAX_AGE_SECONDS = 86400  # 24 hours
+
+
+class ConsultationGateError(ValueError):
+    """Raised when a high-risk allocation approval is missing required consultation evidence."""
+
+
+def consultation_gate_required(
+    target_type: "TargetType | str",
+    risk_level: "RiskLevel | str",
+) -> bool:
+    """Return True if this target_type + risk_level requires consultation handoff evidence."""
+    try:
+        tt = TargetType(target_type)
+        rl = RiskLevel(risk_level)
+    except ValueError:
+        return False
+    return tt in CONSULTATION_GATE_TARGET_TYPES and rl in CONSULTATION_GATE_RISK_LEVELS
+
+
+def _ref_type_str(ref: Any) -> str:
+    if isinstance(ref, dict):
+        val = ref.get("ref_type", "")
+    else:
+        val = getattr(ref, "ref_type", "")
+    return val.value if isinstance(val, EvidenceRefType) else str(val)
+
+
+def _issued_at_from_ref(ref: Any) -> Optional[str]:
+    storage_ref = None
+    if isinstance(ref, dict):
+        storage_ref = ref.get("storage_ref")
+    else:
+        storage_ref = getattr(ref, "storage_ref", None)
+    if isinstance(storage_ref, dict):
+        return storage_ref.get("issued_at")
+    return None
+
+
+def validate_consultation_gate(
+    evidence_refs: "List[Any]",
+    *,
+    now_iso: Optional[str] = None,
+) -> None:
+    """Validate consultation handoff evidence for high-risk allocation_policy approvals.
+
+    Raises ConsultationGateError when:
+    - No committee_memo evidence ref is present.
+    - No service_handoff evidence ref is present.
+    - A service_handoff ref carries an issued_at that is stale beyond
+      CONSULTATION_HANDOFF_MAX_AGE_SECONDS.
+    """
+    memo_refs = [r for r in evidence_refs if _ref_type_str(r) == EvidenceRefType.COMMITTEE_MEMO.value]
+    handoff_refs = [r for r in evidence_refs if _ref_type_str(r) == EvidenceRefType.SERVICE_HANDOFF.value]
+
+    if not memo_refs:
+        raise ConsultationGateError(
+            "committee_memo evidence ref is required for high-risk allocation_policy approval"
+        )
+    if not handoff_refs:
+        raise ConsultationGateError(
+            "service_handoff evidence ref is required for high-risk allocation_policy approval"
+        )
+
+    now = (
+        datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+        if now_iso
+        else datetime.now(timezone.utc)
+    )
+    for ref in handoff_refs:
+        issued_at_str = _issued_at_from_ref(ref)
+        if issued_at_str:
+            issued_at = datetime.fromisoformat(issued_at_str.replace("Z", "+00:00"))
+            age = (now - issued_at).total_seconds()
+            if age > CONSULTATION_HANDOFF_MAX_AGE_SECONDS:
+                raise ConsultationGateError(
+                    f"service_handoff evidence is stale (age={age:.0f}s, "
+                    f"max={CONSULTATION_HANDOFF_MAX_AGE_SECONDS}s)"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +330,9 @@ class ApprovalDecision:
                     "'approved_with_conditions' requires at least one condition"
                 )
             self.conditions = conditions
+        effective_refs = evidence_refs if evidence_refs is not None else self.evidence_refs
+        if consultation_gate_required(self.target_type, self.risk_level):
+            validate_consultation_gate(effective_refs)
         if evidence_refs:
             self.evidence_refs = evidence_refs
         self.decision = outcome
@@ -446,6 +538,15 @@ def validate_decision_json(data: Dict[str, Any]) -> List[str]:
         errors.append(
             f"Invalid risk_level: {data['risk_level']}. Must be one of {valid_risks}"
         )
+
+    # Consultation gate check for high-risk allocation_policy
+    if consultation_gate_required(
+        data.get("target_type", ""), data.get("risk_level", "low")
+    ) and data.get("decision_state") == DecisionState.DECIDED:
+        try:
+            validate_consultation_gate(data.get("evidence_refs") or [])
+        except ConsultationGateError as exc:
+            errors.append(str(exc))
 
     state = data.get("decision_state")
     if state in (

@@ -43,6 +43,23 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type
         ON telemetry_events (event_type);
     """,
+    # Expression indexes for operational readback, replay triage, and lineage joins
+    """
+    CREATE INDEX IF NOT EXISTS idx_telemetry_events_binding_id
+        ON telemetry_events ((payload->>'binding_id'));
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_telemetry_events_runtime_id
+        ON telemetry_events ((payload->>'runtime_id'));
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_stage
+        ON telemetry_events ((payload->>'deployment_stage'));
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_telemetry_events_payload_gin
+        ON telemetry_events USING GIN (payload);
+    """,
 ]
 
 async def run():

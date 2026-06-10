@@ -5,6 +5,7 @@ import importlib
 import os
 from pathlib import Path
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import MagicMock, patch
@@ -192,6 +193,9 @@ class _FakeProbeResponse:
 
 
 class TestUpstreamProbe(unittest.TestCase):
+    def test_upstream_ready_true_health_payload_is_reachable(self):
+        self.assertTrue(adapter_main._is_healthy_upstream_response(200, b'{"ready":true}'))
+
     def test_probe_prefers_readyz_for_upstream_readiness(self):
         calls = []
 
@@ -267,6 +271,12 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(body["canary_adapter"], "deferred")
         self.assertFalse(body["paper_broker"]["paper_adapter_enabled"])
         self.assertEqual(body["paper_broker"]["runtime_binding_check"], "required_for_submit")
+        self.assertEqual(
+            body["assistant_credential_mounts"]["host_policy"],
+            "dedicated_service_user_only",
+        )
+        self.assertIn("codex", body["assistant_credential_mounts"]["mounts"])
+        self.assertNotIn("/srv/pantheon-assistant", str(body["assistant_credential_mounts"]))
         self.assertIn("supported_session_types", body)
         self.assertEqual(body["upstream"]["status"], "degraded")
 
@@ -293,6 +303,388 @@ class TestCapabilities(unittest.TestCase):
         body = resp.json()
         self.assertEqual(body["governed_search"], "enabled")
         self.assertIn("governed_search", body["activation_gates"])
+
+    def test_assistant_credentials_endpoint_is_sanitized(self):
+        resp = client.get("/api/openclaw-adapter/assistant/credentials")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["host_policy"], "dedicated_service_user_only")
+        self.assertIn("claude", body["mounts"])
+        self.assertNotIn("/srv/pantheon-assistant", str(body))
+        self.assertNotIn("/home/pantheon-assistant", str(body))
+
+    def test_assistant_codex_readiness_uses_codex_provider(self):
+        with patch.object(
+            adapter_main._CODEX_PROVIDER,
+            "readiness",
+            return_value={"provider": "codex_cli", "ready": False, "status": "degraded"},
+        ) as readiness:
+            resp = client.get("/api/openclaw-adapter/assistant/readiness/codex?auth_probe=true")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["provider"], "codex_cli")
+        readiness.assert_called_once_with(auth_probe=True)
+
+    def test_assistant_provider_list_includes_codex(self):
+        with patch.object(
+            adapter_main._CODEX_PROVIDER,
+            "readiness",
+            return_value={"provider": "codex_cli", "ready": True, "status": "ready"},
+        ):
+            resp = client.get("/api/openclaw-adapter/assistant/providers")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"][0]["provider"], "codex_cli")
+
+    def test_assistant_skill_authorize_allows_sa_sd_descriptor(self):
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(allowed_tools=["assistant.sa_sd.generate"]),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-skill-1",
+        )
+        with patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/skills/assistant.sa_sd.generate/authorize",
+                json={
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                    "session_id": "conv-1",
+                    "request_type": "assistant_dev_docs_generate",
+                },
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-skill-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"]["status"], "allowed")
+        self.assertEqual(body["data"]["skill_id"], "assistant.sa_sd.generate")
+        self.assertEqual(
+            body["data"]["descriptor"]["handler_ref"],
+            "bff.route:POST /bff/assistant/dev-docs/generate",
+        )
+        entries = bridge._audit.read()  # noqa: SLF001 - test asserts route admission audit.
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["request_type"], "assistant_dev_docs_generate")
+        self.assertEqual(entries[0]["outcome"], "allowed")
+
+    def test_assistant_skill_authorize_fails_closed_when_skill_not_allowlisted(self):
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(allowed_tools=[]),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+        )
+        with patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/skills/assistant.sa_sd.generate/authorize",
+                json={
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error_code"], "BRIDGE_SKILL_DENIED")
+
+    def test_assistant_codex_reauth_starts_device_flow(self):
+        fake_payload = {
+            "reauth_session_id": "codex_reauth_1",
+            "provider": "codex_cli",
+            "status": "pending",
+            "verification_uri": "https://auth.openai.com/device",
+            "user_code": "ABCD-EFGH",
+            "credential_exchange": {
+                "bff_handles_credentials": False,
+                "frontend_handles_credentials": False,
+            },
+        }
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(
+                allowed_tools=[adapter_main.ASSISTANT_PROVIDER_REAUTH_TOOL_NAME]
+            ),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-reauth-1",
+        )
+        with patch.object(
+            adapter_main._CODEX_PROVIDER,
+            "start_device_reauth",
+            return_value=fake_payload,
+        ) as start, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/reauth",
+                json={
+                    "reason": "expired",
+                    "captureTimeoutSeconds": 3,
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={
+                    "X-Operator-Id": "op-1",
+                    "X-Trace-Id": "trace-reauth-1",
+                    "X-Operator-Role": "operator",
+                    "X-Assistant-Mode": "kernel_debug",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 202)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"]["verification_uri"], "https://auth.openai.com/device")
+        self.assertEqual(body["data"]["user_code"], "ABCD-EFGH")
+        start.assert_called_once_with(
+            operator_id="op-1",
+            trace_id="trace-reauth-1",
+            reason="expired",
+            capture_timeout_seconds=3,
+            poll_interval_seconds=None,
+            max_wait_seconds=None,
+        )
+        entries = bridge._audit.read()  # noqa: SLF001 - test asserts route admission audit.
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["request_type"], "assistant_provider_reauth")
+        self.assertEqual(entries[0]["outcome"], "allowed")
+
+    def test_assistant_codex_reauth_fails_closed_when_skill_not_allowlisted(self):
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(allowed_tools=[]),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+        )
+        with patch.object(adapter_main._CODEX_PROVIDER, "start_device_reauth") as start, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/reauth",
+                json={
+                    "reason": "expired",
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={"X-Operator-Id": "op-1", "X-Operator-Role": "operator"},
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error_code"], "BRIDGE_SKILL_DENIED")
+        start.assert_not_called()
+
+    def test_assistant_codex_reauth_requires_operator(self):
+        with patch.object(adapter_main._CODEX_PROVIDER, "start_device_reauth") as start:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/reauth",
+                json={"reason": "expired"},
+            )
+
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["error_code"], "OPERATOR_REQUIRED")
+        start.assert_not_called()
+
+    def test_assistant_codex_reauth_status_returns_session(self):
+        with patch.object(
+            adapter_main._CODEX_PROVIDER,
+            "reauth_status",
+            return_value={
+                "reauth_session_id": "codex_reauth_1",
+                "provider": "codex_cli",
+                "status": "completed",
+                "readiness": {"ready": True},
+            },
+        ) as status:
+            resp = client.get(
+                "/api/openclaw-adapter/assistant/providers/codex/reauth/codex_reauth_1",
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["data"]["status"], "completed")
+        status.assert_called_once_with("codex_reauth_1")
+
+    def test_assistant_codex_invoke_passes_through_runtime(self):
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="user",
+            status="completed",
+            output={"status": "completed", "stdout": "ok"},
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as invoke:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={"mode": "user", "prompt": "hello", "context_pack": {"x": 1}},
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-1"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["data"]["provider"], "codex_cli")
+        request = invoke.call_args.args[0]
+        self.assertEqual(request.provider, "codex_cli")
+        self.assertEqual(request.mode, "user")
+        self.assertEqual(request.prompt, "hello")
+        self.assertEqual(request.metadata["operator_id"], "op-1")
+        self.assertEqual(request.metadata["trace_id"], "trace-1")
+
+    def test_assistant_codex_invoke_preserves_multimodal_payload(self):
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="user",
+            status="completed",
+            output={"status": "completed", "stdout": "ok"},
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "inspect"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,aW1n"},
+                        "attachmentId": "att-1",
+                    },
+                ],
+            }
+        ]
+        attachments = [
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,aW1n"},
+                "attachmentId": "att-1",
+            }
+        ]
+        with patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as invoke:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={
+                    "mode": "user",
+                    "prompt": "hello",
+                    "context_pack": {"x": 1},
+                    "messages": messages,
+                    "attachments": attachments,
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        request = invoke.call_args.args[0]
+        self.assertEqual(request.messages, messages)
+        self.assertEqual(request.attachments, attachments)
+
+    def test_assistant_codex_invoke_header_operator_overrides_body_metadata(self):
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="user",
+            status="completed",
+            output={"status": "completed", "stdout": "ok"},
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as invoke:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={
+                    "mode": "user",
+                    "prompt": "hello",
+                    "metadata": {"operator_id": "body-op", "task_id": "ASST-OCGW-003"},
+                },
+                headers={"X-Operator-Id": "header-op"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        request = invoke.call_args.args[0]
+        self.assertEqual(request.metadata["operator_id"], "header-op")
+        self.assertEqual(request.metadata["task_id"], "ASST-OCGW-003")
+
+    def test_assistant_codex_invoke_requires_operator_id(self):
+        with patch.object(adapter_main._CODEX_RUNTIME, "invoke") as invoke:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={"mode": "user", "prompt": "hello"},
+            )
+        self.assertEqual(resp.status_code, 401)
+        body = resp.json()
+        self.assertEqual(body["status"], "provider_error")
+        self.assertEqual(body["error_code"], "OPERATOR_REQUIRED")
+        invoke.assert_not_called()
+
+    def test_assistant_codex_invoke_returns_provider_error(self):
+        with patch.object(
+            adapter_main._CODEX_RUNTIME,
+            "invoke",
+            side_effect=adapter_main.CodexProviderError(
+                "CODEX_TIMEOUT",
+                "Codex provider timed out after 7s.",
+                status_code=504,
+                retryable=True,
+            ),
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={"mode": "user", "prompt": "hello"},
+                headers={"X-Operator-Id": "op-1"},
+            )
+        self.assertEqual(resp.status_code, 504)
+        body = resp.json()
+        self.assertEqual(body["error_code"], "CODEX_TIMEOUT")
+        self.assertTrue(body["retryable"])
+
+    def test_assistant_repair_worktree_prepare_requires_operator(self):
+        resp = client.post(
+            "/api/openclaw-adapter/assistant/repair-worktrees/prepare",
+            json={"taskId": "MGMT-AI-REPAIR-1", "declaredScope": ["services/control-plane/bff"]},
+        )
+
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()["error_code"], "OPERATOR_REQUIRED")
+
+    def test_assistant_repair_worktree_prepare_returns_metadata(self):
+        fake_preparation = types.SimpleNamespace(
+            to_dict=lambda: {
+                "created": True,
+                "repair": {
+                    "task_id": "MGMT-AI-REPAIR-1",
+                    "task_worktree": "/srv/pantheon-assistant/worktrees/mgmt-ai-repair-1",
+                    "declared_scope": ["services/control-plane/bff"],
+                    "expected_branch": "task/MGMT-AI-REPAIR-1",
+                    "remote": "origin",
+                    "merge_target": "dev",
+                    "require_clean": True,
+                },
+            }
+        )
+        with patch.object(adapter_main._REPAIR_WORKFLOW, "prepare", return_value=fake_preparation) as prepare:
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/repair-worktrees/prepare",
+                json={"taskId": "MGMT-AI-REPAIR-1", "declaredScope": ["services/control-plane/bff"]},
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-1"},
+            )
+
+        self.assertEqual(resp.status_code, 201)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"]["repair"]["task_id"], "MGMT-AI-REPAIR-1")
+        metadata = prepare.call_args.args[0]
+        self.assertEqual(metadata["taskId"], "MGMT-AI-REPAIR-1")
+        self.assertEqual(metadata["declaredScope"], ["services/control-plane/bff"])
+        self.assertEqual(metadata["operator_id"], "op-1")
+        self.assertEqual(metadata["trace_id"], "trace-1")
+
+    def test_assistant_repair_worktree_prepare_maps_workflow_error(self):
+        with patch.object(
+            adapter_main._REPAIR_WORKFLOW,
+            "prepare",
+            side_effect=adapter_main.AssistantRepairWorkflowError(
+                "REPAIR_REPO_URL_NOT_CONFIGURED",
+                "Repair repo source missing.",
+                status_code=503,
+            ),
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/repair-worktrees/prepare",
+                json={"taskId": "MGMT-AI-REPAIR-1", "declaredScope": ["services/control-plane/bff"]},
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertEqual(body["status"], "repair_workflow_error")
+        self.assertEqual(body["error_code"], "REPAIR_REPO_URL_NOT_CONFIGURED")
 
 
 # ---------------------------------------------------------------------------

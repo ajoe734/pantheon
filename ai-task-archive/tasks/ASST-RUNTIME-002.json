@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "task_id": "ASST-RUNTIME-002",
+  "archived_at": "2026-06-09T00:58:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "ASST-RUNTIME-002",
+    "title": "Wire runtime recovery actions to audited runtime-manager or admin CLI execution",
+    "summary_zh": "把核准的 runtime recovery action 接到 runtime-manager protected API 或 admin CLI，補 audit receipt、idempotency 與 stale-session guard。",
+    "phase": "Sprint ASST-RUNTIME / Runtime repair execution",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASST-RUNTIME-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/CONTROL_MODE_REPAIR_EXECUTION_TASKS_2026-06-06.md;services/control-plane/bff/command_executor.py;services/control-plane/bff/test_command_executor.py;services/control-plane/bff/test_bff_write_gap_2026_05_28.py;scripts/pantheon-admin;services/runtime-manager"
+    ],
+    "acceptance": [
+      "runtime repair actions dispatch through runtime-manager protected API or admin CLI not raw BFF shell;each command writes audit receipt with actor action target idempotency key stage and trace id;stale monitoring sessions terminate only when heartbeat/session evidence proves staleness;restart/probe flows update or verify telemetry projection freshness;tests cover success replay stale guard unauthorized missing confirmation and dependency degraded fallback;smoke proves heartbeat freshness recovery to staleness.age_seconds below 90"
+    ],
+    "next": "Superseded by OPS-STATE-CLOSEOUT-CLEANUP-20260609 delivery: command_executor now dispatches governed runtime repair actions through the protected runtime-manager/internal API, forwards command_id/confirm_token/idempotency/actor/trace metadata, returns audit receipts, and fails closed for stale monitoring-session termination without heartbeat staleness evidence.",
+    "last_update": "2026-06-09T00:58:38Z",
+    "task_class": "assistant_control_runtime_repair",
+    "auto_created_by": "dispatch_assistant_control_mode_repair_2026-06-06",
+    "auto_generated": true,
+    "terminal_outcome": "superseded",
+    "superseded_by": "OPS-STATE-CLOSEOUT-CLEANUP-20260609"
+  },
+  "handoffs": [],
+  "blockers": []
+}

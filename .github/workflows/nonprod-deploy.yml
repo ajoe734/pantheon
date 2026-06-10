@@ -108,24 +108,31 @@ jobs:
       - name: Deploy requested VM stack
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'edna' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-vm1' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/edna/code/pantheon' }}
-          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-ai-system-front-dev.lovable.app' }}
-          STAGING_CONTROL_VM: ${{ vars.STAGING_CONTROL_VM || 'pantheon-taiwan' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
+          DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
+          DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
+          DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
+          DEV_MANAGEMENT_AI_DB_PASSWORD: ${{ secrets.DEV_MANAGEMENT_AI_DB_PASSWORD }}
+          DEV_MANAGEMENT_AI_DATABASE_URL: ${{ secrets.DEV_MANAGEMENT_AI_DATABASE_URL }}
+          DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
+          DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
+          STAGING_CONTROL_VM: ${{ vars.STAGING_CONTROL_VM || 'pantheon-lupin-staging-control' }}
           STAGING_CONTROL_ZONE: ${{ vars.STAGING_CONTROL_ZONE || 'asia-east1-b' }}
-          STAGING_CONTROL_REMOTE_DIR: ${{ vars.STAGING_CONTROL_REMOTE_DIR || '/home/edna/code/pantheon' }}
-          STAGING_EXEC_VM: ${{ vars.STAGING_EXEC_VM || 'pantheon-exec-vm2-20260424' }}
-          STAGING_EXEC_ZONE: ${{ vars.STAGING_EXEC_ZONE || 'asia-east1-a' }}
-          STAGING_EXEC_REMOTE_DIR: ${{ vars.STAGING_EXEC_REMOTE_DIR || '/home/edna/code/pantheon' }}
-          STAGING_EXEC_HEALTH_URL: ${{ vars.STAGING_EXEC_HEALTH_URL || 'http://10.140.0.5:28081' }}
+          STAGING_CONTROL_REMOTE_DIR: ${{ vars.STAGING_CONTROL_REMOTE_DIR || '/home/lupin/code/pantheon' }}
+          STAGING_EXEC_VM: ${{ vars.STAGING_EXEC_VM || 'pantheon-lupin-staging-exec' }}
+          STAGING_EXEC_ZONE: ${{ vars.STAGING_EXEC_ZONE || 'asia-east1-b' }}
+          STAGING_EXEC_REMOTE_DIR: ${{ vars.STAGING_EXEC_REMOTE_DIR || '/home/lupin/code/pantheon' }}
+          STAGING_EXEC_HEALTH_URL: ${{ vars.STAGING_EXEC_HEALTH_URL || 'http://10.50.0.21:28081' }}
         run: |
           args=(
             --environment "${TARGET_ENV}"
             --component "${TARGET_COMPONENT}"
             --sha "${{ steps.sha.outputs.sha }}"
-            --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-493602' }}"
+            --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}"
           )
 
           if [[ "${ALLOW_DIRTY}" == "true" ]]; then
@@ -140,9 +147,11 @@ jobs:
 
       - name: Public BFF smoke
         env:
-          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-dev-bff.35.236.178.81.sslip.io' }}
-          DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-ai-system-front-dev.lovable.app' }}
-          STAGING_BFF_URL: ${{ vars.STAGING_BFF_URL || 'https://pantheon-staging-bff.34.81.225.122.sslip.io' }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
+          DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
+          STAGING_BFF_URL: ${{ vars.STAGING_BFF_URL || 'https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io' }}
+          # TODO(off-lovable): staging-live FE is migrating off Lovable to a self-hosted
+          # sslip.io origin; replace this default once the staging FE URL is provisioned.
           STAGING_BFF_CORS_ORIGIN: ${{ vars.STAGING_BFF_CORS_ORIGIN || 'https://pantheon-ai-system-front-staging-live.lovable.app' }}
         run: |
           case "${TARGET_ENV}:${TARGET_COMPONENT}" in

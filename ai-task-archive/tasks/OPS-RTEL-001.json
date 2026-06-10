@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "OPS-RTEL-001",
+  "archived_at": "2026-06-07T14:42:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-RTEL-001",
+    "title": "Telemetry durability bootstrap",
+    "summary_zh": "讓 telemetry schema bootstrap readiness writer metrics 與 DLQ replay 成為部署流程的一部分，不再靠手動補表或人工重送。",
+    "phase": "Runtime Telemetry Hardening",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/db_migrate.sh",
+      "scripts/bootstrap.sh",
+      "services/telemetry/main.py",
+      "services/telemetry/ingest_svc.py",
+      "services/telemetry/test_ingest_shock_absorption.py",
+      "services/telemetry/test_main_routes.py",
+      "docs/deployment/runtime-telemetry-hardening-2026-06-06.md"
+    ],
+    "acceptance": [
+      "fresh Postgres creates telemetry_events before telemetry ready",
+      "readyz fails when canonical table is missing",
+      "heartbeat ingest persists with zero writer failures",
+      "writer-failure DLQ replay is idempotent"
+    ],
+    "next": "Closed after PR #1051 (eef5c9a9), PR #1052 (56fb1877), and PR #1136 (60989373) merged into dev; final task HEAD 5fb018c2 is contained in origin/dev. Revalidated bash -n scripts/bootstrap.sh; bash -n scripts/db_migrate.sh; /tmp/ops-rtel-001-venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_main_routes (68 tests OK).",
+    "last_update": "2026-06-07T14:42:02Z",
+    "source_ref": {
+      "archive": "docs/deployment/runtime-telemetry-hardening-2026-06-06.md",
+      "execution_plan": "docs/deployment/runtime-telemetry-execution-tasks-2026-06-06.md",
+      "repair_pr": 1047,
+      "section": "Workstream A"
+    },
+    "task_class": "execution",
+    "auto_created_by": "codex-runtime-telemetry-hardening-20260606",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：已確認 PR #1051（eef5c9a9）與 PR #1052（56fb1877）已 merge 且 checks 成功",
+      "本次 Codex2 重新核對 artifacts 並重跑：bash -n scripts/bootstrap.sh；bash -n scripts/db_migrate.sh；/tmp/ops-rtel-001-venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_main_routes（68 tests OK）",
+      "無 blocking findings；交還 owner Codex 依 closeout finalization 做 done"
+    ],
+    "review_file": "docs/deployment/ops-rtel-001-review-2026-06-06.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-07T14:42:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-rtel-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-RTEL-001",
+      "git_clean_required": false,
+      "commit": "5fb018c2ea5ac0a132e289e9983d5f36dd30ee5b",
+      "commit_subject": "OPS-RTEL-001: refresh dev for closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "OPS-RTEL-001 task branch base refresh after dev advanced.",
+        "Not changing": "telemetry runtime implementation, bootstrap flow, schema DDL, or canonical architecture policy.",
+        "Composes with": "PR #1136 closeout artifact commit and current origin/dev.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-RTEL-001",
+        "Reviewer": "Codex2",
+        "Verified": "bash -n scripts/bootstrap.sh; bash -n scripts/db_migrate.sh; /tmp/ops-rtel-001-venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_main_routes"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-RTEL-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "60989373f765c5caea4d2bee537cafc7ef6cd205",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-RTEL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation was already merged via PR #1051 (eef5c9a9) and reviewer artifact via PR #1052 (56fb1877), but central status root resurrected OPS-RTEL-001 as in_progress without archive/review metadata. Revalidated now: bash -n scripts/bootstrap.sh; bash -n scripts/db_migrate.sh; /tmp/ops-rtel-001-venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_main_routes. Please re-approve the restored central lifecycle so Codex can run owner done closeout if still required.",
+      "status": "done",
+      "created_at": "2026-06-07T02:38:12Z",
+      "resolved_at": "2026-06-07T14:23:03Z"
+    },
+    {
+      "task_id": "OPS-RTEL-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude quota terminal: {\"type\":\"assistant\",\"message\":{\"id\":\"146cbf92-d073-4058-8de6-1100328f7fec\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_reason\":\"stop_sequenc",
+      "status": "done",
+      "created_at": "2026-06-07T14:23:03Z",
+      "resolved_at": "2026-06-07T14:31:49Z"
+    },
+    {
+      "task_id": "OPS-RTEL-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 re-approved restored central lifecycle after merged PR/check verification and focused local validation; owner Codex should finalize to done if still required.",
+      "status": "done",
+      "created_at": "2026-06-07T14:31:49Z",
+      "resolved_at": "2026-06-07T14:42:02Z"
+    }
+  ],
+  "blockers": []
+}

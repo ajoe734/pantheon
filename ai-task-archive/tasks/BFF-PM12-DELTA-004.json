@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "task_id": "BFF-PM12-DELTA-004",
+  "archived_at": "2026-05-24T13:43:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-PM12-DELTA-004",
+    "title": "GET /bff/management/performance-attribution/by-pool",
+    "summary_zh": null,
+    "phase": "Sprint BFF-DELTA / EPIC-BFF-DELTA-PM12-SUB",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-24_delta/BFF_API_GAP_delta_audit_spec.md;execute-plans/.lovable/audits/bff-backend-gap-2026-05-24-delta.md;services/control-plane/bff/main.py;execute-plans/src/lib/bff-v1/management.ts"
+    ],
+    "acceptance": [
+      "Path registered; attribution grouped by capital pool dimension;Accepts ?period= query;Anonymous 401 authenticated 200; envelope canonical; CORS preflight 204;pytest case attribution_by_pool"
+    ],
+    "next": "Owner closeout complete: implementation PR #515 merged at 0c5c24e13a369d0a5ca42aa88806d72909121f23; closeout PR #528 merged at 2b0b4bd0c4e1c711a58e27a83bc0ab720059a0d5; focused PM12/final-live/auth suite passed 59 tests with 3 existing datetime.utcnow warnings; git diff --check passed.",
+    "last_update": "2026-05-24T13:43:05Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-24T13:43:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-pm12-delta-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-PM12-DELTA-004",
+      "git_clean_required": false,
+      "commit": "e12aac17ad6297cd1cb30e09fa350689f1279905",
+      "commit_subject": "BFF-PM12-DELTA-004: refresh publication evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout evidence for PR #528 after refreshing against BFF-PM12-DELTA-003 on dev.",
+        "Not changing": "by-pool route runtime behavior, execute-plans helper contract, or canonical architecture.",
+        "Composes with": "PR #515 implementation merge, PR #528 closeout publication, and latest dev at BFF-PM12-DELTA-003.",
+        "Verified": "pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py services/control-plane/bff/tests/test_auth_jwks_strict.py -- 59 passed, 3 existing datetime.utcnow warnings; git diff --check",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "BFF-PM12-DELTA-004",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-PM12-DELTA-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2b0b4bd0c4e1c711a58e27a83bc0ab720059a0d5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-PM12-DELTA-004",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Ready for review: PR #515 merged to dev at 0c5c24e13a369d0a5ca42aa88806d72909121f23; task commit 18d45fccc20b1b7a338a5fca5a38c86d26e7ccdd; local validation pytest focused PM12/final-live/CORS suite 46 passed with 3 existing datetime.utcnow warnings.",
+      "status": "done",
+      "created_at": "2026-05-24T13:02:01Z",
+      "resolved_at": "2026-05-24T13:25:29Z"
+    },
+    {
+      "task_id": "BFF-PM12-DELTA-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: by-pool route is a clean narrow wrapper mirroring by-persona pattern. Backend adds /bff/management/performance-attribution/by-pool with correct auth/CORS/envelope. Frontend type/path/fetch helpers match contract. 3 tests cover happy-path, 401-unauth, 204-CORS-preflight. OpenAPI and wiring-contract assertions present. Focused pytest 49 passed (3 existing warnings). No scope creep. Owner to finalize closeout.",
+      "status": "done",
+      "created_at": "2026-05-24T13:25:29Z",
+      "resolved_at": "2026-05-24T13:43:06Z"
+    }
+  ],
+  "blockers": []
+}

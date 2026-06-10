@@ -66,9 +66,26 @@ class CommandType(str, Enum):
     CONFIRM_TOKEN_DELETE = "DeleteConfirmToken"
     CONFIRM_TOKEN_REDEEM = "RedeemConfirmToken"
     V5_INTERVENTION_ACTION = "V5InterventionAction"
+    DECIDE_V5_INTERVENTION = "DecideV5Intervention"
     SENTINEL_FINDING_STATUS = "SentinelFindingStatus"
     SENTINEL_REMEDIATION_BUILD = "SentinelRemediationBuild"
     SENTINEL_REMEDIATION_EXECUTE = "SentinelRemediationExecute"
+    ALERT_ACKNOWLEDGE = "AlertAcknowledge"
+    HUMAN_GATE_APPROVE = "HumanGateApprove"
+    HUMAN_GATE_REJECT = "HumanGateReject"
+    HUMAN_GATE_REQUEST_MORE_EVIDENCE = "HumanGateRequestMoreEvidence"
+    HUMAN_GATE_REVOKE = "HumanGateRevoke"
+    HUMAN_GATE_EXTEND_TTL = "HumanGateExtendTtl"
+    QUARTERLY_RANKING_RECOMMENDATION_SUBMIT = "QuarterlyRankingRecommendationSubmit"
+    # BFF-WRITE-P0-LIFECYCLE: P0-1/2/3 lifecycle action types
+    ADVANCE_LIFECYCLE = "AdvanceLifecycle"
+    APPROVE_POOL = "ApprovePool"
+    START_RUNTIME = "StartRuntime"
+    RESTART_PAPER_RUNTIME = "RestartPaperRuntime"
+    RESTART_TELEMETRY_BRIDGE = "RestartTelemetryBridge"
+    TERMINATE_STALE_PAPER_MONITORING_SESSION = "TerminateStalePaperMonitoringSession"
+    START_PAPER_MONITORING_SESSION = "StartPaperMonitoringSession"
+    PROBE_TELEMETRY_INGEST = "ProbeTelemetryIngest"
 
 
 class ObjectType(str, Enum):
@@ -106,6 +123,7 @@ class ObjectType(str, Enum):
     CONFIRM_TOKEN = "ConfirmToken"
     SENTINEL_FINDING = "SentinelFinding"
     SENTINEL_REMEDIATION = "SentinelRemediation"
+    HUMAN_GATE_ITEM = "HumanGateItem"
 
 
 class CommandStatus(str, Enum):
@@ -134,25 +152,36 @@ class CommandRoutingPath(str, Enum):
 
 
 # --------------------------------------------------------------------------- #
-# Error codes (§5.3 of APP-002-OPERATOR-ACTION-CONTRACT)
+# Error codes (Pack D §D21 canonical allowlist)
 # --------------------------------------------------------------------------- #
 
 class ErrorCode(str, Enum):
-    INVALID_REQUEST = "INVALID_REQUEST"
-    INVALID_TOKEN = "INVALID_TOKEN"
-    INSUFFICIENT_ROLE = "INSUFFICIENT_ROLE"
-    OBJECT_NOT_FOUND = "OBJECT_NOT_FOUND"
-    INVALID_STATE = "INVALID_STATE"
-    CONCURRENT_MODIFICATION = "CONCURRENT_MODIFICATION"
-    DOWNSTREAM_UNAVAILABLE = "DOWNSTREAM_UNAVAILABLE"
-    PRECONDITION_NOT_MET = "PRECONDITION_NOT_MET"
-    CONFIRM_TOKEN_REQUIRED = "CONFIRM_TOKEN_REQUIRED"
-    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
-    TWO_MAN_REQUIRED = "TWO_MAN_REQUIRED"
+    RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+    AUTH_REQUIRED = "AUTH_REQUIRED"
+    AUTH_EXPIRED = "AUTH_EXPIRED"
+    FORBIDDEN = "FORBIDDEN"
+    RATE_LIMITED = "RATE_LIMITED"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+    BUSINESS_RULE_VIOLATION = "BUSINESS_RULE_VIOLATION"
     IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-    SSE_REPLAY_UNAVAILABLE = "SSE_REPLAY_UNAVAILABLE"
-    MFA_REQUIRED = "MFA_REQUIRED"
-    INVALID_PARAMS = "INVALID_PARAMS"
+    PRECONDITION_FAILED = "PRECONDITION_FAILED"
+    CONFIRMATION_REQUIRED = "CONFIRMATION_REQUIRED"
+    TWO_MAN_SIGNATURE_REQUIRED = "TWO_MAN_SIGNATURE_REQUIRED"
+    HUMAN_GATE_PENDING = "HUMAN_GATE_PENDING"
+    HUMAN_GATE_REJECTED = "HUMAN_GATE_REJECTED"
+    HUMAN_GATE_EXPIRED = "HUMAN_GATE_EXPIRED"
+    RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
+    OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
+    DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
+    UPSTREAM_TIMEOUT = "UPSTREAM_TIMEOUT"
+    UPSTREAM_ERROR = "UPSTREAM_ERROR"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
+    MAINTENANCE_MODE = "MAINTENANCE_MODE"
+    KILL_SWITCH_ACTIVE = "KILL_SWITCH_ACTIVE"
+    SAFE_MODE_ACTIVE = "SAFE_MODE_ACTIVE"
+    DEGRADED_READ_ONLY = "DEGRADED_READ_ONLY"
+    REQUEST_TOO_LARGE = "REQUEST_TOO_LARGE"
 
 
 class ErrorDetail(BaseModel):
@@ -163,7 +192,10 @@ class ErrorDetail(BaseModel):
 
 class BffErrorPayload(BaseModel):
     code: ErrorCode
+    i18nKey: str
     message: str
+    retryable: bool
+    userActionable: bool
     details: Optional[ErrorDetail] = None
 
 

@@ -1,0 +1,322 @@
+{
+  "drill_packet": {
+    "action_type": "pause_then_replace",
+    "broker_subaccount_ref": "broker-subaccount://ep5/rollback-drill/no-live-routing",
+    "call_broker_api": false,
+    "capital_pool_id": "capital-pool-ep5-demo",
+    "current_binding_id": "rb-1af6a59171cd4ac3a415d4b66d8fe6ae",
+    "current_binding_status": "active",
+    "deployment_plan_ref": "deployment-plan-ep5-rollback-current",
+    "dispatch_live": false,
+    "drill_id": "rollback-drill-ep5-007",
+    "drill_stage": "canary",
+    "dry_run": true,
+    "ingest_telemetry": false,
+    "loader_checks_passed": true,
+    "opened_by_artifact_id": "artifact-ep5-current",
+    "operator_id": "operator-ep5-demo",
+    "replacement_allowed_deployment_scope": "paper",
+    "replacement_artifact_id": "artifact-ep5-fallback",
+    "replacement_artifact_version": "0.9.0",
+    "replacement_deployment_mode": "paper",
+    "replacement_persona_capital_binding_id": "pcb-ep5-fallback",
+    "replacement_plan_ref": "deployment-plan-ep5-rollback-fallback",
+    "replacement_runtime_id": "rt-ep5-rollback-replacement",
+    "side_effects_allowed": false
+  },
+  "harness_id": "rollback-drill-ep5-007",
+  "harness_version": "2026-05-20.EP5-007.rollback-drill-harness",
+  "live_capital_side_effects": false,
+  "promotion_readiness_packet": {
+    "approval": {
+      "operator": {
+        "recorded": false,
+        "required": false,
+        "role": "operator",
+        "state": "not_required"
+      },
+      "records": [],
+      "risk_owner": {
+        "recorded": false,
+        "required": false,
+        "role": "risk_owner",
+        "state": "not_required"
+      }
+    },
+    "blocking_reasons": [],
+    "can_proceed": true,
+    "depends_on_tasks": [
+      "EP5-001-V2"
+    ],
+    "evidence": {
+      "gate_results": [
+        {
+          "gate": "canary_runtime_started",
+          "note": "runtime_id=rt-ep5-rollback-current reached started state",
+          "source_ref": "canary_run:canary-run-rollback-drill-001",
+          "status": "pass"
+        },
+        {
+          "gate": "runtime_heartbeat_received",
+          "note": "heartbeat_count=1",
+          "source_ref": "canary_run:canary-run-rollback-drill-001",
+          "status": "pass"
+        },
+        {
+          "gate": "order_route_mode",
+          "note": "order_route_mode='validate_only' is paper-safe",
+          "source_ref": "canary_run:canary-run-rollback-drill-001",
+          "status": "pass"
+        },
+        {
+          "gate": "telemetry_ingested",
+          "note": "telemetry_event_count=1",
+          "source_ref": "canary_run:canary-run-rollback-drill-001",
+          "status": "pass"
+        }
+      ],
+      "missing": [],
+      "provided": [
+        {
+          "description": "runtime_id=rt-ep5-rollback-current reached started state",
+          "key": "canary_runtime_started",
+          "source_task_id": "EP5-006-V2",
+          "status": "pass"
+        },
+        {
+          "description": "heartbeat_count=1",
+          "key": "runtime_heartbeat_received",
+          "source_task_id": "EP5-006-V2",
+          "status": "pass"
+        },
+        {
+          "description": "order_route_mode='validate_only' is paper-safe",
+          "key": "order_route_mode",
+          "source_task_id": "EP5-006-V2",
+          "status": "pass"
+        },
+        {
+          "description": "telemetry_event_count=1",
+          "key": "telemetry_ingested",
+          "source_task_id": "EP5-006-V2",
+          "status": "pass"
+        }
+      ],
+      "required": [
+        "canary_runtime_started",
+        "runtime_heartbeat_received",
+        "order_route_mode",
+        "telemetry_ingested"
+      ]
+    },
+    "extensions": {
+      "canary_run_result": "pass",
+      "finished_at": "2026-05-20T04:29:00Z",
+      "heartbeat_count": 1,
+      "order_route_mode": "validate_only",
+      "started_at": "2026-05-20T04:29:00Z",
+      "telemetry_event_count": 1
+    },
+    "flags": {
+      "broker_production_live_enabled": false,
+      "canary_runtime_started": true,
+      "deployment_stage_is_canary": true,
+      "live_capital_side_effects": false,
+      "order_route_mode": true,
+      "runtime_heartbeat_received": true,
+      "telemetry_ingested": true
+    },
+    "generated_at": "2026-05-20T04:29:00Z",
+    "generated_by": "EP5-006-V2/dry_run",
+    "packet_id": "prp-rollback-drill-001",
+    "reason": "EP5 canary proof passed for persona='persona-ep5-demo' run='canary-run-rollback-drill-001': all four proof flags satisfied, fail-closed invariants hold",
+    "schema_version": "PromotionReadinessPacket.v2",
+    "source_task_id": "EP5-006-V2",
+    "target": {
+      "deployment_stage": "canary",
+      "environment": "canary",
+      "persona_id": "persona-ep5-demo",
+      "runtime_id": "rt-ep5-rollback-current",
+      "target_id": "canary-run-rollback-drill-001",
+      "target_type": "canary_run"
+    }
+  },
+  "proof_packet": {
+    "ended_at": "2026-05-20T04:29:00Z",
+    "environment": "canary",
+    "packet_id": "ep5-proof-rollback-drill-001",
+    "packet_version": "2026-05-19.A2.2.dry-run",
+    "promotion_readiness_packet_id": "prp-rollback-drill-001",
+    "proof": {
+      "audit_events_recorded": true,
+      "canary_runtime_started": true,
+      "incident_path_tested": false,
+      "kill_switch_demo_completed": false,
+      "live_capital_side_effects": false,
+      "order_route_mode": "validate_only",
+      "rollback_drill_completed": true,
+      "runtime_heartbeat_received": true,
+      "telemetry_ingested": true
+    },
+    "result": {
+      "blocking_reasons": [],
+      "evidence_refs": [
+        "runbook:docs/operations/rollback_drill_runbook.md",
+        "rollback-drill:rollback-drill-dry-run-6577686f756d05e0",
+        "runtime-manager-rollback:rb-26436bc9127242b5b95f1a2edffc44e4",
+        "rollback-telemetry-preview:rollback_completed"
+      ],
+      "pass": true
+    },
+    "runtime": {
+      "artifact_id": "artifact-ep5-current",
+      "deployment_plan_id": "deployment-plan-ep5-rollback-current",
+      "runtime_binding_id": "rb-1af6a59171cd4ac3a415d4b66d8fe6ae",
+      "runtime_id": "rt-ep5-rollback-current"
+    },
+    "started_at": "2026-05-20T04:29:00Z",
+    "status": "passed"
+  },
+  "rollback_drill_completed": true,
+  "rollback_drill_evidence": {
+    "action_type": "pause_then_replace",
+    "blocking_reasons": [],
+    "broker_subaccount_ref": "broker-subaccount://ep5/rollback-drill/no-live-routing",
+    "capital_pool_id": "capital-pool-ep5-demo",
+    "current_binding_id": "rb-1af6a59171cd4ac3a415d4b66d8fe6ae",
+    "deployment_plan_ref": "deployment-plan-ep5-rollback-current",
+    "drill_stage": "canary",
+    "dry_run": true,
+    "errors": [],
+    "evidence_id": "rollback-drill-dry-run-6577686f756d05e0",
+    "expected_outcome": {
+      "old_binding_status_after": "retired",
+      "position_handling": "pause_new_entries_then_preserve_positions_after_stable_state",
+      "pre_cutover_current_binding_status": "paused",
+      "replacement_binding_preview_id": "dry-run-replacement-binding-f52a3f0226a8",
+      "replacement_binding_status_after": "active",
+      "side_effects_executed": [],
+      "telemetry_cutover": "preview_only_no_ingest"
+    },
+    "operator_id": "operator-ep5-demo",
+    "passed": true,
+    "planned_runtime_manager_request": {
+      "action_type": "pause_then_replace",
+      "current_binding_id": "rb-1af6a59171cd4ac3a415d4b66d8fe6ae",
+      "dry_run": true,
+      "loader_checks_passed": true,
+      "opened_by_artifact_id": "artifact-ep5-current",
+      "replacement_allowed_deployment_scope": "paper",
+      "replacement_artifact_id": "artifact-ep5-fallback",
+      "replacement_artifact_version": "0.9.0",
+      "replacement_deployment_mode": "paper",
+      "replacement_persona_capital_binding_id": "pcb-ep5-fallback",
+      "replacement_persona_capital_binding_status": "active",
+      "replacement_plan_id": "deployment-plan-ep5-rollback-fallback",
+      "replacement_plan_status": "approved",
+      "replacement_runtime_id": "rt-ep5-rollback-replacement",
+      "side_effects_allowed": false
+    },
+    "promotion_eligible": true,
+    "replacement_artifact_id": "artifact-ep5-fallback",
+    "replacement_artifact_version": "0.9.0",
+    "replacement_binding_preview_id": "dry-run-replacement-binding-f52a3f0226a8",
+    "replacement_plan_ref": "deployment-plan-ep5-rollback-fallback",
+    "replacement_runtime_id": "rt-ep5-rollback-replacement",
+    "safety_guards": [
+      "dry_run_only",
+      "no_runtime_manager_dispatch",
+      "no_runtime_binding_mutation",
+      "no_broker_api_call",
+      "no_position_mutation",
+      "no_telemetry_ingest"
+    ],
+    "source": "2026-05-19 blueprint supplement Part B6",
+    "telemetry_event_preview": {
+      "artifact_id": "artifact-ep5-fallback",
+      "artifact_version": "0.9.0",
+      "binding_id": "dry-run-replacement-binding-f52a3f0226a8",
+      "capital_pool_id": "capital-pool-ep5-demo",
+      "deployment_stage": "paper",
+      "environment": "paper",
+      "event_type": "rollback_completed",
+      "execution_mode": "dry_run",
+      "metadata": {
+        "drill_mode": "dry_run",
+        "side_effects_allowed": false,
+        "source_task_id": "BLA-004-V2"
+      },
+      "metrics": {
+        "action": "rollback_completed"
+      },
+      "persona_capital_binding_id": "pcb-ep5-fallback",
+      "plan_id": "deployment-plan-ep5-rollback-fallback",
+      "rollback_action_type": "pause_then_replace",
+      "rollback_parent": "rb-1af6a59171cd4ac3a415d4b66d8fe6ae",
+      "runtime_id": "rt-ep5-rollback-replacement",
+      "target": {
+        "artifact_version": "0.9.0",
+        "promotion_state": "paper",
+        "registry_id": "artifact-ep5-fallback"
+      }
+    },
+    "version": "1.0"
+  },
+  "runbook_ref": "docs/operations/rollback_drill_runbook.md",
+  "runtime_manager_response": {
+    "action_type": "pause_then_replace",
+    "cutover_at": "2026-05-20T04:29:00Z",
+    "new_binding": {
+      "artifact_id": "artifact-ep5-fallback",
+      "artifact_version": "0.9.0",
+      "binding_id": "rb-26436bc9127242b5b95f1a2edffc44e4",
+      "capital_pool_id": "capital-pool-ep5-demo",
+      "deployment_mode": "paper",
+      "effective_at": "2026-05-20T04:29:00Z",
+      "persona_capital_binding_id": "pcb-ep5-fallback",
+      "plan_id": "deployment-plan-ep5-rollback-fallback",
+      "rollback_action_type": "pause_then_replace",
+      "rollback_parent": "rb-1af6a59171cd4ac3a415d4b66d8fe6ae",
+      "runtime_id": "rt-ep5-rollback-replacement",
+      "status": "active"
+    },
+    "old_binding": {
+      "artifact_id": "artifact-ep5-current",
+      "artifact_version": "1.0.0",
+      "binding_id": "rb-1af6a59171cd4ac3a415d4b66d8fe6ae",
+      "capital_pool_id": "capital-pool-ep5-demo",
+      "deployment_mode": "canary",
+      "effective_at": "2026-05-20T04:29:00Z",
+      "metadata": {
+        "activation_gate": {
+          "allowed_deployment_scope": "canary",
+          "broker_sandbox_smoke_ref": "support/evidence/EP5-007-V2/broker-sandbox-smoke.json",
+          "capital_scale_pct": 5.0,
+          "gross_scale_pct": 25.0,
+          "human_gate_packet_ref": "support/evidence/EP5-007-V2/human-gate.json",
+          "operator_approval_ref": "support/evidence/EP5-007-V2/operator-approval.json",
+          "persona_capital_binding_id": "pcb-ep5-current",
+          "promotion_gate_decision_id": "promotion-gate-deployment-plan-ep5-rollback-current",
+          "risk_owner_approval_ref": "support/evidence/EP5-007-V2/risk-owner-approval.json",
+          "target_stage": "canary"
+        }
+      },
+      "persona_capital_binding_id": "pcb-ep5-current",
+      "plan_id": "deployment-plan-ep5-rollback-current",
+      "retired_at": "2026-05-20T04:29:00Z",
+      "runtime_id": "rt-ep5-rollback-current",
+      "status": "retired"
+    },
+    "position_lineage": {
+      "current_managed_by_binding_id": "rb-26436bc9127242b5b95f1a2edffc44e4",
+      "cutover_at": "2026-05-20T04:29:00Z",
+      "new_artifact_id": "artifact-ep5-fallback",
+      "new_binding_id": "rb-26436bc9127242b5b95f1a2edffc44e4",
+      "note": "current_managed_by_binding_id updated to new binding after cutover. opened_by_artifact_id is immutable per ROLLBACK_AND_POSITION_SEMANTICS.md \u00a77.",
+      "opened_by_artifact_id": "artifact-ep5-current",
+      "prev_artifact_id": "artifact-ep5-current",
+      "prev_binding_id": "rb-1af6a59171cd4ac3a415d4b66d8fe6ae"
+    }
+  },
+  "status": "passed"
+}

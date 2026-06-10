@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No queue, approval, provider, or review blocker; sidecars are safe once runnable non-human-gate parent tasks are materialized.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "PROD-WRITES-001-V2",
+    "LIVE-SCALE-001-V2"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "BFF-P0-MATERIALIZATION",
+    "OPS-PUBLISH-PROMOTE-FIX",
+    "OPS-ZOMBIE-BRANCH-CLEANUP",
+    "OPS-BLOCKER-METADATA-CLEANUP"
+  ]
+}

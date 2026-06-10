@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "OPS-RTEL-005",
+  "archived_at": "2026-06-09T12:29:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-RTEL-005",
+    "title": "BFF runtime-state truth split and closeout",
+    "summary_zh": "拆分 BFF runtime telemetry row health 與 rollback_history 等支援 surface degraded 狀態，並收集最終重啟、重啟單 worker、retire binding、signal isolation 證據。",
+    "phase": "Runtime Telemetry Hardening",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "OPS-RTEL-001",
+      "OPS-RTEL-002",
+      "OPS-RTEL-003",
+      "OPS-RTEL-004"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/tests/",
+      "support/evidence/",
+      "docs/deployment/runtime-telemetry-hardening-2026-06-06.md"
+    ],
+    "acceptance": [
+      "BFF can report fifteen runtime telemetry rows healthy while rollback history is unavailable",
+      "board meta names degraded support surface",
+      "final evidence proves stack restart and kill-one-worker recovery",
+      "final evidence proves binding retire stop and signal isolation"
+    ],
+    "next": "Done: PR #1212 merged into dev at 0bc8aa55b408215f2466b0363d9337f42e426740; refreshed owner closeout evidence and validation after dev advanced.",
+    "last_update": "2026-06-09T12:29:11Z",
+    "source_ref": {
+      "archive": "docs/deployment/runtime-telemetry-hardening-2026-06-06.md",
+      "execution_plan": "docs/deployment/runtime-telemetry-execution-tasks-2026-06-06.md",
+      "repair_pr": 1047,
+      "section": "Workstream E"
+    },
+    "task_class": "execution",
+    "auto_created_by": "codex-runtime-telemetry-hardening-20260606",
+    "auto_generated": true,
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：15 執行時 telemetry 列健康且 rollback_history 列為降級",
+      "BFF board 5 通過；fleet reconciler 25 通過；signal consumer 22 通過；py_compile/json/git 通過"
+    ],
+    "review_file": "support/evidence/OPS-RTEL-005/claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T12:29:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-rtel-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-RTEL-005",
+      "git_clean_required": false,
+      "commit": "0547cc10e1f7c369d94d7c9d4c2a144a371f2ec5",
+      "commit_subject": "OPS-RTEL-005: refresh closeout after second dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "OPS-RTEL-005 owner closeout evidence.",
+        "Not changing": "BFF runtime code, runtime-manager reconciler, signal consumer, telemetry or rollback writers, persona memory code, and canonical architecture docs.",
+        "Composes with": "PR #1212 merge into dev after refreshed branch checks pass; previous delivery PR #1093 and metadata PR #1096 remain the implementation baseline.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-RTEL-005",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/control-plane/bff/test_pkt010_runtime_state_board_contract.py -q (5 passed); python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -q (25 passed); python3 -m pytest services/execution/lean_runtime/test_signal_consumer.py -q (22 passed); python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py; python3 -m json.tool docs/examples/PKT-010-runtime-state-board.json; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-RTEL-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0bc8aa55b408215f2466b0363d9337f42e426740",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-RTEL-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Central state resurrected this reviewed/merged task as in_progress without review_notes_zh, so owner cannot legally run restore_approved/done. PR #1093 merged at dcfdfdc559509c319a009ca38644172a8e1aa24b; PR #1096 merged at 0f47a6564a8037e2db61e07e2f15fd2f54101d42. Reran closeout validation: BFF board 5 passed; fleet reconciler 25 passed; signal consumer 22 passed; py_compile/json tool/git diff --check passed. Please re-approve so Codex can run done.",
+      "status": "done",
+      "created_at": "2026-06-09T12:07:24Z",
+      "resolved_at": "2026-06-09T12:13:44Z"
+    },
+    {
+      "task_id": "OPS-RTEL-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 52 tests pass, all acceptance criteria verified. Row health split is clean and scoped correctly. Returning to owner (Codex) for done.",
+      "status": "done",
+      "created_at": "2026-06-09T12:13:44Z",
+      "resolved_at": "2026-06-09T12:29:11Z"
+    }
+  ],
+  "blockers": []
+}

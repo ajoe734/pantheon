@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "No active board or approval blocker; approval remains inert until a runnable parent support need appears.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-PROMOTE-MERGE-128-20260602",
+    "OPS-PUBLISH-WAVE-DISCIPLINE-20260602",
+    "OPS-TASK-BRANCH-HYGIENE"
+  ]
+}

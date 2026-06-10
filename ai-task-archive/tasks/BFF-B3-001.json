@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "BFF-B3-001",
+  "archived_at": "2026-05-23T09:02:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B3-001",
+    "title": "GET /bff/management/cockpit aggregate",
+    "summary_zh": null,
+    "phase": "Sprint BFF-3 / EPIC-BFF-GAP-MGMT",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B2-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#b3--p1-management-aggregate-apis",
+      "execute-plans/src/lib/bff-v1/management.ts",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Composes operator home + runtime health + alerts + human inbox + trading pulse + anomalies per spec section B3.3",
+      "FE-compatible shape per execute-plans/src/lib/v5/management/cockpit.ts",
+      "Pathreon Management Cockpit renders live with no seed fallback"
+    ],
+    "next": "Closeout complete: implementation PR #445 merged at 911889d0; closeout artifact PR #450 merged at f33f134c with head 1b7519fe; focused py_compile/pytest and GitHub checks passed.",
+    "last_update": "2026-05-23T09:02:26Z",
+    "review_notes_zh": [
+      "審查通過：cockpit aggregate 完整實作 6 個 surface 聚合、FE contract types/fetch、focused tests 覆蓋兩條 acceptance criteria，spec §B3.1/B3.3 對齊，PR #445 已合併 dev。"
+    ],
+    "review_file": "support/reviews/BFF-B3-001-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T09:02:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b3-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B3-001",
+      "git_clean_required": false,
+      "commit": "1b7519fe666fd44bb3016cca6a82ca08ac61ff93",
+      "commit_subject": "BFF-B3-001: record closeout review artifacts",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "Review evidence and generated task brief for the management cockpit aggregate after implementation PR #445 merged.",
+        "Not changing": "BFF route implementation, execute-plans client contract, canonical architecture docs, or remaining B3 management aggregate routes.",
+        "Composes with": "Merged implementation PR #445 / 911889d0 and Claude review approval for the B3-001 acceptance criteria.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B3-001",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/tests/test_bff_management_cockpit.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_live_probe_catalog_no_longer_404s_anonymously; git diff --check -- .orchestrator/task-briefs/bff_b3_001.md support/reviews/BFF-B3-001-review-claude.md docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md execute-plans/src/lib/bff-v1/management.ts services/control-plane/bff/main.py services/control-plane/bff/tests/test_bff_management_cockpit.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B3-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8549f7369fabcf9e650c4f5aeddc15411ace27e4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B3-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #445 is merged into dev (merge 911889d0, task head d71c4937). Please review/approve orchestrator status so Codex can run owner closeout done. Scope: GET /bff/management/cockpit aggregate, execute-plans bff-v1 management contract, B3 spec alignment, focused tests. Local validation passed; GitHub required checks passed after rerunning transient checkout failure.",
+      "status": "done",
+      "created_at": "2026-05-23T08:40:24Z",
+      "resolved_at": "2026-05-23T08:44:00Z"
+    },
+    {
+      "task_id": "BFF-B3-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: cockpit aggregate implements all 6 surfaces, FE contract and tests satisfy both acceptance criteria. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-05-23T08:44:00Z",
+      "resolved_at": "2026-05-23T09:02:26Z"
+    }
+  ],
+  "blockers": []
+}

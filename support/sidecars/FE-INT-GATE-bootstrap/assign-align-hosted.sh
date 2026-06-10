@@ -10,7 +10,7 @@ cd "$(git rev-parse --show-toplevel)"
 PHASE="Pantheon FE Integration Gate 2026-05-13"
 BRANCH="bff-luv-fe-006-dev-deploy"
 FE_BASE="https://pantheon-dev.lovable.app"
-BFF_BASE="https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io"
+BFF_BASE="https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
 
 EVIDENCE="execute-plans/.lovable/audits/baseline/hardgate-postmerge/pantheon-integration-evidence/.lovable/audits/current-run/playwright-results.json"
 

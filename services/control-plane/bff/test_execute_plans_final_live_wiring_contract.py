@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -43,6 +44,7 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/capital-pools/{id}"),
     ("GET", "/bff/channels"),
     ("GET", "/bff/channels/{id}"),
+    ("GET", "/bff/command-confirmations/{token}"),
     ("GET", "/bff/confirm-tokens/{tokenId}"),
     ("GET", "/bff/deployments"),
     ("GET", "/bff/deployments/{id}"),
@@ -55,6 +57,39 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/incidents/{id}"),
     ("GET", "/bff/jobs"),
     ("GET", "/bff/jobs/{id}"),
+    ("GET", "/bff/management/board-pack"),
+    ("GET", "/bff/management/cockpit"),
+    ("GET", "/bff/management/cost-attribution"),
+    ("GET", "/bff/management/evidence"),
+    ("GET", "/bff/management/evolution-journal"),
+    ("GET", "/bff/management/governance-ledger"),
+    ("GET", "/bff/management/hiq-backlog"),
+    ("GET", "/bff/management/loop-throughput"),
+    ("GET", "/bff/management/intervention-stream"),
+    ("GET", "/bff/management/persona-intent"),
+    ("GET", "/bff/management/sentinel-pulse"),
+    ("GET", "/bff/management/strategy-allocation"),
+    ("GET", "/bff/management/capital-flow"),
+    ("GET", "/bff/management/risk-radar"),
+    ("GET", "/bff/management/incident-timeline"),
+    ("GET", "/bff/management/portfolio-book/exposure"),
+    ("GET", "/bff/management/persona-league"),
+    ("GET", "/bff/management/persona-league/movers"),
+    ("GET", "/bff/management/persona-league/heatmap"),
+    ("GET", "/bff/management/persona-league/rankings"),
+    ("GET", "/bff/management/persona-league/tiers"),
+    ("GET", "/bff/management/portfolio-book/positions"),
+    ("GET", "/bff/management/quarterly-ranking"),
+    ("GET", "/bff/management/quarterly-ranking/formula"),
+    ("GET", "/bff/management/quarterly-ranking/recommendations"),
+    ("GET", "/bff/management/performance-attribution"),
+    ("GET", "/bff/management/performance-attribution/by-persona"),
+    ("GET", "/bff/management/performance-attribution/by-pool"),
+    ("GET", "/bff/management/readiness/bff-ha"),
+    ("GET", "/bff/management/readiness/broker-live"),
+    ("GET", "/bff/management/readiness/capital-binding-live"),
+    ("GET", "/bff/management/readiness/ep5"),
+    ("GET", "/bff/management/readiness/strict-publish"),
     ("GET", "/bff/mcp-servers"),
     ("GET", "/bff/mcp-servers/{id}"),
     ("GET", "/bff/mcp-tools"),
@@ -108,6 +143,7 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("POST", "/bff/audit/export"),
     ("POST", "/bff/auth/refresh"),
     ("POST", "/bff/capital-pools"),
+    ("POST", "/bff/command-confirmations"),
     ("POST", "/bff/confirm-tokens"),
     ("POST", "/bff/confirm-tokens/{tokenId}/redeem"),
     ("POST", "/bff/deployments"),
@@ -153,6 +189,26 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/deployments"),
     ("GET", "/bff/evolution-programs"),
     ("GET", "/bff/jobs"),
+    ("GET", "/bff/management/board-pack"),
+    ("GET", "/bff/management/cockpit"),
+    ("GET", "/bff/management/cost-attribution"),
+    ("GET", "/bff/management/evidence"),
+    ("GET", "/bff/management/evolution-journal"),
+    ("GET", "/bff/management/governance-ledger"),
+    ("GET", "/bff/management/hiq-backlog"),
+    ("GET", "/bff/management/loop-throughput"),
+    ("GET", "/bff/management/intervention-stream"),
+    ("GET", "/bff/management/persona-intent"),
+    ("GET", "/bff/management/sentinel-pulse"),
+    ("GET", "/bff/management/strategy-allocation"),
+    ("GET", "/bff/management/capital-flow"),
+    ("GET", "/bff/management/risk-radar"),
+    ("GET", "/bff/management/incident-timeline"),
+    ("GET", "/bff/management/readiness/ep5"),
+    ("GET", "/bff/management/readiness/broker-live"),
+    ("GET", "/bff/management/readiness/capital-binding-live"),
+    ("GET", "/bff/management/readiness/bff-ha"),
+    ("GET", "/bff/management/readiness/strict-publish"),
     ("POST", "/bff/approvals/apr_001/decide"),
     ("POST", "/bff/approvals/batch-decide"),
     ("GET", "/bff/alerts"),
@@ -160,6 +216,19 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/incidents"),
     ("GET", "/bff/audit"),
     ("GET", "/bff/artifacts"),
+    ("GET", "/bff/management/portfolio-book/exposure"),
+    ("GET", "/bff/management/persona-league"),
+    ("GET", "/bff/management/persona-league/movers"),
+    ("GET", "/bff/management/persona-league/heatmap"),
+    ("GET", "/bff/management/persona-league/rankings"),
+    ("GET", "/bff/management/persona-league/tiers"),
+    ("GET", "/bff/management/portfolio-book/positions"),
+    ("GET", "/bff/management/quarterly-ranking"),
+    ("GET", "/bff/management/quarterly-ranking/formula"),
+    ("GET", "/bff/management/quarterly-ranking/recommendations"),
+    ("GET", "/bff/management/performance-attribution"),
+    ("GET", "/bff/management/performance-attribution/by-persona"),
+    ("GET", "/bff/management/performance-attribution/by-pool"),
     ("GET", "/bff/runtimes"),
     ("GET", "/bff/mcp-servers"),
     ("GET", "/bff/mcp-tools"),
@@ -316,9 +385,13 @@ def _detail_data(payload: dict) -> dict:
     return payload
 
 
+def _canonical_route_path(path: str) -> str:
+    return re.sub(r"\{[^}]+\}", "{id}", path)
+
+
 def _route_index() -> set[tuple[str, str]]:
     return {
-        (method, getattr(route, "path", ""))
+        (method, _canonical_route_path(getattr(route, "path", "")))
         for route in bff_main.app.routes
         for method in (getattr(route, "methods", set()) or set())
         if method in {"DELETE", "GET", "PATCH", "POST", "PUT"}
@@ -326,7 +399,8 @@ def _route_index() -> set[tuple[str, str]]:
 
 
 def test_execute_plans_final_contract_paths_are_registered() -> None:
-    missing = FINAL_CONTRACT_METHOD_PATHS - _route_index()
+    expected = {(method, _canonical_route_path(path)) for method, path in FINAL_CONTRACT_METHOD_PATHS}
+    missing = expected - _route_index()
     assert not missing
 
 
@@ -336,8 +410,58 @@ def test_execute_plans_final_openapi_json_is_route_discoverable() -> None:
 
     assert response.status_code == 200, response.text
     paths = response.json()["paths"]
-    missing = [path for _, path in FINAL_CONTRACT_METHOD_PATHS if path not in paths]
+    openapi_paths = {_canonical_route_path(path) for path in paths}
+    missing = [path for _, path in FINAL_CONTRACT_METHOD_PATHS if _canonical_route_path(path) not in openapi_paths]
     assert not missing
+
+
+def test_execute_plans_management_board_pack_client_exports_are_present() -> None:
+    repo_root = BFF_DIR.parents[2]
+    paths_ts = (repo_root / "execute-plans/src/lib/bff-v1/paths.ts").read_text()
+    management_ts = (repo_root / "execute-plans/src/lib/bff-v1/management.ts").read_text()
+
+    assert "managementBoardPack: () => `${BASE}/management/board-pack`" in paths_ts
+    assert "ManagementBoardPackQuery" in management_ts
+    assert "ManagementBoardPackResponse" in management_ts
+    assert "managementBoardPackPath" in management_ts
+    assert "fetchManagementBoardPack" in management_ts
+    assert "managementGovernanceLedger: () => `${BASE}/management/governance-ledger`" in paths_ts
+    assert "ManagementGovernanceLedgerQuery" in management_ts
+    assert "ManagementGovernanceLedgerResponse" in management_ts
+    assert "managementGovernanceLedgerPath" in management_ts
+    assert "fetchManagementGovernanceLedger" in management_ts
+    assert "managementCostAttribution: () => `${BASE}/management/cost-attribution`" in paths_ts
+    assert "ManagementCostAttributionQuery" in management_ts
+    assert "ManagementCostAttributionResponse" in management_ts
+    assert "managementCostAttributionPath" in management_ts
+    assert "fetchManagementCostAttribution" in management_ts
+    assert "managementHiqBacklog: () => `${BASE}/management/hiq-backlog`" in paths_ts
+    assert "ManagementHiqBacklogQuery" in management_ts
+    assert "ManagementHiqBacklogResponse" in management_ts
+    assert "managementHiqBacklogPath" in management_ts
+    assert "fetchManagementHiqBacklog" in management_ts
+    assert "managementLoopThroughput: () => `${BASE}/management/loop-throughput`" in paths_ts
+    assert "ManagementLoopThroughputQuery" in management_ts
+    assert "ManagementLoopThroughputResponse" in management_ts
+    assert "managementLoopThroughputPath" in management_ts
+    assert "fetchManagementLoopThroughput" in management_ts
+    assert "managementInterventionStream: () => `${BASE}/management/intervention-stream`" in paths_ts
+    assert "ManagementInterventionStreamQuery" in management_ts
+    assert "ManagementInterventionStreamResponse" in management_ts
+    assert "managementInterventionStreamPath" in management_ts
+    assert "fetchManagementInterventionStream" in management_ts
+
+
+def test_execute_plans_management_sentinel_pulse_client_exports_are_present() -> None:
+    repo_root = BFF_DIR.parents[2]
+    paths_ts = (repo_root / "execute-plans/src/lib/bff-v1/paths.ts").read_text()
+    management_ts = (repo_root / "execute-plans/src/lib/bff-v1/management.ts").read_text()
+
+    assert "managementSentinelPulse: () => `${BASE}/management/sentinel-pulse`" in paths_ts
+    assert "ManagementSentinelPulseQuery" in management_ts
+    assert "ManagementSentinelPulseResponse" in management_ts
+    assert "managementSentinelPulsePath" in management_ts
+    assert "fetchManagementSentinelPulse" in management_ts
 
 
 def test_execute_plans_live_probe_catalog_no_longer_404s_anonymously() -> None:
@@ -356,17 +480,17 @@ def test_execute_plans_live_probe_catalog_no_longer_404s_anonymously() -> None:
 
 def test_execute_plans_final_stub_auth_smoke_avoids_server_errors(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
 
-    for path in [
-        "/bff/agora/signals/sig_001",
-        "/bff/artifacts",
-        "/bff/artifacts/art_001",
-        "/bff/capital-pools/pool_001",
-        "/bff/v5/execution/strategy-health",
-    ]:
-        response = client.get(path, headers=HEADERS)
-        assert response.status_code < 500, response.text
+    with _isolated_final_read_models() as client:
+        for path in [
+            "/bff/agora/signals/sig_001",
+            "/bff/artifacts",
+            "/bff/artifacts/art_001",
+            "/bff/capital-pools/pool-main",
+            "/bff/v5/execution/strategy-health",
+        ]:
+            response = client.get(path, headers=HEADERS)
+            assert response.status_code < 500, response.text
 
 
 def test_execute_plans_final_seeded_detail_paths_use_read_model_dtos(monkeypatch) -> None:

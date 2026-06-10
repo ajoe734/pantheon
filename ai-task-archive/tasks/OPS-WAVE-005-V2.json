@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "OPS-WAVE-005-V2",
+  "archived_at": "2026-05-19T16:28:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPS-WAVE-005-V2",
+    "title": "Evidence retention and sidecar cleanup policy enforcement",
+    "summary_zh": "Classify evidence retention per Part H5; archive eligible sidecars; never delete live/canary/human-gate/rollback/postmortem evidence. Per design reply section 3 (NEW SCOPE).",
+    "phase": "Phase 8 / EPIC-OPS-WAVE",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/evidence_retention_policy.py",
+      "tests/orchestrator/test_evidence_retention_policy.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner finalized approved evidence retention policy after PR #240 merged into dev. Verification: pytest tests/orchestrator/test_evidence_retention_policy.py -q; python3 -m py_compile scripts/evidence_retention_policy.py; pytest .orchestrator/test_sidecar_cleanup.py -q.",
+    "last_update": "2026-05-19T16:28:13Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：Part H5 保護類別信號分類正確（live/canary/human_gate/rollback/postmortem）；never-delete 雙重守衛確認；sidecar archive 邏輯正確；3 個測試全過"
+    ],
+    "review_file": "support/evidence/OPS-WAVE-005-V2/review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-19T16:28:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-wave-005-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-WAVE-005-V2",
+      "git_clean_required": false,
+      "commit": "aea46a12d052d2438e658b4fde595f634c60d293",
+      "commit_subject": "OPS-WAVE-005-V2: finalize owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-WAVE-005-V2",
+        "Reviewer": "Claude",
+        "Verified": "pytest tests/orchestrator/test_evidence_retention_policy.py -q; python3 -m py_compile scripts/evidence_retention_policy.py; pytest .orchestrator/test_sidecar_cleanup.py -q"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPS-WAVE-005-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "08d15cbb8419f7c7926644276a8fe1949f49d903",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPS-WAVE-005-V2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: implemented evidence retention policy in scripts/evidence_retention_policy.py with Part H5 protected evidence classification and archive-only sidecar cleanup wrapper. PR #231 is open with auto-merge enabled at e256dd45. Verification: pytest tests/orchestrator/test_evidence_retention_policy.py -q -> 3 passed; py_compile passed; .orchestrator/test_sidecar_cleanup.py -> 3 passed.",
+      "status": "done",
+      "created_at": "2026-05-19T16:09:18Z",
+      "resolved_at": "2026-05-19T16:12:43Z"
+    },
+    {
+      "task_id": "OPS-WAVE-005-V2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: evidence retention policy correctly classifies Part H5 protected signals, never deletes evidence, and archives eligible sidecars only. 3 tests pass. Returning to Codex for owner closeout.",
+      "status": "done",
+      "created_at": "2026-05-19T16:12:43Z",
+      "resolved_at": "2026-05-19T16:28:14Z"
+    }
+  ],
+  "blockers": []
+}

@@ -64,7 +64,8 @@ For the current EP5 canary-prep slice, the governed provider set is:
 | Execution broker | `IBKR` | broker intents, account boundary, execution-sync quote fallback, fill reconciliation |
 | Taiwan execution broker | `Shioaji` | Taiwan cash / futures execution intent boundary and quote subscription boundary |
 | Crypto execution venue | `Kraken` | crypto venue-canonical execution and quote boundary |
-| Taiwan research-grade vendor | `TEJ` | paid research/reference enrichments that must not replace official-reference disclosure truth |
+| Taiwan research-grade vendor | `FinMind` | low-cost primary API/cache layer for Taiwan research datasets that must not replace official-reference disclosure truth |
+| Taiwan historical backfill vendor | `TEJ` | optional historical gap-fill / audited research-reference enrichments |
 | Research / historical ingest | `Massive / Polygon` | governed market-data ingest for US history, aggregates, and corporate-actions-adjacent normalization inputs |
 | Temporary market-data fallback | `IBKR market data` | allowed only while `Massive / Polygon` activation is still incomplete; do not treat as the long-term research-grade primary |
 
@@ -73,7 +74,8 @@ Guardrails that follow from this split:
 - `IBKR` credentials remain VM-2 only and are execution-owned.
 - `Shioaji` credentials remain VM-2 only and are execution-owned.
 - `Kraken` credentials remain VM-2 only and are execution-owned.
-- `TEJ` API credentials remain VM-2 only even though the vendor is research-grade.
+- `FinMind` API token remains VM-2 only even though the vendor is research-grade.
+- `TEJ` API credentials remain VM-2 only when optional historical gap-fill is enabled.
 - `Massive / Polygon` API credentials also remain VM-2 only; repo docs may record only secret names and provider refs.
 - Operator-facing canary packets must describe whether a run used `Massive / Polygon` ingest or the temporary `IBKR market data` fallback.
 - Provider smoke artifacts must preserve `broker_execution` vs `research_grade` boundaries instead of flattening all vendors into one generic datasource label.
@@ -95,8 +97,8 @@ canary rehearsal:
 | `CANARY_BROKER_ACCOUNT_REF` | identifies the broker account / subaccount boundary |
 | `CANARY_VENUE_REF` | identifies the venue or routing profile boundary |
 | `BROKER_API_*` and `EXCHANGE_API_*` or their secret-name refs | ties the boundary to VM-2 secret injection only |
-| `TW_EXECUTION_PROVIDER=Shioaji`, `CRYPTO_EXECUTION_PROVIDER=Kraken`, `TW_RESEARCH_PROVIDER=TEJ` | records the governed non-US provider set explicitly |
-| `SHIOAJI_*`, `KRAKEN_*`, `TEJ_*` secret-name refs | keeps provider onboarding machine-readable without tracking raw credentials |
+| `TW_EXECUTION_PROVIDER=Shioaji`, `CRYPTO_EXECUTION_PROVIDER=Kraken`, `TW_RESEARCH_PROVIDER=FinMind`, `TW_HISTORICAL_BACKFILL_PROVIDER=TEJ` | records the governed non-US provider set explicitly |
+| `SHIOAJI_*`, `KRAKEN_*`, `FINMIND_*`, optional `TEJ_*` secret-name refs | keeps provider onboarding machine-readable without tracking raw credentials |
 | `US_MARKET_DATA_PROVIDER=polygon` or equivalent provider ref | records that US research/history comes from the governed `Massive / Polygon` lane when enabled |
 | `US_MARKET_DATA_SECRET_REF` | points to the VM-2-only secret name for the market-data vendor |
 

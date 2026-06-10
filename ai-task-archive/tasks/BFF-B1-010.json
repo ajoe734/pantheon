@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "BFF-B1-010",
+  "archived_at": "2026-05-23T07:42:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BFF-B1-010",
+    "title": "POST /bff/approvals/{id}/decide and batch-decide",
+    "summary_zh": null,
+    "phase": "Sprint BFF-1 / EPIC-BFF-GAP-P0",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "BFF-B1-007"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_bff_api_gap_2026-05-23/BFF_API_GAP_final_integration_spec.md#12-decision-endpoints",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "Single decide accepts approve reject request_changes escalate",
+      "Batch-decide accepts list and returns per-id status",
+      "Routes through governance services or /api/v1/operator/commands",
+      "Anonymous 401",
+      "authenticated 200"
+    ],
+    "next": "Owner finalized approved BFF approval decision endpoints. PR #434 delivered implementation; PR #438 recorded review closeout evidence and merged into dev.",
+    "last_update": "2026-05-23T07:42:36Z",
+    "review_notes_zh": [
+      "審查通過：request_changes alias 正確對應 RequestApprovalRevision；batch-decide body idempotency 拒絕順序正確；19/12 測試全數通過；scope 嚴格限定在 BFF approval decision 層"
+    ],
+    "review_file": "support/reviews/BFF-B1-010-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-23T07:42:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bff-b1-010",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BFF-B1-010",
+      "git_clean_required": false,
+      "commit": "1c0d6e6640ad939d08dc1373f881d940825b1bb8",
+      "commit_subject": "BFF-B1-010: record review closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "Review and closeout evidence for the BFF approval decision endpoints.",
+        "Not changing": "BFF route implementation, command admission behavior, canonical API spec, central status records, or generated task briefs.",
+        "Composes with": "Merged PR #434 / 6b87db78 and Claude review approval for the BFF approval decide criteria.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "BFF-B1-010",
+        "Reviewer": "Claude",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 pytest services/control-plane/bff/test_bff_approvals_decide_contract.py -q; PYTHONDONTWRITEBYTECODE=1 pytest services/control-plane/bff/test_ask005_sse_event_publishing_contract.py -q; git diff --check -- support/reviews/BFF-B1-010-review-claude.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BFF-B1-010",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1d03ba01afb350862f0df95ec6eb053940292b05",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BFF-B1-010",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-23T07:14:13Z",
+      "resolved_at": "2026-05-23T07:14:19Z"
+    },
+    {
+      "task_id": "BFF-B1-010",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation merged via PR #434 (merge 6b87db782b7e76fdf2e30fe35e0f911267b99a6c); focused tests and GitHub checks passed. Please review/approve status so owner can close done.",
+      "status": "done",
+      "created_at": "2026-05-23T07:27:21Z",
+      "resolved_at": "2026-05-23T07:32:12Z"
+    },
+    {
+      "task_id": "BFF-B1-010",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria satisfied, 19+12 tests pass, scope correctly bounded to BFF approval decision endpoints",
+      "status": "done",
+      "created_at": "2026-05-23T07:32:12Z",
+      "resolved_at": "2026-05-23T07:42:37Z"
+    }
+  ],
+  "blockers": []
+}

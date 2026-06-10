@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle capacity and runnable assistant backlog exist with no global approval or sidecar-pressure blocker.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "ASST-KERNEL-001",
+    "ASST-KERNEL-002",
+    "ASST-OCGW-001",
+    "OPS-MASTER-CHAIR-PR-CLEANUP-20260601"
+  ]
+}

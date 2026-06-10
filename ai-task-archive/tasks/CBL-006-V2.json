@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "CBL-006-V2",
+  "archived_at": "2026-05-20T05:49:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "CBL-006-V2",
+    "title": "Capital binding evidence collector",
+    "summary_zh": "Evidence collector resolving CapitalBindingLiveReadiness.required_evidence refs.",
+    "phase": "Phase 8 / EPIC-CAPITAL-BINDING-LIVE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "CBL-001-V2"
+    ],
+    "artifacts": [
+      "services/capital/binding_live/evidence_collector.py",
+      "tests/capital/test_binding_evidence_collector.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: PR #337 merged into dev at eb1e9b75 with head 4f2653c8; verification pytest capital evidence/readiness/conflict tests 15 passed, py_compile passed, Branch CI Gate checks passed.",
+    "last_update": "2026-05-20T05:49:08Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_file": "support/evidence/CBL-006-V2/review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T05:49:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/cbl-006-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/CBL-006-V2",
+      "git_clean_required": false,
+      "commit": "4f2653c80b1f2a7fc37f06c339909dce8562c008",
+      "commit_subject": "CBL-006-V2: refresh closeout after dev advance",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "CBL-006-V2 closeout evidence note.",
+        "Not changing": "evidence collector implementation, reviewer approval, readiness",
+        "Composes with": "PR #331 implementation merge, Codex2 reviewer evidence commit",
+        "LLM-Agent": "Codex",
+        "Task-ID": "CBL-006-V2",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest tests/capital/test_binding_evidence_collector.py tests/capital/test_binding_live_readiness.py tests/capital/test_conflict_resolution_log.py (15 passed); python3 -m py_compile services/capital/binding_live/evidence_collector.py services/capital/binding_live/readiness_model.py services/capital/binding_live/conflict_resolution_log.py tests/capital/test_binding_evidence_collector.py (passed); git diff --check HEAD -- support/evidence/CBL-006-V2/finalization.md (passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/CBL-006-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "eb1e9b75eb80ba1ea316eabb315fd75307c8d1fb",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "CBL-006-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for review in PR #331 (commit 56065a97): read-only CapitalBindingLiveReadiness.required_evidence collector with fail-closed local ref resolution. Verified: pytest tests/capital/test_binding_evidence_collector.py tests/capital/test_binding_live_readiness.py tests/capital/test_conflict_resolution_log.py; py_compile evidence_collector/readiness_model/conflict_resolution_log/test_binding_evidence_collector.",
+      "status": "done",
+      "created_at": "2026-05-20T05:19:23Z",
+      "resolved_at": "2026-05-20T05:20:50Z"
+    },
+    {
+      "task_id": "CBL-006-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Ready for Codex2 review. PR #331 is merged into dev (task commit 56065a97, merge commit 0b15848d); GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator. Local verification: pytest tests/capital/test_binding_evidence_collector.py tests/capital/test_binding_live_readiness.py tests/capital/test_conflict_resolution_log.py; py_compile evidence collector/readiness/conflict-resolution paths.",
+      "status": "done",
+      "created_at": "2026-05-20T05:20:50Z",
+      "resolved_at": "2026-05-20T05:27:51Z"
+    },
+    {
+      "task_id": "CBL-006-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: evidence collector resolves required_evidence refs in schema order, fails closed for missing/malformed/out-of-root evidence, and introduces no live side effects. Verification: pytest tests/capital/test_binding_evidence_collector.py tests/capital/test_binding_live_readiness.py tests/capital/test_conflict_resolution_log.py (15 passed); py_compile evidence collector/readiness/conflict-resolution paths passed. Reviewer evidence committed and pushed at d32c8d66.",
+      "status": "done",
+      "created_at": "2026-05-20T05:27:51Z",
+      "resolved_at": "2026-05-20T05:49:09Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "OODA-CANARY-005-V2",
+  "archived_at": "2026-05-20T06:13:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OODA-CANARY-005-V2",
+    "title": "Canary packet closure renderer",
+    "summary_zh": "Renders the closed CanaryOodaPacket as both JSON and reviewer-friendly Markdown. Final closeout artifact for the canary OODA proof.",
+    "phase": "Phase 8 / EPIC-OODA-CANARY",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OODA-CANARY-001-V2",
+      "OODA-CANARY-002-V2",
+      "OODA-CANARY-003-V2",
+      "OODA-CANARY-004-V2"
+    ],
+    "artifacts": [
+      "services/ooda/canary_closure_renderer.py",
+      "tests/ooda/test_canary_closure_renderer.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout finalized. Implementation PR #339 merged at 3dcd15b6; closeout evidence PR #342 merged at a61417f5. Verification: focused OODA pytest 20 passed, py_compile passed, PR merge diff whitespace check passed.",
+    "last_update": "2026-05-20T06:13:41Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：closure renderer 僅新增 services/ooda/canary_closure_renderer.py 與 focused tests，沒有修改 L1 docs 或 runtime side effects。Renderer 對 closed packet 執行 fail-closed validation，mapping path 先驗證原始 payload 以避免 from_dict 靜默正規化型別錯誤；JSON/Markdown/write helpers 均有覆蓋。驗證通過：PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q tests/ooda/test_canary_closure_renderer.py tests/ooda/test_canary_packet_schema.py tests/ooda/test_canary_rollback_linkage.py tests/ooda/test_canary_transitions.py；PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/ooda/canary_closure_renderer.py tests/ooda/test_canary_closure_renderer.py；git diff --check origin/dev...HEAD。PR #339 已合併到 dev，merge commit 3dcd15b6。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T06:13:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ooda-canary-005-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OODA-CANARY-005-V2",
+      "git_clean_required": false,
+      "commit": "00a741187f45bfef9ad8be4c7d888f1b906d76b9",
+      "commit_subject": "OODA-CANARY-005-V2: refresh closeout at dev tip",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout evidence and generated task brief publication refresh.",
+        "Not changing": "CanaryOodaPacket schema, renderer behavior, rollback linkage, L1 docs, runtime side effects, broker actions, or live capital paths.",
+        "Composes with": "PR #339 implementation merge at 3dcd15b6 plus latest origin/dev through PR #341.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OODA-CANARY-005-V2",
+        "Reviewer": "Codex",
+        "Verified": "PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q tests/ooda/test_canary_closure_renderer.py tests/ooda/test_canary_packet_schema.py tests/ooda/test_canary_rollback_linkage.py tests/ooda/test_canary_transitions.py; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/ooda/canary_closure_renderer.py tests/ooda/test_canary_closure_renderer.py; git diff --check 3dcd15b6^1 3dcd15b6 -- services/ooda/canary_closure_renderer.py tests/ooda/test_canary_closure_renderer.py; git diff --check -- .orchestrator/task-briefs/ooda_canary_005_v2.md support/evidence/OODA-CANARY-005-V2/closeout.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OODA-CANARY-005-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a61417f56b5535a5fdc45132535aa6b6d526a10f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OODA-CANARY-005-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: PR #339 https://github.com/ajoe734/pantheon/pull/339 implements services/ooda/canary_closure_renderer.py and tests/ooda/test_canary_closure_renderer.py at commit c1ee9a49, refreshed on branch head 420c98d1. Local validation passed: pytest -q tests/ooda/test_canary_closure_renderer.py tests/ooda/test_canary_packet_schema.py tests/ooda/test_canary_rollback_linkage.py tests/ooda/test_canary_transitions.py (20 passed); py_compile renderer/test; git diff --check origin/dev...HEAD. No L1 docs or runtime side effects changed.",
+      "status": "done",
+      "created_at": "2026-05-20T05:55:34Z",
+      "resolved_at": "2026-05-20T06:02:02Z"
+    },
+    {
+      "task_id": "OODA-CANARY-005-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. PR #339 is merged to dev at 3dcd15b6; focused renderer tests, py_compile, and diff check passed. Owner Codex2 should run task closeout finalization and mark done.",
+      "status": "done",
+      "created_at": "2026-05-20T06:02:02Z",
+      "resolved_at": "2026-05-20T06:13:42Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "task_id": "ASST-OCGW-004",
+  "archived_at": "2026-06-01T23:51:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-OCGW-004",
+    "title": "Implement Claude provider through OpenClaw gateway",
+    "summary_zh": "實作 OpenClaw gateway 內的 Claude Code CLI provider，以 mounted service-user .claude 執行 claude -p，支援 stream-json normalization timeout degraded fallback。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASST-KERNEL-002",
+      "ASST-KERNEL-003",
+      "ASST-OCGW-002"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter/assistant_claude_provider.py",
+      "services/openclaw-gateway-adapter/assistant_provider_runtime.py",
+      "services/openclaw-gateway-adapter/main.py",
+      "services/openclaw-gateway-adapter/tests/test_assistant_claude_provider.py",
+      "scripts/openclaw-assistant-provider-smoke.sh"
+    ],
+    "acceptance": [
+      "invokes claude inside gateway container using mounted CLAUDE_CONFIG_DIR",
+      "normalizes stream-json or text output",
+      "missing auth or binary degrades cleanly",
+      "provider uses brokered tool policy not free shell",
+      "tests cover ready missing auth timeout and malformed output"
+    ],
+    "next": "Owner finalized Claude provider closeout. Implementation PR #764 merged; closeout evidence PR #765 merged; focused validation passed: pytest provider/runtime/credential/main suite (76 passed).",
+    "last_update": "2026-06-01T23:51:30Z",
+    "source_documents": [
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SA_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/SD_assistant_kernel_user_mode.md",
+      "docs/04/pantheon_assistant_kernel_user_2026-05-31/EXECUTION_TASKS.md"
+    ],
+    "implementation_track": "assistant-openclaw-gateway-cli-mount",
+    "provider_runtime": "openclaw_gateway_cli_mount",
+    "credential_policy": "dedicated_service_user_oauth_mount",
+    "delivery_layer": "primary",
+    "review_notes_zh": [
+      "審查通過：Claude provider honors configured Claude binary; readiness and invoke paths degrade cleanly; focused provider/runtime tests pass."
+    ],
+    "review_file": "support/reviews/ASST-OCGW-004-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-01T23:51:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-ocgw-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-OCGW-004",
+      "git_clean_required": false,
+      "commit": "f4644f951ac2790b220fe70543d96dab0446baec",
+      "commit_subject": "ASST-OCGW-004: record closeout review",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout and review evidence for the Claude OpenClaw gateway provider.",
+        "Not changing": "provider runtime code, credential mount policy, subprocess permission mode, assistant routes, transcript/redaction behavior, or canonical architecture docs.",
+        "Composes with": "merged ASST-OCGW-004 implementation PR #764 and the done-transition lifecycle commit that follows.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "ASST-OCGW-004",
+        "Reviewer": "Claude",
+        "Verified": "pytest services/openclaw-gateway-adapter/tests/test_assistant_claude_provider.py services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py services/openclaw-gateway-adapter/test_main.py -q (76 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 7,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-OCGW-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e6904fad683528e63db81bcecdcbc0871e59dd87",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-OCGW-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Claude provider implementation ready for review. PR #752 open. Artifacts: assistant_claude_provider.py (invoke_claude with stream-json normalization, degraded fallback for missing binary/auth/timeout/malformed output), POST /api/openclaw-adapter/assistant/claude/invoke route, 17 tests covering all acceptance criteria, updated smoke script. All 40 tests pass.",
+      "status": "done",
+      "created_at": "2026-06-01T10:17:50Z",
+      "resolved_at": "2026-06-01T10:23:45Z"
+    },
+    {
+      "task_id": "ASST-OCGW-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review blocked: Claude provider must use --permission-mode plan per SD 10.2 and add argv assertion test; PR #752 comment records finding.",
+      "status": "done",
+      "created_at": "2026-06-01T10:23:45Z",
+      "resolved_at": "2026-06-01T10:23:45Z"
+    },
+    {
+      "task_id": "ASST-OCGW-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-01T10:24:19Z",
+      "resolved_at": "2026-06-01T10:24:19Z"
+    },
+    {
+      "task_id": "ASST-OCGW-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Chair reassigned owner from Codex to Codex2: Codex has 2 consecutive auth failures on ASST-OCGW-004 (last: 2026-06-01T10:34:38Z, 'Error: not authenticated, please login first'); task has been stuck in_progress with no live worker since that time. Previous chair cycle (20260601-125122) recommended supervisor clear the stale lease but it has not self-resolved after 2+ hours. Codex2 is the supervisor-provided rescue target, is not the reviewer, and has been verified operational today. Supervisor should return task to todo with Codex2 as owner; dependencies (ASST-KERNEL-002, ASST-KERNEL-003, ASST-OCGW-002) remain todo so no immediate re-dispatch risk. Task returned to todo for a fresh run.",
+      "status": "done",
+      "created_at": "2026-06-01T14:50:53Z",
+      "resolved_at": "2026-06-01T14:57:04Z"
+    },
+    {
+      "task_id": "ASST-OCGW-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Claude provider baseline verified from merged task commits 1de5a8a5 and 52805d10; focused validation passed: pytest services/openclaw-gateway-adapter/tests/test_assistant_claude_provider.py services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py services/openclaw-gateway-adapter/test_main.py -q (72 passed). Ready for reviewer acceptance.",
+      "status": "done",
+      "created_at": "2026-06-01T15:00:55Z",
+      "resolved_at": "2026-06-01T15:01:45Z"
+    },
+    {
+      "task_id": "ASST-OCGW-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Merged implementation update is ready for review: PR #764 merged to dev at 29798d0d, head commit 86827a14 adds configured Claude binary resolution and readiness alias coverage. Local validation passed: pytest services/openclaw-gateway-adapter/tests/test_assistant_claude_provider.py services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py services/openclaw-gateway-adapter/test_main.py -q (76 passed). GitHub required checks passed before merge.",
+      "status": "done",
+      "created_at": "2026-06-01T15:07:08Z",
+      "resolved_at": "2026-06-01T15:14:57Z"
+    },
+    {
+      "task_id": "ASST-OCGW-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved and returned to Codex2 for finalization",
+      "status": "done",
+      "created_at": "2026-06-01T15:14:57Z",
+      "resolved_at": "2026-06-01T23:45:20Z"
+    },
+    {
+      "task_id": "ASST-OCGW-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved by Claude and returned to Codex2 for finalization; PR #764 is merged.",
+      "status": "done",
+      "created_at": "2026-06-01T23:45:28Z",
+      "resolved_at": "2026-06-02T00:32:29Z"
+    },
+    {
+      "task_id": "ASST-OCGW-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved by Claude and returned to Codex2 for finalization; PR #764 is merged.",
+      "status": "done",
+      "created_at": "2026-06-01T23:51:20Z",
+      "resolved_at": "2026-06-01T23:51:31Z"
+    }
+  ],
+  "blockers": []
+}

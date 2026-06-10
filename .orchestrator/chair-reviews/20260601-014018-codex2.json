@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "decision": "approve_sidecars",
+  "sidecar_approved": true,
+  "approval_ttl_minutes": 45,
+  "max_sidecars": null,
+  "reason": "Idle lanes exist, but sidecars must avoid parents whose task status is stale after merged PRs.",
+  "blocked_by": [],
+  "blocked_sidecar_parents": [
+    "ASST-KERNEL-001",
+    "ASST-KERNEL-002",
+    "ASST-KERNEL-003",
+    "ASST-OCGW-001",
+    "ASST-KERNEL-006"
+  ],
+  "approval_actions": [],
+  "reassignment_actions": [],
+  "recommended_focus": [
+    "OPS-ASST-STATUS-SYNC",
+    "ASST-OCGW-002",
+    "ASST-OCGW-003",
+    "ASST-BFF-001"
+  ]
+}

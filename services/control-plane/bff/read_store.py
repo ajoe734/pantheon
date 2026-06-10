@@ -145,6 +145,24 @@ def _fixture_list_record_key(record: Any) -> str:
     return json.dumps(record, sort_keys=True, ensure_ascii=True)
 
 
+def _compact_string_list(value: Any) -> List[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        values = [part.strip() for part in re.split(r"[\s,]+", value) if part.strip()]
+    elif isinstance(value, (list, tuple, set)):
+        values = [str(item).strip() for item in value if str(item).strip()]
+    else:
+        values = [str(value).strip()]
+    deduped: List[str] = []
+    seen = set()
+    for item in values:
+        if item not in seen:
+            deduped.append(item)
+            seen.add(item)
+    return deduped
+
+
 def _merge_default_fixture_pack(target: Dict[str, Any], fixture: Dict[str, Any]) -> bool:
     changed = False
     for raw_key, incoming in fixture.items():
@@ -2143,6 +2161,13 @@ class CanonicalSnapshotAdapter:
             "keys": ["binding_id", "id"],
             "snapshot_key": "runtime_bindings",
         },
+        "paper_runtime_monitoring_sessions": {
+            "env": "PANTHEON_BFF_PAPER_RUNTIME_MONITORING_SESSION_STORE",
+            "dirs": ("PANTHEON_RUNTIME_DATA_DIR",),
+            "filenames": ("paper_runtime_monitoring_sessions.json",),
+            "keys": ["session_id", "id"],
+            "snapshot_key": "paper_runtime_monitoring_sessions",
+        },
         "registry_entries": {
             "env": "PANTHEON_BFF_REGISTRY_ENTRY_STORE",
             "dirs": ("PANTHEON_REGISTRY_DATA_DIR",),
@@ -2178,6 +2203,14 @@ class CanonicalSnapshotAdapter:
             "list_key": "bindings",
             "auth_token_env": "PANTHEON_RUNTIME_MANAGER_TOKEN",
             "default_token": "runtime-control-internal",
+        },
+        "paper_runtime_monitoring_sessions": {
+            "base_env": (
+                "PANTHEON_PAPER_FLEET_RECONCILER_URL",
+                "PANTHEON_PAPER_RUNTIME_MONITORING_URL",
+            ),
+            "list_path": "/api/fleet/state",
+            "list_key": "monitoring_sessions",
         },
     }
 
@@ -2415,6 +2448,13 @@ class ServiceBackedReadAdapter:
             "nested_key": "postmortems",
             "snapshot_key": "postmortems",
         },
+        "kill_switch": {
+            "env": "PANTHEON_BFF_KILL_SWITCH_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["id", "status"],
+            "snapshot_key": "kill_switch",
+        },
         "evolution_decisions": {
             "env": "PANTHEON_BFF_EVOLUTION_DECISION_STORE",
             "dirs": ("EVOLUTION_DATA_DIR",),
@@ -2617,6 +2657,13 @@ class ServiceBackedReadAdapter:
             "filenames": (),
             "keys": ["id"],
             "snapshot_key": "sentinel_findings",
+        },
+        "v5_interventions": {
+            "env": "PANTHEON_BFF_V5_INTERVENTION_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["intervention_id", "id"],
+            "snapshot_key": "v5_interventions",
         },
         "ooda_packets": {
             "env": "PANTHEON_BFF_OODA_PACKET_STORE",
@@ -6733,6 +6780,7 @@ class ReadSurfaceStore:
         "telemetry_summaries": "telemetry_summaries",
         "telemetry_performance": "telemetry_performance",
         "paper_live_drift_reports": "paper_live_drift_reports",
+        "paper_runtime_monitoring_sessions": "paper_runtime_monitoring_sessions",
         "lineage_edges": "lineage_edges",
         "inspiration_graphs": "inspiration_graphs",
         "kill_switch": "kill_switch",
@@ -6765,6 +6813,7 @@ class ReadSurfaceStore:
         "decision_journal_idempotency": "decision_journal_idempotency",
         "agora_journal_audit_events": "agora_journal_audit_events",
         "agora_signals": "agora_signals",
+        "agora_feedback": "agora_feedback",
         "agora_signal_feedback": "agora_signal_feedback",
         "agora_watchlist": "agora_watchlist",
         "agora_sessions": "agora_sessions",
@@ -7550,6 +7599,8 @@ class ReadSurfaceStore:
         agent_id: Optional[str] = None,
         effective_tools_session_id: Optional[str] = None,
         requesting_operator_id: Optional[str] = None,
+        effective_tools_mode: Optional[str] = None,
+        requesting_operator_role: Optional[str] = None,
     ) -> Dict[str, Any]:
         bounded_session_limit = max(min(session_limit, 100), 1)
         bounded_audit_limit = max(min(audit_limit, 100), 1)
@@ -7599,6 +7650,8 @@ class ReadSurfaceStore:
                     agent_id=agent_id,
                     operator_id=requesting_operator_id,
                     session_id=effective_tools_session_id,
+                    mode=effective_tools_mode,
+                    operator_role=requesting_operator_role,
                 ),
             )
             service_status["openclaw_effective_tools"] = tools_surface
@@ -8996,6 +9049,38 @@ class ReadSurfaceStore:
             return None
         return self._agora_record_map("agora_signals", ["signal_id", "id"]).get(str(signal_id))
 
+    def create_agora_signal(
+        self,
+        *,
+        signal_id: str,
+        title: str,
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now_rfc3339()
+        signal = {
+            "id": signal_id,
+            "signal_id": signal_id,
+            "title": title,
+            "body": body,
+            "market": str(payload.get("market") or "").strip() or None,
+            "tags": _compact_string_list(payload.get("tags")),
+            "linkedPersonaIds": _compact_string_list(payload.get("linkedPersonaIds") or payload.get("linked_persona_ids")),
+            "linkedStrategyIds": _compact_string_list(payload.get("linkedStrategyIds") or payload.get("linked_strategy_ids")),
+            "severity": str(payload.get("severity") or "info").strip().lower(),
+            "status": "open",
+            "reviewStatus": "pending_trader_review",
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "createdBy": actor_id,
+            "authorId": actor_id,
+        }
+        self._ensure_local_overlay_records("agora_signals")[signal_id] = json.loads(json.dumps(signal))
+        self._save()
+        return json.loads(json.dumps(signal))
+
     def record_agora_signal_feedback(
         self,
         signal_id: str,
@@ -9049,6 +9134,43 @@ class ReadSurfaceStore:
         signal_records = self._ensure_local_overlay_records("agora_signals")
         signal_copy = json.loads(json.dumps(signal))
         signal_copy["reviewStatus"] = decision
+        signal_copy["latestFeedbackId"] = feedback_id
+        signal_copy["updatedAt"] = timestamp
+        signal_records[signal_id] = signal_copy
+        self._save()
+        return json.loads(json.dumps(feedback))
+
+    def create_agora_feedback(
+        self,
+        signal_id: str,
+        *,
+        verdict: str,
+        memo: Optional[str],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        signal = self.get_agora_signal(signal_id)
+        if signal is None:
+            return None
+
+        timestamp = created_at or _utc_now_rfc3339()
+        feedback_id = f"agfb-{uuid.uuid4().hex[:12]}"
+        feedback = {
+            "id": feedback_id,
+            "feedbackId": feedback_id,
+            "signal_id": signal_id,
+            "signalId": signal_id,
+            "verdict": verdict,
+            "memo": memo,
+            "author_id": actor_id,
+            "authorId": actor_id,
+            "created_at": timestamp,
+            "createdAt": timestamp,
+        }
+        self._ensure_local_overlay_records("agora_feedback")[feedback_id] = json.loads(json.dumps(feedback))
+
+        signal_records = self._ensure_local_overlay_records("agora_signals")
+        signal_copy = json.loads(json.dumps(signal))
         signal_copy["latestFeedbackId"] = feedback_id
         signal_copy["updatedAt"] = timestamp
         signal_records[signal_id] = signal_copy
@@ -9762,6 +9884,8 @@ class ReadSurfaceStore:
     @staticmethod
     def _project_canonical_capital_pool(raw: Dict[str, Any]) -> Dict[str, Any]:
         pool_id = raw.get("pool_id") or raw.get("id")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
         projected = json.loads(json.dumps(raw))
         projected["id"] = pool_id
         projected["pool_id"] = pool_id
@@ -9771,6 +9895,8 @@ class ReadSurfaceStore:
         projected.setdefault("owner_type", raw.get("owner_type"))
         projected.setdefault("single_runtime_enforced", raw.get("single_runtime_enforced", True))
         projected.setdefault("risk_policy_ref", raw.get("risk_policy_ref"))
+        projected["tenant_id"] = tenant_id
+        projected["tenantId"] = tenant_id
         return projected
 
     @staticmethod
@@ -9794,11 +9920,17 @@ class ReadSurfaceStore:
         deployment_stage = raw.get("deployment_stage") or raw.get("deployment_mode")
         deployment_mode = raw.get("deployment_mode") or deployment_stage
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
         projected = json.loads(json.dumps(raw))
         projected["id"] = binding_id
         projected["binding_id"] = binding_id
         projected["runtime_binding_id"] = raw.get("runtime_binding_id") or binding_id
         projected["runtime_id"] = raw.get("runtime_id") or binding_id
+        projected.setdefault("name", raw.get("name"))
+        projected.setdefault("state", raw.get("state") or raw.get("status"))
+        projected.setdefault("persona_id", raw.get("persona_id"))
+        projected.setdefault("deployment_plan_id", raw.get("deployment_plan_id") or raw.get("plan_id"))
+        projected.setdefault("runtime_kind", raw.get("runtime_kind") or deployment_mode)
         projected["deployment_stage"] = deployment_stage
         projected["deployment_mode"] = deployment_mode
         projected.setdefault("status", raw.get("status"))
@@ -9807,16 +9939,24 @@ class ReadSurfaceStore:
         projected.setdefault("artifact_id", raw.get("artifact_id"))
         projected.setdefault("artifact_version", raw.get("artifact_version"))
         projected.setdefault("persona_capital_binding_id", raw.get("persona_capital_binding_id"))
+        projected["tenant_id"] = tenant_id
+        projected["tenantId"] = tenant_id
         projected.setdefault("effective_at", raw.get("effective_at"))
         projected.setdefault("retired_at", raw.get("retired_at"))
         projected.setdefault("rollback_parent", raw.get("rollback_parent"))
         projected.setdefault("rollback_action_type", raw.get("rollback_action_type"))
+        projected.setdefault("created_at", raw.get("created_at"))
+        projected.setdefault("updated_at", raw.get("updated_at"))
+        projected.setdefault("created_by", raw.get("created_by"))
+        projected.setdefault("params", json.loads(json.dumps(raw.get("params") or {})))
         projected["metadata"] = json.loads(json.dumps(metadata))
         return projected
 
     @staticmethod
     def _project_service_persona(raw: Dict[str, Any]) -> Dict[str, Any]:
         persona_id = raw.get("persona_id") or raw.get("id")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
         projected = json.loads(json.dumps(raw))
         projected["id"] = persona_id
         projected["persona_id"] = persona_id
@@ -9828,6 +9968,8 @@ class ReadSurfaceStore:
         projected.setdefault("status", raw.get("status"))
         projected.setdefault("updated_at", raw.get("updated_at"))
         projected.setdefault("metadata", raw.get("metadata", {}))
+        projected["tenant_id"] = tenant_id
+        projected["tenantId"] = tenant_id
         return projected
 
     @staticmethod
@@ -10197,6 +10339,13 @@ class ReadSurfaceStore:
                 plans.append(self._project_canonical_deployment_plan(raw, runtime_binding_id))
         else:
             plans = list((self._local_fallback("deployment_plans") or {}).values())
+        local_plans = self._local_overlay_records("deployment_plans")
+        if local_plans:
+            plans_by_id = {str(p.get("id") or p.get("plan_id") or ""): p for p in plans}
+            for overlay_key, plan in local_plans.items():
+                key = str(plan.get("id") or plan.get("plan_id") or overlay_key)
+                plans_by_id[key] = plan
+            plans = [plan for key, plan in plans_by_id.items() if key]
         if status:
             plans = [
                 p for p in plans
@@ -10249,6 +10398,7 @@ class ReadSurfaceStore:
         version: Optional[str] = None,
         include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
+        local_bindings = self._local_overlay_records("runtime_bindings")
         available, raw_bindings = self._canonical.list_records("runtime_bindings")
         if available:
             bindings_by_id = {
@@ -10273,6 +10423,16 @@ class ReadSurfaceStore:
                 for binding_id, binding in (self._local_fallback("runtime_bindings") or {}).items()
                 if isinstance(binding, dict)
             }
+        for binding_id, binding in local_bindings.items():
+            key = str(
+                binding.get("runtime_id")
+                or binding.get("runtime_binding_id")
+                or binding.get("binding_id")
+                or binding.get("id")
+                or binding_id
+            )
+            if key:
+                bindings_by_id[key] = json.loads(json.dumps(binding))
         if include_market_persona_defaults:
             bindings_by_id = self._merge_market_persona_records(
                 "runtime_bindings",
@@ -10292,6 +10452,87 @@ class ReadSurfaceStore:
             ]
         return sorted(bindings, key=lambda x: x.get("id", ""))
 
+    @staticmethod
+    def _paper_runtime_monitoring_session_active(session: Dict[str, Any]) -> bool:
+        if session.get("ended_at") not in (None, ""):
+            return False
+        explicit = session.get("active")
+        if explicit is not None:
+            return bool(explicit)
+        status = str(session.get("status") or "").strip().lower()
+        if status in {"ended", "stale", "failed"}:
+            return False
+        staleness = session.get("staleness")
+        return not isinstance(staleness, dict)
+
+    @staticmethod
+    def _paper_runtime_monitoring_sort_key(session: Dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            str(
+                session.get("last_heartbeat_at")
+                or session.get("ended_at")
+                or session.get("started_at")
+                or ""
+            ),
+            str(session.get("started_at") or ""),
+            str(session.get("session_id") or session.get("id") or ""),
+        )
+
+    def list_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
+        local_sessions = self._local_overlay_records("paper_runtime_monitoring_sessions")
+        available, raw_sessions = self._canonical.list_records("paper_runtime_monitoring_sessions")
+        if available:
+            sessions_by_id = {
+                str(session.get("session_id") or session.get("id") or ""): session
+                for session in raw_sessions
+                if str(session.get("session_id") or session.get("id") or "").strip()
+            }
+            for session_id, session in local_sessions.items():
+                key = str(session.get("session_id") or session.get("id") or session_id)
+                if key:
+                    sessions_by_id[key] = session
+            sessions = [session for key, session in sessions_by_id.items() if key]
+        else:
+            sessions = list(local_sessions.values()) or list(
+                (self._local_fallback("paper_runtime_monitoring_sessions") or {}).values()
+            )
+        return sorted(
+            [json.loads(json.dumps(session)) for session in sessions],
+            key=self._paper_runtime_monitoring_sort_key,
+            reverse=True,
+        )
+
+    def get_paper_runtime_monitoring_session(
+        self,
+        *,
+        runtime_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        runtime_id = str(runtime_id or "").strip()
+        binding_id = str(binding_id or "").strip()
+        if not runtime_id and not binding_id:
+            return None
+        matches = []
+        for session in self.list_paper_runtime_monitoring_sessions():
+            session_runtime_id = str(session.get("runtime_id") or "").strip()
+            session_binding_id = str(
+                session.get("binding_id") or session.get("runtime_binding_id") or ""
+            ).strip()
+            if binding_id and session_binding_id == binding_id:
+                matches.append(session)
+                continue
+            if runtime_id and session_runtime_id == runtime_id:
+                matches.append(session)
+        if not matches:
+            return None
+        active = [
+            session for session in matches
+            if self._paper_runtime_monitoring_session_active(session)
+        ]
+        selected = (active or matches)[0]
+        selected["active"] = self._paper_runtime_monitoring_session_active(selected)
+        return selected
+
     def list_registry_entries(self) -> List[Dict[str, Any]]:
         available, raw_entries = self._canonical.list_records("registry_entries")
         if available and raw_entries:
@@ -10299,6 +10540,9 @@ class ReadSurfaceStore:
         return list((self._local_fallback("registry_entries") or {}).values())
 
     def get_deployment_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        overlay = self._local_overlay_records("deployment_plans").get(plan_id)
+        if overlay is not None:
+            return overlay
         available, raw = self._canonical.deployment_plan(plan_id)
         if available:
             if raw is None:
@@ -10354,6 +10598,97 @@ class ReadSurfaceStore:
             "created_by": actor_id,
         }
         pools[pool_id] = record
+        self._save()
+        return record
+
+    def create_runtime_binding(
+        self,
+        *,
+        runtime_id: str,
+        name: str,
+        persona_id: str,
+        binding_id: str,
+        deployment_plan_id: str,
+        runtime_kind: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        runtimes = self._ensure_local_overlay_records("runtime_bindings")
+        timestamp = created_at or _utc_now_rfc3339()
+        clean_params = json.loads(json.dumps(params or {}))
+        record = {
+            "id": runtime_id,
+            "runtime_id": runtime_id,
+            "name": name,
+            "state": "stopped",
+            "status": "stopped",
+            "persona_id": persona_id,
+            "binding_id": binding_id,
+            "runtime_binding_id": binding_id,
+            "persona_capital_binding_id": binding_id,
+            "deployment_plan_id": deployment_plan_id,
+            "plan_id": deployment_plan_id,
+            "runtime_kind": runtime_kind,
+            "deployment_stage": runtime_kind,
+            "deployment_mode": runtime_kind,
+            "params": clean_params,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "metadata": {
+                "created_via": "POST /bff/runtimes",
+                "persistenceMode": "bff_local_dev_store",
+            },
+            "canonicalWriteAuthority": "runtime_manager_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        runtimes[runtime_id] = record
+        self._save()
+        return record
+
+    def create_deployment_plan(
+        self,
+        *,
+        plan_id: str,
+        binding_id: str,
+        artifact_id: str,
+        deployment_mode: str,
+        capital_pool_id: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        locked: bool = False,
+        status: str = "pending_approval",
+    ) -> Dict[str, Any]:
+        plans = self._ensure_local_overlay_records("deployment_plans")
+        timestamp = created_at or _utc_now_rfc3339()
+        clean_params = json.loads(json.dumps(params or {}))
+        record = {
+            "id": plan_id,
+            "plan_id": plan_id,
+            "binding_id": binding_id,
+            "persona_capital_binding_id": binding_id,
+            "artifact_id": artifact_id,
+            "deployment_mode": deployment_mode,
+            "deployment_stage": deployment_mode,
+            "target_stage": deployment_mode,
+            "capital_pool_id": capital_pool_id,
+            "target_pool_id": capital_pool_id,
+            "status": status,
+            "locked": bool(locked),
+            "params": clean_params,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "metadata": {
+                "created_via": "POST /api/v1/deployment-plans",
+                "persistenceMode": "bff_local_dev_store",
+            },
+            "canonicalWriteAuthority": "deployment_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        plans[plan_id] = record
         self._save()
         return record
 
@@ -11199,15 +11534,15 @@ class ReadSurfaceStore:
     def get_runtime_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not binding_id:
             return None
-        for binding in self.list_runtime_bindings():
-            if str(binding.get("binding_id") or binding.get("id") or "") == str(binding_id):
+        for binding in self.list_runtime_bindings(include_market_persona_defaults=True):
+            if str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or "") == str(binding_id):
                 return json.loads(json.dumps(binding))
         return None
 
     def get_runtime_binding_by_runtime_id(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not runtime_id:
             return None
-        for binding in self.list_runtime_bindings():
+        for binding in self.list_runtime_bindings(include_market_persona_defaults=True):
             if str(binding.get("runtime_id") or binding.get("id") or "") == runtime_id:
                 return json.loads(json.dumps(binding))
         return None
@@ -11686,7 +12021,146 @@ class ReadSurfaceStore:
             "open_in_new_tab": open_in_new_tab,
         }
 
-    def _project_evidence_ref_list_item(self, evidence_ref: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _tenant_scope_values(value: Any) -> List[str]:
+        if value in (None, ""):
+            return []
+        if isinstance(value, str):
+            return [part.strip() for part in re.split(r"[\s,]+", value) if part.strip()]
+        if isinstance(value, dict):
+            values: List[str] = []
+            for key in ("id", "tenant_id", "tenantId", "value", "name"):
+                if value.get(key) not in (None, ""):
+                    values.extend(ReadSurfaceStore._tenant_scope_values(value.get(key)))
+            return values
+        if isinstance(value, (list, tuple, set)):
+            values: List[str] = []
+            for item in value:
+                values.extend(ReadSurfaceStore._tenant_scope_values(item))
+            return values
+        return [str(value).strip()]
+
+    @classmethod
+    def _record_tenant_ids(cls, record: Dict[str, Any]) -> List[str]:
+        values: List[str] = []
+        direct_keys = (
+            "tenant_id",
+            "tenantId",
+            "tenant",
+            "tenant_ref",
+            "tenantRef",
+            "org_id",
+            "orgId",
+            "organization_id",
+            "organizationId",
+            "workspace_id",
+            "workspaceId",
+        )
+        for key in direct_keys:
+            if key in record:
+                values.extend(cls._tenant_scope_values(record.get(key)))
+        for key in ("metadata", "scope", "source_document", "linked_object_summary"):
+            nested = record.get(key)
+            if isinstance(nested, dict):
+                values.extend(cls._record_tenant_ids(nested))
+        seen = set()
+        result: List[str] = []
+        for value in values:
+            clean = str(value or "").strip()
+            if clean and clean not in seen:
+                seen.add(clean)
+                result.append(clean)
+        return result
+
+    @classmethod
+    def _record_matches_tenant(
+        cls,
+        record: Dict[str, Any],
+        tenant_id: Optional[str],
+        *,
+        include_tenant_agnostic: bool,
+    ) -> bool:
+        clean_tenant = str(tenant_id or "").strip()
+        if not clean_tenant:
+            return True
+        record_tenants = cls._record_tenant_ids(record)
+        if not record_tenants:
+            return include_tenant_agnostic
+        return "*" in record_tenants or clean_tenant in record_tenants
+
+    @staticmethod
+    def _evidence_linked_entity_pairs(evidence_ref: Dict[str, Any]) -> set[tuple[str, str]]:
+        pairs: set[tuple[str, str]] = set()
+
+        def add_pair(entity_type: Any, entity_ref: Any) -> None:
+            clean_type = str(entity_type or "").strip().lower()
+            clean_ref = str(entity_ref or "").strip()
+            if clean_type and clean_ref:
+                pairs.add((clean_type, clean_ref))
+
+        linked_summary = evidence_ref.get("linked_object_summary")
+        if isinstance(linked_summary, dict):
+            add_pair(linked_summary.get("entity_type"), linked_summary.get("entity_ref"))
+        add_pair(evidence_ref.get("linked_entity_type"), evidence_ref.get("linked_entity_ref"))
+        add_pair(evidence_ref.get("target_type"), evidence_ref.get("target_id"))
+        for key in ("linked_decisions", "linked_entities", "related_entities"):
+            for item in evidence_ref.get(key) or []:
+                if isinstance(item, dict):
+                    add_pair(
+                        item.get("entity_type") or item.get("type"),
+                        item.get("entity_ref") or item.get("ref") or item.get("id"),
+                    )
+        return pairs
+
+    @staticmethod
+    def _evidence_source_type(evidence_ref: Dict[str, Any]) -> str:
+        source_document = (
+            evidence_ref.get("source_document")
+            if isinstance(evidence_ref.get("source_document"), dict)
+            else {}
+        )
+        return str(
+            evidence_ref.get("source_type")
+            or source_document.get("source_type")
+            or evidence_ref.get("evidence_type")
+            or evidence_ref.get("type")
+            or ""
+        ).strip().lower()
+
+    @classmethod
+    def _evidence_matches_scope(
+        cls,
+        evidence_ref: Dict[str, Any],
+        *,
+        linked_entities: Optional[set[tuple[str, str]]],
+        source_types: Optional[set[str]],
+    ) -> bool:
+        normalized_entities = {
+            (str(entity_type or "").strip().lower(), str(entity_ref or "").strip())
+            for entity_type, entity_ref in (linked_entities or set())
+            if str(entity_type or "").strip() and str(entity_ref or "").strip()
+        }
+        normalized_source_types = {
+            str(source_type or "").strip().lower()
+            for source_type in (source_types or set())
+            if str(source_type or "").strip()
+        }
+        if not normalized_entities and not normalized_source_types:
+            return True
+        ref_entities = cls._evidence_linked_entity_pairs(evidence_ref)
+        if ref_entities:
+            return bool(normalized_entities and ref_entities.intersection(normalized_entities))
+        ref_source_type = cls._evidence_source_type(evidence_ref)
+        if ref_source_type and ref_source_type in normalized_source_types:
+            return True
+        return False
+
+    def _project_evidence_ref_list_item(
+        self,
+        evidence_ref: Dict[str, Any],
+        *,
+        include_scope_metadata: bool = False,
+    ) -> Dict[str, Any]:
         ref_id = evidence_ref.get("ref_id")
         source_document = evidence_ref.get("source_document") if isinstance(evidence_ref.get("source_document"), dict) else {}
         linked_summary = (
@@ -11735,6 +12209,21 @@ class ReadSurfaceStore:
             },
             "resolved_link": self._kw03_normalize_resolved_link(evidence_ref.get("resolved_link")),
         }
+        if include_scope_metadata:
+            tenant_ids = self._record_tenant_ids(evidence_ref)
+            if tenant_ids:
+                payload["tenant_id"] = tenant_ids[0]
+                payload["tenantId"] = tenant_ids[0]
+            linked_decisions = [
+                {
+                    "entity_type": item.get("entity_type") or item.get("type"),
+                    "entity_ref": item.get("entity_ref") or item.get("ref") or item.get("id"),
+                }
+                for item in evidence_ref.get("linked_decisions") or []
+                if isinstance(item, dict)
+            ]
+            if linked_decisions:
+                payload["linked_decisions"] = linked_decisions
         return payload
 
     def _project_evidence_ref_detail(self, evidence_ref: Dict[str, Any]) -> Dict[str, Any]:
@@ -11807,8 +12296,30 @@ class ReadSurfaceStore:
             "created_at": evidence_ref.get("created_at") or projected["source_document"].get("captured_at"),
         }
 
-    def list_evidence_refs(self) -> List[Dict[str, Any]]:
+    def list_evidence_refs(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        include_tenant_agnostic: bool = True,
+        linked_entities: Optional[set[tuple[str, str]]] = None,
+        source_types: Optional[set[str]] = None,
+        include_scope_metadata: bool = False,
+    ) -> List[Dict[str, Any]]:
         evidence_refs = self._read_dataset_records("evidence_refs")
+        evidence_refs = [
+            evidence_ref
+            for evidence_ref in evidence_refs
+            if self._record_matches_tenant(
+                evidence_ref,
+                tenant_id,
+                include_tenant_agnostic=include_tenant_agnostic,
+            )
+            and self._evidence_matches_scope(
+                evidence_ref,
+                linked_entities=linked_entities,
+                source_types=source_types,
+            )
+        ]
         evidence_refs.sort(
             key=lambda evidence_ref: (
                 _parse_rfc3339(
@@ -11820,7 +12331,13 @@ class ReadSurfaceStore:
             ),
             reverse=True,
         )
-        return [self._project_evidence_ref_list_item(evidence_ref) for evidence_ref in evidence_refs]
+        return [
+            self._project_evidence_ref_list_item(
+                evidence_ref,
+                include_scope_metadata=include_scope_metadata,
+            )
+            for evidence_ref in evidence_refs
+        ]
 
     def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ref_id:
@@ -13640,6 +14157,8 @@ class ReadSurfaceStore:
                 "source": "missing",
                 "connectors": [],
                 "provider_examples": [],
+                "financial_data_source_catalog": None,
+                "active_universe_policy": None,
             }
         available, payload = _http_json_get(base_url, "/api/source-ingest/registry")
         if not available or not isinstance(payload, dict):
@@ -13647,18 +14166,71 @@ class ReadSurfaceStore:
                 "source": "unavailable",
                 "connectors": [],
                 "provider_examples": [],
+                "financial_data_source_catalog": None,
+                "active_universe_policy": None,
             }
         connectors = payload.get("connectors") if isinstance(payload.get("connectors"), list) else []
         provider_examples = (
             payload.get("provider_examples") if isinstance(payload.get("provider_examples"), list) else []
         )
         policy_registry = payload.get("policy_registry") if isinstance(payload.get("policy_registry"), dict) else None
+        financial_catalog = (
+            payload.get("financial_data_source_catalog")
+            if isinstance(payload.get("financial_data_source_catalog"), dict)
+            else None
+        )
+        active_universe_policy = (
+            payload.get("active_universe_policy")
+            if isinstance(payload.get("active_universe_policy"), dict)
+            else None
+        )
+        if active_universe_policy is None and isinstance(financial_catalog, dict):
+            nested_policy = financial_catalog.get("active_universe_policy")
+            if isinstance(nested_policy, dict):
+                active_universe_policy = nested_policy
         return {
             "source": "service_client",
             "schema_version": payload.get("schema_version"),
             "connectors": json.loads(json.dumps(connectors)),
             "provider_examples": json.loads(json.dumps(provider_examples)),
             "policy_registry": json.loads(json.dumps(policy_registry)) if policy_registry else None,
+            "financial_data_source_catalog": json.loads(json.dumps(financial_catalog)) if financial_catalog else None,
+            "active_universe_policy": json.loads(json.dumps(active_universe_policy)) if active_universe_policy else None,
+        }
+
+    def get_source_change_proposals(
+        self,
+        *,
+        status: Optional[str] = None,
+        proposal_type: Optional[str] = None,
+        source_kind: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Read source-change proposals from the source-ingest service.
+
+        BFF is read-only: this method never mutates proposal state.  All
+        lifecycle transitions go through operator-gated action endpoints on
+        the source-ingest service directly.
+        """
+        base_url = self._source_ingest_service_url()
+        if not base_url:
+            return {"source": "missing", "proposals": []}
+        path = "/api/source-change-proposals"
+        params: list[str] = []
+        if status:
+            params.append(f"status={status}")
+        if proposal_type:
+            params.append(f"proposal_type={proposal_type}")
+        if source_kind:
+            params.append(f"source_kind={source_kind}")
+        if params:
+            path = path + "?" + "&".join(params)
+        available, payload = _http_json_get(base_url, path)
+        if not available or not isinstance(payload, dict):
+            return {"source": "unavailable", "proposals": []}
+        proposals = payload.get("proposals") if isinstance(payload.get("proposals"), list) else []
+        return {
+            "source": "service_client",
+            "proposals": json.loads(json.dumps(proposals)),
         }
 
     # ---------------------------------------------------------------------- #
@@ -13684,6 +14256,8 @@ class ReadSurfaceStore:
                 "source": "missing",
                 "connector_health": [],
                 "policy_registry": None,
+                "financial_data_source_catalog": None,
+                "active_universe_policy": None,
                 "crawl_runs": [],
                 "dlq": [],
                 "frontier": [],
@@ -13701,6 +14275,9 @@ class ReadSurfaceStore:
                     "external_allowlist_policy_count": 0,
                     "pit_policy_count": 0,
                     "scheduled_policy_count": 0,
+                    "financial_data_source_count": 0,
+                    "financial_data_source_template_count": 0,
+                    "active_universe_rule_count": 0,
                     "search_refresh_notification_configured": False,
                 },
             }
@@ -13709,6 +14286,8 @@ class ReadSurfaceStore:
         avail_reg, payload_reg = _http_json_get(base_url, "/api/source-ingest/registry")
         connectors: List[Dict[str, Any]] = []
         policy_registry: Optional[Dict[str, Any]] = None
+        financial_catalog: Optional[Dict[str, Any]] = None
+        active_universe_policy: Optional[Dict[str, Any]] = None
         if avail_reg and isinstance(payload_reg, dict):
             raw = payload_reg.get("connectors")
             if isinstance(raw, list):
@@ -13716,6 +14295,16 @@ class ReadSurfaceStore:
             raw_policy = payload_reg.get("policy_registry")
             if isinstance(raw_policy, dict):
                 policy_registry = json.loads(json.dumps(raw_policy))
+            raw_catalog = payload_reg.get("financial_data_source_catalog")
+            if isinstance(raw_catalog, dict):
+                financial_catalog = json.loads(json.dumps(raw_catalog))
+            raw_active_policy = payload_reg.get("active_universe_policy")
+            if isinstance(raw_active_policy, dict):
+                active_universe_policy = json.loads(json.dumps(raw_active_policy))
+            if active_universe_policy is None and isinstance(financial_catalog, dict):
+                raw_nested_policy = financial_catalog.get("active_universe_policy")
+                if isinstance(raw_nested_policy, dict):
+                    active_universe_policy = json.loads(json.dumps(raw_nested_policy))
 
         # crawl runs
         runs_path = "/api/source-ingest/jobs"
@@ -13773,10 +14362,18 @@ class ReadSurfaceStore:
                 degraded_connector_count += 1
         registry_summary = policy_registry.get("summary", {}) if isinstance(policy_registry, dict) else {}
         default_guards = policy_registry.get("default_guards", {}) if isinstance(policy_registry, dict) else {}
+        financial_catalog_summary = (
+            financial_catalog.get("summary", {}) if isinstance(financial_catalog, dict) else {}
+        )
+        active_universe_summary = (
+            active_universe_policy.get("summary", {}) if isinstance(active_universe_policy, dict) else {}
+        )
         return {
             "source": "service_client" if service_available else "unavailable",
             "connector_health": connectors,
             "policy_registry": policy_registry,
+            "financial_data_source_catalog": financial_catalog,
+            "active_universe_policy": active_universe_policy,
             "crawl_runs": crawl_runs,
             "dlq": dlq_entries,
             "frontier": frontier,
@@ -13794,10 +14391,46 @@ class ReadSurfaceStore:
                 "external_allowlist_policy_count": int(registry_summary.get("external_allowlist_policy_count") or 0),
                 "pit_policy_count": int(registry_summary.get("pit_policy_count") or 0),
                 "scheduled_policy_count": int(registry_summary.get("scheduled_policy_count") or 0),
+                "financial_data_source_count": int(financial_catalog_summary.get("data_source_count") or 0),
+                "financial_data_source_template_count": int(
+                    financial_catalog_summary.get("config_template_count") or 0
+                ),
+                "active_universe_rule_count": int(active_universe_summary.get("rule_count") or 0),
                 "search_refresh_notification_configured": bool(
                     default_guards.get("search_refresh_notification_configured")
                 ),
             },
+        }
+
+    def get_source_health_usage_snapshot(self) -> Dict[str, Any]:
+        """Composite source health, usage, and retirement recommendation surface.
+
+        Calls the source-ingest service for enriched health/usage data.
+        The BFF is read-only: it never writes health or usage records.
+        """
+        base_url = self._source_ingest_service_url()
+        if not base_url:
+            return {
+                "source": "missing",
+                "source_count": 0,
+                "sources": [],
+                "recommendation_summary": {},
+            }
+        available, payload = _http_json_get(base_url, "/api/source-ingest/health-usage-snapshot")
+        if not available or not isinstance(payload, dict):
+            return {
+                "source": "unavailable",
+                "source_count": 0,
+                "sources": [],
+                "recommendation_summary": {},
+            }
+        sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
+        rec_summary = payload.get("recommendation_summary") if isinstance(payload.get("recommendation_summary"), dict) else {}
+        return {
+            "source": "service_client",
+            "source_count": int(payload.get("source_count") or len(sources)),
+            "sources": json.loads(json.dumps(sources)),
+            "recommendation_summary": json.loads(json.dumps(rec_summary)),
         }
 
     def get_search_ops_snapshot(
@@ -14313,7 +14946,14 @@ class ReadSurfaceStore:
         return self._service.get_sentinel_finding(finding_id)
 
     def get_kill_switch_status(self) -> Dict[str, Any]:
-        ks = self._local_fallback("kill_switch") or {}
+        available, raw = self._service.record("kill_switch", "current")
+        if available and isinstance(raw, dict):
+            ks = json.loads(json.dumps(raw))
+        elif available:
+            _, records = self._service.list_records("kill_switch")
+            ks = json.loads(json.dumps(records[0])) if records else {}
+        else:
+            ks = self._local_fallback("kill_switch") or {}
         status = str(ks.get("status") or "").lower()
         if status not in {"armed", "triggered", "cooling_down"}:
             safe_mode_status = str(ks.get("safe_mode_status") or "").lower()

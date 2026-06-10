@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import fcntl
 import fnmatch
 import importlib
 import json
@@ -11,6 +12,7 @@ import os
 import random
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -37,6 +39,8 @@ from common import (
     load_status,
     new_runtime_id,
     normalize_agent_id,
+    is_github_cli_auth_failure,
+    preserve_github_cli_auth_env,
     relpath,
     selected_shared_files,
     shell_quote,
@@ -47,6 +51,7 @@ from common import (
     write_failure_evidence,
     write_json,
     write_activity_log,
+    worker_runtime_paths,
 )
 from coordination_file_watcher import sync_coordination_files
 from dispatch_policy import (
@@ -69,6 +74,21 @@ from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
 
+SIDECAR_READY_PRIORITY_OFFSET = 10
+BLOCKED_OWNER_RESCUE_KEYWORDS = (
+    "auth",
+    "authentication",
+    "credential",
+    "credentials",
+    "token",
+    "permission",
+    "quota",
+    "rate limit",
+    "push",
+    "pr push",
+)
+
+
 SESSION_ID_PATTERNS = [
     re.compile(r'"session_id"\s*:\s*"([^"]+)"'),
     re.compile(r'"sessionId"\s*:\s*"([^"]+)"'),
@@ -80,6 +100,8 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r'"type"\s*:\s*"rate_limit_event"', re.IGNORECASE),
     re.compile(r'"error"\s*:\s*"authentication_failed"', re.IGNORECASE),
     re.compile(r"quota exceeded", re.IGNORECASE),
+    re.compile(r"quota_exceeded", re.IGNORECASE),
+    re.compile(r"exceeded your .*quota", re.IGNORECASE),
     re.compile(r"free daily quota has been reached", re.IGNORECASE),
     re.compile(r"you have no quota", re.IGNORECASE),
     re.compile(r"^Failed to authenticate\b", re.IGNORECASE),
@@ -95,6 +117,7 @@ WORKER_FAILURE_PATTERNS = (
     ),
     re.compile(r"^status:\s*(401|429)\b", re.IGNORECASE),
     re.compile(r"^(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+)?\s+limit\b", re.IGNORECASE),
+    re.compile(r"^rate_limit\s*:\s*.*\b(?:limit|quota|reset|resets)\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
 )
@@ -103,6 +126,7 @@ WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     re.compile(r"^error:\s+BFF?[A-Za-z0-9_]*Error[A-Za-z0-9_]*,?$", re.IGNORECASE),
     re.compile(r"^error:\s+[A-Za-z_][A-Za-z0-9_<>{}\[\], :|?]+?\|\s*null$", re.IGNORECASE),
     re.compile(r"^[+-]?\s*console\.error\(", re.IGNORECASE),
+    re.compile(r"^[+-]\s*[A-Za-z_][A-Za-z0-9_.]*\s*=\s*", re.IGNORECASE),
     re.compile(r"^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+·\s+", re.IGNORECASE),
     re.compile(r"\bauto-reassigned\b.*\bafter repeated\b.*\bquota\b", re.IGNORECASE),
 )
@@ -130,6 +154,46 @@ _UNSET = object()
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
     return config_path(config, "state_file").parent / "supervisor.pid"
+
+
+def supervisor_lock_path(config: dict[str, Any]) -> Path:
+    return config_path(config, "state_file").parent / "supervisor.lock"
+
+
+# Held open for the lifetime of the winning supervisor process. The advisory
+# flock is released automatically by the kernel when the process exits (or is
+# killed), so a crashed supervisor never leaves the lock stuck.
+_SINGLETON_LOCK_HANDLE: Any = None
+
+
+def acquire_singleton_lock(config: dict[str, Any]) -> bool:
+    """Acquire the exclusive supervisor singleton lock.
+
+    Returns True if this process is now the sole supervisor, False if another
+    live supervisor already holds the lock (in which case the caller should
+    exit WITHOUT touching the shared pid file or runtime state). This is the
+    race-proof single-instance guard that covers every launch path
+    (cron/tmux/run-supervisor.sh and the watchdog's direct spawn), replacing
+    the PID-ordering heuristic that broke under PID wraparound.
+    """
+    global _SINGLETON_LOCK_HANDLE
+    path = supervisor_lock_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return False
+    _SINGLETON_LOCK_HANDLE = handle
+    try:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"{os.getpid()}\n")
+        handle.flush()
+    except OSError:
+        pass
+    return True
 
 
 def write_supervisor_pid(config: dict[str, Any]) -> None:
@@ -202,11 +266,19 @@ def iter_matching_supervisor_pids() -> list[int]:
     return sorted(matches)
 
 
-def terminate_older_supervisors(config: dict[str, Any]) -> None:
+def terminate_other_supervisors(config: dict[str, Any]) -> None:
+    """Terminate every other matching supervisor process except this one.
+
+    Called only by the process that just won the singleton flock, so killing all
+    other matches (rather than only lower-PID "older" ones) is safe and clears
+    any lock-less straggler from an earlier code version. The previous
+    pid < current_pid heuristic silently failed under PID wraparound, which let a
+    later-started supervisor with a smaller PID coexist with an earlier one.
+    """
     current_pid = os.getpid()
     terminated: list[int] = []
     for pid in iter_matching_supervisor_pids():
-        if pid >= current_pid:
+        if pid == current_pid:
             continue
         if not pid_is_alive(pid):
             continue
@@ -244,12 +316,62 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--no-watch", action="store_true", help="Process the event queue without running watch_events first.")
     parser.add_argument("--replay", action="store_true", help="Pass replay through to watch_events for the first scan.")
-    parser.add_argument("--poll-interval", type=float, default=None)
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help=(
+            "Override supervisor poll interval in seconds. Values below "
+            "config.supervisor.poll_interval_seconds require --allow-fast-poll."
+        ),
+    )
+    parser.add_argument(
+        "--allow-fast-poll",
+        action="store_true",
+        help=(
+            "Authorize --poll-interval below the configured value. Reserved for "
+            "ad-hoc incident debugging; do not use for steady-state runs."
+        ),
+    )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
     parser.add_argument("--claim-agent", default=None, help="Let one idle agent claim and start one ready task.")
     parser.add_argument("--release-task", default=None, help="Release this agent's completed worker slot before claiming more work.")
+    parser.add_argument("--clear-provider-pause", default=None, help="Manually clear one provider dispatch pause.")
     return parser.parse_args()
+
+
+CONFIG_DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+
+
+class FastPollNotAllowedError(SystemExit):
+    """Raised when --poll-interval is below config without --allow-fast-poll."""
+
+
+def resolve_poll_interval(
+    config: dict[str, Any],
+    *,
+    cli_value: float | None,
+    allow_fast_poll: bool,
+) -> tuple[float, str]:
+    configured = float(
+        config.get("supervisor", {}).get(
+            "poll_interval_seconds", CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+        )
+    )
+    if cli_value is None:
+        return configured, "config"
+    if cli_value <= 0:
+        raise FastPollNotAllowedError(
+            f"--poll-interval must be positive (got {cli_value})."
+        )
+    if cli_value < configured and not allow_fast_poll:
+        raise FastPollNotAllowedError(
+            f"--poll-interval={cli_value}s is below config.supervisor.poll_interval_seconds={configured}s. "
+            "Pass --allow-fast-poll to authorize an ad-hoc fast cadence, or update config.json "
+            "if this is a steady-state change."
+        )
+    return cli_value, "cli"
 
 
 def console_log(message: str, *, quiet: bool = False) -> None:
@@ -274,6 +396,35 @@ def heartbeat_lag_seconds(previous_heartbeat: str | None, current_heartbeat: str
     if previous_dt is None or current_dt is None:
         return None
     return max(0.0, (current_dt - previous_dt).total_seconds())
+
+
+def watchdog_safe_mode_active(state: dict[str, Any], now: datetime | None = None) -> bool:
+    watchdog = state.get("watchdog", {}) if isinstance(state.get("watchdog"), dict) else {}
+    safe_mode_until = parse_runtime_timestamp(str(watchdog.get("safe_mode_until") or ""))
+    if safe_mode_until is None:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    return now_dt.astimezone(timezone.utc) < safe_mode_until.astimezone(timezone.utc)
+
+
+def record_watchdog_safe_mode_observed(config: dict[str, Any], state: dict[str, Any], now: str) -> bool:
+    watchdog = state.setdefault("watchdog", {})
+    safe_mode_until = str(watchdog.get("safe_mode_until") or "").strip()
+    if not safe_mode_until:
+        return False
+    if watchdog.get("last_safe_mode_observed_until") == safe_mode_until:
+        return False
+    watchdog["last_safe_mode_observed_until"] = safe_mode_until
+    write_activity_log(
+        config,
+        {
+            "type": "watchdog_safe_mode_dispatch_suppressed",
+            "message": f"Watchdog safe mode suppresses new supervisor dispatch until {safe_mode_until}.",
+            "safe_mode_until": safe_mode_until,
+            "reason": watchdog.get("safe_mode_reason"),
+        },
+    )
+    return True
 
 
 def format_runtime_timestamp_local(ts: str | None) -> str:
@@ -333,12 +484,93 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
         ai_status = importlib.import_module("ai_status")
         status_state = ai_status.load_state()
         ai_status.write_dashboard_bundle(status_state)
-        ai_status.sync_docs_site()
+        ai_status.sync_docs_site(status_state)
     except Exception as exc:
         console_log(
             f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
+
+
+def assistant_dev_bridge_bff_dirs(repo_root: Path) -> list[Path]:
+    code_bff_dir = THIS_DIR.parent / "services" / "control-plane" / "bff"
+    repo_bff_dir = repo_root / "services" / "control-plane" / "bff"
+    dirs: list[Path] = []
+    for candidate in (code_bff_dir, repo_bff_dir):
+        if candidate not in dirs:
+            dirs.append(candidate)
+    return dirs
+
+
+def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    settings = config.get("assistant_dev_bridge") if isinstance(config.get("assistant_dev_bridge"), dict) else {}
+    if settings.get("enabled") is False:
+        return False
+
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except KeyError:
+        repo_root = THIS_DIR.parent
+    bff_dirs = assistant_dev_bridge_bff_dirs(repo_root)
+    for bff_dir in reversed(bff_dirs):
+        if str(bff_dir) not in sys.path:
+            sys.path.insert(0, str(bff_dir))
+
+    try:
+        from assistant.dev_bridge_inbox import drain_task_packet_inbox
+    except Exception as exc:
+        write_activity_log(
+            config,
+            {
+                "type": "assistant_dev_packet_drain_unavailable",
+                "message": f"Assistant dev packet inbox drain unavailable: {type(exc).__name__}: {exc}",
+                "searched_bff_dirs": [str(path) for path in bff_dirs],
+            },
+        )
+        bridge_state = state.setdefault("assistant_dev_bridge", {})
+        bridge_state["last_drain_at"] = utc_now()
+        bridge_state["last_result"] = {
+            "status": "unavailable",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        return True
+
+    limit_value = settings.get("max_packets_per_tick", settings.get("limit", 4))
+    try:
+        limit = max(0, int(limit_value))
+    except (TypeError, ValueError):
+        limit = 4
+    result = drain_task_packet_inbox(
+        repo_root=str(repo_root),
+        inbox_dir=settings.get("inbox_path") or settings.get("inbox_dir"),
+        limit=limit,
+    )
+    processed_count = int(result.get("processedCount") or 0)
+    error_count = int(result.get("errorCount") or 0)
+    if processed_count == 0 and error_count == 0:
+        return False
+
+    bridge_state = state.setdefault("assistant_dev_bridge", {})
+    bridge_state["last_drain_at"] = utc_now()
+    bridge_state["last_result"] = result
+    write_activity_log(
+        config,
+        {
+            "type": "assistant_dev_packet_inbox_drained",
+            "message": (
+                "Drained assistant dev packet inbox: "
+                f"processed={processed_count} errors={error_count}"
+            ),
+            "processed_count": processed_count,
+            "error_count": error_count,
+            "packet_ids": [
+                item.get("packetId")
+                for item in result.get("packets", [])
+                if isinstance(item, dict) and item.get("packetId")
+            ],
+        },
+    )
+    return True
 
 
 def safe_load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
@@ -594,8 +826,13 @@ def log_runtime_summary(
         console_log("queue: empty", quiet=quiet)
 
 
-def load_provider_report(config: dict[str, Any]) -> dict[str, Any]:
-    if config.get("supervisor", {}).get("auto_refresh_provider_capabilities", True):
+def load_provider_report(config: dict[str, Any], *, refresh: bool | None = None) -> dict[str, Any]:
+    should_refresh = (
+        bool(refresh)
+        if refresh is not None
+        else bool(config.get("supervisor", {}).get("auto_refresh_provider_capabilities", True))
+    )
+    if should_refresh:
         report = build_provider_capabilities(config)
         write_provider_capabilities(config, report=report)
         return report
@@ -651,6 +888,92 @@ def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> 
     return normalize_agent_id(str(group or provider_id))
 
 
+def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
+    normalized = normalize_agent_id(agent_id or "")
+    if not normalized:
+        return ""
+    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
+    return normalize_agent_id(str(agent.get("provider") or normalized))
+
+
+def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
+    provider_id = agent_provider_id(config, agent_id)
+    return provider_dispatch_group_id(config, provider_id or agent_id)
+
+
+def active_quota_group_counts(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    active_statuses: set[str],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for worker in state.get("workers", {}).values():
+        if worker.get("status") not in active_statuses:
+            continue
+        group_id = normalize_agent_id(str(worker.get("quota_group") or ""))
+        if not group_id:
+            group_id = provider_dispatch_group_id(config, str(worker.get("provider") or worker.get("agent_id") or ""))
+        if not group_id:
+            continue
+        counts[group_id] = counts.get(group_id, 0) + 1
+    return counts
+
+
+def queued_quota_group_counts(config: dict[str, Any], state: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    queue_records = state.get("queue", {}).get("events", {})
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_queue_event_ids = {
+        str(worker.get("queue_event_id") or "")
+        for worker in state.get("workers", {}).values()
+        if worker.get("status") in active_statuses and worker.get("queue_event_id")
+    }
+    try:
+        queued_events = load_event_queue(config)
+    except KeyError:
+        queued_events = []
+    for event in queued_events:
+        event_id = str(event.get("event_id") or "")
+        if not event_id:
+            continue
+        if event_id in active_queue_event_ids:
+            continue
+        record = queue_records.get(event_id, {})
+        if record.get("status") in {"completed", "failed"}:
+            continue
+        group_id = agent_quota_group_id(config, str(event.get("target_agent") or ""))
+        if not group_id:
+            continue
+        counts[group_id] = counts.get(group_id, 0) + 1
+    return counts
+
+
+def quota_group_concurrency_limit(
+    config: dict[str, Any],
+    agent_id: str | None,
+    settings: dict[str, Any] | None = None,
+) -> int | None:
+    settings = settings or ready_dispatch_settings(config)
+    raw = settings.get("max_concurrent_per_quota_group")
+    group_id = agent_quota_group_id(config, agent_id)
+    if isinstance(raw, dict):
+        provider_id = agent_provider_id(config, agent_id)
+        display_name = display_name_for(config, normalize_agent_id(agent_id or ""))
+        for key in (group_id, provider_id, normalize_agent_id(agent_id or ""), display_name):
+            if key in raw:
+                try:
+                    return max(0, int(raw[key]))
+                except (TypeError, ValueError):
+                    return None
+        return None
+    if raw in (None, ""):
+        return None
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 def agent_is_dispatch_slot(agent: dict[str, Any] | None) -> bool:
     return bool(isinstance(agent, dict) and str(agent.get("dispatch_slot_for") or "").strip())
 
@@ -689,7 +1012,13 @@ def dispatch_loop_agent_ids(config: dict[str, Any]) -> list[str]:
 def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
     normalized = normalize_agent_id(agent_id or "")
     settings = settings or ready_dispatch_settings(config)
-    default_capacity = max(1, int(settings.get("max_tasks_per_agent", 1)))
+    default_capacity: int | None = None
+    raw_default_capacity = settings.get("max_tasks_per_agent")
+    if raw_default_capacity not in (None, ""):
+        try:
+            default_capacity = max(1, int(raw_default_capacity))
+        except (TypeError, ValueError):
+            default_capacity = None
     display_name = display_name_for(config, normalized)
     overrides = settings.get("max_tasks_per_agent_by_agent", {}) or {}
     for key in (normalized, display_name):
@@ -699,7 +1028,9 @@ def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settin
             except (TypeError, ValueError):
                 pass
     slot_count = len(logical_worker_slot_ids(config, normalized))
-    return max(default_capacity, slot_count) if slot_count else default_capacity
+    if slot_count:
+        return max(default_capacity or 0, slot_count)
+    return default_capacity or 1
 
 
 def dispatch_weight_mapping(settings: dict[str, Any] | None) -> dict[str, Any]:
@@ -764,6 +1095,7 @@ def select_dispatch_agent_id(
     provider_report: dict[str, Any] | None = None,
 ) -> str | None:
     normalized = normalize_agent_id(agent_id or "")
+    settings = ready_dispatch_settings(config)
     slot_ids = logical_worker_slot_ids(config, normalized)
     if not slot_ids:
         return normalized
@@ -775,6 +1107,12 @@ def select_dispatch_agent_id(
     for slot_id in slot_ids:
         if slot_id in active_slots:
             continue
+        quota_limit = quota_group_concurrency_limit(config, slot_id, settings)
+        quota_group = agent_quota_group_id(config, slot_id)
+        if quota_limit and quota_group:
+            quota_counts = active_quota_group_counts(config, state, active_statuses)
+            if quota_counts.get(quota_group, 0) >= quota_limit:
+                continue
         if agent_auto_dispatch_block_reason(config, state, slot_id, provider_report):
             continue
         return slot_id
@@ -850,6 +1188,695 @@ def request_from_snapshot(snapshot: dict[str, Any]) -> DeliveryRequest:
     )
 
 
+WORKER_WORKTREE_EXECUTION_REASONS = [
+    REASON_OWNED_READY,
+    REASON_OWNED_IN_PROGRESS,
+    REASON_OWNED_FINALIZE,
+    REASON_REVIEW_READY,
+    "chair_review:*",
+]
+
+
+def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_worktrees")
+    settings = raw if isinstance(raw, dict) else {}
+    branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
+    return {
+        "enabled": bool(settings.get("enabled", False)),
+        "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
+        "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
+        "reuse_existing": bool(settings.get("reuse_existing", True)),
+        "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
+    }
+
+
+def _task_id_slug(task_id: str | None) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(task_id or "").lower()).strip("-")
+    return slug or "unknown-task"
+
+
+def worker_task_branch(config: dict[str, Any], task_id: str | None) -> str:
+    branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
+    prefix = str(branch_workflow.get("task_branch_prefix") or "task/")
+    normalized_task_id = str(task_id or "").strip()
+    return f"{prefix}{normalized_task_id}" if normalized_task_id else f"{prefix}unknown-task"
+
+
+def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any]) -> Path:
+    repo_root = config_path(config, "status_file").parents[0]
+    configured = Path(os.path.expanduser(str(settings.get("root") or "")))
+    if not configured.is_absolute():
+        configured = repo_root / configured
+    return configured.resolve()
+
+
+def worker_task_worktree_path(config: dict[str, Any], task_id: str | None, settings: dict[str, Any] | None = None) -> Path:
+    active_settings = settings or worker_worktree_settings(config)
+    repo_root = config_path(config, "status_file").parents[0]
+    repo_slug = re.sub(r"[^a-z0-9]+", "-", repo_root.name.lower()).strip("-") or "repo"
+    return _worker_worktree_base_root(config, active_settings) / repo_slug / _task_id_slug(task_id)
+
+
+def worker_worktree_reason_enabled(reason: str | None, settings: dict[str, Any]) -> bool:
+    normalized_reason = str(reason or "")
+    for pattern in settings.get("execution_reasons", []):
+        if fnmatch.fnmatchcase(normalized_reason, str(pattern)):
+            return True
+    return False
+
+
+def worker_workspace_task_id(request: DeliveryRequest) -> str | None:
+    metadata_task_id = str(request.metadata.get("workspace_task_id") or "").strip()
+    task_id = metadata_task_id or str(request.task_id or "").strip()
+    return task_id or None
+
+
+def _git_worktree_records(repo_root: Path) -> list[dict[str, str]]:
+    proc = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    records: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            if current:
+                records.append(current)
+                current = {}
+            continue
+        key, _, value = line.partition(" ")
+        current[key] = value.strip()
+    if current:
+        records.append(current)
+    return records
+
+
+def _worktree_record_branch(record: dict[str, str]) -> str:
+    branch = str(record.get("branch") or "").strip()
+    if branch.startswith("refs/heads/"):
+        return branch[len("refs/heads/") :]
+    return branch
+
+
+def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root: bool) -> Path | None:
+    resolved_repo_root = repo_root.resolve()
+    for record in _git_worktree_records(repo_root):
+        if _worktree_record_branch(record) != branch:
+            continue
+        path_value = record.get("worktree")
+        if not path_value:
+            continue
+        path = Path(path_value).resolve()
+        if exclude_root and path == resolved_repo_root:
+            continue
+        return path
+    return None
+
+
+def _branch_checked_out_in_root(repo_root: Path, branch: str) -> bool:
+    for record in _git_worktree_records(repo_root):
+        path_value = record.get("worktree")
+        if not path_value:
+            continue
+        if Path(path_value).resolve() == repo_root.resolve():
+            return _worktree_record_branch(record) == branch
+    return False
+
+
+def _git_ref_exists(repo_root: Path, ref: str) -> bool:
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref],
+        cwd=repo_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: str) -> tuple[bool, str | None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and (not path.is_dir() or any(path.iterdir())):
+        return False, f"Worker worktree path already exists and is not empty: {path}"
+
+    remote_ref = f"refs/remotes/origin/{branch}"
+    if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
+        command = ["git", "worktree", "add", str(path), branch]
+    elif _git_ref_exists(repo_root, remote_ref):
+        command = ["git", "worktree", "add", "-b", branch, str(path), f"origin/{branch}"]
+    else:
+        command = ["git", "worktree", "add", "-b", branch, str(path), base_ref]
+
+    proc = subprocess.run(
+        command,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        details = (proc.stderr or proc.stdout or "").strip()
+        return False, f"Failed to create worker worktree {path} for {branch}: {details}"
+    return True, None
+
+
+# Orchestrator-managed per-task scratch that a worker routinely dirties inside its
+# own worktree (the task brief gets annotated, the review artifact rewritten). The
+# supervisor regenerates these on dispatch, so a reused worktree whose ONLY dirt is
+# here is safe to restore-and-reuse. Blocking dispatch on this churn is what jams
+# the whole fleet once worktrees are reused (every tick re-blocks, nothing runs).
+_REUSABLE_DIRTY_PREFIXES = (
+    ".orchestrator/task-briefs/",
+    ".orchestrator/reviews/",
+)
+
+
+def _classify_worktree_dirt(porcelain_status: str) -> tuple[str, list[str]]:
+    """Classify reused-worktree dirtiness from `git status --porcelain` output.
+
+    Returns (classification, paths):
+      'clean'        - no tracked/staged changes; paths is []
+      'scratch_only' - every change is orchestrator-managed scratch
+                       (see _REUSABLE_DIRTY_PREFIXES); paths lists them
+      'real'         - at least one change outside scratch -> must block dispatch
+    """
+    lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
+    if not lines:
+        return "clean", []
+    paths: list[str] = []
+    for ln in lines:
+        body = ln[3:] if len(ln) > 3 else ln.strip()
+        # rename/copy lines render as "old -> new"; the new path is what exists.
+        path = body.split(" -> ")[-1].strip().strip('"')
+        if path:
+            paths.append(path)
+    if any(not p.startswith(_REUSABLE_DIRTY_PREFIXES) for p in paths):
+        return "real", []
+    return "scratch_only", paths
+
+
+def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
+    """Restore orchestrator scratch paths to HEAD and drop untracked scratch."""
+    if paths:
+        subprocess.run(
+            ["git", "checkout", "-q", "HEAD", "--", *sorted(set(paths))],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    subprocess.run(
+        ["git", "clean", "-fq", "--", *_REUSABLE_DIRTY_PREFIXES],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _staged_index_split_paths_matching_head(worktree_path: Path) -> list[str]:
+    """Return staged paths whose worktree bytes already match HEAD.
+
+    Worker worktrees can be left with a split index after a merge/review loop:
+    the index stages a reverse patch while the working tree contains the branch
+    HEAD content. In that case `git restore --staged` is safe because it only
+    repairs the index. Real staged additions/renames or content changes must
+    continue to block dispatch.
+    """
+    proc = subprocess.run(
+        ["git", "diff", "--cached", "--name-status"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    paths: list[str] = []
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) < 2:
+            return []
+        status, path = parts[0], parts[-1]
+        if status not in {"M", "D"}:
+            return []
+        candidate = worktree_path / path
+        if not candidate.is_file():
+            return []
+        head_proc = subprocess.run(
+            ["git", "rev-parse", f"HEAD:{path}"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        worktree_proc = subprocess.run(
+            ["git", "hash-object", path],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if head_proc.returncode != 0 or worktree_proc.returncode != 0:
+            return []
+        if head_proc.stdout.strip() != worktree_proc.stdout.strip():
+            return []
+        paths.append(path)
+    return paths
+
+
+def _restore_reused_index_split(worktree_path: Path, paths: list[str]) -> bool:
+    if not paths:
+        return False
+    proc = subprocess.run(
+        ["git", "restore", "--staged", "--", *sorted(set(paths))],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _anchor_commit_task_wip(worktree_path: Path, task_id: str | None, branch: str) -> tuple[bool, str]:
+    """Anchor-commit a reused worktree's own uncommitted WIP on its task branch.
+
+    Called when a reused worktree -- located by matching this task's branch --
+    still carries real tracked/staged changes after every orchestrator-managed
+    auto-restore (scratch, index-split). That is almost always a prior worker
+    run for THIS task that was superseded/SIGTERMed before it could commit
+    (supersession has no commit grace period). Because the worktree is checked
+    out on the task's own branch, the dirt is the task's work, so committing it
+    preserves the work and clears the dirty-tree condition that otherwise
+    re-blocks dispatch every supervisor tick (jamming the whole agent). The
+    resumed worker run merges base and finalizes from this anchor.
+
+    Bypasses local commit hooks (--no-verify) for deterministic, non-interactive
+    success, but writes the required Pantheon trailers so the eventual finalize
+    PR still passes the Commit-trailers check.
+    """
+    head = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        cwd=worktree_path, capture_output=True, text=True, check=False,
+    )
+    current = (head.stdout or "").strip()
+    if current != branch:
+        return False, f"branch_mismatch:{current or 'detached'}"
+    add = subprocess.run(
+        ["git", "add", "-A"], cwd=worktree_path, capture_output=True, text=True, check=False,
+    )
+    if add.returncode != 0:
+        return False, "git_add_failed"
+    tid = str(task_id or "").strip() or "TASK"
+    subject = f"{tid}: anchor recovered worktree WIP"
+    if len(subject) > 72:
+        subject = f"{tid}: anchor WIP"
+    message = (
+        f"{subject}\n\n"
+        "Auto-anchor by the supervisor worktree-lease guard. A prior worker run\n"
+        "for this task was superseded/killed before committing, leaving real\n"
+        "uncommitted changes in its isolated worktree. Committing them on the\n"
+        "task's own branch preserves the work and clears the dirty-tree block\n"
+        "that otherwise re-jams dispatch every tick. The resumed worker run\n"
+        "merges base and finalizes from here.\n\n"
+        "LLM-Agent: supervisor\n"
+        f"Task-ID: {tid}\n"
+        "Reviewer: local\n"
+    )
+    commit = subprocess.run(
+        ["git", "commit", "--no-verify", "-q", "-m", message],
+        cwd=worktree_path, capture_output=True, text=True, check=False,
+    )
+    if commit.returncode != 0:
+        details = (commit.stderr or commit.stdout or "").strip().splitlines()
+        return False, "commit_failed:" + (details[0] if details else "unknown")
+    rev = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=worktree_path, capture_output=True, text=True, check=False,
+    )
+    return True, (rev.stdout or "").strip() or "ok"
+
+
+def _refresh_reused_worker_worktree(
+    repo_root: Path,
+    worktree_path: Path,
+    base_ref: str,
+    *,
+    task_id: str | None = None,
+    branch: str | None = None,
+) -> tuple[bool, str]:
+    """Fast-forward a reused worker worktree to the current base ref tip.
+
+    Reused worktrees may carry the worker's per-task branch from days ago,
+    which means their copy of `scripts/ai_status.py` / supervisor / skills can
+    be older than the supervisor root. That stale snapshot has bypassed gates
+    such as ORCH-CLOSEOUT-MERGE-GATE (require_merged_pr). Refresh on lease so
+    the worker always sees current control-plane code.
+
+    Strategy: fetch + `git merge --ff-only origin/<base>`. Never auto-resolve
+    a real merge — if the branch genuinely diverged, leave it for the worker
+    to handle. Dirty reused worktrees are blocked before dispatch so workers
+    cannot inherit unrelated staged or tracked changes.
+    """
+    base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
+    fetch_proc = subprocess.run(
+        ["git", "fetch", "origin", base, "--quiet"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if fetch_proc.returncode != 0:
+        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
+        return False, f"fetch_failed: {details}"
+
+    status_proc = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    scratch_restored = False
+    index_restored = False
+    if status_proc.returncode == 0 and status_proc.stdout.strip():
+        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
+        if classification == "real":
+            index_split_paths = _staged_index_split_paths_matching_head(worktree_path)
+            if index_split_paths and _restore_reused_index_split(worktree_path, index_split_paths):
+                index_restored = True
+            # No restorable staged index-split (or a failed restore) is NOT fatal:
+            # fall through to re-classify and anchor genuine task WIP below instead
+            # of hard-blocking dispatch forever. The previous early return here made
+            # the auto-anchor unreachable for plain unstaged real dirt -- the common
+            # case (a superseded run leaves modified-but-unstaged task files).
+            status_proc = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if status_proc.returncode != 0:
+                return False, "skipped_dirty_worktree"
+            classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
+            if classification == "real":
+                # All orchestrator-managed auto-restores ran and the worktree is
+                # still dirty: the remaining changes are this task's own
+                # uncommitted WIP (the worktree was located by its task branch),
+                # typically a superseded run killed before it could commit.
+                # Anchor-commit it on the task branch instead of jamming dispatch
+                # every tick; the resumed worker merges base and finalizes from
+                # the anchor. Fall back to blocking only if the anchor cannot be
+                # made safely (wrong branch / git failure).
+                if not branch:
+                    return False, "skipped_dirty_worktree"
+                anchored, anchor_detail = _anchor_commit_task_wip(worktree_path, task_id, branch)
+                if not anchored:
+                    return False, "skipped_dirty_worktree"
+                return True, f"autoanchored_{anchor_detail}"
+            if classification == "clean":
+                scratch_paths = []
+        # Only orchestrator-managed scratch is dirty: restore it and reuse the
+        # worktree instead of jamming dispatch on regenerable bookkeeping churn.
+        if scratch_paths:
+            _restore_reusable_scratch(worktree_path, scratch_paths)
+            verify_untracked = "all" if index_restored else "no"
+            verify_proc = subprocess.run(
+                ["git", "status", "--porcelain", f"--untracked-files={verify_untracked}"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if verify_proc.returncode == 0 and verify_proc.stdout.strip():
+                return False, "skipped_dirty_worktree"
+            scratch_restored = True
+
+    merge_proc = subprocess.run(
+        ["git", "merge", "--ff-only", f"origin/{base}"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merge_proc.returncode == 0:
+        head_proc = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        head = (head_proc.stdout or "").strip()
+        status_suffixes = []
+        if scratch_restored:
+            status_suffixes.append("scratch_restored")
+        if index_restored:
+            status_suffixes.append("index_restored")
+        suffix = f"+{'+'.join(status_suffixes)}" if status_suffixes else ""
+        return True, (f"ff_to_{head}{suffix}" if head else f"ff_ok{suffix}")
+    details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
+    return False, f"non_fast_forward: {details}"
+
+
+def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
+    normalized = rel_context_path.replace("\\", "/").strip()
+    candidates = [normalized]
+    if ".orchestrator/task-briefs/" in normalized and task_id:
+        hyphen_slug = _task_id_slug(task_id)
+        underscore_slug = hyphen_slug.replace("-", "_")
+        for slug in (underscore_slug, hyphen_slug, normalize_agent_id(task_id)):
+            if slug:
+                candidates.append(f".orchestrator/task-briefs/{slug}.md")
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            ordered.append(candidate)
+    return ordered
+
+
+def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
+    task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
+    if not task:
+        return "\n".join(
+            [
+                f"# Task Brief: {task_id or 'unknown-task'}",
+                "",
+                "Generated in the worker workspace because the supervisor root did not have a task brief file.",
+                "",
+            ]
+        )
+    return "\n".join(
+        [
+            f"# Task Brief: {task.get('id') or task_id}",
+            "",
+            "Generated in the worker workspace because the supervisor root did not have a task brief file.",
+            "",
+            "## Task",
+            f"- Title: {task.get('title') or '-'}",
+            f"- Status: {task.get('status') or '-'}",
+            f"- Owner: {task.get('owner') or '-'}",
+            f"- Reviewer: {task.get('reviewer') or '-'}",
+            f"- Next: {task.get('next') or '-'}",
+            "",
+            "## Summary",
+            str(task.get("summary_zh") or "-"),
+            "",
+        ]
+    )
+
+
+def materialize_worker_context_files(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    workspace_path: Path,
+) -> list[str]:
+    """Copy generated task briefs into isolated worktrees before worker launch."""
+    if not request.context_files:
+        return []
+    status_root = config_path(config, "status_file").parents[0].resolve()
+    materialized: list[str] = []
+    for rel_context_path in request.context_files:
+        rel_value = str(rel_context_path or "").strip().replace("\\", "/")
+        if not rel_value or Path(rel_value).is_absolute():
+            continue
+        if ".orchestrator/task-briefs/" not in rel_value:
+            continue
+        destination = workspace_path / rel_value
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        copied = False
+        for candidate in _task_brief_context_candidates(request.task_id, rel_value):
+            source = status_root / candidate
+            if not source.exists() or not source.is_file():
+                continue
+            shutil.copy2(source, destination)
+            copied = True
+            break
+        if not copied:
+            destination.write_text(_generated_worker_task_brief(config, request.task_id), encoding="utf-8")
+        materialized.append(rel_value)
+    if materialized:
+        request.metadata["materialized_context_files"] = materialized
+    return materialized
+
+
+def prepare_worker_workspace(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    request: DeliveryRequest,
+    *,
+    queue_event_id: str | None,
+    target_agent: str | None,
+) -> tuple[bool, str | None]:
+    settings = worker_worktree_settings(config)
+    if not settings.get("enabled"):
+        return True, None
+    if not worker_worktree_reason_enabled(request.reason, settings):
+        return True, None
+    workspace_task_id = worker_workspace_task_id(request)
+    if not workspace_task_id:
+        return True, None
+    if request.metadata.get("workspace_path"):
+        return True, None
+
+    repo_root = config_path(config, "status_file").parents[0].resolve()
+    branch = worker_task_branch(config, workspace_task_id)
+    worktree_path = worker_task_worktree_path(config, workspace_task_id, settings)
+    reused = False
+
+    if settings.get("reuse_existing", True):
+        existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
+        if existing:
+            worktree_path = existing
+            reused = True
+            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                repo_root,
+                worktree_path,
+                str(settings.get("base_ref") or "origin/dev"),
+                task_id=workspace_task_id,
+                branch=branch,
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_worktree_refreshed",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                    "refresh_ok": refresh_ok,
+                    "refresh_status": refresh_status,
+                },
+            )
+            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
+                message = (
+                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                    f"reused worktree {worktree_path} has dirty tracked or staged changes. "
+                    "Clean or remove that worktree before dispatch."
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_blocked_worktree_lease",
+                        "task_id": request.task_id,
+                        "workspace_task_id": workspace_task_id,
+                        "target_agent": target_agent,
+                        "queue_event_id": queue_event_id,
+                        "message": message,
+                        "workspace_branch": branch,
+                        "workspace_path": str(worktree_path),
+                        "refresh_status": refresh_status,
+                    },
+                )
+                return False, message
+
+    if not reused:
+        if _branch_checked_out_in_root(repo_root, branch):
+            message = (
+                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                f"branch {branch} is currently checked out in supervisor root {repo_root}. "
+                "Move the supervisor root back to dev or finish that root task branch first."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "workspace_task_id": workspace_task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                },
+            )
+            return False, message
+        created, error = _create_worker_worktree(repo_root, worktree_path, branch, str(settings.get("base_ref") or "origin/dev"))
+        if not created:
+            message = error or f"Failed to create worker worktree for {workspace_task_id}."
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "workspace_task_id": workspace_task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                },
+            )
+            return False, message
+
+    request.metadata.update(
+        {
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(worktree_path),
+            "workspace_branch": branch,
+            "status_root": str(repo_root),
+        }
+    )
+    materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
+    leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
+    leases[workspace_task_id] = {
+        "task_id": request.task_id,
+        "workspace_task_id": workspace_task_id,
+        "branch": branch,
+        "path": str(worktree_path),
+        "status_root": str(repo_root),
+        "last_queue_event_id": queue_event_id,
+        "last_target_agent": target_agent,
+        "last_used_at": utc_now(),
+        "materialized_context_files": materialized_context_files,
+    }
+    write_activity_log(
+        config,
+        {
+            "type": "worker_worktree_reused" if reused else "worker_worktree_allocated",
+            "task_id": request.task_id,
+            "workspace_task_id": workspace_task_id,
+            "target_agent": target_agent,
+            "queue_event_id": queue_event_id,
+            "workspace_branch": branch,
+            "workspace_path": str(worktree_path),
+            "status_root": str(repo_root),
+        },
+    )
+    return True, None
+
+
 def worker_tree_guard_settings(config: dict[str, Any]) -> dict[str, Any]:
     raw = config.get("worker_tree_guard")
     settings = raw if isinstance(raw, dict) else {}
@@ -883,10 +1910,10 @@ def worker_tree_guard_settings(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _git_dirty_entries() -> list[dict[str, str]]:
+def _git_dirty_entries(cwd: Path | None = None) -> list[dict[str, str]]:
     proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        cwd=THIS_DIR.parent,
+        cwd=cwd or THIS_DIR.parent,
         capture_output=True,
         text=True,
         check=False,
@@ -932,6 +1959,7 @@ def check_worker_tree_clean(
     task_id: str | None,
     target_agent: str | None,
     queue_event_id: str | None,
+    cwd: Path | None = None,
 ) -> tuple[bool, str | None]:
     settings = worker_tree_guard_settings(config)
     if not settings.get("enabled"):
@@ -940,7 +1968,7 @@ def check_worker_tree_clean(
     if mode in {"off", "disabled", "false"}:
         return True, None
 
-    dirty_entries = _git_dirty_entries()
+    dirty_entries = _git_dirty_entries(cwd)
     if not dirty_entries:
         return True, None
 
@@ -974,6 +2002,7 @@ def check_worker_tree_clean(
             "worker_run_id": run_id,
             "blocking_paths": [entry["path"] for entry in blocking_entries],
             "mode": mode,
+            "workspace_path": str(cwd) if cwd else None,
         },
     )
     return mode != "block", message
@@ -1031,6 +2060,9 @@ def start_worker_for_request(
     worker_run_id = result.run_id or new_runtime_id(request.provider)
     logical_agent_id = str(request.metadata.get("logical_agent_id") or agent["id"])
     dispatch_slot_id = str(request.metadata.get("dispatch_slot_id") or "")
+    now_dt = datetime.now(timezone.utc)
+    now = _isoformat_utc(now_dt)
+    result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
     state.setdefault("workers", {})[worker_run_id] = {
         "run_id": worker_run_id,
         "provider": request.provider,
@@ -1043,7 +2075,10 @@ def start_worker_for_request(
         "session_id": result.session_id,
         "mode": result.mode,
         "status": "manual_pending" if result.manual_confirmation_required and not result.auto_delivered else "running",
-        "last_event_at": utc_now(),
+        "last_event_at": now,
+        "last_heartbeat_at": None,
+        "lease_acquired_at": now,
+        "lease_expires_at": worker_lease_expiry(config, now_dt),
         "deferred_action": None,
         "resume_token": result.resume_token or result.session_id,
         "pr_url": normalize_pr_url(config, result.pr_url),
@@ -1053,15 +2088,39 @@ def start_worker_for_request(
         "command": result.command,
         "log_path": result.log_path,
         "payload_path": result.payload_path,
+        "workspace_mode": request.metadata.get("workspace_mode"),
+        "workspace_path": request.metadata.get("workspace_path"),
+        "workspace_branch": request.metadata.get("workspace_branch"),
+        "status_root": request.metadata.get("status_root"),
         "pid": result.pid,
+        "heartbeat_path": result_metadata.get("heartbeat_path"),
+        "runner_status_path": result_metadata.get("runner_status_path"),
         "notes": result.notes,
-        "metadata": result.metadata,
+        "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
         "parent_run_id": parent_run_id,
         "retry_count": 0,
         "next_retry_at": None,
         "last_error": None,
     }
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "worker_started",
+        {
+            "workers_started": 1,
+            "queue_leases_started": 1 if queue_event_id else 0,
+        },
+        details={
+            "worker_run_id": worker_run_id,
+            "queue_event_id": queue_event_id,
+            "task_id": request.task_id,
+            "agent_id": agent["id"],
+            "provider": request.provider,
+            "lease_expires_at": state["workers"][worker_run_id].get("lease_expires_at"),
+        },
+        emit_activity=False,
+    )
     # Persist immediately after launch so a supervisor crash cannot orphan
     # a live worker before the end-of-tick state save.
     save_runtime_state(config, state)
@@ -1080,6 +2139,10 @@ def start_worker_for_request(
             "command": result.command,
             "log_path": result.log_path,
             "payload_path": result.payload_path,
+            "workspace_mode": request.metadata.get("workspace_mode"),
+            "workspace_path": request.metadata.get("workspace_path"),
+            "workspace_branch": request.metadata.get("workspace_branch"),
+            "status_root": request.metadata.get("status_root"),
         },
     )
     return True, worker_run_id, result.as_dict()
@@ -1119,6 +2182,9 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             if record.get("status") != desired_status or record.get("run_id") != active_worker.get("run_id"):
                 record["status"] = desired_status
                 record["run_id"] = active_worker.get("run_id") or event_id
+                record["lease_owner"] = active_worker.get("run_id") or event_id
+                record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
+                record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
                 sync_dispatched_task_status(config, event)
                 changed = True
@@ -1168,6 +2234,29 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         request_agent_id = str(getattr(request, "agent_id", event.get("target_agent")) or "")
         auto_block_reason = agent_auto_dispatch_block_reason(config, state, request_agent_id, provider_report)
         if auto_block_reason:
+            if auto_dispatch_block_is_temporary_capacity(auto_block_reason):
+                record["status"] = "pending"
+                record["last_wait_reason"] = f"Auto dispatch waiting for {request_agent_id}: {auto_block_reason}"
+                record["capacity_wait_count"] = int(record.get("capacity_wait_count", 0) or 0) + 1
+                record["last_capacity_wait_at"] = utc_now()
+                reason_changed = record.get("last_capacity_wait_reason") != auto_block_reason
+                record["last_capacity_wait_reason"] = auto_block_reason
+                record_worker_runtime_measurement(
+                    config,
+                    state,
+                    "dispatch_capacity_wait",
+                    {"capacity_pending_queue_events": 1},
+                    details={
+                        "queue_event_id": event_id,
+                        "task_id": event.get("task_id"),
+                        "agent_id": request_agent_id,
+                        "reason": auto_block_reason,
+                        "capacity_wait_count": record["capacity_wait_count"],
+                    },
+                    emit_activity=reason_changed,
+                )
+                changed = True
+                continue
             record["status"] = "failed"
             record["processed_at"] = utc_now()
             record["error"] = f"Auto dispatch unavailable for {request_agent_id}: {auto_block_reason}"
@@ -1192,12 +2281,28 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
         if dispatch_agent_id != request_agent_id:
             request = build_request(config, event, agent_id_override=dispatch_agent_id)
+        workspace_ok, workspace_message = prepare_worker_workspace(
+            config,
+            state,
+            request,
+            queue_event_id=str(event_id or ""),
+            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+        )
+        if not workspace_ok:
+            record["status"] = "pending"
+            record["last_wait_reason"] = workspace_message
+            record["worktree_lease_blocked_at"] = utc_now()
+            changed = True
+            continue
+        request_metadata = getattr(request, "metadata", {}) if hasattr(request, "metadata") else {}
+        workspace_path = request_metadata.get("workspace_path") if isinstance(request_metadata, dict) else None
         guard_ok, guard_message = check_worker_tree_clean(
             config,
             run_id=str(event_id or ""),
             task_id=str(event.get("task_id") or ""),
             target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
             queue_event_id=str(event_id or ""),
+            cwd=Path(str(workspace_path)) if workspace_path else None,
         )
         if not guard_ok:
             record["status"] = "pending"
@@ -1307,9 +2412,14 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             continue
 
         worker_run_id = outcome or event_id
+        queue_started_at = datetime.now(timezone.utc)
         record["status"] = "manual_pending" if delivery and delivery.get("manual_confirmation_required") and not delivery.get("auto_delivered") else "started"
         record["run_id"] = worker_run_id
-        record["processed_at"] = utc_now()
+        record["lease_owner"] = worker_run_id
+        record["lease_acquired_at"] = _isoformat_utc(queue_started_at)
+        record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
+        record["processed_at"] = _isoformat_utc(queue_started_at)
+        record.pop("last_wait_reason", None)
         sync_dispatched_task_status(config, event)
         changed = True
     return changed
@@ -1337,6 +2447,70 @@ def pid_is_alive(pid: int | None) -> bool:
     except OSError:
         return False
     return True
+
+
+# Worker wakeup template always embeds `auto worker 身分是：<DisplayName>` in argv;
+# scan /proc to recover the truth when state["workers"] bookkeeping drifts.
+WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
+
+
+def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, list[int]]:
+    """Return live worker PIDs grouped by agent display name parsed from /proc/*/cmdline."""
+    root = proc_root if proc_root is not None else Path("/proc")
+    result: dict[str, list[int]] = {}
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return result
+    self_pid = os.getpid()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        if pid == self_pid:
+            continue
+        cmdline_path = entry / "cmdline"
+        try:
+            raw = cmdline_path.read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        match = WORKER_AGENT_CMDLINE_MARKER.search(cmdline)
+        if not match:
+            continue
+        agent = match.group(1)
+        result.setdefault(agent, []).append(pid)
+    return result
+
+
+def active_worker_refs_for_agent_id(
+    state: dict[str, Any],
+    agent_id: str | None,
+    active_statuses: set[str],
+) -> list[str]:
+    normalized_agent = normalize_agent_id(agent_id or "")
+    if not normalized_agent:
+        return []
+    normalized_statuses = {str(status or "").strip().lower() for status in active_statuses}
+    refs: list[str] = []
+    for worker in (state.get("workers", {}) or {}).values():
+        worker_agent_id = normalize_agent_id(str(worker.get("agent_id") or ""))
+        if worker_agent_id != normalized_agent:
+            continue
+        worker_status = str(worker.get("status") or "").strip().lower()
+        if worker_status not in normalized_statuses:
+            continue
+        pid = worker.get("pid")
+        if pid:
+            refs.append(str(pid))
+            continue
+        run_id = str(worker.get("run_id") or "").strip()
+        if run_id:
+            refs.append(run_id)
+    return sorted(set(refs))
 
 
 def terminate_worker_pid(pid: int | None) -> bool:
@@ -1399,7 +2573,7 @@ def discussion_planning_needs_materialization(config: dict[str, Any], planning_s
         for task in list(status.get(tasks_path) or [])
         if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
     }
-    resolver = TaskResolver(task_map)
+    resolver = task_resolver_for_config(config, task_map)
     session_id = str(planning_state.get("session_id") or "").strip()
 
     for payload in proposed:
@@ -1724,6 +2898,93 @@ def pending_chair_review_active(state: dict[str, Any], pending_review_path: str)
         if record and str(record.get("status") or "") not in {"completed", "failed"}:
             return True
     return False
+
+
+def chair_review_worker_workspace_path(worker: dict[str, Any]) -> Path | None:
+    raw_path = str(worker.get("workspace_path") or "").strip()
+    if not raw_path:
+        snapshot = worker.get("request_snapshot", {}) or {}
+        metadata = snapshot.get("metadata", {}) or {}
+        if isinstance(metadata, dict):
+            raw_path = str(metadata.get("workspace_path") or "").strip()
+    if not raw_path:
+        metadata = worker.get("metadata", {}) or {}
+        if isinstance(metadata, dict):
+            raw_path = str(metadata.get("workspace_path") or "").strip()
+    return Path(raw_path) if raw_path else None
+
+
+def chair_review_workspace_artifact_path(config: dict[str, Any], workspace_path: Path, artifact_path: Path) -> Path | None:
+    if not artifact_path.is_absolute():
+        return workspace_path / artifact_path
+
+    base_candidates: list[Path] = []
+    try:
+        base_candidates.append(config_path(config, "status_file").parent)
+    except KeyError:
+        pass
+    base_candidates.append(chair_review_base_dir(config))
+
+    for base in base_candidates:
+        try:
+            relative_path = artifact_path.resolve().relative_to(base.resolve())
+        except ValueError:
+            continue
+        return workspace_path / relative_path
+    return None
+
+
+def sync_chair_review_artifacts_from_worker_workspace(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    pending_review_relpath: str,
+    review_path: Path,
+    decision_path: Path,
+) -> bool:
+    """Copy completed chair-review artifacts out of an isolated worker workspace."""
+    copied = False
+    for worker in state.get("workers", {}).values():
+        if not worker_is_chair_review(worker):
+            continue
+        if chair_review_worker_path(worker) != pending_review_relpath:
+            continue
+
+        workspace_path = chair_review_worker_workspace_path(worker)
+        if workspace_path is None:
+            continue
+        source_review_path = chair_review_workspace_artifact_path(config, workspace_path, review_path)
+        source_decision_path = chair_review_workspace_artifact_path(config, workspace_path, decision_path)
+        if source_review_path is None or not source_review_path.exists():
+            continue
+
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        if not review_path.exists() or source_review_path.stat().st_mtime_ns > review_path.stat().st_mtime_ns:
+            shutil.copy2(source_review_path, review_path)
+            copied = True
+
+        if source_decision_path is not None and source_decision_path.exists():
+            decision_path.parent.mkdir(parents=True, exist_ok=True)
+            if not decision_path.exists() or source_decision_path.stat().st_mtime_ns > decision_path.stat().st_mtime_ns:
+                shutil.copy2(source_decision_path, decision_path)
+                copied = True
+
+        if copied:
+            write_activity_log(
+                config,
+                {
+                    "type": "chair_review_artifact_synced_from_worktree",
+                    "task_id": chair_review_settings(config).get("task_id"),
+                    "message": f"Copied chair review artifacts from worker workspace {workspace_path}.",
+                    "review_path": relpath(review_path),
+                    "decision_path": relpath(decision_path),
+                    "workspace_path": str(workspace_path),
+                    "source_review_path": str(source_review_path),
+                    "source_decision_path": str(source_decision_path) if source_decision_path is not None else None,
+                },
+            )
+        return copied
+    return copied
 
 
 def normalize_chair_review_decision(
@@ -2116,7 +3377,11 @@ def apply_chair_review_reassignment_actions(
                 handoff_from=reviewer,
             )
         elif role == "owner":
-            if task_status not in owned_statuses | finalize_statuses:
+            blocked_owner_rescue = chair_blocked_owner_rescue_allowed(task)
+            allowed_owner_statuses = owned_statuses | finalize_statuses
+            if blocked_owner_rescue:
+                allowed_owner_statuses.add("blocked")
+            if task_status not in allowed_owner_statuses:
                 log_chair_reassignment_skip(
                     config,
                     review_path=review_path,
@@ -2140,10 +3405,14 @@ def apply_chair_review_reassignment_actions(
                     message=f"Chair owner reassignment skipped because target {to_agent} is already reviewer.",
                 )
                 continue
-            requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
+            requeue_for_fresh_dispatch = (
+                (task_status in owned_statuses or blocked_owner_rescue)
+                and task_status not in finalize_statuses
+            )
             message = f"Chair reassigned owner from {owner} to {to_agent}: {reason}"
             if requeue_for_fresh_dispatch:
-                message = f"{message}. Task returned to todo for a fresh run."
+                suffix = "Task returned to todo for a blocked-owner rescue dispatch." if blocked_owner_rescue else "Task returned to todo for a fresh run."
+                message = f"{message.rstrip('.')}. {suffix}"
             applied = persist_task_reassignment(
                 config,
                 task_id=task_id,
@@ -2153,6 +3422,7 @@ def apply_chair_review_reassignment_actions(
                 new_status="todo" if requeue_for_fresh_dispatch else None,
                 handoff_to=to_agent,
                 handoff_from=owner,
+                resolve_open_blockers=blocked_owner_rescue,
             )
 
         if not applied:
@@ -2293,6 +3563,14 @@ def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) ->
         pending_decision_path = chair_review_state_path(str(rotation.get("pending_decision_path") or "")) if rotation.get("pending_decision_path") else None
         if pending_review_path is not None:
             pending_decision_path = pending_decision_path or chair_review_decision_path(pending_review_path)
+            pending_active = pending_chair_review_active(state, pending_review_relpath)
+            sync_chair_review_artifacts_from_worker_workspace(
+                config,
+                state,
+                pending_review_relpath=pending_review_relpath,
+                review_path=pending_review_path,
+                decision_path=pending_decision_path,
+            )
             if pending_decision_path.exists():
                 return refresh_chair_review_artifact(
                     config,
@@ -2300,14 +3578,14 @@ def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) ->
                     review_path=pending_review_path,
                     decision_path=pending_decision_path,
                 )
-            if pending_review_path.exists() and not pending_chair_review_active(state, pending_review_relpath):
+            if pending_review_path.exists() and not pending_active:
                 return refresh_chair_review_artifact(
                     config,
                     state,
                     review_path=pending_review_path,
                     decision_path=pending_decision_path,
                 )
-            if not pending_chair_review_active(state, pending_review_relpath):
+            if not pending_active:
                 return mark_chair_review_problem(
                     config,
                     state,
@@ -2364,6 +3642,24 @@ def chair_review_active(state: dict[str, Any]) -> bool:
         if str(worker.get("status") or "") in {"running", "started", "waiting_approval", "manual_pending", "retry_backoff", "suspended_approval", "stalled", "fallback"} and worker_is_chair_review(worker):
             return True
     return False
+
+
+def chair_review_worker_artifacts_applied(state: dict[str, Any], worker: dict[str, Any]) -> bool:
+    if not worker_is_chair_review(worker):
+        return False
+    review_relpath = chair_review_worker_path(worker)
+    if not review_relpath:
+        return False
+
+    rotation = chair_rotation_state(state)
+    if str(rotation.get("last_review_path") or "") != review_relpath:
+        return False
+    if not rotation.get("last_review_valid"):
+        return False
+
+    review_path = chair_review_state_path(review_relpath)
+    decision_path = chair_review_state_path(str(rotation.get("last_review_decision_path") or ""))
+    return bool(review_path and review_path.exists() and decision_path and decision_path.exists())
 
 
 def chair_review_report_path(config: dict[str, Any], agent_name: str, *, issued_at: str) -> Path:
@@ -2467,6 +3763,62 @@ def chair_review_failure_loop_lines(config: dict[str, Any], state: dict[str, Any
     return lines
 
 
+def chair_review_blocked_owner_rescue_details(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
+    settings = chair_review_settings(config)
+    if not settings.get("reassignment_actions_enabled", True):
+        return []
+    try:
+        status = load_status(config)
+    except KeyError:
+        return []
+    max_items = max(1, int(settings.get("max_blocked_owner_rescues_in_prompt", 6)))
+    details: list[dict[str, Any]] = []
+    owner_fallbacks = worker_reassignment_settings(config).get("owner_fallbacks", {})
+    for task in status.get("tasks", []) or []:
+        if not isinstance(task, dict) or not chair_blocked_owner_rescue_allowed(task):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        owner = str(task.get("owner") or "").strip()
+        reviewer = str(task.get("reviewer") or "").strip()
+        candidates = normalized_mapping_values(owner_fallbacks, owner)
+        viable_candidates = [
+            candidate
+            for candidate in candidates
+            if first_viable_agent(config, [candidate], exclude={owner, reviewer}, state=state, task=task) == candidate
+        ]
+        details.append(
+            {
+                "task_id": task_id,
+                "status": str(task.get("status") or "").lower(),
+                "owner": owner,
+                "reviewer": reviewer,
+                "waiting_for": str(task.get("waiting_for") or "").strip(),
+                "next": str(task.get("next") or "").replace("\n", " ").strip(),
+                "viable_reassignment_targets": viable_candidates,
+            }
+        )
+    return details[:max_items]
+
+
+def chair_review_blocked_owner_rescue_lines(config: dict[str, Any], state: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for item in chair_review_blocked_owner_rescue_details(config, state):
+        note = str(item.get("next") or "")
+        if len(note) > 220:
+            note = note[:217] + "..."
+        lines.append(
+            "- "
+            f"task={item.get('task_id')} "
+            f"status={item.get('status')} "
+            f"owner={item.get('owner')} "
+            f"reviewer={item.get('reviewer')} "
+            f"waiting_for={json.dumps(item.get('waiting_for') or '', ensure_ascii=False)} "
+            f"targets={json.dumps(item.get('viable_reassignment_targets') or [], ensure_ascii=False)} "
+            f"next={json.dumps(note, ensure_ascii=False)}"
+        )
+    return lines
+
+
 def chair_reassignment_triage_needed_for_task(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -2491,11 +3843,11 @@ def chair_reassignment_triage_needed_for_task(
         return False
 
 
-def failure_loop_agents_for_task_map(
+def failure_loop_task_agents_for_task_map(
     config: dict[str, Any],
     state: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
-) -> set[str]:
+) -> set[tuple[str, str]]:
     settings = chair_review_settings(config)
     if not settings.get("reassignment_actions_enabled", True):
         return set()
@@ -2504,7 +3856,7 @@ def failure_loop_agents_for_task_map(
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
-    agents: set[str] = set()
+    task_agents: set[tuple[str, str]] = set()
     for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
         if not isinstance(record, dict):
             continue
@@ -2522,9 +3874,20 @@ def failure_loop_agents_for_task_map(
         agent_name = display_name_for(config, provider)
         task_status = str(task.get("status") or "").lower()
         if task_status in review_statuses and str(task.get("reviewer") or "").strip() == agent_name:
-            agents.add(agent_name)
+            task_agents.add((task_id, agent_name))
         elif task_status in owned_statuses | finalize_statuses and str(task.get("owner") or "").strip() == agent_name:
-            agents.add(agent_name)
+            task_agents.add((task_id, agent_name))
+    return task_agents
+
+
+def failure_loop_agents_for_task_map(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> set[str]:
+    agents: set[str] = set()
+    for _task_id, agent_name in failure_loop_task_agents_for_task_map(config, state, task_map):
+        agents.add(agent_name)
     return agents
 
 
@@ -2547,6 +3910,8 @@ def build_chair_review_message(
     pending_approvals_block = "\n".join(pending_approval_lines) if pending_approval_lines else "- none"
     failure_loop_lines = chair_review_failure_loop_lines(config, state)
     failure_loops_block = "\n".join(failure_loop_lines) if failure_loop_lines else "- none"
+    blocked_owner_rescue_lines = chair_review_blocked_owner_rescue_lines(config, state)
+    blocked_owner_rescues_block = "\n".join(blocked_owner_rescue_lines) if blocked_owner_rescue_lines else "- none"
     return (
         "你是本輪輪值主席，請做一次 operational review，不接主線實作。\n\n"
         f"- Chair Agent: {agent_name}\n"
@@ -2562,6 +3927,8 @@ def build_chair_review_message(
         f"{pending_approvals_block}\n\n"
         "Repeated Failure Details:\n"
         f"{failure_loops_block}\n\n"
+        "Blocked Owner Rescue Candidates:\n"
+        f"{blocked_owner_rescues_block}\n\n"
         "請檢查以下事項：\n"
         "1. task board 是否有假的 in_progress（沒有 live worker）。\n"
         "2. worker 是否跑錯 owner/reviewer 或 queue event 對不上。\n"
@@ -2579,7 +3946,7 @@ def build_chair_review_message(
         '  "decision": "approve_sidecars | deny_sidecars",\n'
         '  "sidecar_approved": true,\n'
         '  "approval_ttl_minutes": 45,\n'
-        '  "max_sidecars": 2,\n'
+        '  "max_sidecars": null,\n'
         '  "reason": "one concise operational reason",\n'
         '  "blocked_by": [],\n'
         '  "blocked_sidecar_parents": [],\n'
@@ -2603,9 +3970,11 @@ def build_chair_review_message(
         '  "recommended_focus": []\n'
         "}\n\n"
         "如果目前有 idle auto worker、execution backlog 有可安全平行化的工作、且沒有 global blocker，預設應 approve_sidecars。\n"
+        "不要為 sidecar wave 設定數量上限；max_sidecars 請填 null，除非存在具體安全風險需要暫時 cap。\n"
         "如果 deny_sidecars，blocked_by 必須列出具體 blocker；如果只有特定 parent 不應產生 sidecar，請放進 blocked_sidecar_parents。\n"
         "如果 Pending Approval Details 裡有你能判斷的低風險 approval，請在 approval_actions 裡 allow 或 deny；不能判斷就不要列入。\n"
         "如果 Repeated Failure Details 顯示同一 agent 在同一 task 壞循環，請用 reassignment_actions 指定是否改派；不需要就留空。\n"
+        "如果 Blocked Owner Rescue Candidates 有可用 targets，且不是 human gate，請用 role=owner 的 reassignment_actions 改派給健康 target；supervisor 會把該 task 退回 todo 重新 dispatch。\n"
         "你可以提出 repair commands 或建立 OPS-/SUP- follow-up task 建議；不要直接手改 task board，也不要直接把 task 標成 done。\n"
     )
 
@@ -2663,7 +4032,8 @@ def queue_chair_review_event(
                 "agent": agent_name,
                 "review_path": relpath(review_path),
                 "decision_path": relpath(decision_path),
-            }
+            },
+            "workspace_task_id": f"chair-review-{review_path.stem}",
         },
     }
     enqueue_event(config, queue_payload)
@@ -2912,6 +4282,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "no quota",
         "you have no quota",
         "quota exceeded",
+        "quota_exceeded",
+        "exceeded your monthly quota",
         "free daily quota has been reached",
         "free tier quota exceeded",
         "quota will reset after",
@@ -2931,8 +4303,12 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "[object object]",
     }
 
+    if is_github_cli_auth_failure(reason):
+        return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
+    if re.search(r"\b(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+){0,3}\s+limit\b", normalized):
+        return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
@@ -2955,14 +4331,244 @@ def _parse_iso_utc(ts: str | None) -> datetime | None:
         return None
 
 
+def _isoformat_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def worker_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_runtime")
+    settings = dict(raw if isinstance(raw, dict) else {})
+    supervisor_settings = config.get("supervisor", {}) if isinstance(config.get("supervisor"), dict) else {}
+    settings.setdefault("worker_lease_seconds", supervisor_settings.get("worker_lease_seconds", 1800))
+    settings.setdefault("queue_lease_seconds", supervisor_settings.get("queue_lease_seconds", 1800))
+    settings.setdefault("heartbeat_stale_seconds", supervisor_settings.get("heartbeat_stale_seconds", 300))
+    settings.setdefault("heartbeat_grace_seconds", supervisor_settings.get("heartbeat_grace_seconds", 60))
+    settings.setdefault("runner_heartbeat_interval_seconds", 15)
+    return settings
+
+
+WORKER_RUNTIME_METRIC_COUNTERS = (
+    "workers_started",
+    "queue_leases_started",
+    "marker_updates",
+    "lease_refreshes",
+    "missing_process_workers_failed",
+    "expired_lease_workers_failed",
+    "started_queue_records_requeued",
+    "started_queue_records_failed",
+    "stale_queue_records_completed",
+    "capacity_pending_queue_events",
+)
+
+
+def worker_runtime_metrics_bucket(state: dict[str, Any]) -> dict[str, Any]:
+    bucket = state.setdefault("worker_runtime_metrics", {})
+    bucket.setdefault("version", 1)
+    bucket.setdefault("updated_at", None)
+    totals = bucket.setdefault("totals", {})
+    for key in WORKER_RUNTIME_METRIC_COUNTERS:
+        totals.setdefault(key, 0)
+    bucket.setdefault("last_measurements", {})
+    return bucket
+
+
+def positive_runtime_counts(counts: dict[str, Any]) -> dict[str, int]:
+    positive: dict[str, int] = {}
+    for key, value in counts.items():
+        try:
+            amount = int(value)
+        except (TypeError, ValueError):
+            continue
+        if amount > 0:
+            positive[key] = amount
+    return positive
+
+
+def record_worker_runtime_measurement(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    measurement: str,
+    counts: dict[str, Any],
+    *,
+    details: dict[str, Any] | None = None,
+    emit_activity: bool = True,
+) -> bool:
+    positive = positive_runtime_counts(counts)
+    if not positive and not details:
+        return False
+    now = utc_now()
+    bucket = worker_runtime_metrics_bucket(state)
+    totals = bucket.setdefault("totals", {})
+    for key, amount in positive.items():
+        totals[key] = int(totals.get(key, 0) or 0) + amount
+    bucket["updated_at"] = now
+    bucket.setdefault("last_measurements", {})[measurement] = {
+        "at": now,
+        "counts": positive,
+        "details": details or {},
+    }
+    if emit_activity and positive:
+        try:
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_runtime_metrics",
+                    "measurement": measurement,
+                    "message": f"Worker runtime measurement {measurement}: {positive}",
+                    "counts": positive,
+                    "details": details or {},
+                },
+            )
+        except KeyError:
+            pass
+    return True
+
+
+def worker_lease_expiry(config: dict[str, Any], now: datetime | None = None) -> str:
+    settings = worker_runtime_settings(config)
+    now_dt = now or datetime.now(timezone.utc)
+    return _isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("worker_lease_seconds", 1800)))))
+
+
+def queue_lease_expiry(config: dict[str, Any], now: datetime | None = None) -> str:
+    settings = worker_runtime_settings(config)
+    now_dt = now or datetime.now(timezone.utc)
+    return _isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("queue_lease_seconds", 1800)))))
+
+
+def refresh_worker_lease(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> None:
+    now_dt = now or datetime.now(timezone.utc)
+    worker.setdefault("lease_acquired_at", _isoformat_utc(now_dt))
+    worker["lease_expires_at"] = worker_lease_expiry(config, now_dt)
+
+
+def _load_runtime_marker(path_value: Any) -> dict[str, Any] | None:
+    if not path_value:
+        return None
+    path = Path(str(path_value))
+    if not path.exists():
+        return None
+    try:
+        payload = load_json(path, default={}) or {}
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def update_worker_runtime_markers(worker: dict[str, Any]) -> bool:
+    metadata = worker.setdefault("metadata", {}) if isinstance(worker.get("metadata"), dict) else {}
+    heartbeat_path = worker.get("heartbeat_path") or metadata.get("heartbeat_path")
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    changed = False
+    status_payload = _load_runtime_marker(status_path)
+    heartbeat_payload = _load_runtime_marker(heartbeat_path)
+    for payload in (status_payload, heartbeat_payload):
+        if not payload:
+            continue
+        heartbeat_at = str(payload.get("last_heartbeat_at") or payload.get("updated_at") or "").strip()
+        if heartbeat_at and heartbeat_at > str(worker.get("last_heartbeat_at") or ""):
+            worker["last_heartbeat_at"] = heartbeat_at
+            changed = True
+        child_pid = payload.get("child_pid")
+        if child_pid and worker.get("child_pid") != child_pid:
+            worker["child_pid"] = child_pid
+            changed = True
+    if status_payload:
+        runner_status = str(status_payload.get("status") or "").strip()
+        if runner_status and worker.get("runner_status") != runner_status:
+            worker["runner_status"] = runner_status
+            changed = True
+        if status_payload.get("finished_at") and worker.get("runner_finished_at") != status_payload.get("finished_at"):
+            worker["runner_finished_at"] = status_payload.get("finished_at")
+            changed = True
+        if "exit_code" in status_payload and worker.get("exit_code") != status_payload.get("exit_code"):
+            worker["exit_code"] = status_payload.get("exit_code")
+            changed = True
+        if status_payload.get("signal") and worker.get("runner_signal") != status_payload.get("signal"):
+            worker["runner_signal"] = status_payload.get("signal")
+            changed = True
+    return changed
+
+
+def worker_runner_succeeded(worker: dict[str, Any]) -> bool:
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status not in {"completed", "success", "succeeded"}:
+        return False
+    try:
+        exit_code = int(worker.get("exit_code", 0))
+    except (TypeError, ValueError):
+        return False
+    return exit_code == 0 and not worker.get("runner_signal")
+
+
+def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
+    settings = worker_runtime_settings(config)
+    heartbeat_dt = _parse_iso_utc(str(worker.get("last_heartbeat_at") or ""))
+    if heartbeat_dt is None:
+        return True
+    now_dt = now or datetime.now(timezone.utc)
+    stale_after = int(settings.get("heartbeat_stale_seconds", 300)) + int(settings.get("heartbeat_grace_seconds", 60))
+    return (now_dt - heartbeat_dt.astimezone(timezone.utc)).total_seconds() > max(60, stale_after)
+
+
+def worker_lease_is_expired(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
+    lease_expires_at = _parse_iso_utc(str(worker.get("lease_expires_at") or ""))
+    if lease_expires_at is None:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    return now_dt > lease_expires_at.astimezone(timezone.utc) and worker_heartbeat_is_stale(config, worker, now_dt)
+
+
 _QUOTA_RETRY_AT_PATTERN = re.compile(
     r"\btry again at\s+(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
+    re.IGNORECASE,
+)
+_QUOTA_RETRY_AT_DATE_PATTERN = re.compile(
+    r"\btry again at\s+"
+    r"(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+"
+    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)"
+    r"(?P<year>\d{4})\s+"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
 )
 _QUOTA_RESETS_AT_PATTERN = re.compile(
     r"\bresets\s+(?:at\s+)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
     re.IGNORECASE,
 )
+_QUOTA_RESETS_AT_DATE_PATTERN = re.compile(
+    r"\bresets\s+(?:at\s+)?"
+    r"(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+"
+    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<meridiem>[ap]\.?m\.?)?",
+    re.IGNORECASE,
+)
+_MONTH_NAME_TO_NUMBER = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
 
 
 def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -> datetime | None:
@@ -2975,6 +4581,67 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
     """
     if not reason:
         return None
+    hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
+    now_dt = now or datetime.now(timezone.utc)
+    date_match = _QUOTA_RETRY_AT_DATE_PATTERN.search(reason)
+    if date_match:
+        month = _MONTH_NAME_TO_NUMBER.get(date_match.group("month").lower())
+        if not month:
+            return None
+        hour = int(date_match.group("hour"))
+        minute = int(date_match.group("minute") or 0)
+        meridiem = (date_match.group("meridiem") or "").replace(".", "").lower()
+        if meridiem == "pm" and hour < 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        if not (0 <= hour < 24 and 0 <= minute < 60):
+            return None
+        try:
+            return datetime(
+                int(date_match.group("year")),
+                month,
+                int(date_match.group("day")),
+                hour,
+                minute,
+                tzinfo=hint_tz,
+            ).astimezone(timezone.utc)
+        except ValueError:
+            return None
+
+    reset_date_match = _QUOTA_RESETS_AT_DATE_PATTERN.search(reason)
+    if reset_date_match:
+        month = _MONTH_NAME_TO_NUMBER.get(reset_date_match.group("month").lower())
+        if not month:
+            return None
+        hour = int(reset_date_match.group("hour"))
+        minute = int(reset_date_match.group("minute") or 0)
+        meridiem = (reset_date_match.group("meridiem") or "").replace(".", "").lower()
+        if meridiem == "pm" and hour < 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        if not (0 <= hour < 24 and 0 <= minute < 60):
+            return None
+        base = now_dt.astimezone(hint_tz)
+        try:
+            candidate = datetime(
+                base.year,
+                month,
+                int(reset_date_match.group("day")),
+                hour,
+                minute,
+                tzinfo=hint_tz,
+            )
+        except ValueError:
+            return None
+        if candidate <= base:
+            try:
+                candidate = candidate.replace(year=candidate.year + 1)
+            except ValueError:
+                return None
+        return candidate.astimezone(timezone.utc)
+
     match = _QUOTA_RETRY_AT_PATTERN.search(reason) or _QUOTA_RESETS_AT_PATTERN.search(reason)
     if not match:
         return None
@@ -2987,8 +4654,7 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
         hour = 0
     if not (0 <= hour < 24 and 0 <= minute < 60):
         return None
-    hint_tz = timezone.utc if re.search(r"\(\s*UTC\s*\)|\bUTC\b", reason, re.IGNORECASE) else LOCAL_TZ
-    base = (now.astimezone(hint_tz) if now else datetime.now(hint_tz))
+    base = now_dt.astimezone(hint_tz)
     candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if candidate <= base:
         candidate += timedelta(days=1)
@@ -3111,10 +4777,23 @@ def mark_provider_dispatch_paused(
         pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
     pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
+    hinted_blocked_until: str | None = None
+    hint_capped = False
     if effective_pause_kind == "quota_terminal":
         hinted = parse_quota_retry_hint(reason, now=now)
         if hinted is not None and hinted > blocked_until:
-            blocked_until = hinted.replace(microsecond=0)
+            hinted = hinted.replace(microsecond=0)
+            hinted_blocked_until = hinted.isoformat().replace("+00:00", "Z")
+            hint_max_seconds = int(settings.get("quota_terminal_hint_max_seconds", 0) or 0)
+            if hint_max_seconds > 0:
+                hint_cap = (now + timedelta(seconds=hint_max_seconds)).replace(microsecond=0)
+                if hinted > hint_cap:
+                    blocked_until = hint_cap
+                    hint_capped = True
+                else:
+                    blocked_until = hinted
+            else:
+                blocked_until = hinted
     blocked_until_iso = blocked_until.isoformat().replace("+00:00", "Z")
     actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
     bucket = _dispatch_pause_bucket(state)
@@ -3141,6 +4820,9 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
+    if hinted_blocked_until:
+        bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
+        bucket[pause_provider_id]["hint_capped"] = hint_capped
     if changed:
         if effective_pause_kind == "quota_terminal":
             pause_description = "terminal quota failure"
@@ -3164,6 +4846,33 @@ def mark_provider_dispatch_paused(
             },
         )
     return changed
+
+
+def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> bool:
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id:
+        return False
+    pause_provider_id = provider_dispatch_group_id(config, provider_id) or provider_id
+    bucket = _dispatch_pause_bucket(state)
+    removed: list[tuple[str, dict[str, Any]]] = []
+    for pause_id in dict.fromkeys([pause_provider_id, provider_id]):
+        entry = bucket.pop(pause_id, None)
+        if isinstance(entry, dict):
+            removed.append((pause_id, entry))
+    for pause_id, entry in removed:
+        write_activity_log(
+            config,
+            {
+                "type": "provider_dispatch_resumed",
+                "provider": pause_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "message": f"Manually cleared dispatch pause for {pause_id}; dispatch is enabled again.",
+                "raw_ref": entry.get("raw_ref"),
+                "cleared_pause": entry,
+            },
+        )
+    return bool(removed)
 
 
 def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -3249,6 +4958,135 @@ def clear_task_failure_streaks_for_task(state: dict[str, Any], task_id: str | No
     bucket = _task_failure_streak_bucket(state)
     for key in [item for item in bucket if item.startswith(f"{task_id}:")]:
         bucket.pop(key, None)
+
+
+def _provider_report_entry(provider_report: dict[str, Any] | None, provider: str | None) -> dict[str, Any]:
+    providers = (provider_report or {}).get("providers") or {}
+    raw = str(provider or "").strip()
+    normalized = normalize_agent_id(raw)
+    candidates = [raw, normalized, raw.replace("_", "-"), raw.replace("-", "_")]
+    for candidate in candidates:
+        entry = providers.get(candidate)
+        if isinstance(entry, dict):
+            return entry
+    for provider_id, entry in providers.items():
+        if normalize_agent_id(str(provider_id)) == normalized and isinstance(entry, dict):
+            return entry
+    return {}
+
+
+def _provider_auth_identity_ids(config: dict[str, Any], provider: str | None) -> set[str]:
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id:
+        return set()
+    ids = {provider_id}
+    group_id = provider_dispatch_group_id(config, provider_id)
+    if group_id:
+        ids.add(group_id)
+    for configured_provider in (config.get("providers", {}) or {}):
+        configured_id = normalize_agent_id(str(configured_provider))
+        configured_group = provider_dispatch_group_id(config, configured_provider)
+        if configured_id in ids or (group_id and configured_group == group_id):
+            ids.add(configured_id)
+            if configured_group:
+                ids.add(configured_group)
+    for agent_id, agent in (config.get("agents", {}) or {}).items():
+        normalized_agent = normalize_agent_id(str(agent_id))
+        agent_provider = normalize_agent_id(str((agent or {}).get("provider") or normalized_agent))
+        agent_group = provider_dispatch_group_id(config, agent_provider)
+        dispatch_parent = normalize_agent_id(str((agent or {}).get("dispatch_slot_for") or ""))
+        if agent_provider in ids or normalized_agent in ids or dispatch_parent in ids or (group_id and agent_group == group_id):
+            ids.update(value for value in (normalized_agent, agent_provider, agent_group, dispatch_parent) if value)
+    return ids
+
+
+def _is_auth_failure_streak(config: dict[str, Any], record: dict[str, Any]) -> bool:
+    if is_auth_failure_kind(str(record.get("last_failure_kind") or "")):
+        return True
+    reason = str(record.get("last_reason") or "")
+    if not reason:
+        return False
+    provider = str(record.get("provider") or "")
+    return classify_worker_failure(config, {"provider": provider}, reason).get("kind") == "auth"
+
+
+def clear_auth_failure_streaks_for_provider(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> list[str]:
+    ids = _provider_auth_identity_ids(config, provider)
+    if not ids:
+        return []
+    bucket = _task_failure_streak_bucket(state)
+    removed: list[str] = []
+    for key, record in list(bucket.items()):
+        key_provider = key.rsplit(":", 1)[-1] if ":" in key else ""
+        record_provider = normalize_agent_id(str((record if isinstance(record, dict) else {}).get("provider") or key_provider))
+        if record_provider not in ids:
+            continue
+        if isinstance(record, dict) and _is_auth_failure_streak(config, record):
+            bucket.pop(key, None)
+            removed.append(key)
+    return removed
+
+
+def clear_auth_dispatch_pauses_for_provider(config: dict[str, Any], state: dict[str, Any], provider: str | None) -> list[str]:
+    ids = _provider_auth_identity_ids(config, provider)
+    if not ids:
+        return []
+    bucket = _dispatch_pause_bucket(state)
+    removed: list[str] = []
+    for pause_id, entry in list(bucket.items()):
+        if normalize_agent_id(str(pause_id)) not in ids or not isinstance(entry, dict):
+            continue
+        pause_kind = str(entry.get("pause_kind") or entry.get("failure_kind") or "").strip().lower()
+        if pause_kind != "auth":
+            continue
+        bucket.pop(pause_id, None)
+        removed.append(str(pause_id))
+        write_activity_log(
+            config,
+            {
+                "type": "provider_dispatch_resumed",
+                "provider": pause_id,
+                "task_id": entry.get("task_id"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "message": f"Cleared authentication dispatch pause for {pause_id}; provider auth probe is healthy again.",
+                "raw_ref": entry.get("raw_ref"),
+                "cleared_pause": entry,
+            },
+        )
+    return removed
+
+
+def reconcile_provider_auth_recovery(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    previous_report: dict[str, Any] | None,
+    current_report: dict[str, Any] | None,
+) -> bool:
+    changed = False
+    for provider_id, current in ((current_report or {}).get("providers") or {}).items():
+        if not isinstance(current, dict) or current.get("auth_ready") is not True:
+            continue
+        previous = _provider_report_entry(previous_report, str(provider_id))
+        if previous.get("auth_ready") is not False:
+            continue
+        cleared_streaks = clear_auth_failure_streaks_for_provider(config, state, str(provider_id))
+        cleared_pauses = clear_auth_dispatch_pauses_for_provider(config, state, str(provider_id))
+        if not cleared_streaks and not cleared_pauses:
+            continue
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "provider_auth_recovered",
+                "provider": str(provider_id),
+                "message": f"Provider {provider_id} authentication recovered; cleared stale auth guardrails.",
+                "cleared_task_failure_streaks": cleared_streaks,
+                "cleared_dispatch_pauses": cleared_pauses,
+                "last_auth_probe_at": current.get("last_auth_probe_at"),
+                "auth_method": current.get("auth_method"),
+            },
+        )
+    return changed
 
 
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
@@ -3380,11 +5218,103 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
     return False
 
 
+_PROVIDER_CAPS_MTIME_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _cached_provider_capabilities(config: dict[str, Any]) -> dict[str, Any]:
+    """Load provider_capabilities.json, cached by mtime to avoid re-reading it on
+    every per-task dispatch check within a scan."""
+    try:
+        path = config_path(config, "provider_capabilities")
+    except (KeyError, TypeError):
+        return {}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    cached = _PROVIDER_CAPS_MTIME_CACHE.get(str(path))
+    if cached and cached[0] == mtime:
+        return cached[1]
+    data = load_json(path, default={}) or {}
+    _PROVIDER_CAPS_MTIME_CACHE[str(path)] = (mtime, data)
+    return data
+
+
+def agent_provider_auth_blocked(
+    config: dict[str, Any],
+    agent_name: str | None,
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
+    """True when the agent's provider auth probe is explicitly not ready.
+
+    The dispatch gate (agent_auto_dispatch_block_reason) already refuses to
+    dispatch to an auth-down provider, but that only *skips* the task and leaves
+    it parked on a dead owner forever. Surfacing the same signal here lets
+    agent_can_take_task treat an auth-down owner as unable to take the task, so
+    the mainline reassignment policy moves it to a healthy fallback instead of
+    silently stalling. Mirrors the `is False` semantics of the dispatch gate so
+    a missing/None capability never triggers churn.
+    """
+    name = str(agent_name or "").strip()
+    if not name:
+        return False
+    if provider_report is None:
+        provider_report = _cached_provider_capabilities(config)
+    providers = provider_report.get("providers") or {}
+    if not providers:
+        return False
+    normalized = normalize_agent_id(name)
+    agent = (config.get("agents", {}) or {}).get(normalized) or {}
+    provider_key = str(agent.get("provider") or normalized or name)
+    provider_id = normalize_agent_id(provider_key)
+    capability = providers.get(provider_key) or providers.get(provider_id) or {}
+    return capability.get("auth_ready") is False
+
+
+def agent_is_known(config: dict[str, Any], agent_name: str | None) -> bool:
+    """True if the name maps to an agent in the roster (display name or id).
+
+    A task owner/reviewer that is NOT in the roster (e.g. a stale "Gemini2"
+    left by an old dispatch script after the gemini->antigravity migration) can
+    never run, so it must be treated as unable-to-take and reassigned.
+    """
+    name = str(agent_name or "").strip()
+    if not name:
+        return False
+    if name in known_agent_display_names(config):
+        return True
+    agent_id = normalize_agent_id(name)
+    return bool(agent_id and agent_id in (config.get("agents", {}) or {}))
+
+
+def default_reassignment_candidates(config: dict[str, Any], exclude: set[str] | None = None) -> list[str]:
+    """Roster-ordered healthy fallback owners, used when an unavailable owner
+    has no specific owner_fallbacks entry (e.g. a phantom owner)."""
+    exclude_cf = {str(x).strip().casefold() for x in (exclude or set()) if str(x).strip()}
+    sidecar_cf = {s.casefold() for s in sidecar_only_agent_names(config)}
+    out: list[str] = []
+    for agent_id, agent in (config.get("agents", {}) or {}).items():
+        name = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
+        if not name:
+            continue
+        cf = name.casefold()
+        if cf in exclude_cf or cf in sidecar_cf:
+            continue
+        if agent_dispatch_disabled(config, name):
+            continue
+        out.append(name)
+    return out
+
+
 def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
     name = str(agent_name or "").strip()
     if not name:
         return False
     if agent_dispatch_disabled(config, name):
+        return False
+    if agent_provider_auth_blocked(config, name):
+        return False
+    if not agent_is_known(config, name):
         return False
     if not isinstance(task, dict) or task_is_sidecar(task):
         return True
@@ -3427,6 +5357,18 @@ def agent_auto_dispatch_block_reason(
         return "missing target agent"
     if agent_dispatch_paused(config, state, normalized_agent):
         return f"dispatch is paused or disabled for {display_name_for(config, normalized_agent) or normalized_agent}"
+    settings = ready_dispatch_settings(config)
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    quota_limit = quota_group_concurrency_limit(config, normalized_agent, settings)
+    quota_group = agent_quota_group_id(config, normalized_agent)
+    if quota_limit and quota_group:
+        active_quota_counts = active_quota_group_counts(config, state, active_statuses)
+        active_count = active_quota_counts.get(quota_group, 0)
+        if active_count >= quota_limit:
+            return (
+                f"quota group {quota_group} already has {active_count}/{quota_limit} "
+                "active worker(s)"
+            )
     if not provider_report:
         return None
 
@@ -3453,7 +5395,58 @@ def agent_auto_dispatch_block_reason(
         if provider_capability.get("auth_ready") is False:
             return f"{provider_id} authentication is not ready"
 
+    if settings.get("worker_os_duplicate_guard", True):
+        slot_ids = logical_worker_slot_ids(config, normalized_agent)
+        if slot_ids:
+            occupied_slots = {
+                slot_id: refs
+                for slot_id in slot_ids
+                if (refs := active_worker_refs_for_agent_id(state, slot_id, active_statuses))
+            }
+            if len(occupied_slots) >= len(slot_ids):
+                slot_summary = ", ".join(
+                    f"{slot_id}=PID:{'/'.join(refs)}" for slot_id, refs in sorted(occupied_slots.items())
+                )
+                display_name = display_name_for(config, normalized_agent) or normalized_agent
+                return (
+                    f"{display_name} all dispatch slots already have live worker process(es) "
+                    f"{slot_summary}; skipping dispatch to avoid duplicate workers"
+                )
+            return None
+
+        if agent and agent_is_dispatch_slot(agent):
+            slot_refs = active_worker_refs_for_agent_id(state, normalized_agent, active_statuses)
+            if slot_refs:
+                display_name = display_name_for(config, normalized_agent) or normalized_agent
+                return (
+                    f"{display_name} slot {normalized_agent} already has live worker process(es) "
+                    f"PID={','.join(slot_refs)}; skipping dispatch to avoid duplicate workers"
+                )
+            return None
+
+        display_name = display_name_for(config, normalized_agent) or normalized_agent
+        live_pids = scan_live_worker_pids_by_agent().get(display_name, [])
+        if live_pids:
+            return (
+                f"{display_name} already has live worker process(es) "
+                f"PID={','.join(str(p) for p in sorted(set(live_pids)))}; "
+                "skipping dispatch to avoid duplicate workers"
+            )
+
     return None
+
+
+def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
+    normalized = str(reason or "").lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "quota group",
+            "already has live worker",
+            "all dispatch slots",
+            "slot",
+        )
+    )
 
 
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
@@ -3638,6 +5631,7 @@ def persist_task_reassignment(
     new_status: str | None = None,
     handoff_to: str | None = None,
     handoff_from: str | None = None,
+    resolve_open_blockers: bool = False,
 ) -> bool:
     status_path = config_path(config, "status_file")
     status = load_status(config)
@@ -3653,8 +5647,18 @@ def persist_task_reassignment(
     task["reviewer"] = new_reviewer
     if new_status:
         task["status"] = new_status
+        if str(new_status).lower() == "todo":
+            task.pop("waiting_for", None)
     task["last_update"] = timestamp
     task["next"] = message
+
+    if resolve_open_blockers:
+        for blocker in status.get("blockers", []) or []:
+            if blocker.get("task_id") != task_id or blocker.get("status") == "resolved":
+                continue
+            blocker["status"] = "resolved"
+            blocker["resolved_at"] = timestamp
+            blocker["resolution_ref"] = f"chair_reassignment:{task_id}"
 
     for handoff in status.get("handoffs", []) or []:
         if handoff.get("task_id") != task_id or handoff.get("status") == "done":
@@ -3816,6 +5820,49 @@ def maybe_reassign_task_after_worker_failure(
         return new_owner
 
     return None
+
+
+def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    settings = worker_reassignment_settings(config)
+    if not settings.get("enabled", True):
+        return False
+    threshold = max(1, int(settings.get("after_attempts", 2)))
+    max_reassignments = max(1, int(settings.get("max_failure_streak_reassignments_per_cycle", 4)))
+    changed = False
+    applied = 0
+    streaks = list((_task_failure_streak_bucket(state) or {}).items())
+    for _key, record in streaks:
+        if applied >= max_reassignments:
+            break
+        if not isinstance(record, dict):
+            continue
+        task_id = str(record.get("task_id") or "").strip()
+        provider = str(record.get("provider") or "").strip()
+        count = int(record.get("count") or 0)
+        if not task_id or not provider or count < threshold:
+            continue
+        reason = str(record.get("last_reason") or GENERIC_WORKER_EXIT_REASON)
+        failure_kind = str(record.get("last_failure_kind") or "")
+        worker = {
+            "task_id": task_id,
+            "provider": provider,
+            "agent_id": provider,
+            "run_id": record.get("worker_run_id"),
+            "retry_count": max(0, count - 1),
+        }
+        reassigned_to = maybe_reassign_task_after_worker_failure(
+            config,
+            state,
+            worker,
+            reason,
+            terminal=True,
+            force=is_terminal_quota_failure_kind(failure_kind),
+            failure_count=count,
+        )
+        if reassigned_to:
+            applied += 1
+            changed = True
+    return changed
 
 
 def is_transient_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> bool:
@@ -4111,7 +6158,8 @@ def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -
 def _claude_runtime_env(config: dict[str, Any], provider_id: str | None) -> dict[str, str]:
     provider = (config.get("providers", {}) or {}).get(normalize_agent_id(provider_id or ""), {}) or {}
     runtime = provider.get("runtime", {}) or {}
-    env = dict(os.environ)
+    base_env = dict(os.environ)
+    env = dict(base_env)
     home = str(runtime.get("home") or "").strip()
     if home:
         env["HOME"] = os.path.expanduser(home)
@@ -4120,6 +6168,7 @@ def _claude_runtime_env(config: dict[str, Any], provider_id: str | None) -> dict
         if value is None:
             continue
         env[str(key)] = os.path.expanduser(str(value))
+    preserve_github_cli_auth_env(env, base_env)
     return env
 
 
@@ -4180,6 +6229,10 @@ def resume_claude_worker(
         command.extend(["--mcp-config", str(config_path(config, "claude_mcp_config"))])
     log_path = config_path(config, "state_file").parent / "logs" / f"{new_runtime_id(f'{provider_id}-resume')}.log"
     env = _claude_runtime_env(config, provider_id)
+    repo_root = config_path(config, "status_file").parents[0]
+    request_metadata = (worker.get("request_snapshot") or {}).get("metadata", {}) if isinstance(worker.get("request_snapshot"), dict) else {}
+    workspace_root = Path(str(worker.get("workspace_path") or request_metadata.get("workspace_path") or repo_root)).expanduser().resolve()
+    status_root = Path(str(worker.get("status_root") or request_metadata.get("status_root") or repo_root)).expanduser().resolve()
     env.update(
         {
             "ORCH_RUN_ID": worker["run_id"],
@@ -4187,22 +6240,35 @@ def resume_claude_worker(
             "ORCH_AGENT_ID": worker.get("agent_id") or "",
             "ORCH_PROVIDER": provider_id,
             "ORCH_SESSION_ID": str(session_id),
+            "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+            "PANTHEON_STATUS_ROOT": str(status_root),
+            "ORCH_WORKSPACE_PATH": str(workspace_root),
         }
     )
+    runtime_paths = worker_runtime_paths(config, worker["run_id"])
     process, _ = spawn_background_process(
         command,
-        cwd=config_path(config, "status_file").parents[0],
+        cwd=workspace_root,
         log_path=log_path,
         env=env,
+        run_id=worker["run_id"],
+        heartbeat_path=runtime_paths["heartbeat_path"],
+        status_path=runtime_paths["status_path"],
     )
     previous_logs = list(worker.get("previous_log_paths") or [])
     if worker.get("log_path"):
         previous_logs.append(worker["log_path"])
+    now_dt = datetime.now(timezone.utc)
     worker["previous_log_paths"] = previous_logs
     worker["pid"] = process.pid
     worker["status"] = "running"
     worker["deferred_action"] = None
-    worker["last_event_at"] = utc_now()
+    worker["last_event_at"] = _isoformat_utc(now_dt)
+    worker["last_heartbeat_at"] = None
+    worker["lease_acquired_at"] = _isoformat_utc(now_dt)
+    worker["lease_expires_at"] = worker_lease_expiry(config, now_dt)
+    worker["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
+    worker["runner_status_path"] = str(runtime_paths["status_path"])
     worker["log_path"] = str(log_path)
     worker["resume_count"] = int(worker.get("resume_count", 0)) + 1
     worker["last_resumed_session_id"] = str(session_id)
@@ -4210,6 +6276,8 @@ def resume_claude_worker(
     worker.setdefault("metadata", {})["shell_command"] = shell_quote(command)
     worker["metadata"]["resume_permission_mode"] = resume_permission_mode if worker.get("last_approval_id") else None
     worker["metadata"]["resume_allowed_tools"] = allowed_tools
+    worker["metadata"]["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
+    worker["metadata"]["runner_status_path"] = str(runtime_paths["status_path"])
     return {
         "command": command,
         "log_path": str(log_path),
@@ -4241,6 +6309,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     if provider_report is None:
         provider_report = load_provider_report(config)
     changed = retry_due_workers(config, state, provider_report, now) or changed
+    poll_counts = {
+        "marker_updates": 0,
+        "lease_refreshes": 0,
+        "expired_lease_workers_failed": 0,
+    }
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
         previous_last_event_at = worker.get("last_event_at")
@@ -4264,8 +6337,63 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
+        marker_changed = update_worker_runtime_markers(worker)
+        if marker_changed:
+            poll_counts["marker_updates"] += 1
+            changed = True
         update_from_log(config, worker)
         alive = pid_is_alive(worker.get("pid"))
+        if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
+            if not worker_heartbeat_is_stale(config, worker, now):
+                refresh_worker_lease(config, worker, now)
+                poll_counts["lease_refreshes"] += 1
+                if worker.get("queue_event_id"):
+                    record = queue_status(state, worker["queue_event_id"])
+                    record["lease_owner"] = worker.get("run_id")
+                    record["lease_expires_at"] = queue_lease_expiry(config, now)
+        if alive and worker.get("status") in active_worker_statuses and worker_lease_is_expired(config, worker, now):
+            terminate_worker_pid(worker.get("pid"))
+            worker["status"] = "failed"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = "Worker lease expired after heartbeat became stale."
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_failed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
+            finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+            poll_counts["expired_lease_workers_failed"] += 1
+            changed = True
+            continue
+        if (
+            alive
+            and worker.get("status") in active_worker_statuses
+            and chair_review_worker_artifacts_applied(state, worker)
+        ):
+            terminate_worker_pid(worker.get("pid"))
+            worker["status"] = "completed"
+            worker["last_event_at"] = utc_now()
+            clear_task_failure_streak(state, worker=worker)
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Chair review artifacts were accepted; terminated lingering control runner.",
+                    "worker_run_id": worker["run_id"],
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            finalize_queue_event_record(config, state, worker, "completed")
+            changed = True
+            continue
         last_event_advanced = bool(
             previous_last_event_at
             and worker.get("last_event_at")
@@ -4574,7 +6702,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     changed = True
             continue
 
-        failure_reason = detect_worker_failure(worker)
+        failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
@@ -4830,7 +6958,227 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
             changed = True
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "poll_workers",
+        poll_counts,
+        emit_activity=bool(poll_counts["expired_lease_workers_failed"]),
+    )
     return changed
+
+
+def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_worktree_housekeeping")
+    settings = raw if isinstance(raw, dict) else {}
+    return {
+        "enabled": bool(settings.get("enabled", True)),
+        "tick_interval_seconds": int(settings.get("tick_interval_seconds", 600) or 0),
+        "base_branches": [str(b).strip() for b in (settings.get("base_branches") or ["dev", "master", "main"]) if str(b).strip()],
+        "max_removals_per_tick": int(settings.get("max_removals_per_tick", 5)),
+    }
+
+
+def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
+    """Return resolved paths under base_root mentioned in any live process cmdline."""
+    base_str = str(base_root)
+    referenced: set[Path] = set()
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return referenced
+    self_pid = os.getpid()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit():
+            continue
+        if int(name) == self_pid:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        if base_str not in cmdline:
+            continue
+        for tok in cmdline.split(" "):
+            if tok.startswith(base_str):
+                try:
+                    referenced.add(Path(tok).resolve())
+                except OSError:
+                    pass
+    return referenced
+
+
+def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Remove finished worker worktrees whose branches are merged and tree is clean."""
+    settings = worker_worktree_housekeeping_settings(config)
+    if not settings["enabled"]:
+        return False
+
+    interval = settings["tick_interval_seconds"]
+    bucket = state.setdefault("worker_worktree_housekeeping", {})
+    if interval > 0:
+        last_at = bucket.get("last_run_at")
+        last_dt = _parse_iso_utc(str(last_at or ""))
+        now = datetime.now(timezone.utc)
+        if last_dt is not None and (now - last_dt).total_seconds() < interval:
+            return False
+    bucket["last_run_at"] = utc_now()
+
+    worktree_settings = worker_worktree_settings(config)
+    if not worktree_settings.get("enabled", False):
+        return False
+    base_root = _worker_worktree_base_root(config, worktree_settings)
+    if not base_root.exists():
+        return False
+    repo_root = config_path(config, "status_file").parents[0]
+
+    claimed_paths: set[Path] = set()
+    for worker in state.get("workers", {}).values():
+        wp = worker.get("workspace_path")
+        if not wp:
+            continue
+        try:
+            claimed_paths.add(Path(str(wp)).resolve())
+        except OSError:
+            continue
+
+    live_paths = _scan_process_paths_in_root(base_root)
+
+    merged_branches: set[str] = set()
+    for ref in settings["base_branches"]:
+        for candidate in (f"origin/{ref}", ref):
+            if not _git_ref_exists(repo_root, candidate):
+                continue
+            proc = subprocess.run(
+                ["git", "branch", "--merged", candidate, "--list", "task/*"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                continue
+            for line in proc.stdout.splitlines():
+                name = line.strip().lstrip("*").strip()
+                if name:
+                    merged_branches.add(name)
+    if not merged_branches:
+        return False
+
+    max_removals = max(0, settings["max_removals_per_tick"])
+    base_root_str = str(base_root)
+    removed: list[str] = []
+    for record in _git_worktree_records(repo_root):
+        if len(removed) >= max_removals:
+            break
+        wt_value = record.get("worktree")
+        if not wt_value or not wt_value.startswith(base_root_str):
+            continue
+        try:
+            wt_path = Path(wt_value).resolve()
+        except OSError:
+            continue
+        if wt_path in claimed_paths:
+            continue
+        if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
+            continue
+        branch = _worktree_record_branch(record)
+        if not branch or branch not in merged_branches:
+            continue
+        status_proc = subprocess.run(
+            ["git", "-C", str(wt_path), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if status_proc.returncode != 0 or status_proc.stdout.strip():
+            continue
+        remove_proc = subprocess.run(
+            ["git", "-C", str(repo_root), "worktree", "remove", str(wt_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if remove_proc.returncode == 0:
+            removed.append(str(wt_path))
+
+    if removed:
+        write_activity_log(
+            config,
+            {
+                "type": "worktree_pruned",
+                "message": f"Pruned {len(removed)} orphan worker worktree(s): {', '.join(removed)}",
+            },
+        )
+        return True
+    return False
+
+
+def auto_commit_archive_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("auto_commit_archive")
+    settings = raw if isinstance(raw, dict) else {}
+    return {
+        "enabled": bool(settings.get("enabled", True)),
+        "tick_interval_seconds": int(settings.get("tick_interval_seconds", 1800) or 0),
+        "script_timeout_seconds": int(settings.get("script_timeout_seconds", 180)),
+    }
+
+
+def maybe_auto_commit_archive(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Periodically run .orchestrator/auto_commit_archive.py so supervisor-side
+    archive metadata + task briefs are not stranded as untracked files in the
+    main worktree. Returns True iff the script ran AND produced a PR (so the
+    caller can mark state as changed and refresh runtime artifacts)."""
+    settings = auto_commit_archive_settings(config)
+    if not settings["enabled"]:
+        return False
+
+    interval = settings["tick_interval_seconds"]
+    bucket = state.setdefault("auto_commit_archive", {})
+    if interval > 0:
+        last_at = bucket.get("last_run_at")
+        last_dt = _parse_iso_utc(str(last_at or ""))
+        now = datetime.now(timezone.utc)
+        if last_dt is not None and (now - last_dt).total_seconds() < interval:
+            return False
+    bucket["last_run_at"] = utc_now()
+
+    try:
+        repo_root = config_path(config, "status_file").parents[0]
+    except KeyError:
+        bucket["last_error"] = "status_file path not configured"
+        return False
+    script = repo_root / ".orchestrator" / "auto_commit_archive.py"
+    if not script.exists():
+        bucket["last_error"] = "script missing"
+        return False
+
+    try:
+        proc = subprocess.run(
+            ["python3", str(script), "--quiet"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=settings["script_timeout_seconds"],
+        )
+    except subprocess.TimeoutExpired:
+        bucket["last_error"] = "timeout"
+        return False
+    except OSError as exc:
+        bucket["last_error"] = f"spawn failed: {exc}"
+        return False
+
+    bucket["last_exit"] = proc.returncode
+    stdout_tail = (proc.stdout or "").strip().splitlines()[-1:] if proc.stdout else []
+    stderr_tail = (proc.stderr or "").strip().splitlines()[-1:] if proc.stderr else []
+    bucket["last_stdout"] = stdout_tail[0] if stdout_tail else ""
+    bucket["last_stderr"] = stderr_tail[0] if stderr_tail else ""
+    # Script prints "auto_commit_archive: opened PR for ..." when it actually opens one.
+    return proc.returncode == 0 and "opened PR for" in (proc.stdout or "")
 
 
 def trim_worker_history(state: dict[str, Any], max_entries: int) -> None:
@@ -4863,6 +7211,261 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
             changed = True
     return changed
 
+
+def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -> None:
+    record["status"] = "queued"
+    record["requeued_at"] = utc_now()
+    record["requeue_reason"] = reason
+    for key in (
+        "processed_at",
+        "error",
+        "lease_owner",
+        "lease_acquired_at",
+        "lease_expires_at",
+        "lease_released_at",
+        "last_wait_reason",
+    ):
+        record.pop(key, None)
+
+
+def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    changed = False
+    now = datetime.now(timezone.utc)
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    redispatch_statuses = redispatch_candidate_statuses(config)
+    counts = {
+        "marker_updates": 0,
+        "lease_refreshes": 0,
+        "missing_process_workers_failed": 0,
+        "expired_lease_workers_failed": 0,
+        "started_queue_records_requeued": 0,
+        "started_queue_records_failed": 0,
+        "stale_queue_records_completed": 0,
+    }
+    try:
+        task_map = task_index_from_status(config, load_status(config))
+    except KeyError:
+        task_map = {}
+    workers = state.setdefault("workers", {})
+
+    for run_id, worker in list(workers.items()):
+        if worker.get("status") not in active_statuses:
+            continue
+        marker_changed = update_worker_runtime_markers(worker)
+        if marker_changed:
+            counts["marker_updates"] += 1
+            changed = True
+        alive = pid_is_alive(worker.get("pid"))
+        missing_process = worker.get("status") in {"running", "stalled"} and not alive
+        expired_lease = alive and worker_lease_is_expired(config, worker, now)
+        if alive and not expired_lease and worker.get("last_heartbeat_at") and not worker_heartbeat_is_stale(config, worker, now):
+            refresh_worker_lease(config, worker, now)
+            counts["lease_refreshes"] += 1
+            if worker.get("queue_event_id"):
+                record = queue_status(state, worker["queue_event_id"])
+                record["lease_owner"] = worker.get("run_id")
+                record["lease_expires_at"] = queue_lease_expiry(config, now)
+            changed = True
+            continue
+        if not missing_process and not expired_lease:
+            continue
+        if alive:
+            terminate_worker_pid(worker.get("pid"))
+        reason = (
+            "Worker lease expired during supervisor boot reconciliation."
+            if expired_lease
+            else "Worker process missing during supervisor boot reconciliation."
+        )
+        runner_succeeded = worker_runner_succeeded(worker)
+        if runner_succeeded and (
+            worker_is_chair_review(worker) or worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)
+        ):
+            worker["status"] = "completed"
+            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            clear_task_failure_streak(state, worker=worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Control worker exited successfully during supervisor boot reconciliation.",
+                    "worker_run_id": run_id,
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            changed = True
+            continue
+
+        task_status = str(task_map.get(str(worker.get("task_id") or ""), {}).get("status") or "").lower()
+        terminal_statuses = {
+            str(value).lower()
+            for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
+        }
+        if runner_succeeded and task_status in terminal_statuses:
+            worker["status"] = "completed"
+            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            clear_task_failure_streak(state, worker=worker)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "Worker exited successfully during supervisor boot reconciliation.",
+                    "worker_run_id": run_id,
+                    "pr_url": worker.get("pr_url"),
+                    "session_url": worker.get("session_url"),
+                },
+            )
+            changed = True
+            continue
+
+        if runner_succeeded:
+            reason = GENERIC_WORKER_EXIT_REASON
+
+        detected_reason = None if runner_succeeded else detect_worker_failure(worker)
+        if detected_reason:
+            failure = classify_worker_failure(config, worker, detected_reason)
+            failure_summary = summarize_failure_reason(
+                detected_reason,
+                str(worker.get("provider") or worker.get("agent_id") or ""),
+            )
+            raw_ref = write_failure_evidence(
+                config,
+                worker=worker,
+                reason=detected_reason,
+                failure_kind=str(failure.get("kind") or ""),
+            )
+            failure_count = record_task_failure_streak(
+                state,
+                worker,
+                detected_reason,
+                failure_kind=str(failure.get("kind") or ""),
+            )
+            failure_kind = str(failure.get("kind") or "")
+            if should_pause_dispatch_for_failure_kind(failure_kind):
+                mark_provider_dispatch_paused(
+                    config,
+                    state,
+                    str(worker.get("provider") or worker.get("agent_id") or ""),
+                    detected_reason,
+                    task_id=str(worker.get("task_id") or ""),
+                    worker_run_id=str(worker.get("run_id") or ""),
+                    failure_kind=failure_kind,
+                    pause_kind=failure_kind,
+                    raw_ref=raw_ref,
+                )
+            if is_terminal_quota_failure_kind(failure_kind):
+                reassigned_to = maybe_reassign_task_after_worker_failure(
+                    config,
+                    state,
+                    worker,
+                    failure_summary.get("summary") or detected_reason,
+                    terminal=True,
+                    force=True,
+                    failure_count=failure_count,
+                )
+                if reassigned_to:
+                    worker["status"] = "reassigned"
+                    worker["reassigned_to"] = reassigned_to
+                    worker["last_event_at"] = utc_now()
+                    worker["last_error"] = failure_summary.get("summary") or detected_reason
+                    worker["last_error_raw_ref"] = raw_ref
+                    finalize_queue_event_record(config, state, worker, "completed")
+                    if expired_lease:
+                        counts["expired_lease_workers_failed"] += 1
+                    else:
+                        counts["missing_process_workers_failed"] += 1
+                    changed = True
+                    continue
+            reason = failure_summary.get("summary") or detected_reason
+            worker["last_error_raw_ref"] = raw_ref
+        worker["status"] = "failed"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = reason
+        finalize_queue_event_record(config, state, worker, "failed", reason)
+        if expired_lease:
+            counts["expired_lease_workers_failed"] += 1
+        else:
+            counts["missing_process_workers_failed"] += 1
+        write_activity_log(
+            config,
+            {
+                "type": "worker_failed",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": reason,
+                "worker_run_id": run_id,
+            },
+        )
+        changed = True
+
+    queue_records = state.setdefault("queue", {}).setdefault("events", {})
+    try:
+        queued_events = load_event_queue(config)
+    except KeyError:
+        queued_events = []
+    for event in queued_events:
+        event_id = str(event.get("event_id") or "")
+        if not event_id:
+            continue
+        record = queue_records.get(event_id)
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("status") or "") not in {"started", "stalled"}:
+            continue
+        related_active = [
+            worker
+            for worker in workers.values()
+            if worker.get("queue_event_id") == event_id and worker.get("status") in active_statuses
+        ]
+        if related_active:
+            continue
+        skip_message = stale_dispatch_skip_message(config, event, task_map)
+        if skip_message:
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "stale_dispatch_event"
+            record["requeue_reason"] = "started event became stale while supervisor was offline"
+            counts["stale_queue_records_completed"] += 1
+            changed = True
+            continue
+        task_status = str(task_map.get(str(event.get("task_id") or ""), {}).get("status") or "").lower()
+        if task_status in redispatch_statuses:
+            _reset_queue_record_for_redispatch(
+                record,
+                reason="started queue record had no active worker during supervisor boot reconciliation",
+            )
+            counts["started_queue_records_requeued"] += 1
+        else:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = "Started queue record had no active worker and task is no longer redispatchable."
+            counts["started_queue_records_failed"] += 1
+        changed = True
+    corrective_counts = {
+        key: counts[key]
+        for key in (
+            "missing_process_workers_failed",
+            "expired_lease_workers_failed",
+            "started_queue_records_requeued",
+            "started_queue_records_failed",
+            "stale_queue_records_completed",
+        )
+    }
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "boot_reconciliation",
+        counts,
+        emit_activity=bool(positive_runtime_counts(corrective_counts)),
+    )
+    return changed
+
 def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(ready_dispatch_settings(config).get("helper_claim", {}) or {})
     settings.setdefault("enabled", True)
@@ -4871,6 +7474,7 @@ def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("require_owner_higher_priority_load", True)
     settings.setdefault("claim_idle_work", False)
     settings.setdefault("claim_sidecars_when_idle", False)
+    settings.setdefault("disable_when_failure_loops", True)
     return settings
 
 
@@ -4938,13 +7542,25 @@ def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("threshold_ratio", 0.5)
     settings.setdefault("continuous_window_seconds", 900)
     settings.setdefault("cooldown_seconds", 900)
-    settings.setdefault("max_new_sidecars_per_wave", 2)
+    settings.setdefault("max_new_sidecars_per_wave", None)
     settings.setdefault("max_active_sidecars_per_agent", 1)
+    settings.setdefault("respect_chair_max_sidecars", False)
     settings.setdefault(
         "productive_worker_statuses",
         ["running", "waiting_approval", "suspended_approval", "retry_backoff"],
     )
     return settings
+
+
+def sidecar_wave_limit(raw_value: Any) -> int | None:
+    if raw_value in (None, ""):
+        return None
+    if isinstance(raw_value, str) and raw_value.strip().lower() in {"none", "null", "unlimited", "false"}:
+        return None
+    try:
+        return max(0, int(raw_value))
+    except (TypeError, ValueError):
+        return None
 
 
 def load_sidecar_catalog(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -5001,6 +7617,36 @@ def task_is_sidecar(task: dict[str, Any]) -> bool:
     return str(task.get("task_class") or "").strip().lower() == "sidecar"
 
 
+def task_is_human_gate(task: dict[str, Any]) -> bool:
+    task_class = str(task.get("task_class") or "").strip().lower()
+    gate_status = str(task.get("gate_status") or "").strip().lower()
+    return (
+        task_class == "human_gate"
+        or bool(task.get("human_required_roles"))
+        or gate_status.startswith("pending_human")
+    )
+
+
+def chair_blocked_owner_rescue_allowed(task: dict[str, Any]) -> bool:
+    if str(task.get("status") or "").strip().lower() != "blocked":
+        return False
+    if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
+        return False
+    context = " ".join(
+        str(task.get(key) or "")
+        for key in (
+            "next",
+            "waiting_for",
+            "blocker",
+            "blocked_by",
+            "failure_reason",
+            "last_failure_reason",
+            "push_status",
+        )
+    ).casefold()
+    return any(keyword in context for keyword in BLOCKED_OWNER_RESCUE_KEYWORDS)
+
+
 def sidecar_statuses() -> set[str]:
     return {"todo", "in_progress", "review", "review_approved", "blocked", "done"}
 
@@ -5031,7 +7677,11 @@ def render_sidecar_template(value: str, variables: dict[str, str]) -> str:
     return rendered
 
 
-def task_phase_priority(task: dict[str, Any], task_map: dict[str, dict[str, Any]], dependency_done_statuses: set[str]) -> int:
+def task_phase_priority(
+    task: dict[str, Any],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
+    dependency_done_statuses: set[str],
+) -> int:
     status = str(task.get("status") or "").lower()
     if status == "in_progress":
         return 0
@@ -5039,7 +7689,7 @@ def task_phase_priority(task: dict[str, Any], task_map: dict[str, dict[str, Any]
         return 1
     if status == "review_approved":
         return 2
-    if status == "todo" and dependencies_satisfied(task, task_map, dependency_done_statuses):
+    if status == "todo" and dependencies_satisfied(task, task_lookup, dependency_done_statuses):
         return 3
     if status == "todo":
         return 4
@@ -5094,6 +7744,8 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
 
     if owner and not owner_allowed:
         owner_candidates = normalized_mapping_values(settings.get("owner_fallbacks", {}), owner)
+        if not owner_candidates:
+            owner_candidates = default_reassignment_candidates(config, exclude={owner, reviewer})
         replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task)
         if not replacement_owner:
             return False
@@ -5125,8 +7777,8 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
     ]
     blocked_summary = ", ".join(dict.fromkeys(blocked_agents)) or "disallowed lane"
     message = (
-        f"Auto-reassigned {task_id} away from sidecar-only lane {blocked_summary}; "
-        f"{', '.join(changed_fields)}. Reserved sidecar-only agents no longer hold mainline tasks."
+        f"Auto-reassigned {task_id} away from unavailable lane {blocked_summary} "
+        f"(disabled, sidecar-only, or auth-down); {', '.join(changed_fields)}."
     )
     if not persist_task_reassignment(
         config,
@@ -5162,7 +7814,7 @@ def agent_has_dispatchable_primary_work(
     config: dict[str, Any],
     status: dict[str, Any],
     agent_name: str,
-    task_map: dict[str, dict[str, Any]],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
 ) -> bool:
     settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
@@ -5180,9 +7832,9 @@ def agent_has_dispatchable_primary_work(
             return True
         if task.get("owner") != agent_name:
             continue
-        if task_status == "in_progress" and dependencies_satisfied(task, task_map, dependency_done_statuses):
+        if task_status == "in_progress" and dependencies_satisfied(task, task_lookup, dependency_done_statuses):
             return True
-        if task_status == "todo" and dependencies_satisfied(task, task_map, dependency_done_statuses):
+        if task_status == "todo" and dependencies_satisfied(task, task_lookup, dependency_done_statuses):
             return True
     return False
 
@@ -5273,6 +7925,7 @@ def eligible_idle_agents_for_sidecars(
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
     task_map = task_index_from_status(config, status)
+    task_resolver = task_resolver_for_config(config, task_map)
     owner_field = config.get("schema", {}).get("assignee_field", "owner")
     agents: list[str] = []
     for agent_id, agent in (config.get("agents", {}) or {}).items():
@@ -5288,7 +7941,7 @@ def eligible_idle_agents_for_sidecars(
             continue
         if count_open_sidecars_for_agent(status, display_name) >= max_active_sidecars_per_agent:
             continue
-        if agent_has_dispatchable_primary_work(config, status, display_name, task_map):
+        if agent_has_dispatchable_primary_work(config, status, display_name, task_resolver):
             continue
         if not agent_within_target_workload_for_assignment(
             status,
@@ -5313,7 +7966,7 @@ def build_catalog_sidecar_candidates(
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
-    resolver = TaskResolver(task_map)
+    resolver = task_resolver_for_config(config, task_map)
     templates = load_sidecar_catalog(config)
     candidates: list[dict[str, Any]] = []
     for template in templates:
@@ -5373,7 +8026,7 @@ def build_catalog_sidecar_candidates(
                     "artifacts": artifact_targets,
                     "reviewer": reviewer,
                     "mutates_canonical": bool(template.get("mutates_canonical", False)),
-                    "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
+                    "priority": task_phase_priority(parent, resolver, dependency_done_statuses),
                 }
             )
     return candidates
@@ -5387,7 +8040,7 @@ def build_dynamic_sidecar_candidates(
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
-    resolver = TaskResolver(task_map)
+    resolver = task_resolver_for_config(config, task_map)
     candidates: list[dict[str, Any]] = []
     for parent in status.get("tasks", []) or []:
         if task_is_sidecar(parent):
@@ -5402,7 +8055,7 @@ def build_dynamic_sidecar_candidates(
         if signature in existing_signatures:
             continue
         parent_status = str(parent.get("status") or "").lower()
-        if kind in {"review_packet", "acceptance_packet"} and parent_status == "todo" and not dependencies_satisfied(parent, task_map, dependency_done_statuses):
+        if kind in {"review_packet", "acceptance_packet"} and parent_status == "todo" and not dependencies_satisfied(parent, resolver, dependency_done_statuses):
             continue
         activation_dependencies = [
             dep_id
@@ -5439,7 +8092,7 @@ def build_dynamic_sidecar_candidates(
                 "artifacts": [sidecar_support_artifact(parent_id, sidecar_id)],
                 "reviewer": reviewer,
                 "mutates_canonical": False,
-                "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
+                "priority": task_phase_priority(parent, resolver, dependency_done_statuses),
             }
         )
     return candidates
@@ -5506,6 +8159,22 @@ def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
     statuses.update(str(value).lower() for value in settings.get("finalize_statuses", []))
     statuses.update(str(value).lower() for value in settings.get("owned_statuses", []))
     return statuses
+
+
+def status_root_for_config(config: dict[str, Any]) -> Path:
+    try:
+        return config_path(config, "status_file", "ai-status.json").parent
+    except KeyError:
+        return THIS_DIR.parent
+
+
+def task_resolver_for_config(
+    config: dict[str, Any],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
+) -> TaskResolver:
+    if isinstance(task_lookup, TaskResolver):
+        return task_lookup
+    return TaskResolver(task_lookup, status_root=status_root_for_config(config))
 
 
 def _task_resolver(task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> TaskResolver:
@@ -5621,6 +8290,9 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
     record = queue_status(state, queue_event_id)
     record["status"] = status
     record["processed_at"] = utc_now()
+    record["lease_released_at"] = record["processed_at"]
+    if worker.get("run_id"):
+        record["lease_owner"] = worker.get("run_id")
     if error:
         record["error"] = error
 
@@ -5747,6 +8419,7 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
     dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
     task_status = str(task.get("status") or "").lower()
+    resolver = task_resolver_for_config(config, task_map)
 
     eligible = False
     if reason == REASON_REVIEW_READY:
@@ -5754,14 +8427,14 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     elif reason == REASON_OWNED_FINALIZE:
         eligible = task_status in finalize_statuses and task.get(owner_field) == target_agent
     elif reason == REASON_OWNED_IN_PROGRESS:
-        eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, resolver, dependency_done_statuses)
     elif reason == REASON_OWNED_READY:
-        eligible = task_status == "todo" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        eligible = task_status == "todo" and task.get(owner_field) == target_agent and dependencies_satisfied(task, resolver, dependency_done_statuses)
 
     if not eligible:
         return None
 
-    return str(build_dispatch_event(task, target_agent, reason, task_map).get("key") or "")
+    return str(build_dispatch_event(task, target_agent, reason, resolver).get("key") or "")
 
 def dispatch_priority_for_task(
     config: dict[str, Any],
@@ -5941,6 +8614,7 @@ def higher_priority_ready_task_exists(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     current_task = task_map.get(current_task_id)
+    task_resolver = task_resolver_for_config(config, task_map)
     higher_priority_task_ids: set[str] = set()
     slot_count = len(logical_worker_slot_ids(config, logical_agent_id))
     urgent_priority_cutoff = dispatch_reason_priority(REASON_OWNED_FINALIZE)
@@ -5968,13 +8642,13 @@ def higher_priority_ready_task_exists(
         elif (
             task_status == "in_progress"
             and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
+            and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
         ):
             candidate_priority = 2
         elif (
             task_status == "todo"
             and task.get(owner_field) == agent_name
-            and dependencies_satisfied(task, task_map, dependency_done_statuses)
+            and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
         ):
             candidate_priority = 3
 
@@ -6094,7 +8768,7 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
     return None
 
 
-def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[str, dict[str, Any]]) -> str:
+def ready_dispatch_signature(task: dict[str, Any], reason: str, task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
     return json.dumps(
         {
             "task_id": task.get("id"),
@@ -6104,14 +8778,19 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
             "reviewer": task.get("reviewer"),
             "last_update": task.get("last_update"),
             "depends_on": list(task.get("depends_on", []) or []),
-            "dependency_signature": task_dependency_signature(task, task_map),
+            "dependency_signature": task_dependency_signature(task, task_lookup),
         },
         sort_keys=True,
         ensure_ascii=True,
     )
 
 
-def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, task_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def build_dispatch_event(
+    task: dict[str, Any],
+    target_agent: str,
+    reason: str,
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     task_payload = {
         "id": task.get("id"),
         "artifacts": list(task.get("artifacts", []) or []),
@@ -6127,7 +8806,7 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
     ):
         if key in task:
             task_payload[key] = task.get(key)
-    signature = ready_dispatch_signature(task, reason, task_map)
+    signature = ready_dispatch_signature(task, reason, task_lookup)
     return {
         "key": f"dispatcher:{target_agent}:{task.get('id')}:{reason}:{signature}",
         "task_id": task.get("id"),
@@ -6202,6 +8881,7 @@ def dispatch_ready_tasks(
 
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
     task_map = {task.get(task_id_field): task for task in tasks}
+    task_resolver = task_resolver_for_config(config, task_map)
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = [str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])]
@@ -6215,13 +8895,12 @@ def dispatch_ready_tasks(
     pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
     agent_loads = agent_dispatch_loads(config, state, active_statuses)
     helper_settings = helper_claim_settings(config)
+    active_quota_counts = active_quota_group_counts(config, state, active_statuses)
+    pending_quota_counts = queued_quota_group_counts(config, state)
     seen = state.setdefault("seen_event_keys", {})
-    failure_loop_agents = failure_loop_agents_for_task_map(config, state, task_map)
-    blocked_sidecar_parents = {
-        str(item).strip()
-        for item in (chair_rotation_state(state).get("sidecar_blocked_parents", []) or [])
-        if str(item).strip()
-    }
+    failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
+    failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
+    disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
     changed = False
     normalized = False
@@ -6236,6 +8915,9 @@ def dispatch_ready_tasks(
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
+        task_resolver = task_resolver_for_config(config, task_map)
+        failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
+        failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
 
     dispatches = 0
     weighted_dispatch_enabled = bool(dispatch_weight_mapping(settings)) and not agent_ids_override
@@ -6254,22 +8936,34 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
+    if max_concurrent is not None and max_concurrent > 0:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        if live_total >= max_concurrent:
+            return changed
     considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
             break
         considered_agents += 1
         target_agent = display_name_for(config, agent_id)
-        if target_agent in failure_loop_agents:
-            continue
         if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
+            continue
+        quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
+        quota_group = agent_quota_group_id(config, agent_id)
+        quota_used = active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0)
+        if quota_limit and quota_group and quota_used >= quota_limit:
             continue
         agent_capacity = agent_dispatch_capacity(config, agent_id, settings)
         current_agent_load = len(agent_loads.get(target_agent, []))
         if current_agent_load >= agent_capacity:
             continue
         available_agent_slots = agent_capacity - current_agent_load
-        target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_map)
+        if quota_limit and quota_group:
+            available_agent_slots = min(available_agent_slots, max(0, quota_limit - quota_used))
+            if available_agent_slots <= 0:
+                continue
+        target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_resolver)
 
         candidates: list[tuple[int, int, dict[str, Any], str]] = []
         helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
@@ -6277,12 +8971,9 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
                 continue
-            if task_is_sidecar(task):
-                if target_has_primary_work:
-                    continue
-                helper_parent = str(task.get("helper_parent") or "").strip()
-                if helper_parent and helper_parent in blocked_sidecar_parents:
-                    continue
+            if task_id in active_task_ids or task_id in pending_task_ids:
+                continue
+            is_sidecar_task = task_is_sidecar(task)
             task_status = str(task.get("status") or "").lower()
             task_owner = task.get(owner_field)
             task_reviewer = task.get(reviewer_field)
@@ -6306,14 +8997,16 @@ def dispatch_ready_tasks(
             elif task_status in finalize_statuses and task_owner == target_agent:
                 reason = "owned_finalize_dispatch"
                 priority = 1
-            elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+            elif task_status == "in_progress" and task_owner == target_agent and dependencies_satisfied(task, task_resolver, dependency_done_statuses):
                 reason = "owned_in_progress_dispatch"
                 priority = 2
-            elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses):
+            elif task_status == "todo" and task_owner == target_agent and dependencies_satisfied(task, task_resolver, dependency_done_statuses):
                 reason = "owned_ready_dispatch"
                 priority = 3
 
             if reason is not None and not agent_can_take_task(config, target_agent, task):
+                continue
+            if reason is not None and (task_id, target_agent) in failure_loop_task_agents:
                 continue
             if reason is not None and chair_reassignment_triage_needed_for_task(config, state, task_id, target_agent):
                 continue
@@ -6324,7 +9017,8 @@ def dispatch_ready_tasks(
                 or bool(helper_settings.get("claim_sidecars_when_idle", False))
             )
             helper_claim_candidate = (
-                dependencies_satisfied(task, task_map, dependency_done_statuses)
+                (not disable_helper_claims_for_failure_loops or task_id not in failure_loop_task_ids)
+                and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
                 and task_id not in active_task_ids
                 and task_id not in pending_task_ids
                 and sidecar_claim_allowed
@@ -6372,7 +9066,10 @@ def dispatch_ready_tasks(
             if reason is None or priority is None:
                 continue
 
-            event = build_dispatch_event(task, target_agent, reason, task_map)
+            if is_sidecar_task and target_has_primary_work:
+                priority += SIDECAR_READY_PRIORITY_OFFSET
+
+            event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if event["key"] in pending_event_keys:
                 continue
             candidates.append((priority, index, task, reason))
@@ -6381,11 +9078,16 @@ def dispatch_ready_tasks(
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
         for _, _, task, reason in candidates[:per_occurrence_limit]:
-            event = build_dispatch_event(task, target_agent, reason, task_map)
+            event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if queue_delivery_event(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
+                pending_agents.add(agent_id)
+                pending_task_ids.add(str(task.get(task_id_field) or ""))
+                pending_task_agents.add((str(task.get(task_id_field) or ""), agent_id))
                 agent_loads.setdefault(target_agent, []).append(dispatch_reason_priority(reason) or 9)
+                if quota_group:
+                    pending_quota_counts[quota_group] = pending_quota_counts.get(quota_group, 0) + 1
                 changed = True
                 dispatches += 1
                 queued_for_agent += 1
@@ -6448,10 +9150,11 @@ def dispatch_ready_tasks(
                 task.update(persisted_task)
                 task_map = dict(task_map)
                 task_map[task_id] = task
+                task_resolver = task_resolver_for_config(config, task_map)
             else:
                 task["last_update"] = utc_now()
 
-            event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
+            event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_resolver)
             if event["key"] not in pending_event_keys and queue_delivery_event(config, event):
                 seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
@@ -6460,6 +9163,9 @@ def dispatch_ready_tasks(
                     dispatch_reason_priority(helper_dispatch_reason) or 9
                 )
                 active_task_ids.add(task_id)
+                pending_task_ids.add(task_id)
+                if quota_group:
+                    pending_quota_counts[quota_group] = pending_quota_counts.get(quota_group, 0) + 1
                 changed = True
                 dispatches += 1
                 write_activity_log(
@@ -6483,6 +9189,17 @@ def dispatch_ready_tasks(
     if agent_sequence and considered_agents and not agent_ids_override:
         dispatch_state["weighted_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
     return changed
+
+
+def ready_dispatch_max_concurrent_workers(config: dict[str, Any]) -> int | None:
+    max_concurrent_setting = ready_dispatch_settings(config).get("max_concurrent_workers")
+    try:
+        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+    if max_concurrent is not None and max_concurrent <= 0:
+        return None
+    return max_concurrent
 
 
 def dispatch_chair_review(
@@ -6533,9 +9250,16 @@ def dispatch_chair_review(
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
+    max_concurrent = ready_dispatch_max_concurrent_workers(config)
+    if max_concurrent is not None:
+        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+        reserved_total = len(set(active_agents) | set(pending_agents))
+        if max(live_total, reserved_total) >= max_concurrent:
+            return False
     seen = state.setdefault("seen_event_keys", {})
     status = load_status(config)
     task_map = task_index_from_status(config, status)
+    task_resolver = task_resolver_for_config(config, task_map)
     rotation = chair_rotation_state(state)
     start_index = int(rotation.get("current_index") or 0) % len(candidates)
 
@@ -6555,7 +9279,7 @@ def dispatch_chair_review(
                 approval_triage_requested
                 and settings.get("bypass_primary_work_for_pending_approvals", True)
             )
-            and agent_has_dispatchable_primary_work(config, status, agent_name, task_map)
+            and agent_has_dispatchable_primary_work(config, status, agent_name, task_resolver)
         ):
             continue
         if failure_loop_count:
@@ -6688,16 +9412,15 @@ def dispatch_underutilization_sidecars(
     _pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     seen = state.setdefault("seen_event_keys", {})
     per_agent_counts = {agent: count_open_sidecars_for_agent(status, agent) for agent in idle_agents}
-    max_new_sidecars = int(settings.get("max_new_sidecars_per_wave", 2))
-    if rotation.get("sidecar_approval_max_sidecars") is not None:
-        try:
-            max_new_sidecars = min(max_new_sidecars, max(0, int(rotation.get("sidecar_approval_max_sidecars"))))
-        except (TypeError, ValueError):
-            pass
+    max_new_sidecars = sidecar_wave_limit(settings.get("max_new_sidecars_per_wave"))
+    if settings.get("respect_chair_max_sidecars", False):
+        chair_limit = sidecar_wave_limit(rotation.get("sidecar_approval_max_sidecars"))
+        if chair_limit is not None:
+            max_new_sidecars = chair_limit if max_new_sidecars is None else min(max_new_sidecars, chair_limit)
     created = 0
 
     for candidate in candidates:
-        if created >= max_new_sidecars:
+        if max_new_sidecars is not None and created >= max_new_sidecars:
             break
 
         parent_owner = str(candidate.get("reviewer") or "").strip()
@@ -6752,13 +9475,14 @@ def dispatch_underutilization_sidecars(
 
         status = load_status(config)
         task_map = task_index_from_status(config, status)
+        task_resolver = task_resolver_for_config(config, task_map)
         sidecar_task = next((task for task in status.get("tasks", []) if task.get("id") == candidate["sidecar_id"]), None)
         if not sidecar_task:
             continue
 
         state.setdefault("tasks", {})[candidate["sidecar_id"]] = snapshot_task(sidecar_task, config.get("schema", {}))
 
-        event = build_dispatch_event(sidecar_task, selected_owner, "owned_ready_dispatch", task_map)
+        event = build_dispatch_event(sidecar_task, selected_owner, "owned_ready_dispatch", task_resolver)
         if event["key"] in pending_event_keys:
             continue
         if queue_delivery_event(config, event):
@@ -6836,12 +9560,21 @@ def run_once(
     save_runtime_state(config, state)
     changed = False
     try:
+        changed = reconcile_runtime_on_boot(config, state) or changed
+        if changed:
+            save_runtime_state(config, state)
         continue_or_skip_empty(THIS_DIR.parent)
         changed = expire_provider_dispatch_pauses(config, state) or changed
         pruned = prune_stale_approvals(config)
         if pruned:
             changed = True
+        try:
+            previous_provider_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+        except KeyError:
+            previous_provider_report = {}
         provider_report = load_provider_report(config)
+        changed = reconcile_provider_auth_recovery(config, state, previous_provider_report, provider_report) or changed
+        changed = drain_assistant_dev_packet_inbox(config, state) or changed
         if watch:
             changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
             state = load_runtime_state(config)
@@ -6855,31 +9588,37 @@ def run_once(
             )
         changed = sync_coordination_files(config, state) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
+        changed = maybe_reassign_tasks_from_failure_streaks(config, state) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = refresh_chair_review_state(config, state) or changed
         planning_state = load_discussion_planning_state()
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
-        if discussion_planning_is_active(planning_state):
+        dispatch_suppressed_by_watchdog = watchdog_safe_mode_active(state)
+        if dispatch_suppressed_by_watchdog:
+            changed = record_watchdog_safe_mode_observed(config, state, loop_started_at) or changed
+        elif discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
             if chair_review_failure_loop_details(config, state):
                 chair_dispatched = dispatch_chair_review(config, state, planning_state, provider_report=provider_report)
                 changed = chair_dispatched or changed
-                if not chair_dispatched and not chair_review_active(state):
-                    changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
+                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
             else:
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
                 changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
             changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
-        changed = process_queue(config, state, provider_report) or changed
+        if not dispatch_suppressed_by_watchdog:
+            changed = process_queue(config, state, provider_report) or changed
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = sync_github_bus(config, state) or changed
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
+        changed = prune_orphan_worktrees(config, state) or changed
+        changed = maybe_auto_commit_archive(config, state) or changed
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(
@@ -6962,7 +9701,7 @@ def claim_next_task_for_agent(
         agent_name=display_name_for(config, agent_id),
         task_id=release_task_id,
     )
-    provider_report = load_provider_report(config)
+    provider_report = load_provider_report(config, refresh=False)
     changed = expire_provider_dispatch_pauses(config, state) or changed
     changed = reconcile_queue_records(config, state) or changed
     changed = prune_event_queue(config, state) or changed
@@ -6990,6 +9729,15 @@ def main() -> int:
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    if args.clear_provider_pause:
+        state = load_runtime_state(config)
+        changed = clear_provider_dispatch_pause(config, state, args.clear_provider_pause)
+        if changed:
+            save_runtime_state(config, state)
+            console_log(f"cleared provider dispatch pause: {args.clear_provider_pause}", quiet=args.quiet)
+        else:
+            console_log(f"no provider dispatch pause found for: {args.clear_provider_pause}", quiet=args.quiet)
+        return 0
     if args.claim_agent:
         claim_next_task_for_agent(
             config,
@@ -6998,13 +9746,25 @@ def main() -> int:
             quiet=args.quiet,
         )
         return 0
-    terminate_older_supervisors(config)
+    if not acquire_singleton_lock(config):
+        console_log(
+            "another supervisor already holds the singleton lock; exiting without "
+            "touching shared state",
+            quiet=args.quiet,
+        )
+        return 0
+    terminate_other_supervisors(config)
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
     bootstrap_supervisor_runtime_state(config, lifecycle="starting")
-    poll_interval = args.poll_interval or float(config.get("supervisor", {}).get("poll_interval_seconds", 300.0))
+    poll_interval, poll_source = resolve_poll_interval(
+        config,
+        cli_value=args.poll_interval,
+        allow_fast_poll=args.allow_fast_poll,
+    )
     console_log(
-        f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s config={args.config}",
+        f"starting supervisor pid={os.getpid()} poll_interval={poll_interval:.1f}s "
+        f"source={poll_source} config={args.config}",
         quiet=args.quiet,
     )
     if args.once:

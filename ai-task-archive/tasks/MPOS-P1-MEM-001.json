@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-MEM-001",
+  "archived_at": "2026-06-09T12:48:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-MEM-001",
+    "title": "Add first class PersonaMemory retrieval and writeback",
+    "summary_zh": "在 institutional memory 之外補齊 per persona memory entry、授權 retrieval、writeback triggers，讓 persona 真的有自己的記憶而不是只共享機構知識。",
+    "phase": "EPIC MPOS / P1 persona policy and memory",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P0-VAL-001"
+    ],
+    "artifacts": [
+      "services/memory/main.py",
+      "services/memory/MEMORY_LAYER_DESIGN_NOTE.md",
+      "services/consultation",
+      "services/evolution",
+      "services/postmortems"
+    ],
+    "acceptance": [
+      "Persona memory entries support persona id scope visibility evidence refs and source service",
+      "Retrieval returns authorized persona memory plus institutional memory with provenance",
+      "Unauthorized persona memory access fails closed",
+      "Postmortem evolution consultation and research completion writeback paths are represented by contracts or tests",
+      "Tests cover write read authz ranking and provenance"
+    ],
+    "next": "Closeout complete: implementation PR #1215 and closeout PR #1220 merged into dev; owner verification rerun passed (28 unittest, 32 pytest, 22 smoke checks).",
+    "last_update": "2026-06-09T12:48:22Z",
+    "auto_created_by": "codex_mpos_gap_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "all 5 acceptance criteria met",
+      "28/28 memory tests pass",
+      "fail-closed authz verified"
+    ],
+    "review_file": ".orchestrator/task-briefs/mpos_p1_mem_001.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T12:48:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-mem-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-MEM-001",
+      "git_clean_required": false,
+      "commit": "767a5105b34ccfa30a96f071a5884a8b8e5ba232",
+      "commit_subject": "MPOS-P1-MEM-001: finalize closeout record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout record for first-class PersonaMemory retrieval/writeback after reviewer approval and merged implementation PR.",
+        "Not changing": "memory service behavior, governance authz implementation, consultation/evolution/postmortem lifecycle emitters, or canonical architecture policy.",
+        "Composes with": "implementation PR #1215 merged into dev at 1d29b0012732fc1c0059a30c566e61b551913a8f and Claude review approval.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MPOS-P1-MEM-001",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m unittest services/memory/test_persona_memory_store.py services/memory/test_main.py (28 tests OK); python3 -m pytest services/governance/test_governance_api.py services/foundation/tests/test_control_plane_postgres_owner_stores.py -q (32 passed); python3 services/memory/smoke_test_institutional_memory.py (22 passed); git diff --check -- .orchestrator/task-briefs/mpos_p1_mem_001.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-MEM-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2b12d2cd028664dc63591c258b6af7177f7acd07",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-MEM-001",
+      "from": "Gemini",
+      "to": "Codex",
+      "message": "Auto-reassigned MPOS-P1-MEM-001 away from unavailable lane Antigravity (disabled, sidecar-only, or auth-down); owner Antigravity -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:48Z",
+      "resolved_at": "2026-06-09T12:15:35Z"
+    },
+    {
+      "task_id": "MPOS-P1-MEM-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review. PR #1215 is already merged into dev at 1d29b0012732fc1c0059a30c566e61b551913a8f after green GitHub checks. Scope: first-class PersonaMemory store/writeback/retrieval authz, tests, smoke replay, and docs. Local validation: unittest memory persona/main; pytest governance/foundation Postgres builders; memory smoke; git diff --check.",
+      "status": "done",
+      "created_at": "2026-06-09T12:26:14Z",
+      "resolved_at": "2026-06-09T12:35:35Z"
+    },
+    {
+      "task_id": "MPOS-P1-MEM-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 5 acceptance criteria met, 28/28 tests pass, fail-closed authz verified. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T12:35:35Z",
+      "resolved_at": "2026-06-09T12:48:23Z"
+    }
+  ],
+  "blockers": []
+}

@@ -6,11 +6,15 @@ import {
   workerStatusIcon,
 } from "./dashboard-config.js?v=20260517-audit";
 import {
+  buildActiveWorkRows,
+  buildDependencyRunway,
+  buildProviderPauses,
   buildTruthMismatches,
   actorLabel,
   agentLabel,
-  buildCodexSlotRoster,
   buildDependencySchedule,
+  buildWorkerCapacity,
+  buildWorkerHealth,
   dependencyBatchState,
   deriveAgentState,
   DISPLAY_TIME_ZONE_LABEL,
@@ -94,6 +98,318 @@ function summarizePausedReason(reason, provider) {
     detail: truncate(raw, 420),
     kind: "pause",
   };
+}
+
+function workStateLabel(state) {
+  const labels = {
+    attention: "需處理",
+    blocked: "阻塞",
+    running: "執行中",
+    queued: "Queue",
+    waiting: "等前置",
+    ready: "可派工",
+    review: "審查中",
+    approved: "待收尾",
+    todo: "待開始",
+  };
+  return labels[state] || statusLabel(state);
+}
+
+function healthLabel(health) {
+  const labels = {
+    blocked: "派工受阻",
+    degraded: "健康異常",
+    paused: "暫停派工",
+    running: "執行中",
+    queued: "Queue",
+    ready: "可接工",
+    idle: "待命",
+  };
+  return labels[health] || health || "-";
+}
+
+function renderRuntimeWorkerChips(workers) {
+  if (!workers.length) return '<span class="chip status-blocked">no live worker</span>';
+  return workers.map((worker) => {
+    const actor = worker.display_actor || actorLabel(worker.actor || worker.logical_agent_id, worker.provider);
+    const workerStatus = worker.worker_status || worker.status || worker.bucket || "-";
+    return `<span class="chip">${escapeHtml(actor)} · ${escapeHtml(workerStatus)}</span>`;
+  }).join("");
+}
+
+function renderQueueChips(events) {
+  if (!events.length) return '<span class="chip">queue clear</span>';
+  return events.map((event) => {
+    const status = event.status || "pending";
+    const reason = event.last_wait_reason || event.wait_reason || event.reason || "";
+    return `
+      <span class="chip status-review">queue ${escapeHtml(status)}</span>
+      ${reason ? `<span class="chip queue-reason-chip">${shortText(reason, 120)}</span>` : ""}
+    `;
+  }).join("");
+}
+
+export function renderSupervisorCockpit(status, orchState, approvalQueue, dashboardBundle = null) {
+  const summaryEl = qs("#supervisor-cockpit-summary");
+  const nextEl = qs("#operator-next-action");
+  const runtimeEl = qs("#runtime-health-strip");
+  if (!summaryEl || !nextEl || !runtimeEl) return;
+
+  const activeWork = buildActiveWorkRows(status, orchState, dashboardBundle, approvalQueue);
+  const runtime = dashboardBundle?.runtime_summary || {};
+  const pauses = buildProviderPauses(orchState);
+  const approvals = approvalQueue?.pending || [];
+  const supervisor = orchState?.supervisor || {};
+  const attentionRows = activeWork.rows.filter((row) => row.state === "attention" || row.state === "blocked" || row.primaryQueueReason);
+  const lead = attentionRows[0] || activeWork.rows[0] || null;
+  const capacity = buildWorkerCapacity(status, orchState, dashboardBundle, approvalQueue);
+  const runningWorkers = Number.isFinite(runtime.running_workers) ? runtime.running_workers : capacity.totals.running;
+  const pendingWorkers = Number.isFinite(runtime.pending_workers) ? runtime.pending_workers : capacity.totals.pending;
+  const liveSlots = runningWorkers + pendingWorkers;
+  const queueDepth = Number.isFinite(runtime.queue_depth) ? runtime.queue_depth : activeWork.queueEvents.length;
+  const mismatchCount = Number.isFinite(runtime.mismatch_count) ? runtime.mismatch_count : activeWork.truth.counts.total;
+
+  summaryEl.innerHTML = [
+    `<span class="chip ${activeWork.counts.attention ? "status-blocked" : "status-ready"}">Attention ${activeWork.counts.attention}</span>`,
+    `<span class="chip">Open ${activeWork.counts.open}</span>`,
+    `<span class="chip">Queue ${queueDepth}</span>`,
+    `<span class="chip">Live slots ${liveSlots}/${capacity.totals.capacity}</span>`,
+    `<span class="chip">Provider lanes ${capacity.totals.lanes}</span>`,
+    `<span class="chip ${mismatchCount ? "status-blocked" : "status-ready"}">Mismatch ${mismatchCount}</span>`,
+  ].join("");
+
+  if (!lead) {
+    nextEl.innerHTML = `
+      <article class="operator-card operator-ok">
+        <div class="stack-head">
+          <strong>目前沒有 open execution task</strong>
+          <span class="status-pill status-ready">clear</span>
+        </div>
+        <p class="body-copy">Supervisor 沒有看到需要立刻處理的 active task。</p>
+      </article>
+    `;
+  } else {
+    const task = lead.task;
+    const queueReason = lead.primaryQueueReason ? `<p class="queue-wait-reason">${shortText(lead.primaryQueueReason, 260)}</p>` : "";
+    nextEl.innerHTML = `
+      <article class="operator-card operator-${lead.state}">
+        <div class="stack-head">
+          <strong>${escapeHtml(task.id)} · ${escapeHtml(task.title || "-")}</strong>
+          <span class="status-pill status-${lead.state}">${workStateLabel(lead.state)}</span>
+        </div>
+        <p class="body-copy">${shortText(lead.nextAction, 300)}</p>
+        ${queueReason}
+        <div class="lane-meta">
+          <span class="chip">owner ${escapeHtml(task.owner || "-")}</span>
+          <span class="chip">reviewer ${escapeHtml(task.reviewer || "-")}</span>
+          <span class="chip">expected ${escapeHtml(lead.expected_actor || "-")}</span>
+          <span class="chip">status ${statusLabel(task.status)}</span>
+          <span class="chip">updated ${formatTime(task.last_update)}</span>
+        </div>
+        <div class="lane-meta">
+          ${renderRuntimeWorkerChips(lead.runtimeWorkers)}
+          ${renderQueueChips(lead.queueEvents)}
+        </div>
+        ${
+          lead.unresolvedDeps.length
+            ? `<p class="dependency-copy">未完成前置：${lead.unresolvedDeps.map((depId) => escapeHtml(depId)).join("、")}</p>`
+            : ""
+        }
+        ${
+          lead.dependents.length
+            ? `<p class="dependency-copy">完成後會解鎖：${lead.dependents.map((item) => escapeHtml(item.id)).join("、")}</p>`
+            : ""
+        }
+      </article>
+    `;
+  }
+
+  const heartbeat = runtime.heartbeat_at || supervisor.last_heartbeat_at || orchState?.last_heartbeat_at || null;
+  const runtimeCards = [
+    {
+      label: "Supervisor",
+      value: heartbeat ? "running" : "unknown",
+      note: `heartbeat ${timeAgo(heartbeat)} · pid ${runtime.supervisor_pid || supervisor.pid || "-"}`,
+      tone: heartbeat ? "status-ready" : "status-blocked",
+    },
+    {
+      label: "Queue",
+      value: queueDepth,
+      note: activeWork.queueEvents[0]?.last_wait_reason || activeWork.queueEvents[0]?.reason || "目前沒有 queue wait reason",
+      tone: queueDepth ? "status-review" : "status-ready",
+    },
+    {
+      label: "Worker Slots",
+      value: `${liveSlots}/${capacity.totals.capacity}`,
+      note: `${runningWorkers} running · ${pendingWorkers} pending · ${capacity.totals.lanes} provider lanes`,
+      tone: runningWorkers ? "status-active" : activeWork.counts.open ? "status-review" : "status-ready",
+    },
+    {
+      label: "Assigned",
+      value: capacity.totals.assigned,
+      note: "open task owners currently occupying logical lanes",
+      tone: capacity.totals.assigned ? "status-review" : "status-ready",
+    },
+    {
+      label: "Truth",
+      value: mismatchCount,
+      note: mismatchCount ? "task board、worker、queue 尚未對齊" : "runtime truth aligned",
+      tone: mismatchCount ? "status-blocked" : "status-ready",
+    },
+    {
+      label: "Approval",
+      value: approvals.length,
+      note: approvals.length ? "tool approval queue has pending items" : "approval queue clear",
+      tone: approvals.length ? "status-review" : "status-ready",
+    },
+    {
+      label: "Paused",
+      value: pauses.length,
+      note: pauses.length ? pauses.map((pause) => agentLabel(pause.provider)).join("、") : "no provider pause",
+      tone: pauses.length ? "status-review" : "status-ready",
+    },
+  ];
+  runtimeEl.innerHTML = runtimeCards.map((card) => `
+    <article class="runtime-health-card">
+      <div class="metric-label">${escapeHtml(card.label)}</div>
+      <div class="metric-value ${card.tone}">${escapeHtml(card.value)}</div>
+      <p class="metric-note">${shortText(card.note, 150)}</p>
+    </article>
+  `).join("");
+}
+
+export function renderActiveWorkMatrix(status, orchState, approvalQueue, dashboardBundle = null) {
+  const container = qs("#active-work-matrix");
+  if (!container) return;
+  const activeWork = buildActiveWorkRows(status, orchState, dashboardBundle, approvalQueue);
+  if (!activeWork.rows.length) {
+    container.innerHTML = '<p class="empty">目前沒有 open execution task。</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="active-work-table" role="table" aria-label="Active work matrix">
+      <div class="active-work-row active-work-head" role="row">
+        <div role="columnheader">Task</div>
+        <div role="columnheader">Dependence</div>
+        <div role="columnheader">Owner / Worker</div>
+        <div role="columnheader">Queue / Health</div>
+        <div role="columnheader">Task Execution</div>
+      </div>
+      ${activeWork.rows.map((row) => {
+        const task = row.task;
+        const unresolved = row.unresolvedDeps.length
+          ? row.unresolvedDeps.map((depId) => `<span class="chip status-review">${escapeHtml(depId)}</span>`).join("")
+          : '<span class="chip status-ready">deps clear</span>';
+        const unlocks = row.dependents.length
+          ? row.dependents.map((item) => `<span class="chip">${escapeHtml(item.id)}</span>`).join("")
+          : '<span class="chip">no downstream</span>';
+        const mismatch = row.mismatches.length
+          ? `<span class="chip status-blocked">mismatch ${row.mismatches.length}</span>`
+          : '<span class="chip status-ready">truth ok</span>';
+        return `
+          <div class="active-work-row state-${row.state}" role="row">
+            <div class="active-work-task" role="cell">
+              <strong>${escapeHtml(task.id)}</strong>
+              <span class="status-pill status-${row.state}">${workStateLabel(row.state)}</span>
+              <p>${shortText(task.title, 110)}</p>
+              <p class="dependency-copy">${formatTime(task.last_update)}</p>
+            </div>
+            <div role="cell">
+              <div class="chip-row">${unresolved}</div>
+              <p class="dependency-copy">unlocks</p>
+              <div class="chip-row">${unlocks}</div>
+            </div>
+            <div role="cell">
+              <div class="chip-row">
+                <span class="chip">owner ${escapeHtml(task.owner || "-")}</span>
+                <span class="chip">reviewer ${escapeHtml(task.reviewer || "-")}</span>
+              </div>
+              <div class="chip-row">${renderRuntimeWorkerChips(row.runtimeWorkers)}</div>
+            </div>
+            <div role="cell">
+              <div class="chip-row">${renderQueueChips(row.queueEvents)}${mismatch}</div>
+              ${
+                row.primaryQueueReason
+                  ? `<p class="queue-wait-reason">${shortText(row.primaryQueueReason, 180)}</p>`
+                  : ""
+              }
+            </div>
+            <div role="cell">
+              <p class="body-copy">${shortText(row.nextAction, 220)}</p>
+              ${task.next && task.next !== row.nextAction ? `<p class="dependency-copy">task next: ${shortText(task.next, 140)}</p>` : ""}
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+export function renderDependencyRunway(status) {
+  const container = qs("#dependency-runway");
+  if (!container) return;
+  const runway = buildDependencyRunway(status);
+  if (!runway.length) {
+    container.innerHTML = '<p class="empty">目前沒有 open dependency chain。</p>';
+    return;
+  }
+  container.innerHTML = runway.slice(0, 8).map((item) => {
+    const task = item.task;
+    const deps = item.unresolvedDeps.length
+      ? item.unresolvedDeps.map((depId) => `<span class="chip status-review">${escapeHtml(depId)}</span>`).join("")
+      : '<span class="chip status-ready">deps clear</span>';
+    const unlocks = item.unlocks.length
+      ? item.unlocks.map((taskId) => `<span class="chip">${escapeHtml(taskId)}</span>`).join("")
+      : '<span class="chip">no downstream</span>';
+    return `
+      <article class="runway-card runway-${item.state}">
+        <div class="stack-head">
+          <strong>${escapeHtml(task.id)}</strong>
+          <span class="status-pill status-${item.state}">${workStateLabel(item.state)}</span>
+        </div>
+        <p>${shortText(task.title, 120)}</p>
+        <div class="dependency-meta">${deps}</div>
+        <p class="dependency-copy">完成後影響</p>
+        <div class="dependency-meta">${unlocks}</div>
+      </article>
+    `;
+  }).join("");
+}
+
+export function renderWorkerHealthDigest(status, orchState, approvalQueue, dashboardBundle = null) {
+  const container = qs("#worker-health-digest");
+  if (!container) return;
+  const rows = buildWorkerHealth(status, orchState, dashboardBundle, approvalQueue);
+  if (!rows.length) {
+    container.innerHTML = '<p class="empty">目前沒有 autoworker 狀態。</p>';
+    return;
+  }
+  container.innerHTML = rows.map((row) => {
+    const pauseReason = row.pause ? summarizePausedReason(row.pause.summary || row.pause.reason, row.pause.provider) : null;
+    return `
+      <article class="worker-health-card health-${row.health}">
+        <div class="stack-head">
+          <strong>${escapeHtml(row.label)}</strong>
+          <span class="status-pill status-${row.health}">${healthLabel(row.health)}</span>
+        </div>
+        <div class="lane-meta">
+          <span class="chip">slots ${row.liveOccupied}/${row.capacity}</span>
+          <span class="chip">running ${row.running}</span>
+          <span class="chip">pending ${row.pending}</span>
+          <span class="chip">queue ${row.queued}</span>
+          <span class="chip">idle ${row.idleCapacity}</span>
+          ${row.queueBlocked ? `<span class="chip status-blocked">blocked ${row.queueBlocked}</span>` : ""}
+          ${row.readyCount ? `<span class="chip status-ready">ready ${row.readyCount}</span>` : ""}
+          ${row.waitingCount ? `<span class="chip">waiting ${row.waitingCount}</span>` : ""}
+          ${row.attentionCount ? `<span class="chip status-blocked">attention ${row.attentionCount}</span>` : ""}
+        </div>
+        <p class="dependency-copy">capacity source: ${escapeHtml(row.capacitySource)} · last ${formatTime(row.lastUpdate)}</p>
+        ${row.activeTaskIds.length ? `<p class="dependency-copy">tasks: ${row.activeTaskIds.map((taskId) => escapeHtml(taskId)).join(", ")}</p>` : ""}
+        ${pauseReason ? `<p class="queue-wait-reason">${shortText(pauseReason.summary, 170)}</p>` : ""}
+      </article>
+    `;
+  }).join("");
 }
 
 export function renderWorkload(status, orchState = null) {
@@ -260,19 +576,45 @@ export function renderArchiveRecords(dashboardBundle = null) {
   container.appendChild(list);
 }
 
-export function renderDeliveryLayers(status, planningState) {
+function knownExecutionTaskIds(status, dashboardBundle) {
+  const ids = new Set((status.tasks || []).map((task) => task.id).filter(Boolean));
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  for (const taskId of bridgeSummary.materialized_task_ids || []) {
+    if (taskId) ids.add(taskId);
+  }
+
+  const archiveSummary = dashboardBundle?.archive_summary || {};
+  for (const taskId of archiveSummary.recent_terminal_ids || []) {
+    if (taskId) ids.add(taskId);
+  }
+  for (const record of archiveSummary.recent_terminal_tasks || []) {
+    const taskId = record?.task_id || record?.id;
+    if (taskId) ids.add(taskId);
+  }
+  return ids;
+}
+
+function unresolvedPlanningTasks(planning, status, dashboardBundle) {
+  const bridgeSummary = dashboardBundle?.bridge_summary || {};
+  if (Array.isArray(bridgeSummary.pending_proposals)) {
+    return bridgeSummary.pending_proposals;
+  }
+  const taskIds = knownExecutionTaskIds(status, dashboardBundle);
+  return (planning.proposed_execution_tasks || []).filter((task) => !taskIds.has(task.id));
+}
+
+export function renderDeliveryLayers(status, planningState, dashboardBundle = null) {
   const container = qs("#delivery-layers");
   container.innerHTML = "";
 
-  const tasks = (status.tasks || []).filter((task) => task.status !== "done");
+  const tasks = (status.tasks || []).filter((task) => !terminalTaskStatus(task.status));
   const planning = normalizePlanningState(planningState);
-  const taskIds = new Set((status.tasks || []).map((task) => task.id));
   const layers = [
     {
       key: "planning",
       title: "Planning Outputs",
-      copy: "已在 discussion planning 中提出，但尚未完全 materialize 成 execution task 的共識輸出。",
-      tasks: (planning.proposed_execution_tasks || []).filter((task) => !taskIds.has(task.id)),
+      copy: "已在 discussion planning 中提出，且尚未 materialize 或封存結案的共識輸出。",
+      tasks: unresolvedPlanningTasks(planning, status, dashboardBundle),
       planningLayer: true,
     },
     {
@@ -2391,315 +2733,6 @@ export function renderExecutionSectionSummary(status, orchState, planningState, 
     chips.push(`<span class="chip status-blocked">Paused ${pausedProviders.length}</span>`);
   }
   container.innerHTML = chips.join("");
-}
-
-export function renderSystemStatus(status, orchState, approvalQueue, agentStates, dashboardBundle = null) {
-  const statusEl = qs("#system-status");
-  const historyEl = qs("#worker-history");
-  if (!statusEl || !historyEl) return;
-  statusEl.innerHTML = "";
-  historyEl.innerHTML = "";
-  const queueEvents = normalizeDispatchQueue(orchState, status);
-  const runtimeSummary = dashboardBundle?.runtime_summary || {};
-  const chairSummary = dashboardBundle?.chair_summary || {};
-  const supervisor = orchState?.supervisor || {};
-  const supervisorPid = supervisor?.pid || "-";
-  const supervisorStartedAt = supervisor?.started_at || orchState?.initialized_at || null;
-  const supervisorHeartbeat = supervisor?.last_heartbeat_at || orchState?.last_heartbeat_at || null;
-  const lastScan = orchState?.last_scan_at || supervisorHeartbeat || null;
-  const workers = normalizeWorkerRecords(orchState, status);
-  const pausedProviders = pausedProviderEntries(orchState);
-  const activeWorkerCount = Number.isFinite(runtimeSummary.running_workers) ? runtimeSummary.running_workers : workers.filter((w) => w.bucket === "running").length;
-  const pending = Number.isFinite(runtimeSummary.pending_approvals) ? runtimeSummary.pending_approvals : (approvalQueue?.pending || []).length;
-  const dispatchPolicy = dashboardBundle?.dispatch_policy || {};
-  const recentHelperClaims = Array.isArray(dashboardBundle?.recent_helper_claims) ? dashboardBundle.recent_helper_claims : [];
-  const idleClaimEnabled = Boolean(dispatchPolicy.claim_idle_work && dispatchPolicy.helper_claim_enabled !== false);
-  const sidecarClaimEnabled = Boolean(dispatchPolicy.claim_sidecars_when_idle);
-  const maxDispatchesPerTick = Number.isFinite(Number(dispatchPolicy.max_dispatches_per_tick))
-    ? Number(dispatchPolicy.max_dispatches_per_tick)
-    : "-";
-  const maxTasksPerAgent = Number.isFinite(Number(dispatchPolicy.max_tasks_per_agent))
-    ? Number(dispatchPolicy.max_tasks_per_agent)
-    : "-";
-
-  const supervisorCard = document.createElement("article");
-  supervisorCard.className = "sys-card";
-  supervisorCard.innerHTML = `
-      <div class="sys-card-head"><span class="sys-icon">🖥</span><strong>Supervisor</strong></div>
-      <div class="sys-card-body">
-        <span class="status-pill ${supervisorHeartbeat ? "status-working" : "status-blocked"}">${supervisorHeartbeat ? "運作中" : "無資料"}</span>
-      <span class="chip">PID：${runtimeSummary.supervisor_pid || supervisorPid}</span>
-        <span class="chip">啟動：${formatTime(supervisorStartedAt)}</span>
-      <span class="chip">絕對時間：${DISPLAY_TIME_ZONE_LABEL}</span>
-      <span class="chip">Heartbeat：${timeAgo(runtimeSummary.heartbeat_at || supervisorHeartbeat)}</span>
-        <span class="chip">上次掃描：${timeAgo(lastScan)}</span>
-        <span class="chip">Active Workers：${activeWorkerCount}</span>
-      </div>
-  `;
-  statusEl.appendChild(supervisorCard);
-
-  const workerClaimCard = document.createElement("article");
-  workerClaimCard.className = "sys-card";
-  workerClaimCard.innerHTML = `
-    <div class="sys-card-head"><span class="sys-icon">⇄</span><strong>Worker Claim Policy</strong></div>
-    <div class="sys-card-body">
-      <span class="status-pill ${idleClaimEnabled ? "status-working" : "status-review"}">${idleClaimEnabled ? "idle worker 可 claim" : "Supervisor 主導派工"}</span>
-      <span class="chip">own work first</span>
-      <span class="chip">idle claim ${idleClaimEnabled ? "on" : "off"}</span>
-      <span class="chip">sidecar claim ${sidecarClaimEnabled ? "on" : "off"}</span>
-      <span class="chip">per tick ${escapeHtml(maxDispatchesPerTick)}</span>
-      <span class="chip">per agent ${escapeHtml(maxTasksPerAgent)}</span>
-      <span class="chip">priority gate ${dispatchPolicy.require_owner_higher_priority_load ? "on" : "off"}</span>
-      ${recentHelperClaims.length ? recentHelperClaims.slice(0, 5).map((claim) => `
-        <div class="approval-item">
-          <span class="chip">${escapeHtml(claim.task_id || "-")}</span>
-          <span class="chip">${escapeHtml(actorLabel(claim.from_owner, null))} &rarr; ${escapeHtml(actorLabel(claim.to_owner, null))}</span>
-          ${claim.new_reviewer ? `<span class="chip">reviewer ${escapeHtml(actorLabel(claim.new_reviewer, null))}</span>` : ""}
-          <span class="chip">${escapeHtml(timeAgo(claim.ts))}</span>
-        </div>
-      `).join("") : '<div class="approval-item"><span class="chip">尚無 helper claim 紀錄</span></div>'}
-    </div>
-  `;
-  statusEl.appendChild(workerClaimCard);
-
-  const chairCard = document.createElement("article");
-  chairCard.className = "sys-card";
-  const chairReviewSummary = Array.isArray(chairSummary.last_review_summary) ? chairSummary.last_review_summary : [];
-  chairCard.innerHTML = `
-      <div class="sys-card-head"><span class="sys-icon">🪑</span><strong>Chair Review</strong></div>
-      <div class="sys-card-body">
-        <span class="status-pill ${chairSummary.pending_review_path ? "status-working" : chairSummary.last_chair_run_at ? "status-done" : "status-blocked"}">${
-          chairSummary.pending_review_path ? "巡檢進行中" : chairSummary.last_chair_run_at ? "最近有巡檢" : "尚未巡檢"
-        }</span>
-        <span class="chip">Last Chair：${escapeHtml(actorLabel(chairSummary.last_chair_agent, null))}</span>
-        <span class="chip">上次派出：${escapeHtml(timeAgo(chairSummary.last_chair_run_at))}</span>
-        ${chairSummary.pending_review_agent ? `<span class="chip">Pending：${escapeHtml(actorLabel(chairSummary.pending_review_agent, null))}</span>` : ""}
-        ${chairSummary.last_review_path ? `<span class="chip">${escapeHtml(chairSummary.last_review_path)}</span>` : ""}
-        ${chairSummary.sidecar_approved_until ? `<span class="chip">Sidecar until ${escapeHtml(formatTime(chairSummary.sidecar_approved_until))}</span>` : ""}
-        ${chairReviewSummary.map((line) => `<div class="approval-item">${escapeHtml(line)}</div>`).join("")}
-      </div>
-  `;
-  statusEl.appendChild(chairCard);
-
-  const dispatchCard = document.createElement("article");
-  dispatchCard.className = "sys-card";
-  dispatchCard.innerHTML = `
-      <div class="sys-card-head"><span class="sys-icon">📬</span><strong>Dispatch Queue</strong></div>
-      <div class="sys-card-body">
-        <span class="status-pill ${queueEvents.length > 0 ? "status-review" : "status-done"}">${queueEvents.length > 0 ? `${queueEvents.length} 個待處理` : "清空"}</span>
-        <span class="chip">bundle queue ${Number.isFinite(runtimeSummary.queue_depth) ? runtimeSummary.queue_depth : queueEvents.length}</span>
-        <span class="chip">目前 active workers：${activeWorkerCount}</span>
-      ${queueEvents.map((event) => `
-        <div class="approval-item">
-          <span class="chip">${event.task_id || "-"}</span>
-          <span class="chip">${actorLabel(event.logical_agent_id, event.provider)}</span>
-          <span class="chip">${event.status || "-"}</span>
-          <span class="chip">${event.reason || "-"}</span>
-          <span class="chip">${timeAgo(event.last_event_at || event.last_attempt_at || event.processed_at)}</span>
-        </div>
-      `).join("")}
-    </div>
-  `;
-  statusEl.appendChild(dispatchCard);
-
-  const codexSlots = buildCodexSlotRoster(orchState, status);
-  const codexActiveCount = codexSlots.filter((slot) => slot.status === "running").length;
-  const codexPendingCount = codexSlots.filter((slot) => slot.status === "pending").length;
-  const codexIdleCount = codexSlots.filter((slot) => slot.status === "idle").length;
-  const codexSlotCard = document.createElement("article");
-  codexSlotCard.className = "sys-card codex-slot-card";
-  codexSlotCard.innerHTML = `
-    <div class="sys-card-head">
-      <span class="sys-icon">▦</span>
-      <strong>Codex Autoworker Slots</strong>
-      <span class="chip">active ${codexActiveCount}</span>
-      <span class="chip">pending ${codexPendingCount}</span>
-      <span class="chip">idle ${codexIdleCount}</span>
-      <span class="chip">total ${codexSlots.length}</span>
-    </div>
-    <div class="codex-slot-grid">
-      ${codexSlots.map((slot) => `
-        <div class="codex-slot-row codex-slot-${slot.status}">
-          <div class="codex-slot-name">
-            <strong>${escapeHtml(slot.label)}</strong>
-            <span class="chip">${escapeHtml(slot.quota_group)}</span>
-          </div>
-          <div class="codex-slot-meta">
-            <span class="status-pill ${slot.status === "running" ? "status-working" : slot.status === "pending" ? "status-review" : "status-idle"}">${slot.status === "idle" ? "idle" : slot.worker_status || slot.status}</span>
-            <span class="chip">${escapeHtml(slot.id)}</span>
-            ${slot.worker?.provider ? `<span class="chip">${escapeHtml(slot.worker.provider)}</span>` : ""}
-            ${slot.task_id ? `<span class="chip">${escapeHtml(slot.task_id)}</span>` : `<span class="chip">空 slot</span>`}
-            ${slot.worker?.reason ? `<span class="chip">${escapeHtml(slot.worker.reason)}</span>` : ""}
-            ${slot.last_event_at ? `<span class="chip">${escapeHtml(timeAgo(slot.last_event_at))}</span>` : ""}
-          </div>
-        </div>
-      `).join("")}
-    </div>
-  `;
-  statusEl.appendChild(codexSlotCard);
-
-  const approvalCard = document.createElement("article");
-  approvalCard.className = "sys-card";
-  approvalCard.innerHTML = `
-    <div class="sys-card-head"><span class="sys-icon">⏳</span><strong>待批准佇列</strong></div>
-    <div class="sys-card-body">
-      <span class="status-pill ${pending > 0 ? "status-review" : "status-done"}">${pending > 0 ? `${pending} 個待處理` : "清空"}</span>
-      ${(approvalQueue?.pending || []).map((a) => {
-        const chips = [
-          `<span class="chip">${escapeHtml(actorLabel(a.agent_id, a.provider))}</span>`,
-          `<span class="chip">task=${escapeHtml(a.task_id || "-")}</span>`,
-          `<span class="chip">${escapeHtml(a.tool_name || "-")}</span>`,
-          a.risk_class ? `<span class="chip">${escapeHtml(a.risk_class)}</span>` : "",
-          `<span class="chip">${escapeHtml(timeAgo(a.created_at))}</span>`,
-          a.tool_input_preview ? `<span class="chip">input=${escapeHtml(a.tool_input_preview)}</span>` : "",
-          a.evidence_ref ? `<span class="chip">evidence=${escapeHtml(a.evidence_ref)}</span>` : "",
-        ].filter(Boolean).join("");
-        return `
-        <div class="approval-item">
-          ${chips}
-        </div>
-      `;
-      }).join("")}
-    </div>
-  `;
-  statusEl.appendChild(approvalCard);
-
-  if (pausedProviders.length) {
-    const pauseCard = document.createElement("article");
-    pauseCard.className = "sys-card";
-    pauseCard.innerHTML = `
-      <div class="sys-card-head"><span class="sys-icon">⛔</span><strong>Provider Guardrails</strong></div>
-      <div class="sys-card-body">
-        <span class="status-pill status-blocked">${pausedProviders.length} 個 lane 暫停派工</span>
-        ${pausedProviders.map((entry) => `
-          <div class="approval-item">
-            <span class="chip">${agentLabel(entry.provider)}</span>
-            <span class="chip">until ${formatTime(entry.blocked_until)}</span>
-            ${entry.task_id ? `<span class="chip">task=${entry.task_id}</span>` : ""}
-          </div>
-        `).join("")}
-      </div>
-    `;
-    statusEl.appendChild(pauseCard);
-  }
-
-  const agentStateMap = new Map((agentStates || []).map((a) => [normalizedProviderKey(a.name), a]));
-  const pauseMap = new Map(pausedProviders.map((entry) => [normalizedProviderKey(entry.provider), entry]));
-  const runtimeAgentIds = Array.from(new Set([
-    ...logicalAgents,
-    ...(agentStates || []).map((agent) => normalizedProviderKey(agent.name)),
-    ...workers.map((worker) => normalizedProviderKey(worker.logical_agent_id || worker.provider || worker.agent_id)),
-    ...pausedProviders.map((entry) => normalizedProviderKey(entry.provider)),
-  ].filter(Boolean)));
-  for (const agentId of runtimeAgentIds) {
-    const pw = workers.filter((w) => normalizedProviderKey(w.logical_agent_id || w.provider || w.agent_id) === agentId);
-    const running = pw.filter((w) => w.bucket === "running").length;
-    const waiting = pw.filter((w) => w.bucket === "pending").length;
-    const transition = pw.filter((w) => w.bucket === "transition").length;
-    const failed = pw.filter((w) => w.status === "failed").length;
-    const completed = pw.filter((w) => w.bucket === "completed").length;
-    const agent = agentStateMap.get(agentId);
-    const runningTasks = pw.filter((w) => w.bucket === "running").map((w) => w.task_id).filter(Boolean);
-    const pause = pauseMap.get(agentId);
-    const readyCount = agent?.ready_count || 0;
-    const availability = agentRuntimeAvailability(agentId, { pause, running, failed, readyCount });
-    const pauseReason = pause ? summarizePausedReason(pause.summary || pause.reason || pause.detail, pause.provider) : null;
-    const card = document.createElement("article");
-    card.className = `sys-card agent-runtime-card ${availability.className}`;
-    card.innerHTML = `
-      <div class="sys-card-head">
-        <span class="sys-icon">${availability.icon}</span>
-        <strong>${agentLabel(agentId)}</strong>
-        <span class="status-pill ${availability.pillClass}">${availability.label}</span>
-      </div>
-      <div class="sys-card-body">
-        <span class="chip ${availability.canAccept ? "agent-can-accept" : "agent-cannot-accept"}">${availability.canAccept ? "可接新工作" : "不可接新工作"}</span>
-        <span class="chip">執行中 ${running}</span>
-        <span class="chip">等待 ${waiting}</span>
-        ${transition ? `<span class="chip">改派 ${transition}</span>` : ""}
-        <span class="chip">失敗 ${failed}</span>
-        <span class="chip">完成 ${completed}</span>
-        ${runningTasks.length ? `<span class="chip">任務 ${runningTasks.join(", ")}</span>` : ""}
-        ${agent ? `<span class="chip">可開工 ${readyCount}</span><span class="chip">等前置 ${agent.waiting_count || 0}</span>` : ""}
-        ${pause ? `<span class="chip status-blocked">暫停到 ${formatTime(pause.blocked_until)}</span>` : ""}
-        ${pause?.task_id ? `<span class="chip status-blocked">卡在 ${pause.task_id}</span>` : ""}
-        ${pauseReason ? `<span class="chip status-blocked">${escapeHtml(pauseReason.summary)}</span>` : ""}
-        ${pause?.raw_ref ? `<span class="chip">evidence ${escapeHtml(pause.raw_ref)}</span>` : ""}
-      </div>
-    `;
-    statusEl.appendChild(card);
-  }
-
-  const workerGroups = logicalAgents.map((agentId) => {
-    const groupWorkers = workers.filter((worker) => worker.logical_agent_id === agentId);
-    return {
-      agentId,
-      running: groupWorkers.filter((worker) => worker.bucket === "running"),
-      pending: groupWorkers.filter((worker) => worker.bucket === "pending"),
-      transition: groupWorkers.filter((worker) => worker.bucket === "transition"),
-      completed: groupWorkers.filter((worker) => worker.bucket === "completed"),
-    };
-  });
-
-  if (!workerGroups.some((group) => group.running.length || group.pending.length || group.transition.length || group.completed.length)) {
-    historyEl.innerHTML = '<p class="empty">尚無 Worker 記錄。</p>';
-    return;
-  }
-
-  historyEl.innerHTML = workerGroups
-    .map((group) => {
-      const total = group.running.length + group.pending.length + group.transition.length + group.completed.length;
-      if (!total) return "";
-      const renderBucket = (label, items, open = true, options = {}) => {
-        const { hideWhenEmpty = false } = options;
-        if (hideWhenEmpty && !items.length) return "";
-        return `
-        <details class="worker-bucket" ${open ? "open" : ""}>
-          <summary class="worker-bucket-head">
-            <strong>${label}</strong>
-            <span class="chip">${items.length}</span>
-          </summary>
-          <div class="worker-bucket-body">
-            ${items.length ? items.map((w) => `
-              <article class="queue-item worker-row worker-${w.status}">
-                <div class="queue-item-head">
-                  <strong>${w.task_id || "-"}</strong>
-                  <div class="chip-row">
-                    ${workerLifecycleBadge(w) ? `<span class="status-pill worker-lifecycle ${workerLifecycleBadge(w).className}">${workerLifecycleBadge(w).label}</span>` : ""}
-                    <span class="status-pill status-${w.status}">${workerStatusIcon[w.status] || "?"} ${w.status}</span>
-                  </div>
-                </div>
-                <div class="lane-meta">
-                  <span class="chip"><code>${w.mode || "-"}</code></span>
-                  <span class="chip">${w.display_actor}</span>
-                  ${w.task_status ? `<span class="chip">task=${statusLabel(w.task_status)}</span>` : ""}
-                  ${w.reason ? `<span class="chip">${escapeHtml(w.reason)}</span>` : ""}
-                  <span class="chip">${timeAgo(w.last_event_at)}</span>
-                </div>
-                ${w.last_error ? `<p class="meta-line">${truncate(w.last_error, 120)}</p>` : ""}
-              </article>
-            `).join("") : '<p class="empty">目前沒有項目。</p>'}
-          </div>
-        </details>
-      `;
-      };
-
-      return `
-        <section class="worker-group">
-          <div class="worker-group-head">
-            <strong>${agentLabel(group.agentId)}</strong>
-            <span class="chip">共 ${total} 筆</span>
-          </div>
-          <div class="worker-buckets">
-            ${renderBucket("進行中", group.running, true)}
-            ${renderBucket("等待處理", group.pending, true)}
-            ${renderBucket("已改派 / 已接手", group.transition, false, { hideWhenEmpty: true })}
-            ${renderBucket("已完成", group.completed, false, { hideWhenEmpty: true })}
-          </div>
-        </section>
-      `;
-    })
-    .join("");
 }
 
 export function renderProgressBar(tasks, dashboardBundle = null) {

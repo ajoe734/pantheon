@@ -142,4 +142,4 @@ def test_bff_runtime_detail_reports_downstream_unavailable_when_runtime_store_mi
     assert list_response.json()["meta"]["surfaces"]["runtimes"]["status"] == "unavailable"
 
     assert detail_response.status_code == 503, detail_response.text
-    assert detail_response.json()["detail"]["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
+    assert detail_response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"

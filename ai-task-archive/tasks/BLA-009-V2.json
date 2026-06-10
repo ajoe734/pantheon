@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "BLA-009-V2",
+  "archived_at": "2026-05-20T02:05:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "BLA-009-V2",
+    "title": "Live activation simulator",
+    "summary_zh": "Simulator that walks through the full broker live activation criteria + dual gate without flipping production flags. Asserts no live side effects.",
+    "phase": "Phase 8 / EPIC-BROKER-LIVE",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "BLA-001-V2",
+      "BLA-002-V2",
+      "BLA-003-V2"
+    ],
+    "artifacts": [
+      "services/broker/live_activation/simulator.py",
+      "tests/broker/test_live_activation_simulator.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 supplement section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "Owner closeout complete: implementation PR #296 merged at 40995a9d; closeout evidence PR #301 merged at 6ce9cc69; focused verification passed with pytest -q tests/broker services/broker (138 passed); no live broker side effects.",
+    "last_update": "2026-05-20T02:05:18Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：simulator 以 in-memory approvals 串接 criteria、risk-owner、operator 與 final validation；確認不 flip production flags、不 dispatch Runtime Manager、不呼叫 broker API。",
+      "驗證通過：pytest -q tests/broker services/broker（132 passed）。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T02:05:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/bla-009-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/BLA-009-V2",
+      "git_clean_required": false,
+      "commit": "97950351b566a7e633eb4e395e556ace9e37ecaa",
+      "commit_subject": "BLA-009-V2: refresh closeout after dev merge",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "BLA-009-V2",
+        "Reviewer": "Codex2",
+        "Verified": "pytest -q tests/broker services/broker (138 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/BLA-009-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6ce9cc6972ee35e058ef26c5d5d75cc3195c2b14",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "BLA-009-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #296 merged to dev at 40995a9d; simulator and tests ready for reviewer acceptance. Verified: pytest -q tests/broker services/broker.",
+      "status": "done",
+      "created_at": "2026-05-20T01:47:21Z",
+      "resolved_at": "2026-05-20T01:52:37Z"
+    },
+    {
+      "task_id": "BLA-009-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer approval: simulator scope matches BLA-009-V2 acceptance; pytest -q tests/broker services/broker passed with 132 tests.",
+      "status": "done",
+      "created_at": "2026-05-20T01:52:37Z",
+      "resolved_at": "2026-05-20T02:05:19Z"
+    }
+  ],
+  "blockers": []
+}

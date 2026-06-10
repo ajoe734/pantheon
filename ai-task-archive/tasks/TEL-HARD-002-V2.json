@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "TEL-HARD-002-V2",
+  "archived_at": "2026-05-20T15:20:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TEL-HARD-002-V2",
+    "title": "Evolution cooldown enforcement integration",
+    "summary_zh": "Evolution cooldown enforcement integration: same artifact cannot emit repeated EvolutionDecisionProposal inside cooldown window; override requires HumanGateDecision; every rejection emits audit evidence.",
+    "phase": "Phase 8 / EPIC-TEL-HARD",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/evolution/cooldown_enforcement.py",
+      "tests/evolution/test_cooldown_enforcement.py"
+    ],
+    "acceptance": [
+      "Schema/code matches 2026-05-19 blueprint section",
+      "Unit tests cover happy path and at least one fail-closed case",
+      "Reviewer signs off via ai-status.sh approve",
+      "Artifact exists in worktree at closeout",
+      "No L1 canonical doc modified"
+    ],
+    "next": "PR #368 merged into dev at 8e6665ac031886034aa3b5924665a9c09909e1ee; closeout commit afc19686ba6fbecd69f144fa01021c9e12ee0b69 records owner verification. Validation: python3 -m pytest -q tests/evolution/test_cooldown_enforcement.py (8 passed); python3 -m pytest -q services/evolution/test_evolution_service.py tests/evolution/test_cooldown_enforcement.py (65 passed).",
+    "last_update": "2026-05-20T15:20:16Z",
+    "task_class": "primary",
+    "auto_created_by": "phase8-v3-blueprint-residual-2026-05-20",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "review_notes_zh": [
+      "審查通過：PR #366 已修正 cooldown override scope 缺口；approved HumanGateDecision 必須明確帶 override_scope=evolution_proposal_cooldown_override 才可繞過同 artifact cooldown。驗證：pytest -q tests/evolution/test_cooldown_enforcement.py；pytest -q services/evolution/test_evolution_service.py tests/evolution/test_cooldown_enforcement.py。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-05-20T15:20:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tel-hard-002-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TEL-HARD-002-V2",
+      "git_clean_required": false,
+      "commit": "afc19686ba6fbecd69f144fa01021c9e12ee0b69",
+      "commit_subject": "TEL-HARD-002-V2: record closeout verification",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout record for the approved evolution cooldown enforcement delivery.",
+        "Not changing": "cooldown enforcement behavior, evolution service behavior, tests, or L1 canonical architecture docs.",
+        "Composes with": "PR #366 after Codex review_approved and latest dev refresh.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "TEL-HARD-002-V2",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest -q tests/evolution/test_cooldown_enforcement.py (8 passed); python3 -m pytest -q services/evolution/test_evolution_service.py tests/evolution/test_cooldown_enforcement.py (65 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TEL-HARD-002-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8e6665ac031886034aa3b5924665a9c09909e1ee",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TEL-HARD-002-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: PR #362 merged into dev at 4ebe4d8f3a42236bd90de8287234e39c2f0d42aa. Task commit 8b7510ac adds services/evolution/cooldown_enforcement.py and tests/evolution/test_cooldown_enforcement.py. Local validation after dev refresh: py_compile PASS; pytest services/evolution/test_postmortem_bridge.py services/evolution/test_evolution_service.py tests/evolution/test_cooldown_enforcement.py -q -> 83 passed; git diff --check task files PASS. GitHub checks PASS: Commit trailers, Runtime mirror guard, Smoke acceptance. Reviewer must approve before owner can run done.",
+      "status": "done",
+      "created_at": "2026-05-20T14:51:08Z",
+      "resolved_at": "2026-05-20T14:56:16Z"
+    },
+    {
+      "task_id": "TEL-HARD-002-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested: validate_cooldown_override currently accepts an approved HumanGateDecision with missing override_scope as a cooldown override. Require the explicit cooldown override scope (and add a regression test) so unrelated approved HumanGateDecision records for the same artifact cannot bypass proposal cooldown.",
+      "status": "done",
+      "created_at": "2026-05-20T14:56:16Z",
+      "resolved_at": "2026-05-20T14:56:16Z"
+    },
+    {
+      "task_id": "TEL-HARD-002-V2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Reviewer change addressed in PR #366 (merged ebcbf895e5ceaeb0817a7fe01a7dc5f03e9e5b03): cooldown override now requires explicit override_scope=evolution_proposal_cooldown_override; pytest -q tests/evolution/test_cooldown_enforcement.py passed (8 tests).",
+      "status": "done",
+      "created_at": "2026-05-20T15:05:04Z",
+      "resolved_at": "2026-05-20T15:12:18Z"
+    },
+    {
+      "task_id": "TEL-HARD-002-V2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after PR #366: cooldown override now requires explicit evolution_proposal_cooldown_override scope; rejection audit evidence and same-artifact fail-closed behavior verified. Validation: pytest -q tests/evolution/test_cooldown_enforcement.py; pytest -q services/evolution/test_evolution_service.py tests/evolution/test_cooldown_enforcement.py.",
+      "status": "done",
+      "created_at": "2026-05-20T15:12:18Z",
+      "resolved_at": "2026-05-20T15:20:17Z"
+    }
+  ],
+  "blockers": []
+}

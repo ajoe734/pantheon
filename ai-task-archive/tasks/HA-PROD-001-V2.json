@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "task_id": "HA-PROD-001-V2",
+  "archived_at": "2026-05-20T11:52:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "HA-PROD-001-V2",
+    "title": "Production BFF HA cutover (human gate)",
+    "summary_zh": "Re-spec'd per design reply section 4. Management Console read model showing research activation tier (R0-R7) per adapter, evidence presence, admission gate status.",
+    "phase": "Phase 8 / EPIC-LIVE-GATE",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [
+      "Human risk-owner + operator signoff",
+      "Preconditions satisfied",
+      "Activation logged in audit chain"
+    ],
+    "next": "Operator marked human gate complete; closing gate placeholder without changing production live flags or runtime config. Downstream supervisor may proceed.",
+    "last_update": "2026-05-20T11:52:23Z",
+    "task_class": "human_gate",
+    "auto_created_by": "phase8-2026-05-19-pantheon-live-ready-engineering-round2",
+    "auto_generated": true,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "gate_status": "pending_human_go_no_go",
+    "allowed_workers": [],
+    "human_required_roles": [
+      "risk_owner",
+      "operator"
+    ],
+    "activation_effect": [
+      "irreversible_or_high_risk"
+    ],
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "task_id": "HA-PROD-001-V2",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-05-19T15:39:02Z",
+      "resolved_at": "2026-05-19T15:39:17Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "HA-PROD-001-V2",
+      "owner": "Codex2",
+      "waiting_for": "Claude",
+      "message": "Blocked: production BFF HA cutover cannot proceed. Current L1 BFF_HA_AND_CONTROL_PLANE_RESILIENCE keeps BFF HA/LB production topology deferred; BFF_HA_TOPOLOGY_PLANNING_BRIEF is not a consensus packet and forbids direct production multi-replica work before PoC. Need explicit infra decision-maker signoff plus risk-owner + operator approvals, confirmed preconditions, and an audit-chain activation record before this human gate can move forward.",
+      "status": "resolved",
+      "created_at": "2026-05-19T15:42:05Z",
+      "resolved_at": "2026-05-20T11:52:23Z"
+    }
+  ]
+}

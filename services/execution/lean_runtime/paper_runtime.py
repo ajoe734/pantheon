@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from urllib.parse import parse_qs, urlparse
 
 _THIS_DIR = Path(__file__).resolve().parent
 if str(_THIS_DIR) not in sys.path:
@@ -28,7 +29,9 @@ if str(_RUNTIME_MANAGER_DIR) not in sys.path:
 
 from runtime_manager_client import RuntimeManagerClient
 from services.execution.lean_runtime.pending_signal_store import (
+    BINDING_QUEUE_KEY_PREFIX,
     PendingSignalStore,
+    binding_queue_key,
     build_pending_signal_store,
 )
 from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext
@@ -649,9 +652,20 @@ class PaperRuntimeService:
             else None
         )
         self._identity = identity or RuntimeIdentity.from_env(identity_env)
+        # Resolve queue key: explicit env > binding-scoped > default.
+        # The reconciler sets PANTHEON_SIGNAL_QUEUE_KEY for each worker subprocess;
+        # direct invocations fall back to PANTHEON_RUNTIME_BINDING_ID if available.
+        _explicit_key = os.getenv("PANTHEON_SIGNAL_QUEUE_KEY", "").strip()
+        _binding_for_key = (self._identity.binding_id or "").strip()
+        if _explicit_key:
+            _resolved_queue_key = _explicit_key
+        elif _binding_for_key:
+            _resolved_queue_key = binding_queue_key(_binding_for_key)
+        else:
+            _resolved_queue_key = BINDING_QUEUE_KEY_PREFIX
         self._store = store or build_pending_signal_store(
             os.getenv("SIGNAL_STORE_URL", "redis://signal-store:6379"),
-            queue_key=os.getenv("PANTHEON_SIGNAL_QUEUE_KEY", "pantheon:signals:pending"),
+            queue_key=_resolved_queue_key,
             default_batch_size=int(os.getenv("PANTHEON_SIGNAL_BATCH_SIZE", "100")),
         )
         self._runtime_manager_client = runtime_manager_client or RuntimeManagerClient(
@@ -676,7 +690,10 @@ class PaperRuntimeService:
                 default=True,
             ),
         )
-        self._consumer = SignalConsumer(store_client=self._store)
+        self._consumer = SignalConsumer(
+            store_client=self._store,
+            binding_id=self._identity.binding_id or None,
+        )
         self._poll_interval_seconds = poll_interval_seconds or _as_float(
             os.getenv("PANTHEON_RUNTIME_POLL_INTERVAL_SECONDS"),
             1.0,
@@ -712,8 +729,12 @@ class PaperRuntimeService:
         with self._lock:
             self._last_poll_at = _iso_now()
             before = len(self._consumer._processed_signal_ids)
-            self._binding_resolver.resolve()
+            binding = self._binding_resolver.resolve()
             try:
+                if not binding:
+                    raise RuntimeError(
+                        "RuntimeBinding is required before paper execution can drain signals"
+                    )
                 self._consumer.drain(algo=self._algo)
                 self._last_drain_at = _iso_now()
                 self._last_error = None
@@ -723,9 +744,25 @@ class PaperRuntimeService:
             after = len(self._consumer._processed_signal_ids)
             self._processed_signal_count += max(after - before, 0)
             self._poll_count += 1
-            self._maybe_emit_heartbeat()
-            self._maybe_emit_pnl_snapshot()
+            if self._last_error is None:
+                self._maybe_emit_heartbeat()
+                self._maybe_emit_pnl_snapshot()
             return self.snapshot()
+
+    def pool_access_violation(self, requested_pool_id: str | None) -> dict[str, Any] | None:
+        requested = str(requested_pool_id or "").strip()
+        if not requested:
+            return None
+        current = self._current_capital_pool_id()
+        if current and requested == current:
+            return None
+        return {
+            "status": "blocked",
+            "error": "capital_pool_scope_mismatch",
+            "requested_capital_pool_id": requested,
+            "runtime_capital_pool_id": current,
+            "message": "Runtime state, credentials, positions, and PnL are scoped to the active RuntimeBinding capital pool.",
+        }
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -851,6 +888,24 @@ class PaperRuntimeService:
         except Exception:  # noqa: BLE001
             return None
 
+    def _current_capital_pool_id(self) -> str | None:
+        binding_snapshot = self._binding_resolver.snapshot()
+        if not binding_snapshot.get("capital_pool_id"):
+            try:
+                self._binding_resolver.resolve()
+                binding_snapshot = self._binding_resolver.snapshot()
+            except Exception:  # noqa: BLE001
+                pass
+        for value in (
+            binding_snapshot.get("capital_pool_id"),
+            self._identity.capital_pool_id,
+            self._runtime_context.capital.capital_pool_id if self._runtime_context else None,
+        ):
+            text = str(value or "").strip()
+            if text:
+                return text
+        return None
+
 
 _SERVICE: PaperRuntimeService | None = None
 
@@ -877,6 +932,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _runtime_health_response(self) -> tuple[int, dict[str, Any]]:
         snapshot = get_service().snapshot()
         ready = snapshot.get("status") == "ok"
+        parsed_path = urlparse(self.path).path
         body = {
             **snapshot,
             "live": True,
@@ -888,29 +944,57 @@ class _Handler(BaseHTTPRequestHandler):
                 "legacy": ["/health", "/__health__"],
             },
         }
-        if self.path in {"/healthz", "/livez"}:
+        if parsed_path in {"/healthz", "/livez"}:
             return 200, body
         return (200 if ready else 503), body
 
+    def _requested_pool_id(self) -> str | None:
+        query = parse_qs(urlparse(self.path).query)
+        for key in ("capital_pool_id", "pool_id"):
+            values = query.get(key) or []
+            if values and str(values[0]).strip():
+                return str(values[0]).strip()
+        return None
+
+    def _pool_guard(self, service: PaperRuntimeService) -> dict[str, Any] | None:
+        return service.pool_access_violation(self._requested_pool_id())
+
     def do_GET(self) -> None:  # noqa: N802
-        if self.path in {"/", "/__health__", "/health", "/healthz", "/livez", "/readyz"}:
+        parsed_path = urlparse(self.path).path
+        if parsed_path in {"/", "/__health__", "/health", "/healthz", "/livez", "/readyz"}:
             status_code, body = self._runtime_health_response()
             self._write_json(status_code, body)
             return
-        if self.path == "/api/runtime/state":
-            self._write_json(200, get_service().snapshot())
+        if parsed_path == "/api/runtime/state":
+            service = get_service()
+            violation = self._pool_guard(service)
+            if violation:
+                self._write_json(403, violation)
+                return
+            self._write_json(200, service.snapshot())
             return
-        if self.path == "/api/runtime/orders":
-            snapshot = get_service().snapshot()
+        if parsed_path == "/api/runtime/orders":
+            service = get_service()
+            violation = self._pool_guard(service)
+            if violation:
+                self._write_json(403, violation)
+                return
+            snapshot = service.snapshot()
             self._write_json(200, {"orders": snapshot["paper_state"]["recent_order_events"]})
             return
-        self._write_json(404, {"status": "not_found", "path": self.path})
+        self._write_json(404, {"status": "not_found", "path": parsed_path})
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path == "/api/runtime/drain":
-            self._write_json(200, get_service().drain_once())
+        parsed_path = urlparse(self.path).path
+        if parsed_path == "/api/runtime/drain":
+            service = get_service()
+            violation = self._pool_guard(service)
+            if violation:
+                self._write_json(403, violation)
+                return
+            self._write_json(200, service.drain_once())
             return
-        self._write_json(404, {"status": "not_found", "path": self.path})
+        self._write_json(404, {"status": "not_found", "path": parsed_path})
 
 
 def main(runtime_context: PantheonRuntimeContext | None = None) -> None:
