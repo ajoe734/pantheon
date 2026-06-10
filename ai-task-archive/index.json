@@ -1,31 +1,31 @@
 {
   "version": 1,
-  "updated_at": "2026-06-10T00:45:22Z",
+  "updated_at": "2026-06-10T12:50:37Z",
   "counts": {
-    "total": 1433,
-    "completed": 1410,
+    "total": 1445,
+    "completed": 1422,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "MPOS-P1-VERIFY-001",
+    "MPOS-P1-MEM-002",
+    "MPOS-P1-CONSULT-001",
+    "MPOS-P1-E2E-002",
+    "MPOS-P2-BACKEND-001",
+    "MPOS-P1-RISK-002",
+    "MPOS-P1-PER-002",
     "DATASTRAT-PERSONA-005",
+    "ASST-SKILL-006",
+    "MPOS-P2-LEAN-001",
     "DATASTRAT-SEED-004",
+    "MPOS-P1-TEL-001",
+    "MPOS-P1-CAN-001",
+    "MPOS-P1-GOV-001",
     "DATASTRAT-USAGE-007",
     "MPOS-P1-ART-001",
     "DATASTRAT-PROPOSAL-006",
     "DATASTRAT-CATALOG-003",
     "DATASTRAT-REG-002",
-    "MPOS-P1-RISK-001",
-    "MPOS-P1-PER-001",
-    "MPOS-P1-MEM-001",
-    "MPOS-P0-E2E-001",
-    "OPS-RTEL-005",
-    "OPS-RTEL-004",
-    "MPOS-P0-VAL-001",
-    "ASST-SKILL-004",
-    "OPS-RTEL-002",
-    "DATASTRAT-CONTRACT-001",
-    "ASST-SKILL-005",
-    "ASST-SKILL-003",
-    "ASST-SKILL-002"
+    "MPOS-P1-RISK-001"
   ]
 }
