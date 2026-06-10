@@ -1,7 +1,7 @@
 {
   "version": 1,
   "task_id": "OPS-RTEL-002",
-  "archived_at": "2026-06-06T12:12:46Z",
+  "archived_at": "2026-06-09T11:11:05Z",
   "terminal_status": "done",
   "terminal_outcome": "completed",
   "task": {
@@ -28,8 +28,8 @@
       "retired binding stops its worker",
       "no worker consumes shared Redis signals before isolation"
     ],
-    "next": "Closeout complete: paper fleet reconciler with per-binding signal queue isolation (PANTHEON_SIGNAL_QUEUE_KEY) implemented and verified; 22/22 tests pass; deployment doc updated; PR #1076 merged into dev.",
-    "last_update": "2026-06-06T12:12:46Z",
+    "next": "Closeout complete: deployment doc updated (22->25 tests, monitoring sessions noted), task brief finalized; 25/25 tests pass; PR #1201 merged into dev.",
+    "last_update": "2026-06-09T11:11:05Z",
     "source_ref": {
       "archive": "docs/deployment/runtime-telemetry-hardening-2026-06-06.md",
       "execution_plan": "docs/deployment/runtime-telemetry-execution-tasks-2026-06-06.md",
@@ -41,31 +41,30 @@
     "auto_generated": true,
     "mutates_canonical": true,
     "review_notes_zh": [
-      "已複查 latest anchor eb95ea8e：paper_fleet_reconciler._build_worker_env 會為每個 binding 設定 PANTHEON_SIGNAL_QUEUE_KEY=pantheon:signals:pending:<binding_id>，paper_runtime 已讀取該 env，避免 worker 消費 shared default Redis queue。",
-      "Focused verification: python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v，22 passed。",
-      "Closeout note: 最新 isolation fix 尚未進 dev；task branch 目前相對 origin/dev behind 14 / ahead 2，且沒有 open PR。Owner closeout 需整理 task artifact（建議同步 deployment doc 的 18->22 test count / signal queue isolation 註記）、開 PR、等 merge 後才能 done。"
+      "Review approved for reopened OPS-RTEL-002 dispatch: PR #1138 merge commit 29bab65f contains task-brief refresh 330a2ae6; current runtime-manager focused suite passes 25/25; core acceptance remains covered by PaperFleetReconciler start/restart/retire/degraded-fetch safety and binding-scoped PANTHEON_SIGNAL_QUEUE_KEY isolation."
     ],
     "terminal_outcome": "completed",
     "delivery": {
-      "recorded_at": "2026-06-06T12:12:46Z",
+      "recorded_at": "2026-06-09T11:11:05Z",
       "repository_id": "pantheon",
       "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-rtel-002",
       "repository_slug": "ajoe734/pantheon",
       "branch": "task/OPS-RTEL-002",
       "git_clean_required": false,
-      "commit": "257320fc2de8e0467ff62c5de96bfb5b48038372",
-      "commit_subject": "OPS-RTEL-002: closeout — sync deployment doc and task brief",
+      "commit": "76798e918a6773531035aeb6d0ba3f9c703c0a26",
+      "commit_subject": "OPS-RTEL-002: closeout — update doc test count and task brief",
       "commit_author": {
         "name": "Codex",
         "email": "codex@pantheon.local"
       },
       "commit_metadata": {
-        "Update deployment doc": "test count 18→22, add Signal Queue Isolation",
-        "Verification": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v -- 22 passed",
+        "Deployment doc": "test count 22->25, note monitoring session tests.",
+        "Task brief": "record final verified state and dispatch history.",
+        "Verification": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v -- 25 passed",
         "LLM-Agent": "Claude",
         "Task-ID": "OPS-RTEL-002",
         "Reviewer": "Codex",
-        "Verified": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v -- 22 passed"
+        "Verified": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v -- 25 passed"
       },
       "git_clean": true,
       "dirty_entry_count": 0,
@@ -75,77 +74,41 @@
       ],
       "upstream": "origin/task/OPS-RTEL-002",
       "ahead": 0,
-      "behind": 21,
-      "push_status": "behind",
+      "behind": 0,
+      "push_status": "in_sync",
       "merge_target_branch": "dev",
       "merge_target_ref": "origin/dev",
-      "merge_target_sha": "3419b84d531f0fa411fd51ac4b268d51a3505d5e",
+      "merge_target_sha": "32b7bbc242adb6207062348d5f98fbb006296003",
       "head_merged_to_target": true
     }
   },
   "handoffs": [
     {
       "task_id": "OPS-RTEL-002",
-      "from": "Claude",
+      "from": "Codex2",
       "to": "Codex",
-      "message": "Fleet reconciler implemented: PaperFleetReconciler polls runtime-manager for active paper bindings and auto-maintains one subprocess per binding. 15 unit tests, 15 passed. docker-compose paper-fleet profile added. Deployment doc updated. Commit: 49f1d330.",
+      "message": "Revalidation and task-brief refresh complete. Focused validation passed: python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -q -> 25 passed. Task-scoped commit 330a2ae6 merged via PR #1138 (merge commit 29bab65f). Please review/approve so owner can finalize done.",
       "status": "done",
-      "created_at": "2026-06-06T06:49:48Z",
-      "resolved_at": "2026-06-06T09:56:45Z"
+      "created_at": "2026-06-07T14:57:30Z",
+      "resolved_at": "2026-06-07T15:03:15Z"
     },
     {
       "task_id": "OPS-RTEL-002",
       "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: focused validation passed (python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -q -> 25 passed); PR #1138 is already merged via 29bab65f. Owner can finalize done once active task state is present.",
+      "status": "done",
+      "created_at": "2026-06-07T15:03:15Z",
+      "resolved_at": "2026-06-09T10:42:47Z"
+    },
+    {
+      "task_id": "OPS-RTEL-002",
+      "from": "Codex2",
       "to": "Claude",
-      "message": "Reviewer blocked approval: (1) docker-compose paper-fleet service points to missing services/execution/runtime-manager/Dockerfile, so profile build cannot start; use an existing runtime image path or add the Dockerfile/requirements intentionally. (2) paper_fleet_reconciler treats runtime-manager fetch errors as an empty desired set, terminates existing workers, then clears last_error, violating degraded runtime safety. Also reconcile RECONCILER_RESTART_BACKOFF_SECONDS implementation/docs. Verified: python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v (15 passed).",
+      "message": "Auto-reassigned OPS-RTEL-002 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Claude.",
       "status": "done",
-      "created_at": "2026-06-06T09:56:45Z",
-      "resolved_at": "2026-06-06T09:56:45Z"
-    },
-    {
-      "task_id": "OPS-RTEL-002",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Paper fleet reconciler implementation complete. PR #1056 merged. Deliverables: paper_fleet_reconciler.py, 18 unit tests all passing, docker-compose paper-fleet profile, and OPS-RTEL-002 section in runtime-telemetry-hardening doc. Please verify acceptance criteria: (1) workers start for all active paper bindings, (2) dead worker triggers restart with backoff, (3) retired binding terminates worker, (4) fetch failure preserves running workers. Branch: task/OPS-RTEL-002.",
-      "status": "done",
-      "created_at": "2026-06-06T11:39:16Z",
-      "resolved_at": "2026-06-06T11:44:39Z"
-    },
-    {
-      "task_id": "OPS-RTEL-002",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "DRY-RUN-CHECK",
-      "status": "done",
-      "created_at": "2026-06-06T11:44:39Z",
-      "resolved_at": "2026-06-06T11:45:36Z"
-    },
-    {
-      "task_id": "OPS-RTEL-002",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review blocker: active acceptance still requires no worker consumes shared Redis signals before isolation. paper_fleet_reconciler spawns paper_runtime without a binding-scoped PANTHEON_SIGNAL_QUEUE_KEY, so workers default to pantheon:signals:pending and RedisPendingSignalStore lpop can remove signals for another binding. Add binding-scoped queue/consumer isolation or disable Redis consumption until isolation, with tests.",
-      "status": "done",
-      "created_at": "2026-06-06T11:45:36Z",
-      "resolved_at": "2026-06-06T11:45:36Z"
-    },
-    {
-      "task_id": "OPS-RTEL-002",
-      "from": "Claude",
-      "to": "Codex",
-      "message": "Signal queue isolation fix complete. paper_fleet_reconciler._build_worker_env now sets PANTHEON_SIGNAL_QUEUE_KEY=pantheon:signals:pending:<binding_id> for each spawned worker, scoping Redis consumption to that binding only. 4 new isolation tests added to TestPaperFleetReconcilerSignalQueueIsolation; all 22 tests pass. Anchor commit eb95ea8e on task/OPS-RTEL-002. Ready for re-review.",
-      "status": "done",
-      "created_at": "2026-06-06T11:50:34Z",
-      "resolved_at": "2026-06-06T11:56:40Z"
-    },
-    {
-      "task_id": "OPS-RTEL-002",
-      "from": "Codex",
-      "to": "Claude",
-      "message": "Review approved: binding-scoped Redis signal queue isolation verified; focused paper_fleet_reconciler suite passes 22/22. Owner must finalize via task PR because latest isolation commit is not merged to dev yet.",
-      "status": "done",
-      "created_at": "2026-06-06T11:56:40Z",
-      "resolved_at": "2026-06-06T12:12:46Z"
+      "created_at": "2026-06-09T10:42:47Z",
+      "resolved_at": "2026-06-09T11:11:06Z"
     }
   ],
   "blockers": []

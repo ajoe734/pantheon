@@ -30,7 +30,8 @@
         "feature_set",
         "prompt_bundle",
         "signal_snapshot",
-        "execution_bundle"
+        "execution_bundle",
+        "allocation_policy"
       ]
     },
     "artifact_state": {

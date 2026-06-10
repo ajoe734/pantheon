@@ -826,6 +826,7 @@ class _FakeBinding:
         self.artifact_id = overrides.get("artifact_id", "artifact-123")
         self.artifact_version = overrides.get("artifact_version", "1.0.0")
         self.deployment_mode = overrides.get("deployment_mode", "paper")
+        self.execution_mode = overrides.get("execution_mode", self.deployment_mode)
         self.effective_at = overrides.get("effective_at", "2026-01-01T00:00:00Z")
         self.retired_at = overrides.get("retired_at", None)
         self.plan_id = overrides.get("plan_id", "plan-456")
@@ -864,6 +865,43 @@ class TestRuntimeBindingEvidenceValidation(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result)
         await svc.stop(graceful=True)
         self.assertEqual(svc.stats()["service"]["total_ingested"], 1)
+
+    async def test_valid_canary_event_with_binding_store_accepted(self):
+        """Canary events must carry explicit canary execution_mode, not live."""
+        b = _FakeBinding(deployment_mode="canary")
+        store = _FakeBindingStore(bindings={b.binding_id: b})
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        result = await svc.ingest(
+            _make_event(
+                event_id="valid-canary-binding",
+                execution_mode="canary",
+                environment="canary",
+                deployment_stage="canary",
+            )
+        )
+        self.assertTrue(result)
+        await svc.stop(graceful=True)
+        self.assertEqual(svc.stats()["service"]["total_ingested"], 1)
+
+    async def test_canary_execution_mode_mismatch_rejected(self):
+        """Canary telemetry cannot be accepted with legacy execution_mode=live."""
+        b = _FakeBinding(deployment_mode="canary")
+        store = _FakeBindingStore(bindings={b.binding_id: b})
+        svc = TelemetryIngestService(binding_store=store, batch_size=10, batch_interval=0.1)
+        await svc.start()
+        result = await svc.ingest(
+            _make_event(
+                event_id="canary-execution-mode-mismatch",
+                execution_mode="live",
+                environment="canary",
+                deployment_stage="canary",
+            )
+        )
+        self.assertFalse(result)
+        await svc.stop(graceful=True)
+        dlq = svc.get_dlq_entries(tag_filter=TAG_BINDING_MISMATCH)
+        self.assertGreater(len(dlq), 0)
 
     async def test_unknown_binding_id_rejected(self):
         """Event whose binding_id is absent from the store is rejected."""

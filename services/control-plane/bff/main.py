@@ -15683,6 +15683,39 @@ async def list_source_connectors(
     }
 
 
+@app.get("/api/v1/research/source-change-proposals")
+async def list_source_change_proposals(
+    status: Optional[str] = None,
+    proposal_type: Optional[str] = None,
+    source_kind: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Read-only BFF surface for source-change proposals.
+
+    Proposals are written via the LLM proposal adapter on the source-ingest
+    service.  Lifecycle transitions (submit/approve/reject/apply) are operator-
+    gated actions on the source-ingest service; the BFF does not proxy writes.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    snapshot_at = utc_now()
+    result = read_store.get_source_change_proposals(
+        status=status,
+        proposal_type=proposal_type,
+        source_kind=source_kind,
+    )
+    source = str(result.get("source") or "missing")
+    surface_state = "ok" if source == "service_client" else "unavailable"
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = {"source_change_proposals": surface_state}
+    meta["source"] = source
+    return {
+        "data": list(result.get("proposals") or []),
+        "meta": meta,
+    }
+
+
 @app.get("/api/v1/research/analysis")
 async def list_research_analysis(
     ticket_id: Optional[str] = None,

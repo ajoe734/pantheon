@@ -1,31 +1,31 @@
 {
   "version": 1,
-  "updated_at": "2026-06-09T08:03:02Z",
+  "updated_at": "2026-06-09T15:23:47Z",
   "counts": {
-    "total": 1416,
-    "completed": 1393,
+    "total": 1430,
+    "completed": 1407,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "MPOS-P1-ART-001",
+    "DATASTRAT-PROPOSAL-006",
+    "DATASTRAT-CATALOG-003",
+    "DATASTRAT-REG-002",
+    "MPOS-P1-RISK-001",
+    "MPOS-P1-PER-001",
+    "MPOS-P1-MEM-001",
+    "MPOS-P0-E2E-001",
+    "OPS-RTEL-005",
+    "OPS-RTEL-004",
+    "MPOS-P0-VAL-001",
+    "ASST-SKILL-004",
+    "OPS-RTEL-002",
     "DATASTRAT-CONTRACT-001",
     "ASST-SKILL-005",
     "ASST-SKILL-003",
     "ASST-SKILL-002",
     "ASST-SKILL-001",
     "OPS-RTEL-001",
-    "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732",
-    "ASST-INTEG-008",
-    "ASST-INTEG-009",
-    "ASST-INTEG-004",
-    "ASST-INTEG-007",
-    "MGMT-AI-PERSIST-P1-ATTACH-007",
-    "MGMT-AI-PERSIST-P1-ATTACH-006",
-    "MGMT-AI-PERSIST-P0-WRITE-003",
-    "MGMT-AI-PERSIST-P0-WRITE-004",
-    "MGMT-AI-PERSIST-P0-WRITE-002",
-    "MGMT-AI-PERSIST-P0-READ-005",
-    "MGMT-AI-PERSIST-P0-STORE-001",
-    "ASST-INTEG-006",
-    "ASST-INTEG-003"
+    "MGMT-AI-LIVE-BRIDGE-SMOKE-20260607101732"
   ]
 }

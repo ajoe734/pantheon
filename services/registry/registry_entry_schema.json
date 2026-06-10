@@ -28,7 +28,8 @@
         "execution_bundle",
         "evaluation_result",
         "critique_result",
-        "optimizer_result"
+        "optimizer_result",
+        "allocation_policy"
       ]
     },
     "strategy_id": {

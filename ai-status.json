@@ -1,9 +1,9 @@
 {
   "project": "pantheon",
-  "sprint": "2026-06-06-assistant-control-mode-runtime-repair",
-  "sprint_started_at": "2026-06-06T00:00:00Z",
-  "objective": "Make Pantheon Management AI control mode operational for authorized operators while keeping user mode safe by default, then add governed runtime repair actions for stale paper runtime, monitoring sessions, telemetry bridge, and telemetry ingest recovery. The passphrase remains an activation factor only and must not bypass RBAC, MFA, explicit capabilities, TTL, audit, redaction, or command policy.",
-  "updated_at": "2026-06-09T01:06:34Z",
+  "sprint": "2026-06-09-mpos-full-loop-gap-closure",
+  "sprint_started_at": "2026-06-09T00:00:00Z",
+  "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
+  "updated_at": "2026-06-09T15:28:12Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,10 +94,12 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "MPOS-P1-E2E-002"
+      ],
       "branch": "task/LSP-002-V2",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-02T13:10:43Z"
     },
     {
@@ -122,10 +124,12 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "MPOS-P1-RISK-002"
+      ],
       "branch": "task/ASST-OCGW-001",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-06T10:13:34Z"
     },
     {
@@ -136,10 +140,12 @@
         "schema",
         "acceptance"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "MPOS-P1-MEM-002"
+      ],
       "branch": "task/ASST-OCGW-004",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-02T03:56:50Z"
     },
     {
@@ -150,11 +156,13 @@
         "spec-review",
         "critique"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "MPOS-P1-PER-002"
+      ],
       "branch": "feat/grok-research-critique",
-      "next": "",
-      "last_update": "2026-06-03T13:33:57Z"
+      "next": "Assignment created",
+      "last_update": "2026-06-09T15:28:07Z"
     },
     {
       "name": "Claude2",
@@ -163,10 +171,12 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "MPOS-P1-CONSULT-001"
+      ],
       "branch": "feat/claude2-execution-control",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-02T04:46:37Z"
     },
     {
@@ -177,10 +187,12 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "MPOS-P1-VERIFY-001"
+      ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-01T00:47:46Z",
       "last_action_at": "2026-05-20T11:29:47Z",
       "last_action_note": "Manual ai-status sync by Claude: cleared ['LOVABLE-STRICT-PUBLISH', 'OSS-QUANTLIB-V2-001'] after push-auth failure."
@@ -199,7 +211,263 @@
       "last_update": "2026-06-01T02:42:08Z"
     }
   ],
-  "tasks": [],
+  "tasks": [
+    {
+      "id": "MPOS-P1-PER-002",
+      "title": "Prove Persona A/B/C research-to-proposal OODA packets",
+      "summary_zh": "補三個 persona 各自從 Observe/Orient 到 PersonaAllocationProposal 的證據鏈，避免多人格 synthesis 只吃手寫 proposal fixture。",
+      "phase": "Sprint MPOS-P1 / Persona OODA evidence",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MPOS-P0-VAL-001",
+        "MPOS-P1-PER-001",
+        "MPOS-P0-E2E-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+        "tests/e2e/test_multi_persona_ooda_packet.py",
+        "tests/e2e/test_source_to_strategy_spec.py",
+        "tests/e2e/test_strategy_spec_to_experiment_run.py",
+        "services/source_ingestion/strategy_seed_builder.py",
+        "services/research/strategy_spec/conversion.py",
+        "services/optimizer-svc/portfolio_synthesis/models.py"
+      ],
+      "acceptance": [
+        "Persona A B C each start from source or strategy evidence;each packet includes StrategySpecSeed or StrategySpec and ExperimentRun or OOS validation;each packet records regime risk mandate fit evidence quality and no-order-route proof;each PersonaAllocationProposal evidence_refs point back to its packet;ineligible or suspended persona remains excluded by policy or health gate"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-09T15:28:07Z",
+      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "gap_ids": [
+        "G2"
+      ],
+      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+      "task_class": "mpos_full_loop_gap_closure",
+      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+      "auto_generated": true
+    },
+    {
+      "id": "MPOS-P1-E2E-002",
+      "title": "Run approved AllocationPolicyArtifact through paper LEAN loop",
+      "summary_zh": "把已核准 AllocationPolicyArtifact 實際接到 DeploymentPlan、RuntimeBinding、paper LEAN、fills/telemetry 與 lineage 查詢。",
+      "phase": "Sprint MPOS-P1 / Allocation policy runtime closure",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MPOS-P1-ART-001",
+        "MPOS-P1-PER-002",
+        "MPOS-P1-RISK-001",
+        "MPOS-P1-MEM-001",
+        "MPOS-P1-PER-001"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+        "services/registry/test_allocation_policy_artifact.py",
+        "services/control-plane/governance/deployment_plan.py",
+        "services/control-plane/governance/approval_decision.py",
+        "services/control-plane/governance/test_persona_proposal_runtime_binding_e2e.py",
+        "tests/e2e/test_deployment_plan_to_paper_run.py",
+        "services/execution/lean_runtime/paper_runtime.py",
+        "services/telemetry/feedback_adapter.py"
+      ],
+      "acceptance": [
+        "Start from synthesized AllocationPolicyArtifact;register allocation artifact as candidate and advance to approved with ApprovalDecision evidence;create DeploymentPlan whose artifact_type is allocation_policy;create RuntimeBinding with sponsor persona and persona capital binding attribution;run paper LEAN only and assert no live broker order route;capture fills telemetry and query lineage by runtime binding deployment plan capital pool artifact and persona capital binding"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-09T15:28:09Z",
+      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "gap_ids": [
+        "G1"
+      ],
+      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+      "task_class": "mpos_full_loop_gap_closure",
+      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+      "auto_generated": true
+    },
+    {
+      "id": "MPOS-P1-CONSULT-001",
+      "title": "Require consultation handoff for high-risk allocation approval",
+      "summary_zh": "把 consultation/committee memo 與 sponsor decision handoff 變成 allocation approval 的硬門檻，而不是旁路資料。",
+      "phase": "Sprint MPOS-P1 / Consultation governance gate",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MPOS-P1-ART-001",
+        "MPOS-P1-PER-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+        "services/consultation/test_e2e_consult_review.py",
+        "services/consultation/sponsor_decision_bridge.py",
+        "services/control-plane/bff/test_cw03_committee_board_contract.py",
+        "services/consultation/store.py",
+        "services/control-plane/governance/approval_decision.py",
+        "services/registry/test_allocation_policy_artifact.py"
+      ],
+      "acceptance": [
+        "Open conflicts or high-risk allocation paths require consultation request;committee memo and service_handoff refs are stored as approval evidence;allocation approval rejects missing stale or mismatched committee handoff;sponsor decision bridge can emit approval proposal for allocation_policy;tests cover approve approve-with-conditions reject missing-handoff and stale-handoff cases"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-09T15:28:10Z",
+      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "gap_ids": [
+        "G3"
+      ],
+      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+      "task_class": "mpos_full_loop_gap_closure",
+      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+      "auto_generated": true
+    },
+    {
+      "id": "MPOS-P1-RISK-002",
+      "title": "Add homogeneity and correlation review to allocation gate",
+      "summary_zh": "在 pre-LEAN allocation gate 補 homogeneity/correlation review，避免多個 persona 同時堆疊高度相關或重複 exposure。",
+      "phase": "Sprint MPOS-P1 / Homogeneity correlation gate",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "MPOS-P1-RISK-001",
+        "MPOS-P1-PER-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+        "services/optimizer-svc/portfolio_synthesis/conflict_classifier.py",
+        "services/capital/risk_policy.py",
+        "services/optimizer-svc/test_allocation_conflict_classifier.py",
+        "services/optimizer-svc/test_portfolio_synthesis.py",
+        "services/capital/test_risk_policy.py"
+      ],
+      "acceptance": [
+        "Add first-class homogeneity or correlation review to allocation conflict taxonomy or adjacent gate;detect duplicated strategy family high target overlap high correlation bucket and concentration by capital pool;escalate or reject according to RiskPolicy evaluator precedence;risk veto still outranks committee escalation;tests include low correlation pass high correlation committee escalation and hard veto"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-09T15:28:10Z",
+      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "gap_ids": [
+        "G4"
+      ],
+      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+      "task_class": "mpos_full_loop_gap_closure",
+      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+      "auto_generated": true
+    },
+    {
+      "id": "MPOS-P1-MEM-002",
+      "title": "Automate persona and sponsor Learn feedback writeback",
+      "summary_zh": "把 runtime telemetry、postmortem、evolution 結果自動寫回 persona memory 與 sponsor-attributed institutional memory。",
+      "phase": "Sprint MPOS-P1 / Learn feedback attribution",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "MPOS-P1-MEM-001",
+        "MPOS-P1-E2E-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+        "services/memory/main.py",
+        "services/memory/persona_memory_store.py",
+        "services/memory/institutional_memory_store.py",
+        "services/telemetry/feedback_adapter.py",
+        "services/incident/incident.py",
+        "services/evolution/postmortem_bridge.py",
+        "services/memory/test_main.py"
+      ],
+      "acceptance": [
+        "Telemetry postmortem or evolution outcomes create persona memory writebacks;sponsor-attributed institutional memory includes sponsor persona and contributing persona ids;contributor memory entries link proposal ids and runtime telemetry evidence;writeback is idempotent by source event id;tests cover success duplicate replay missing persona attribution and unauthorized writeback"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-09T15:28:11Z",
+      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "gap_ids": [
+        "G5"
+      ],
+      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+      "task_class": "mpos_full_loop_gap_closure",
+      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+      "auto_generated": true
+    },
+    {
+      "id": "MPOS-P1-VERIFY-001",
+      "title": "Produce supervisor closure packet for MPOS full-loop proof",
+      "summary_zh": "彙整所有 MPOS P1 修補任務的 PR、commit、CI 與本機驗證，產生 supervisor 可審的完整閉環證據包。",
+      "phase": "Sprint MPOS-P1 / Supervisor closure evidence",
+      "owner": "Gemini2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MPOS-P1-PER-002",
+        "MPOS-P1-E2E-002",
+        "MPOS-P1-CONSULT-001",
+        "MPOS-P1-RISK-002",
+        "MPOS-P1-MEM-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+        ".orchestrator/task-briefs",
+        "current-work.md",
+        "dashboard-bundle.json",
+        "tests/e2e",
+        "services/telemetry/lineage_read/service.py"
+      ],
+      "acceptance": [
+        "Build one supervisor-visible closure packet for all MPOS P1 gates;include task PR commit and check refs for all implementation tasks;include requirement matrix against MPOS gap dispatch doc;include local validation commands and CI status;mark live or canary broker activation as intentionally fail-closed when not activated"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-09T15:28:12Z",
+      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "gap_ids": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5"
+      ],
+      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+      "task_class": "mpos_full_loop_gap_closure",
+      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+      "auto_generated": true
+    },
+    {
+      "id": "MPOS-P2-BACKEND-001",
+      "title": "Normalize MPOS Observe backend maturity matrix",
+      "summary_zh": "整理 Qlib/vectorbt/statsmodels/QuantLib 在 MPOS Observe 流程中的 maturity、no-order-route 與驗收證據。",
+      "phase": "Sprint MPOS-P2 / Research backend clarity",
+      "owner": "Copilot",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "MPOS-P1-PER-002"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+        "services/research/experiment_orchestrator/parallel_dispatch.py",
+        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
+        "services/research/qlib",
+        "services/research/vectorbt",
+        "services/research/statsmodels",
+        "services/research/quantlib"
+      ],
+      "acceptance": [
+        "Create MPOS Observe backend matrix for vectorbt Qlib statsmodels and QuantLib;state production or readiness posture for each backend;state no-order-route guarantees and proof tests;clarify whether Qlib remains activation-ready or production-active;clarify whether QuantLib is default-dispatch separate governed path or deferred"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-09T15:28:12Z",
+      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "gap_ids": [
+        "G6"
+      ],
+      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+      "task_class": "mpos_full_loop_gap_closure",
+      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+      "auto_generated": true
+    }
+  ],
   "handoffs": [
     {
       "task_id": "LUV-REVIEW-007",
@@ -224,22 +492,22 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Claude2": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Gemini": {
       "total": 0,
@@ -251,40 +519,40 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Codex": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Codex2": {
-      "total": 0,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 1
     },
     "Copilot": {
-      "total": 0,
+      "total": 2,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 0
+      "todo": 2
     },
     "Human/Ops": {
       "total": 0,

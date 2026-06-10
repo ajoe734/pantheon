@@ -137,6 +137,67 @@ class TestPortfolioSynthesis(unittest.TestCase):
         self.assertEqual(len(log.vetoed_proposals), 2)
         self.assertEqual(log.sponsor_persona_id, None)
 
+    def test_first_class_risk_policy_payload_vetoes_optimizer_proposal(self) -> None:
+        policy = PoolRiskPolicy(
+            risk_policy={
+                "risk_policy_id": "risk-main",
+                "forbidden_asset_classes": ["crypto"],
+                "max_single_name_weight": 0.5,
+            }
+        )
+        synthesizer = PortfolioSynthesizer(pool_risk_policy=policy)
+
+        with self.assertRaises(SynthesisError):
+            synthesizer.synthesize(
+                [
+                    make_proposal(
+                        metadata={"asset_classes": ["crypto"]},
+                        target_weights={"BTC": 0.8},
+                    )
+                ],
+                capital_pool_id="pool-001",
+                scope_ref="live",
+            )
+
+        log = synthesizer.last_conflict_resolution_log
+        self.assertIsNotNone(log)
+        assert log is not None
+        self.assertEqual(log.vetoed_proposals[0].reason, VetoReason.FORBIDDEN_ASSET_CLASS.value)
+
+    def test_risk_veto_precedes_committee_escalation(self) -> None:
+        referrals: list[CommitteeReferral] = []
+        policy = PoolRiskPolicy(risk_policy={"risk_policy_id": "risk-main", "forbidden_asset_classes": ["crypto"]})
+        synthesizer = PortfolioSynthesizer(
+            pool_risk_policy=policy,
+            committee_escalation_fn=referrals.append,
+        )
+
+        with self.assertRaises(SynthesisError):
+            synthesizer.synthesize(
+                [
+                    make_proposal(
+                        conviction=0.95,
+                        metadata={"asset_classes": ["crypto"]},
+                    ),
+                    make_proposal(
+                        proposal_id="proposal-002",
+                        persona_id="persona-beta",
+                        conviction=0.96,
+                        directions=["short"],
+                        target_weights={"ETH": 0.8},
+                        metadata={"asset_classes": ["crypto"]},
+                    ),
+                ],
+                capital_pool_id="pool-001",
+                scope_ref="live",
+            )
+
+        self.assertEqual(referrals, [])
+        log = synthesizer.last_conflict_resolution_log
+        self.assertIsNotNone(log)
+        assert log is not None
+        self.assertEqual(log.rejected_reason, "all_proposals_vetoed")
+
     def test_committee_escalation_returns_referral_and_log(self) -> None:
         referrals: list[CommitteeReferral] = []
         synthesizer = PortfolioSynthesizer(

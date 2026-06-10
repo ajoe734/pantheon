@@ -48,6 +48,16 @@ from .active_universe import (
     UniverseTier,
     build_active_universe_update_plan,
 )
+from .registry.proposals import (
+    ProposalStatus,
+    ProposalType,
+    ProposedSourceInfo,
+    SourceChangeProposal,
+    SourceChangeProposalError,
+    SourceChangeProposalStore,
+    SourceKind,
+)
+from .registry.llm_proposal_adapter import LLMSourceProposalAdapter
 from .connectors import (
     AuthType,
     ConnectorMode,
@@ -65,10 +75,13 @@ from .external_sources import (
     validate_external_source_connector,
     validate_external_source_record,
 )
+from .financial_source_catalog import financial_data_source_catalog_payload
 from .ingest_manager import IngestManager
 from .pg_store import build_source_evidence_repository
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
+from .source_health import SourceHealth, SourceHealthError, SourceHealthStore, SourceUsageDaily, SourceUsageDailyStore
+from .retirement_engine import RecommendationType, RetirementRecommendation, compute_recommendations
 
 
 def _resolve_data_dir() -> Path:
@@ -78,12 +91,15 @@ def _resolve_data_dir() -> Path:
 
 
 DATA_DIR = _resolve_data_dir()
+PROPOSAL_STORE_PATH = Path(os.getenv("SOURCE_INGEST_PROPOSAL_STORE_PATH", str(DATA_DIR / "source_change_proposals.jsonl")))
 SCHEDULE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_STORE_PATH", str(DATA_DIR / "ingest_schedule.jsonl")))
 CONNECTOR_STORE_PATH = Path(os.getenv("SOURCE_INGEST_CONNECTOR_STORE_PATH", str(DATA_DIR / "connector_config.jsonl")))
 SOURCE_EVIDENCE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_EVIDENCE_STORE_PATH", str(DATA_DIR / "source_evidence.jsonl")))
 DLQ_STORE_PATH = Path(os.getenv("SOURCE_INGEST_DLQ_PATH", str(DATA_DIR / "source_ingest_dlq.jsonl")))
 AUDIT_STORE_PATH = Path(os.getenv("SOURCE_INGEST_AUDIT_PATH", str(DATA_DIR / "source_ingest_audit.jsonl")))
 CONNECTOR_SCHEDULE_CONFIG_PATH = Path(os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_PATH", str(DATA_DIR / "connector_schedule.jsonl")))
+SOURCE_HEALTH_STORE_PATH = Path(os.getenv("SOURCE_INGEST_HEALTH_STORE_PATH", str(DATA_DIR / "source_health.jsonl")))
+SOURCE_USAGE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_USAGE_STORE_PATH", str(DATA_DIR / "source_usage_daily.jsonl")))
 SOURCE_RECORD_SCHEMA_PATH = Path(__file__).with_name("source_record.schema.json")
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
@@ -95,6 +111,8 @@ PRODUCTION_POSTURE = require_source_search_posture("source-ingest")
 
 app = FastAPI(title="Pantheon Source Ingest Service", version="0.1.0")
 manager = IngestManager()
+proposal_store = SourceChangeProposalStore.from_jsonl(PROPOSAL_STORE_PATH)
+llm_proposal_adapter = LLMSourceProposalAdapter(proposal_store)
 store = JsonlIngestScheduleStore(SCHEDULE_STORE_PATH)
 connector_store = JsonlConfiguredConnectorStore(CONNECTOR_STORE_PATH)
 schedule_config_store = JsonlConnectorScheduleStore(CONNECTOR_SCHEDULE_CONFIG_PATH)
@@ -105,6 +123,8 @@ dead_letter_queue = DeadLetterQueue(DLQ_STORE_PATH)
 dead_letter_queue.load_from_spill()
 scheduler = IngestionScheduler(manager=manager, store=store, dead_letter_queue=dead_letter_queue)
 replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
+source_health_store = SourceHealthStore.from_jsonl(SOURCE_HEALTH_STORE_PATH)
+source_usage_store = SourceUsageDailyStore.from_jsonl(SOURCE_USAGE_STORE_PATH)
 register_fastapi_health_routes(
     app,
     "pantheon-source-ingest",
@@ -1180,17 +1200,30 @@ def list_connectors() -> dict[str, Any]:
 @app.get("/api/source-ingest/registry")
 def source_connector_registry() -> dict[str, Any]:
     entries = _source_connector_entries()
+    financial_catalog = financial_data_source_catalog_payload()
     return {
         "schema_version": "source_connector_registry.v1",
         "connectors": entries,
         "provider_examples": _provider_example_payloads(),
         "policy_registry": _source_policy_registry_payload(),
+        "financial_data_source_catalog": financial_catalog,
+        "active_universe_policy": financial_catalog["active_universe_policy"],
     }
 
 
 @app.get("/api/source-ingest/policy-registry")
 def source_policy_registry() -> dict[str, Any]:
     return _source_policy_registry_payload()
+
+
+@app.get("/api/source-ingest/data-sources/financial-catalog")
+def financial_data_source_catalog() -> dict[str, Any]:
+    return financial_data_source_catalog_payload()
+
+
+@app.get("/api/source-ingest/active-universe/policy")
+def active_universe_policy() -> dict[str, Any]:
+    return financial_data_source_catalog_payload()["active_universe_policy"]
 
 
 @app.post("/api/source-ingest/active-universe/plan")
@@ -1484,3 +1517,433 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
 @app.get("/api/source-ingest/audit")
 def list_audit() -> dict[str, Any]:
     return {"actions": _load_audit_actions()}
+
+
+# ---------------------------------------------------------------------------
+# LLM Source-Change Proposal routes (DATASTRAT-PROPOSAL-006)
+# ---------------------------------------------------------------------------
+# Design invariant: LLM agents may only create draft proposals through the
+# /api/source-change-proposals POST endpoint.  All approval and apply
+# transitions require an explicit operator-gated action endpoint.
+# ---------------------------------------------------------------------------
+
+class ProposedSourceBody(StrictBaseModel):
+    source_id: str
+    source_kind: str
+    provider: str
+    source_class: str
+    license_scope: str
+    allowed_use: list[str]
+    homepage_url: str | None = None
+    docs_url: str | None = None
+    entitlement_required: bool = False
+    entitlement_tags: list[str] = Field(default_factory=list)
+    expected_datasets: list[str] = Field(default_factory=list)
+    update_frequency: str | None = None
+    cost_notes: str | None = None
+
+
+class ProposalRiskBody(StrictBaseModel):
+    risk_type: str
+    severity: str
+    note: str
+
+
+class CreateProposalRequest(StrictBaseModel):
+    proposal_type: str
+    source_kind: str
+    rationale: str
+    proposed_by: dict[str, Any]
+    target_source_id: str | None = None
+    proposed_source: ProposedSourceBody | None = None
+    expected_value: dict[str, Any] = Field(default_factory=dict)
+    risks: list[ProposalRiskBody] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LLMProposalRequest(StrictBaseModel):
+    """LLM-originated proposal — always creates a draft via the adapter."""
+    proposal_type: str
+    source_kind: str
+    rationale: str
+    agent_id: str
+    trace_id: str | None = None
+    target_source_id: str | None = None
+    proposed_source: ProposedSourceBody | None = None
+    expected_value: dict[str, Any] = Field(default_factory=dict)
+    risks: list[ProposalRiskBody] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def _proposal_to_response(proposal: SourceChangeProposal) -> dict[str, Any]:
+    return proposal.to_dict()
+
+
+@app.get("/api/source-change-proposals")
+def list_proposals(
+    status: str | None = None,
+    proposal_type: str | None = None,
+    source_kind: str | None = None,
+) -> dict[str, Any]:
+    try:
+        proposals = proposal_store.list(
+            status=status if status else None,
+            proposal_type=proposal_type if proposal_type else None,
+            source_kind=source_kind if source_kind else None,
+        )
+    except (SourceChangeProposalError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"proposals": [_proposal_to_response(p) for p in proposals]}
+
+
+@app.post("/api/source-change-proposals", status_code=201)
+def create_proposal(request: CreateProposalRequest) -> dict[str, Any]:
+    """Create a new source-change proposal (draft only).
+
+    Operator or LLM callers that need to enforce the draft-only restriction
+    should use /api/source-change-proposals/llm-draft instead.
+    """
+    try:
+        proposed_source = None
+        if request.proposed_source is not None:
+            proposed_source = ProposedSourceInfo.from_dict(request.proposed_source.model_dump())
+        from .registry.proposals import ProposalRisk
+        risks = [ProposalRisk(risk_type=r.risk_type, severity=r.severity, note=r.note)
+                 for r in request.risks]
+        proposal = SourceChangeProposal(
+            proposal_id=f"prop-{re.sub(r'[^a-z0-9]', '-', request.rationale[:20].lower())}-{sha256(request.rationale.encode()).hexdigest()[:8]}",
+            proposal_type=request.proposal_type,
+            source_kind=request.source_kind,
+            rationale=request.rationale,
+            proposed_by=request.proposed_by,
+            status=ProposalStatus.DRAFT.value,
+            target_source_id=request.target_source_id,
+            proposed_source=proposed_source,
+            expected_value=request.expected_value,
+            risks=risks,
+            evidence_refs=request.evidence_refs,
+            metadata=request.metadata,
+        )
+        created = proposal_store.create_draft(proposal)
+        return _proposal_to_response(created)
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/source-change-proposals/llm-draft", status_code=201)
+def create_llm_draft_proposal(request: LLMProposalRequest) -> dict[str, Any]:
+    """LLM-originated proposal.  The adapter enforces draft-only status."""
+    try:
+        pt = ProposalType(request.proposal_type)
+        sk = SourceKind(request.source_kind)
+        proposed_source_data = request.proposed_source.model_dump() if request.proposed_source else None
+        risks_data = [r.model_dump() for r in request.risks]
+        if pt == ProposalType.ADD_DATA_SOURCE:
+            proposal = llm_proposal_adapter.propose_add_data_source(
+                agent_id=request.agent_id,
+                proposed_source=proposed_source_data or {},
+                rationale=request.rationale,
+                trace_id=request.trace_id,
+                expected_value=request.expected_value or None,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        elif pt == ProposalType.ADD_STRATEGY_SEED_SOURCE:
+            proposal = llm_proposal_adapter.propose_add_strategy_seed_source(
+                agent_id=request.agent_id,
+                proposed_source=proposed_source_data or {},
+                rationale=request.rationale,
+                trace_id=request.trace_id,
+                expected_value=request.expected_value or None,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        elif pt == ProposalType.DISABLE_SOURCE:
+            proposal = llm_proposal_adapter.propose_disable_source(
+                agent_id=request.agent_id,
+                target_source_id=request.target_source_id or "",
+                source_kind=sk.value,
+                rationale=request.rationale,
+                trace_id=request.trace_id,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        elif pt == ProposalType.RETIRE_SOURCE:
+            proposal = llm_proposal_adapter.propose_retire_source(
+                agent_id=request.agent_id,
+                target_source_id=request.target_source_id or "",
+                source_kind=sk.value,
+                rationale=request.rationale,
+                trace_id=request.trace_id,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        elif pt == ProposalType.REPLACE_SOURCE:
+            replacement_id = str(request.metadata.get("replacement_source_id") or "")
+            proposal = llm_proposal_adapter.propose_replace_source(
+                agent_id=request.agent_id,
+                target_source_id=request.target_source_id or "",
+                source_kind=sk.value,
+                rationale=request.rationale,
+                replacement_source_id=replacement_id,
+                trace_id=request.trace_id,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata={k: v for k, v in request.metadata.items() if k != "replacement_source_id"},
+            )
+        elif pt == ProposalType.CHANGE_SCHEDULE:
+            schedule_change = dict(request.metadata.get("schedule_change") or {})
+            proposal = llm_proposal_adapter.propose_change_schedule(
+                agent_id=request.agent_id,
+                target_source_id=request.target_source_id or "",
+                source_kind=sk.value,
+                rationale=request.rationale,
+                schedule_change=schedule_change,
+                trace_id=request.trace_id,
+                risks=risks_data or None,
+                evidence_refs=request.evidence_refs or None,
+                metadata={k: v for k, v in request.metadata.items() if k != "schedule_change"},
+            )
+        elif pt == ProposalType.REQUEST_VENDOR_QUOTE:
+            proposal = llm_proposal_adapter.propose_request_vendor_quote(
+                agent_id=request.agent_id,
+                source_kind=sk.value,
+                rationale=request.rationale,
+                proposed_source=proposed_source_data,
+                trace_id=request.trace_id,
+                evidence_refs=request.evidence_refs or None,
+                metadata=request.metadata or None,
+            )
+        else:
+            raise SourceChangeProposalError(f"Unsupported proposal_type for LLM draft: {pt.value}")
+        return _proposal_to_response(proposal)
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-change-proposals/{proposal_id}")
+def get_proposal(proposal_id: str) -> dict[str, Any]:
+    proposal = proposal_store.get(proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="proposal not found")
+    return _proposal_to_response(proposal)
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/submit")
+def submit_proposal(proposal_id: str) -> dict[str, Any]:
+    try:
+        return _proposal_to_response(proposal_store.submit(proposal_id))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/approve")
+def approve_proposal(proposal_id: str) -> dict[str, Any]:
+    try:
+        return _proposal_to_response(proposal_store.approve(proposal_id))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/reject")
+def reject_proposal(proposal_id: str) -> dict[str, Any]:
+    try:
+        return _proposal_to_response(proposal_store.reject(proposal_id))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class ApplyProposalRequest(StrictBaseModel):
+    change_ref: str | None = None
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/apply")
+def apply_proposal(proposal_id: str, request: ApplyProposalRequest | None = None) -> dict[str, Any]:
+    try:
+        change_ref = request.change_ref if request else None
+        return _proposal_to_response(proposal_store.apply(proposal_id, change_ref=change_ref))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/source-change-proposals/{proposal_id}/actions/retire")
+def retire_proposal(proposal_id: str) -> dict[str, Any]:
+    try:
+        return _proposal_to_response(proposal_store.retire(proposal_id))
+    except SourceChangeProposalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Source health and usage routes (DATASTRAT-USAGE-007)
+# ---------------------------------------------------------------------------
+
+
+class UpsertHealthRequest(StrictBaseModel):
+    source_id: str
+    source_kind: str
+    status: str = "ok"
+    last_success_at: str | None = None
+    last_failure_at: str | None = None
+    latest_watermark: str | None = None
+    row_count_last_run: int = 0
+    rejected_count_last_run: int = 0
+    schema_hash: str | None = None
+    staleness_seconds: int | None = None
+    error_rate_7d: float = 0.0
+    cost_estimate_30d: float | None = None
+    metadata: dict[str, Any] = {}
+
+
+class UpsertUsageRequest(StrictBaseModel):
+    date: str
+    source_id: str
+    source_kind: str
+    ingest_run_count: int = 0
+    query_count: int = 0
+    search_hit_count: int = 0
+    persona_match_count: int = 0
+    strategy_seed_yield_count: int = 0
+    strategy_promotion_count: int = 0
+    experiment_dependency_count: int = 0
+    active_strategy_dependency_count: int = 0
+    cost_estimate: float | None = None
+
+
+@app.get("/api/source-ingest/health")
+def list_source_health(source_kind: str | None = None) -> dict[str, Any]:
+    """List source health records, optionally filtered by source_kind."""
+    records = source_health_store.list(source_kind=source_kind)
+    return {
+        "health_records": [r.to_dict() for r in records],
+        "count": len(records),
+    }
+
+
+@app.get("/api/source-ingest/health/{source_id}")
+def get_source_health(source_id: str) -> dict[str, Any]:
+    health = source_health_store.get(source_id)
+    if health is None:
+        raise HTTPException(status_code=404, detail=f"No health record for source: {source_id}")
+    return health.to_dict()
+
+
+@app.put("/api/source-ingest/health/{source_id}", status_code=200)
+def upsert_source_health(source_id: str, request: UpsertHealthRequest) -> dict[str, Any]:
+    if request.source_id != source_id:
+        raise HTTPException(status_code=400, detail="source_id in body must match path parameter")
+    try:
+        health = SourceHealth.from_dict(request.model_dump())
+        source_health_store.upsert(health)
+        return health.to_dict()
+    except SourceHealthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/usage")
+def list_source_usage(
+    source_id: str | None = None,
+    source_kind: str | None = None,
+    date: str | None = None,
+) -> dict[str, Any]:
+    """List daily usage records, optionally filtered."""
+    records = source_usage_store.list(source_id=source_id, source_kind=source_kind, date=date)
+    return {
+        "usage_records": [r.to_dict() for r in records],
+        "count": len(records),
+    }
+
+
+@app.post("/api/source-ingest/usage", status_code=201)
+def upsert_source_usage(request: UpsertUsageRequest) -> dict[str, Any]:
+    """Upsert a daily usage record for a source."""
+    try:
+        record = SourceUsageDaily.from_dict(request.model_dump())
+        source_usage_store.upsert(record)
+        return record.to_dict()
+    except SourceHealthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/health/{source_id}/usage-aggregate")
+def get_source_usage_aggregate(source_id: str, days: int = 30) -> dict[str, Any]:
+    """Aggregate usage for one source over the most recent N days."""
+    return source_usage_store.aggregate_for_source(source_id, days=max(1, min(days, 365)))
+
+
+@app.get("/api/source-ingest/retirement-recommendations")
+def list_retirement_recommendations(
+    source_kind: str | None = None,
+    low_usage_threshold: int = 5,
+    high_failure_threshold: float = 0.5,
+    high_cost_threshold_30d: float = 1000.0,
+    low_yield_threshold: int = 1,
+    observation_window_days: int = 30,
+) -> dict[str, Any]:
+    """Compute retirement recommendations for all tracked sources.
+
+    Recommendations are pure computations over stored health and usage data.
+    They do not mutate any state. To act on a recommendation, create a
+    SourceChangeProposal through /api/source-change-proposals.
+    """
+    health_records = source_health_store.list(source_kind=source_kind)
+    recommendations = compute_recommendations(
+        health_records,
+        lambda sid: source_usage_store.aggregate_for_source(sid),
+        low_usage_threshold=low_usage_threshold,
+        high_failure_threshold=high_failure_threshold,
+        high_cost_threshold_30d=high_cost_threshold_30d,
+        low_yield_threshold=low_yield_threshold,
+        observation_window_seconds=observation_window_days * 86400,
+    )
+    return {
+        "recommendations": [r.to_dict() for r in recommendations],
+        "count": len(recommendations),
+        "summary": {
+            rt.value: sum(1 for r in recommendations if r.recommendation == rt)
+            for rt in RecommendationType
+        },
+    }
+
+
+@app.get("/api/source-ingest/health-usage-snapshot")
+def get_health_usage_snapshot() -> dict[str, Any]:
+    """Composite snapshot of source health, usage aggregates, and retirement recommendations.
+
+    Designed to be consumed by the BFF ops surface without requiring
+    multiple round-trips. Returns health records enriched with their
+    30-day usage aggregate and computed recommendation.
+    """
+    health_records = source_health_store.list()
+    recommendations = compute_recommendations(
+        health_records,
+        lambda sid: source_usage_store.aggregate_for_source(sid),
+    )
+    rec_map = {r.source_id: r for r in recommendations}
+
+    enriched: list[dict[str, Any]] = []
+    for health in health_records:
+        rec = rec_map.get(health.source_id)
+        usage = source_usage_store.aggregate_for_source(health.source_id)
+        enriched.append({
+            "health": health.to_dict(),
+            "usage_aggregate_30d": usage,
+            "recommendation": rec.to_dict() if rec else None,
+        })
+
+    return {
+        "source_count": len(enriched),
+        "sources": enriched,
+        "recommendation_summary": {
+            rt.value: sum(1 for r in recommendations if r.recommendation == rt)
+            for rt in RecommendationType
+        },
+    }
