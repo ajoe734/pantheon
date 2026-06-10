@@ -15,6 +15,10 @@ jobs:
 
       - name: Rebase Organization Branches
         run: |
+          if [[ ! -f rebase_organization_branches.sh ]]; then
+            echo "rebase_organization_branches.sh is not present on this branch; skipping legacy organization branch rebase."
+            exit 0
+          fi
           chmod +x rebase_organization_branches.sh
           ./rebase_organization_branches.sh
         env:
