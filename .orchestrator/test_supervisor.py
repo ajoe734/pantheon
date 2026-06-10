@@ -1965,7 +1965,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         status = {"tasks": [current_task]}
 
         class FakeResolver:
-            def __init__(self, task_lookup):
+            def __init__(self, task_lookup, **_kwargs):
                 self.task_lookup = task_lookup
 
             def dependency_status(self, task_id):
@@ -1989,6 +1989,57 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         queued_task_ids = [call.args[1]["task_id"] for call in queue_delivery_event.call_args_list]
         self.assertIn("FB-004", queued_task_ids)
 
+    def test_dispatcher_reads_archived_dependency_from_configured_status_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "status-root"
+            archive_dir = status_root / "ai-task-archive" / "tasks"
+            archive_dir.mkdir(parents=True)
+            (archive_dir / "REG-300.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "task_id": "REG-300",
+                        "terminal_status": "done",
+                        "terminal_outcome": "completed",
+                        "archived_at": "2026-06-10T01:00:00Z",
+                        "task": {
+                            "id": "REG-300",
+                            "status": "done",
+                            "terminal_outcome": "completed",
+                            "owner": "Claude",
+                            "reviewer": "Codex",
+                            "depends_on": [],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = json.loads(json.dumps(self.config))
+            config["paths"] = {"status_file": str(status_root / "ai-status.json")}
+            current_task = {
+                "id": "FB-006",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": ["REG-300"],
+                "last_update": "2026-06-10T01:05:00Z",
+            }
+            state = {"queue": {"events": {}}, "workers": {}}
+            status = {"tasks": [current_task]}
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            ):
+                changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "FB-006")
+        self.assertIn("REG-300:done", queued_event["key"])
+
     def test_dispatcher_rejects_archived_superseded_dependency(self) -> None:
         current_task = {
             "id": "FB-005",
@@ -2002,7 +2053,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         status = {"tasks": [current_task]}
 
         class FakeResolver:
-            def __init__(self, task_lookup):
+            def __init__(self, task_lookup, **_kwargs):
                 self.task_lookup = task_lookup
 
             def dependency_status(self, task_id):
@@ -2035,7 +2086,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         }
 
         class FakeResolver:
-            def __init__(self, _task_lookup):
+            def __init__(self, _task_lookup, **_kwargs):
                 pass
 
             def snapshot(self, task_id):
@@ -3528,7 +3579,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             }
 
             class FakeResolver:
-                def __init__(self, _task_lookup):
+                def __init__(self, _task_lookup, **_kwargs):
                     pass
 
                 def snapshot(self, _task_id):
@@ -3955,7 +4006,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
                             "FakeResolver",
                             (),
                             {
-                                "__init__": lambda self, _task_lookup: None,
+                                "__init__": lambda self, _task_lookup, **_kwargs: None,
                                 "snapshot": lambda self, _task_id: None,
                             },
                         ),

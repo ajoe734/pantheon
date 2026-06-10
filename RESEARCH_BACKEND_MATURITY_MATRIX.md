@@ -5,7 +5,7 @@
 **Reviewer**: Qwen
 **Phase**: Blueprint Gap P1
 **Depends On**: PLAN-002 (done)
-**Last Updated**: 2026-04-29
+**Last Updated**: 2026-06-10
 
 _Drafted during Claude helper-claim; finalized by Codex after ownership moved back on 2026-04-13._
 
@@ -71,6 +71,40 @@ runtime paths, canonical writes, and networked backend operation remain gated.
 | **vectorbt** | Backtesting and portfolio optimization prototyping; fast vectorized backtest engine | `governed` | **Production Research Path** | Codex2 | Rapid strategy prototyping | Keep stub smoke, worker entrypoint, and governance evidence refreshed when the pin or adapter changes |
 | **statsmodels** | Econometrics and regime analysis; cointegration, VAR, ARIMA, regime-switching models | `governed` | **Production Research Path** | Codex2 | Regime inference / macro research | Keep smoke evidence, worker entrypoint, and governance docs refreshed when the pin or adapter changes |
 | **QuantLib** | Derivatives pricing and risk; options pricing, fixed income analytics, Greeks | `governed` | **Production Research Path** | Codex | Derivatives strategy research | Keep smoke, worker entrypoint, and evidence pack refreshed when the pin or backend changes |
+
+---
+
+## MPOS Observe Backend Matrix (G6)
+
+This MPOS-specific read narrows the general Research Plane matrix to the
+Observe phase used before persona proposal synthesis. The dispatcher contract is
+`services/research/experiment_orchestrator/parallel_dispatch.py`: its default
+backend registry includes `vectorbt`, `qlib`, and `statsmodels` backend ids.
+`QuantLib` is intentionally kept outside that default fanout because derivatives
+pricing and risk analytics need a separate governed request path.
+
+| Backend | MPOS Observe role | Default dispatcher posture | Maturity posture | No-order-route guarantee | Proof tests and evidence |
+|---|---|---|---|---|---|
+| `vectorbt` | Rapid backtesting and strategy-prototype scoring for StrategySpec evidence | Default dispatcher ids: `vectorbt`, `vectorbt_portfolio` | `governed`; Production Research Path for rapid strategy backtesting | Emits `artifact_state=draft`, `deployment_summary.current_stage=none`, `governance.direct_live_influence=false`, and `lean_consumption=scoring_only_not_direct_action`; may not write SignalStore, LEAN, broker, or live execution state | `python3 services/research/vectorbt/smoke_test.py`; `python3 -m pytest services/research/vectorbt/test_adapter.py -q`; `integrations/vectorbt/{integration,governance,smoke_test}.md` |
+| `Qlib` | Supervised alpha / rolling OOS evidence for cross-sectional signal discovery | Dispatcher ids exist: `qlib`, `qlib_rolling_oos`; use only for activation-ready research evidence with explicit inputs and gates | `smoke-tested`; Activation-Ready, not production-active | Keeps output at `artifact_state=draft` and `deployment_stage=none`; production packet requests review-only `draft_to_candidate`; requires `no_order_route=true`, no broker session, no capital binding, and `order_route=none` | `python3 services/research/qlib/smoke_test.py`; `python3 -m unittest discover -s services/research/qlib -p 'test_*.py'`; `python3 -m pytest tests/governance/test_qlib_proof_artifacts.py -q`; `integrations/qlib/{governance,smoke_test,activation_packet,rolling_oos_admission_packet}.md` |
+| `statsmodels` | Econometrics, cointegration, factor diagnostics, and regime evidence for Observe/Orient | Default dispatcher id: `statsmodels` | `governed`; Production Research Path for regime and econometrics research | Emits non-executable research artifacts at `artifact_state=draft`, `deployment_summary.current_stage=none`, `governance.direct_live_influence=false`, and `lean_consumption=research_only_not_direct_action`; admission packets keep `order_route=none` | `python3 services/research/statsmodels/smoke_test.py`; `python3 -m pytest services/research/statsmodels/test_adapter.py -q`; `python3 -m pytest tests/governance/test_statsmodels_proof_artifacts.py -q`; `integrations/statsmodels/{governance,smoke_test,admission_proof,cointegration_production_evidence}.md` |
+| `QuantLib` | Derivatives pricing, Greeks, option-chain snapshots, and fixed-income risk evidence | Separate governed research path, not default-dispatch, not deferred | `governed`; Production Research Path for derivatives pricing and risk research | Emits non-executable `pricing_report` / `pricing_snapshot` evidence at `artifact_state=draft`, `deployment_summary.current_stage=none`, `governance.direct_live_influence=false`, and `lean_consumption=research_only_not_direct_action`; admission packets keep `registry_write_performed=false`, `order_route=none`, and `no_order_route=true` | `python3 services/research/quantlib/smoke_test.py`; `python3 -m pytest services/research/quantlib/test_adapter.py -q`; `python3 -m pytest tests/governance/test_quantlib_proof_artifacts.py -q`; `integrations/quantlib/{governance,smoke_test,admission_proof,pricing_evidence_retention}.md` |
+
+MPOS interpretation:
+
+- `Qlib` remains Activation-Ready, not production-active. It can contribute
+  review/OOS evidence only through explicit activation-ready inputs, production
+  data proof, and review-only candidate packets; it does not open a production
+  LightGBM lane or any order-capable route.
+- `QuantLib` is not deferred. It is governed and production-path for derivatives
+  pricing/risk research, but it is not part of the generic default MPOS Observe
+  dispatcher fanout. Use it when the task explicitly needs derivative pricing,
+  Greeks, option-chain, or fixed-income evidence.
+- For all four backends, Observe outputs are research evidence only. Any later
+  movement toward candidate, approval, deployment, RuntimeBinding, LEAN, paper,
+  canary, live, broker, or capital authority must pass the downstream registry
+  and governance gates; backend smoke or admission evidence alone is not
+  execution authority.
 
 ---
 
