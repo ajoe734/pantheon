@@ -35,7 +35,7 @@
     "strat-spec://tw_equity/mean-reversion-v1"
   ],
   "synthesis": {
-    "artifact_id": "e7f9cc45-da7a-4159-b049-9a9766ec5429",
+    "artifact_id": "7117ed44-5096-40ea-8c2b-73c2e65dc25f",
     "capital_pool_id": "pool-paper",
     "sponsor_persona_id": "persona-alpha",
     "synthesis_method": "weighted_fusion",
@@ -48,7 +48,7 @@
       "0050.TW": 0.16609152288072018,
       "2454.TW": 0.20086271567891972
     },
-    "mgmt_syn_conflict_log_id": "6be3a687-ebe4-4c23-ae63-451ec5ab3a65"
+    "mgmt_syn_conflict_log_id": "102e21db-f2b5-4159-a068-89734620268e"
   },
   "sponsor_resolution": {
     "sponsor_persona_id": "persona-alpha",
@@ -58,16 +58,16 @@
     ],
     "has_open_conflicts": false,
     "conflict_resolution_log": {
-      "log_id": "6be3a687-ebe4-4c23-ae63-451ec5ab3a65",
+      "log_id": "102e21db-f2b5-4159-a068-89734620268e",
       "capital_pool_id": "pool-paper",
       "scope_ref": "paper",
-      "timestamp": "2026-05-20T16:00:46Z",
+      "timestamp": "2026-06-10T03:04:07Z",
       "proposal_ids": [
         "pap-alpha-001",
         "pap-beta-001"
       ],
       "sponsor_persona_id": "persona-alpha",
-      "artifact_id": "e7f9cc45-da7a-4159-b049-9a9766ec5429",
+      "artifact_id": "7117ed44-5096-40ea-8c2b-73c2e65dc25f",
       "synthesis_method": "weighted_fusion",
       "vetoed_proposals": [],
       "weighting_inputs": {
@@ -155,14 +155,43 @@
               ]
             }
           }
+        },
+        {
+          "conflict_id": "homogeneity_conflict-005",
+          "conflict_type": "homogeneity_conflict",
+          "severity": "warning",
+          "proposal_ids": [
+            "pap-alpha-001",
+            "pap-beta-001"
+          ],
+          "summary": "Proposals concentrate the capital pool in duplicate strategy-family exposure.",
+          "details": {
+            "strategy_family": "tw_equity",
+            "family_proposal_ids": [
+              "pap-alpha-001",
+              "pap-beta-001"
+            ],
+            "strategy_family_concentration": 1.0,
+            "strategy_family_concentration_threshold": 0.65,
+            "max_target_overlap": 0.23529411764705882,
+            "target_overlap_threshold": 0.8,
+            "max_signal_correlation": null,
+            "high_correlation_threshold": 0.8,
+            "correlation_buckets": {},
+            "max_overlap_pair": [
+              "pap-alpha-001",
+              "pap-beta-001"
+            ],
+            "max_correlation_pair": []
+          }
         }
       ],
       "open_conflicts": [],
-      "source_conflict_resolution_log_id": "6be3a687-ebe4-4c23-ae63-451ec5ab3a65",
+      "source_conflict_resolution_log_id": "102e21db-f2b5-4159-a068-89734620268e",
       "schema_version": "MultiPersonaConflictResolutionLog.v1"
     }
   },
-  "governance_memo": "MPO-003-V2 governance review memo — 2026-05-20T00:00:00Z\nSponsor persona: persona-alpha (Alpha)\nParticipating personas: pap-alpha-001, pap-beta-001\nStrategySpec pool: strat-spec://tw_equity/momentum-v1, strat-spec://tw_equity/mean-reversion-v1\nCapital pool: pool-paper\nSynthesis method: weighted_fusion\nClassified conflicts: 4 (types: horizon_conflict, weight_conflict)\nConflict status: all conflicts resolved or non-blocking\nHealth gate: excluded=['persona-suspended'], candidates=['persona-alpha', 'persona-beta']\n",
+  "governance_memo": "MPO-003-V2 governance review memo — 2026-05-20T00:00:00Z\nSponsor persona: persona-alpha (Alpha)\nParticipating personas: pap-alpha-001, pap-beta-001\nStrategySpec pool: strat-spec://tw_equity/momentum-v1, strat-spec://tw_equity/mean-reversion-v1\nCapital pool: pool-paper\nSynthesis method: weighted_fusion\nClassified conflicts: 5 (types: homogeneity_conflict, horizon_conflict, weight_conflict)\nConflict status: all conflicts resolved or non-blocking\nHealth gate: excluded=['persona-suspended'], candidates=['persona-alpha', 'persona-beta']\n",
   "acceptance_gates": {
     "min_2_personas": true,
     "sponsor_resolved": true,
