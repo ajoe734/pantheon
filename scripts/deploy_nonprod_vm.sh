@@ -417,6 +417,13 @@ git_fetch_origin() {
   fi
 }
 
+git_fetch_origin_default_refs() {
+  git_fetch_origin \
+    --prune \
+    '+refs/heads/*:refs/remotes/origin/*' \
+    '+refs/tags/*:refs/tags/*'
+}
+
 prepare_deploy_worktree() {
   local sha="${PANTHEON_DEPLOY_SHA}"
   local source_dir="${PANTHEON_REMOTE_DIR}"
@@ -426,7 +433,7 @@ prepare_deploy_worktree() {
 
   cd "$source_dir"
   info "fetching origin"
-  git_fetch_origin --prune
+  git_fetch_origin_default_refs
   if ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
     git_fetch_origin "$sha"
   fi
@@ -440,7 +447,7 @@ prepare_deploy_worktree() {
     cd "$deploy_dir"
     require_clean_checkout
     info "reusing managed deploy worktree ${deploy_dir}"
-    git_fetch_origin --prune
+    git_fetch_origin_default_refs
     git checkout --detach "$sha"
   else
     info "creating managed deploy worktree ${deploy_dir}"
