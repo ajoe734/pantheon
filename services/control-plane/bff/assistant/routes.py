@@ -76,9 +76,12 @@ BffErrorFactory = Callable[..., HTTPException]
 ProviderReadiness = Callable[[], Dict[str, Any]]
 OpenClawToolPolicy = Callable[[], Dict[str, Any]]
 OpenClawEffectiveTools = Callable[[str], Dict[str, Any]]
+AuthorizeAssistantSkill = Callable[[str, Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 PrepareRepairWorktree = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 ProviderReauth = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 ProviderReauthStatus = Callable[[str, str, str], Dict[str, Any]]
+
+ASSISTANT_SA_SD_GENERATE_SKILL_ID = "assistant.sa_sd.generate"
 
 DEFAULT_DEV_DOC_CONTEXT_SOURCES = [
     "ui",
@@ -109,6 +112,7 @@ def create_assistant_router(
     provider_readiness: Optional[ProviderReadiness] = None,
     openclaw_tool_policy: Optional[OpenClawToolPolicy] = None,
     openclaw_effective_tools: Optional[OpenClawEffectiveTools] = None,
+    authorize_assistant_skill: Optional[AuthorizeAssistantSkill] = None,
     prepare_repair_worktree: Optional[PrepareRepairWorktree] = None,
     provider_reauth: Optional[ProviderReauth] = None,
     provider_reauth_status: Optional[ProviderReauthStatus] = None,
@@ -611,6 +615,22 @@ def create_assistant_router(
         )
 
         request = _parse_dev_doc_request(payload, bff_error=bff_error)
+        trace_id = str(payload.get("traceId") or payload.get("trace_id") or "").strip() or None
+        _require_assistant_skill_authorized(
+            skill_id=ASSISTANT_SA_SD_GENERATE_SKILL_ID,
+            authorize_assistant_skill=authorize_assistant_skill,
+            identity=identity,
+            control_status=control_status,
+            session_id=request.conversation_id,
+            trace_id=trace_id,
+            request_type="assistant_dev_docs_generate",
+            audit_extra={
+                "archive": request.archive,
+                "queue_task_packet": _should_queue_task_packet(payload),
+                "affected_module_count": len(request.affected_modules),
+            },
+            bff_error=bff_error,
+        )
         turns = _conversation_turns_for_request(_transcript_store, request)
         context_pack = _context_pack_for_dev_docs(
             payload,
@@ -1041,6 +1061,81 @@ def _require_active_control_mode(
             reason=status.get("reason") or status.get("state") or "inactive",
         )
     return status
+
+
+def _require_assistant_skill_authorized(
+    *,
+    skill_id: str,
+    authorize_assistant_skill: Optional[AuthorizeAssistantSkill],
+    identity: Any,
+    control_status: Dict[str, Any],
+    session_id: Optional[str],
+    trace_id: Optional[str],
+    request_type: str,
+    audit_extra: Optional[Dict[str, Any]],
+    bff_error: Optional[BffErrorFactory],
+) -> Dict[str, Any]:
+    if authorize_assistant_skill is None:
+        _raise_error(
+            bff_error,
+            503,
+            ErrorCode.PRECONDITION_FAILED,
+            "OpenClaw assistant skill authorization is not configured",
+            "Assistant dev-doc generation must be authorized through the OpenClaw skill catalog.",
+            field="openclaw_skill_authorizer",
+            required_skill=skill_id,
+        )
+
+    actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+    mode = str(control_status.get("mode") or "")
+    activation_id = control_status.get("activation_id") or control_status.get("activationId")
+    payload = {
+        "mode": mode,
+        "operator_role": _operator_role_from_identity(identity),
+        "confirmed": False,
+        "control_mode": {
+            "active": True,
+            "mode": mode,
+            "activation_id": activation_id,
+        },
+        "session_id": session_id,
+        "request_type": request_type,
+        "audit_extra": audit_extra or {},
+    }
+    try:
+        result = authorize_assistant_skill(skill_id, payload, actor_id, trace_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fail closed around the policy boundary.
+        _raise_error(
+            bff_error,
+            502,
+            ErrorCode.PRECONDITION_FAILED,
+            "OpenClaw assistant skill authorization failed",
+            str(exc),
+            field="openclaw_skill_authorizer",
+            required_skill=skill_id,
+        )
+
+    data = result.get("data") if isinstance(result, dict) else None
+    if isinstance(data, dict):
+        status = str(data.get("status") or "")
+    elif isinstance(result, dict):
+        status = str(result.get("status") or "")
+    else:
+        status = ""
+    if status not in {"allowed", "ok"}:
+        _raise_error(
+            bff_error,
+            403,
+            ErrorCode.FORBIDDEN,
+            "OpenClaw assistant skill authorization denied",
+            "The OpenClaw skill catalog did not authorize this assistant action.",
+            field="openclaw_skill_authorizer",
+            required_skill=skill_id,
+            policy_status=status or "unknown",
+        )
+    return result
 
 
 def _require_kernel_repair_control(

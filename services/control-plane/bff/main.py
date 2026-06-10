@@ -49047,6 +49047,30 @@ def _assistant_openclaw_effective_tools(operator_id: str) -> Dict[str, Any]:
         }
 
 
+def _assistant_authorize_skill(
+    skill_id: str,
+    payload: Dict[str, Any],
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().authorize_assistant_skill(
+            skill_id=skill_id,
+            operator_id=operator_id or "management-ai",
+            mode=payload.get("mode"),
+            operator_role=payload.get("operator_role") or payload.get("operatorRole"),
+            confirmed=bool(payload.get("confirmed")),
+            confirm_token=payload.get("confirm_token") or payload.get("confirmToken"),
+            control_mode=payload.get("control_mode") or payload.get("controlMode"),
+            session_id=payload.get("session_id") or payload.get("sessionId"),
+            request_type=payload.get("request_type") or payload.get("requestType") or "assistant_skill_authorize",
+            audit_extra=payload.get("audit_extra") or payload.get("auditExtra"),
+            trace_id=trace_id,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
 def _assistant_prepare_repair_worktree(
     payload: Dict[str, Any],
     operator_id: str,
@@ -49122,6 +49146,7 @@ def _include_assistant_routes() -> None:
             provider_readiness=_assistant_provider_readiness,
             openclaw_tool_policy=_assistant_openclaw_tool_policy,
             openclaw_effective_tools=_assistant_openclaw_effective_tools,
+            authorize_assistant_skill=_assistant_authorize_skill,
             prepare_repair_worktree=_assistant_prepare_repair_worktree,
             provider_reauth=_assistant_provider_reauth,
             provider_reauth_status=_assistant_provider_reauth_status,
