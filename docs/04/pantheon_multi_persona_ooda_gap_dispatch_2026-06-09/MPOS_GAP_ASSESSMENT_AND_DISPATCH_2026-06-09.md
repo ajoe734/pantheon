@@ -104,7 +104,7 @@ Relevant files:
 - `services/research/strategy_spec/conversion.py`
 - `services/research/experiment_orchestrator/parallel_dispatch.py`
 - `services/governance/research_activation/admission_gate.py`
-- `RESEARCH_BACKEND_MATURITY_MATRIX.md`
+- `RESEARCH_BACKEND_MATURITY_MATRIX.md` (`MPOS Observe Backend Matrix (G6)`)
 
 Current interpretation:
 
@@ -113,6 +113,7 @@ Current interpretation:
 - parallel dispatch includes vectorbt, Qlib, and statsmodels backend ids.
 - QuantLib exists as a governed research path, but it is not part of the default dispatcher list reviewed here.
 - admission gate requires no-order-route / no-broker / no-capital assertions before research artifacts move toward candidate state.
+- `RESEARCH_BACKEND_MATURITY_MATRIX.md` now carries the MPOS Observe backend matrix for G6, including posture, no-order-route guarantees, proof tests, and the Qlib/QuantLib dispatch distinction.
 
 Gap: the MPOS persona loop does not yet prove Persona A/B/C each run Observe/Orient with real StrategySpecSeed / ExperimentRun / OOS evidence before producing `PersonaAllocationProposal`.
 
@@ -235,7 +236,7 @@ Gap:
 | G3 | P1 blocker | Consultation/committee is not a hard allocation gate | Committee handoff exists but approval path can be reasoned about without consuming it | Allocation approval rejects missing committee handoff when conflict/risk policy demands it |
 | G4 | P1 blocker | Homogeneity/correlation review absent from pre-LEAN gate | Existing classifier lacks correlation or homogeneity conflict type | Synthesis/approval blocks or escalates highly correlated/duplicative persona proposals |
 | G5 | P1 blocker | Per-persona/sponsor Learn writeback not automatic | Memory primitives exist but no telemetry -> memory feedback closure | Runtime telemetry/postmortem/evolution creates persona memory and sponsor-attributed institutional memory evidence |
-| G6 | P2 clarity | Research backend maturity matrix is not MPOS-specific | Qlib/vectorbt/statsmodels/QuantLib status is spread across docs and code | MPOS Observe backend matrix states supported path, activation status, and proof tests for each backend |
+| G6 | P2 clarity | Research backend maturity matrix is not MPOS-specific | Qlib/vectorbt/statsmodels/QuantLib status is spread across docs and code | `RESEARCH_BACKEND_MATURITY_MATRIX.md` section `MPOS Observe Backend Matrix (G6)` states supported path, activation status, no-order-route guarantees, and proof tests for each backend |
 
 ## 5. Dispatch Plan
 
@@ -249,7 +250,7 @@ The following tasks should be materialized through `scripts/ai_status.py assign`
 | MPOS-P1-RISK-002 | Codex | Claude | Add homogeneity/correlation review to pre-LEAN allocation gate |
 | MPOS-P1-MEM-002 | Codex2 | Claude | Automate per-persona and sponsor-attributed Learn writeback from telemetry/postmortem/evolution |
 | MPOS-P1-VERIFY-001 | Gemini2 | Codex | Produce supervisor closure packet after the implementation tasks land |
-| MPOS-P2-BACKEND-001 | Copilot | Claude | Normalize MPOS Observe backend matrix for Qlib/vectorbt/statsmodels/QuantLib |
+| MPOS-P2-BACKEND-001 | Codex | Claude | Normalize MPOS Observe backend matrix for Qlib/vectorbt/statsmodels/QuantLib |
 
 ## 6. Acceptance Details By Task
 
@@ -324,6 +325,10 @@ Acceptance:
 - Clarify whether Qlib remains activation-ready or production-active.
 - Clarify whether QuantLib is default-dispatch, separate governed production path, or deferred.
 - Link the matrix from the gap assessment or successor closure packet.
+
+Closure link:
+
+- `RESEARCH_BACKEND_MATURITY_MATRIX.md` section `MPOS Observe Backend Matrix (G6)` is the task-scoped closure artifact for MPOS-P2-BACKEND-001.
 
 ## 7. Validation Plan
 
