@@ -276,10 +276,13 @@ class YahooTaiwanBrokerTopAdapter(SourceConnectorProvider):
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "YahooTaiwanBrokerTopAdapter.records_from_html",
+            "adapter": "YahooTaiwanBrokerTopAdapter.records_from_html",
+            "adapter_config": {
+                "max_rank": self.max_rank,
+            },
+            "request": {},
             "url_template": YAHOO_TW_BROKER_TRADING_URL_TEMPLATE,
             "max_rank": self.max_rank,
         }
@@ -437,10 +440,14 @@ class YahooTaiwanRssAdapter(SourceConnectorProvider):
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "YahooTaiwanRssAdapter.records_from_rss",
+            "adapter": "YahooTaiwanRssAdapter.records_from_rss",
+            "adapter_config": {
+                "feed_url": self.feed_url,
+                "max_records": self.max_records,
+            },
+            "request": {},
             "feed_url": self.feed_url,
             "max_records": self.max_records,
         }

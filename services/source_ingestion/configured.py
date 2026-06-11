@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
 from .external_sources import validate_external_source_connector, validate_external_source_record
+from .provider_adapters import execute_provider_owned_adapter, validate_provider_adapter_token
 from .scheduler import IngestBatch
 
 
@@ -246,6 +247,10 @@ class JsonlConfiguredConnectorStore:
         if fail_until_attempt < 0:
             raise SourceEvidenceError("fetch.fail_until_attempt must be >= 0")
         failure_reason = str(fetch.get("failure_reason") or "configured connector fetch failed")
+        allow_empty = bool(fetch.get("allow_empty", False))
+        empty_reason = str(fetch.get("empty_reason") or "")
+        if allow_empty and not empty_reason.strip():
+            raise SourceEvidenceError("fetch.empty_reason is required when fetch.allow_empty is true")
 
         if mode == "static_records":
             records = fetch.get("records")
@@ -255,6 +260,8 @@ class JsonlConfiguredConnectorStore:
                 "mode": mode,
                 "records": [dict(record) for record in records],
                 "next_watermark": fetch.get("next_watermark"),
+                "allow_empty": allow_empty,
+                "empty_reason": empty_reason,
                 "fail_until_attempt": fail_until_attempt,
                 "failure_reason": failure_reason,
             }
@@ -290,11 +297,39 @@ class JsonlConfiguredConnectorStore:
                 "next_watermark": fetch.get("next_watermark"),
                 "default_access_scope": _normalized_string_list(fetch.get("default_access_scope")) or ["public"],
                 "respect_robots_txt": bool(fetch.get("respect_robots_txt", True)),
+                "allow_empty": allow_empty,
+                "empty_reason": empty_reason,
                 "fail_until_attempt": fail_until_attempt,
                 "failure_reason": failure_reason,
             }
 
-        raise SourceEvidenceError("fetch.mode must be static_records or external_feed")
+        if mode == "provider_owned_adapter":
+            adapter = validate_provider_adapter_token(
+                str(fetch.get("adapter") or fetch.get("provider_owned_fetcher") or "")
+            )
+            max_records = int(fetch.get("max_records") or 100)
+            if max_records <= 0 or max_records > 1000:
+                raise SourceEvidenceError("fetch.max_records must be > 0 and <= 1000")
+            adapter_config = fetch.get("adapter_config") or {}
+            request = fetch.get("request") or {}
+            if not isinstance(adapter_config, Mapping):
+                raise SourceEvidenceError("fetch.adapter_config must be an object")
+            if not isinstance(request, Mapping):
+                raise SourceEvidenceError("fetch.request must be an object")
+            return {
+                "mode": mode,
+                "adapter": adapter,
+                "adapter_config": dict(adapter_config),
+                "request": dict(request),
+                "max_records": max_records,
+                "next_watermark": fetch.get("next_watermark"),
+                "allow_empty": allow_empty,
+                "empty_reason": empty_reason,
+                "fail_until_attempt": fail_until_attempt,
+                "failure_reason": failure_reason,
+            }
+
+        raise SourceEvidenceError("fetch.mode must be static_records, external_feed, or provider_owned_adapter")
 
     def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -314,7 +349,14 @@ class ConfiguredConnectorFetcher:
     def __init__(self, store: JsonlConfiguredConnectorStore) -> None:
         self.store = store
 
-    def fetch_batch(self, connector_id: str, watermark: str | None) -> IngestBatch:
+    def fetch_batch(
+        self,
+        connector_id: str,
+        watermark: str | None,
+        *,
+        trace_id: str = "",
+        job_parameters: Mapping[str, Any] | None = None,
+    ) -> IngestBatch:
         config = self.store.get_config(connector_id)
         if config is None:
             raise SourceEvidenceError(f"Connector fetch is not configured: {connector_id}")
@@ -337,24 +379,49 @@ class ConfiguredConnectorFetcher:
                 if len(record_payloads) > max_records:
                     raise SourceEvidenceError(f"external feed records exceeds fetch.max_records={max_records}")
                 next_watermark = payload.get("next_watermark", config.fetch.get("next_watermark"))
+                records = tuple(
+                    self._source_record_from_config(
+                        payload,
+                        connector=config.connector,
+                        watermark=watermark,
+                        fetch=config.fetch,
+                    )
+                    for payload in record_payloads
+                )
+            elif config.fetch.get("mode") == "provider_owned_adapter":
+                records = execute_provider_owned_adapter(
+                    connector=config.connector,
+                    fetch=config.fetch,
+                    trace_id=trace_id,
+                    job_parameters=job_parameters,
+                )
+                next_watermark = config.fetch.get("next_watermark")
             else:
                 record_payloads = config.fetch.get("records", [])
                 next_watermark = config.fetch.get("next_watermark")
-
-            records = tuple(
-                self._source_record_from_config(
-                    payload,
-                    connector=config.connector,
-                    watermark=watermark,
-                    fetch=config.fetch,
+                records = tuple(
+                    self._source_record_from_config(
+                        payload,
+                        connector=config.connector,
+                        watermark=watermark,
+                        fetch=config.fetch,
+                    )
+                    for payload in record_payloads
                 )
-                for payload in record_payloads
-            )
         except Exception as exc:
             self.store.record_fetch_attempt(connector_id, success=False, error=str(exc))
             raise
         self.store.record_fetch_attempt(connector_id, success=True)
-        return IngestBatch(records=records, next_watermark=next_watermark)
+        return IngestBatch(
+            records=records,
+            next_watermark=next_watermark,
+            empty_ok=bool(config.fetch.get("allow_empty", False)),
+            empty_reason=str(config.fetch.get("empty_reason") or "") or None,
+            metadata={
+                "fetch_mode": config.fetch.get("mode"),
+                "job_parameters": dict(job_parameters or {}),
+            },
+        )
 
     def _fetch_external_payload(self, fetch: Mapping[str, Any]) -> Mapping[str, Any]:
         url = str(fetch["url"])
