@@ -207,7 +207,25 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         cadence="10m_to_30m",
         priority=20,
         reason="cheap news metadata for symbols still under research",
-        metadata={"detail_level": "rss_metadata", "archive_behavior": "skip"},
+        metadata={
+            "detail_level": "rss_metadata",
+            "archive_behavior": "skip",
+            "full_text_allowed_by_default": False,
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="tw-anue-news-rss",
+        dataset="tw_news_metadata",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="10m_to_30m",
+        priority=21,
+        reason="secondary public Taiwan finance news metadata for active research symbols",
+        metadata={
+            "detail_level": "rss_metadata",
+            "archive_behavior": "skip",
+            "full_text_allowed_by_default": False,
+            "feed_url_configurable": True,
+        },
     ),
     SourceUpdateRule(
         connector_id="tw-mops-official-disclosures",

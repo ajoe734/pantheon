@@ -44,6 +44,7 @@ from .us_public import (
     StooqDailyOhlcvAdapter,
 )
 from .yahoo_taiwan import (
+    AnueTaiwanRssAdapter,
     YahooTaiwanBrokerTopAdapter,
     YahooTaiwanRssAdapter,
     parse_yahoo_broker_trading_html,
@@ -52,6 +53,7 @@ from .yahoo_taiwan import (
 __all__ = [
     "AuthPolicy",
     "AuthType",
+    "AnueTaiwanRssAdapter",
     "ConnectorMode",
     "ConnectorStatus",
     "IngestEvent",

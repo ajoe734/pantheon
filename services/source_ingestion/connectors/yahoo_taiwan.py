@@ -33,8 +33,11 @@ from .base import (
 
 YAHOO_TW_BROKER_TRADING_URL_TEMPLATE = "https://tw.stock.yahoo.com/quote/{symbol}/broker-trading"
 YAHOO_TW_STOCK_RSS_URL = "https://tw.stock.yahoo.com/rss"
+ANUE_TW_NEWS_HOME_URL = "https://news.cnyes.com/"
+ANUE_TW_NEWS_RSS_FEED_REF = "anue-rss://operator-configured"
 BROKER_TOP_SCHEMA_HASH = "tw_broker_top.v1"
 RSS_NEWS_SCHEMA_HASH = "tw_yahoo_rss_news.v1"
+ANUE_RSS_NEWS_SCHEMA_HASH = "tw_anue_rss_news.v1"
 
 _DATE_RE = re.compile(r"(?:資料日期|日期)\s*[:：]?\s*(\d{4})[/-](\d{1,2})[/-](\d{1,2})")
 _INT_RE = re.compile(r"^[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)$")
@@ -357,11 +360,40 @@ class YahooTaiwanBrokerTopAdapter(SourceConnectorProvider):
         return tuple(records)
 
 
+def _rss_local_name(tag: str) -> str:
+    return str(tag).rsplit("}", 1)[-1]
+
+
 def _rss_text(item: ET.Element, name: str) -> str:
     value = item.findtext(name)
     if value is None:
+        for child in item:
+            if _rss_local_name(child.tag) == name:
+                value = child.text
+                break
+    if value is None:
         return ""
     return _clean_text(value)
+
+
+def _rss_first_text(item: ET.Element, *names: str) -> str:
+    for name in names:
+        value = _rss_text(item, name)
+        if value:
+            return value
+    return ""
+
+
+def _rss_link(item: ET.Element) -> str:
+    link = _rss_text(item, "link")
+    if link:
+        return link
+    for child in item:
+        if _rss_local_name(child.tag) == "link":
+            href = _clean_text(child.attrib.get("href"))
+            if href:
+                return href
+    return ""
 
 
 def _parse_rss_time(value: str | None) -> tuple[str, bool]:
@@ -374,7 +406,13 @@ def _parse_rss_time(value: str | None) -> tuple[str, bool]:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"), False
     except (TypeError, ValueError):
-        return _utc_now(), True
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"), False
+        except ValueError:
+            return _utc_now(), True
 
 
 def _symbols_from_text(*parts: str) -> list[str]:
@@ -385,6 +423,89 @@ def _symbols_from_text(*parts: str) -> list[str]:
             if symbol not in symbols:
                 symbols.append(symbol)
     return symbols
+
+
+def _rss_records(
+    rss_xml: str,
+    *,
+    connector_id: str,
+    provider: str,
+    publisher: str,
+    feed_url: str,
+    default_feed_url: str,
+    source_id_prefix: str,
+    content_ref_prefix: str,
+    entitlement_tag: str,
+    schema_hash: str,
+    title_fallback: str,
+    trace_id: str,
+    max_records: int,
+) -> tuple[SourceRecord, ...]:
+    root = ET.fromstring(rss_xml)
+    items = list(root.findall(".//item"))[:max_records]
+    if not items:
+        items = list(root.findall(".//{*}entry"))[:max_records]
+
+    records: list[SourceRecord] = []
+    effective_feed_url = feed_url or default_feed_url
+    for item in items:
+        title = _rss_first_text(item, "title")
+        link = _rss_link(item)
+        summary = _rss_first_text(item, "description", "summary")
+        guid = _rss_first_text(item, "guid", "id") or link or title
+        published_at, inferred_time = _parse_rss_time(
+            _rss_first_text(item, "pubDate", "published", "updated", "date")
+        )
+        body = f"{title}\n{summary}".strip()
+        content_hash = _content_hash(body or guid)
+        title_hash = _content_hash(title or guid)
+        dedupe_key = _stable_hash(
+            {
+                "provider": provider,
+                "source_url": link,
+                "title_hash": title_hash,
+                "published_at": published_at,
+            }
+        )
+        source_id = f"{source_id_prefix}:{dedupe_key}"
+        records.append(
+            SourceRecord(
+                source_id=source_id,
+                connector_id=connector_id,
+                source_type="news",
+                title=title or title_fallback,
+                content_ref=link or f"{content_ref_prefix}/{source_id}",
+                metadata={
+                    "source_class": "public_news_metadata",
+                    "provider": provider,
+                    "publisher": publisher,
+                    "dataset": "tw_news_metadata",
+                    "feed_url": effective_feed_url,
+                    "source_url": link or None,
+                    "guid": guid,
+                    "published_at": published_at,
+                    "event_time": published_at,
+                    "available_time": published_at,
+                    "published_at_inferred": inferred_time,
+                    "symbols": _symbols_from_text(title, summary, link),
+                    "summary": summary,
+                    "body": body,
+                    "content_hash": content_hash,
+                    "body_hash": content_hash,
+                    "title_hash": title_hash,
+                    "dedupe_key": dedupe_key,
+                    "dedupe_fields": ["provider", "source_url", "title_hash", "published_at"],
+                    "full_text_stored": False,
+                    "full_text_allowed_by_default": False,
+                    "license_scope": "rss_metadata",
+                    "entitlement_tags": [entitlement_tag],
+                    "access_scope": ["public", "research"],
+                    "schema_hash": schema_hash,
+                },
+                trace_id=trace_id,
+            )
+        )
+    return tuple(records)
 
 
 @dataclass(frozen=True)
@@ -433,6 +554,8 @@ class YahooTaiwanRssAdapter(SourceConnectorProvider):
                 "entitlement_tags": ["yahoo-tw-rss-public-metadata"],
                 "access_scope": ["public", "research"],
                 "active_universe_tiers": ["core_universe", "candidate_universe"],
+                "full_text_allowed_by_default": False,
+                "summary_only_default": True,
                 "schema_hash": RSS_NEWS_SCHEMA_HASH,
                 **dict(self.connector_metadata),
             },
@@ -459,48 +582,113 @@ class YahooTaiwanRssAdapter(SourceConnectorProvider):
         feed_url: str | None = None,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
-        root = ET.fromstring(rss_xml)
-        items = list(root.findall(".//item"))[: self.max_records]
-        records: list[SourceRecord] = []
-        for item in items:
-            title = _rss_text(item, "title")
-            link = _rss_text(item, "link")
-            description = _rss_text(item, "description")
-            guid = _rss_text(item, "guid") or link or title
-            published_at, inferred_time = _parse_rss_time(_rss_text(item, "pubDate"))
-            body = f"{title}\n{description}".strip()
-            content_hash = _content_hash(body or guid)
-            source_id = f"yahoo-tw-rss:{_stable_hash({'guid': guid, 'published_at': published_at})}"
-            records.append(
-                SourceRecord(
-                    source_id=source_id,
-                    connector_id=self.connector_id,
-                    source_type="news",
-                    title=title or "Yahoo Taiwan RSS item",
-                    content_ref=link or f"rss://yahoo-tw/{source_id}",
-                    metadata={
-                        "source_class": "public_news_metadata",
-                        "provider": "Yahoo Taiwan Stock RSS",
-                        "publisher": "Yahoo Taiwan Stock",
-                        "dataset": "tw_news_metadata",
-                        "feed_url": feed_url or self.feed_url,
-                        "source_url": link or None,
-                        "guid": guid,
-                        "published_at": published_at,
-                        "event_time": published_at,
-                        "available_time": published_at,
-                        "published_at_inferred": inferred_time,
-                        "symbols": _symbols_from_text(title, description, link),
-                        "summary": description,
-                        "body": body,
-                        "content_hash": content_hash,
-                        "body_hash": content_hash,
-                        "license_scope": "rss_metadata",
-                        "entitlement_tags": ["yahoo-tw-rss-public-metadata"],
-                        "access_scope": ["public", "research"],
-                        "schema_hash": RSS_NEWS_SCHEMA_HASH,
-                    },
-                    trace_id=trace_id,
-                )
-            )
-        return tuple(records)
+        return _rss_records(
+            rss_xml,
+            connector_id=self.connector_id,
+            provider="Yahoo Taiwan Stock RSS",
+            publisher="Yahoo Taiwan Stock",
+            feed_url=feed_url or self.feed_url,
+            default_feed_url=self.feed_url,
+            source_id_prefix="yahoo-tw-rss",
+            content_ref_prefix="rss://yahoo-tw",
+            entitlement_tag="yahoo-tw-rss-public-metadata",
+            schema_hash=RSS_NEWS_SCHEMA_HASH,
+            title_fallback="Yahoo Taiwan RSS item",
+            trace_id=trace_id,
+            max_records=self.max_records,
+        )
+
+
+@dataclass(frozen=True)
+class AnueTaiwanRssAdapter(SourceConnectorProvider):
+    """Provider-owned adapter for Anue Cnyes RSS/news metadata."""
+
+    connector_id: str = "tw-anue-news-rss"
+    feed_url: str = ANUE_TW_NEWS_RSS_FEED_REF
+    max_records: int = 100
+    source_metadata: SourceMetadata | Mapping[str, Any] | None = None
+    connector_metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def connector(self) -> SourceConnector:
+        return SourceConnector(
+            connector_id=self.connector_id,
+            source_type="news",
+            provider="Anue Cnyes RSS",
+            license_scope="rss_metadata",
+            supported_modes=(ConnectorMode.BATCH,),
+            auth_policy=AuthPolicy(auth_type=AuthType.NONE),
+            license_policy=LicensePolicy(
+                license_scope="rss_metadata",
+                allowed_use=("research", "search_index", "audit_evidence"),
+                attribution_required=True,
+                redistribution_allowed=False,
+                policy_ref="source-ingest://license/anue-tw-rss-metadata",
+            ),
+            rate_limit_policy=RateLimitPolicy(
+                requests_per_minute=20,
+                burst=2,
+                retry_after_seconds=90,
+                concurrency=1,
+                policy_ref="source-ingest://policy/anue-tw-rss-low-rate",
+            ),
+            source_metadata=self.source_metadata
+            or SourceMetadata(
+                display_name="Anue Cnyes news RSS",
+                homepage_url=ANUE_TW_NEWS_HOME_URL,
+                owner="Anue Cnyes",
+                tags=("taiwan", "anue", "cnyes", "rss", "news"),
+            ),
+            metadata={
+                "source_class": "public_news_metadata",
+                "dataset": "tw_news_metadata",
+                "source_profile": "rss_metadata",
+                "entitlement_tags": ["anue-tw-rss-public-metadata"],
+                "access_scope": ["public", "research"],
+                "active_universe_tiers": ["core_universe", "candidate_universe"],
+                "full_text_allowed_by_default": False,
+                "summary_only_default": True,
+                "feed_url_configurable": True,
+                "default_feed_url_verified": False,
+                "schema_hash": ANUE_RSS_NEWS_SCHEMA_HASH,
+                **dict(self.connector_metadata),
+            },
+        )
+
+    def fetch_config(self) -> Mapping[str, Any]:
+        return {
+            "mode": "provider_owned_adapter",
+            "next_watermark": None,
+            "adapter": "AnueTaiwanRssAdapter.records_from_rss",
+            "adapter_config": {
+                "feed_url": self.feed_url,
+                "max_records": self.max_records,
+            },
+            "request": {},
+            "feed_url": self.feed_url,
+            "max_records": self.max_records,
+            "allow_empty": True,
+            "empty_reason": "rss_feed_not_configured_or_no_new_data",
+        }
+
+    def records_from_rss(
+        self,
+        rss_xml: str,
+        *,
+        feed_url: str | None = None,
+        trace_id: str = "",
+    ) -> tuple[SourceRecord, ...]:
+        return _rss_records(
+            rss_xml,
+            connector_id=self.connector_id,
+            provider="Anue Cnyes RSS",
+            publisher="Anue Cnyes",
+            feed_url=feed_url or self.feed_url,
+            default_feed_url=self.feed_url,
+            source_id_prefix="anue-tw-rss",
+            content_ref_prefix="rss://anue-tw",
+            entitlement_tag="anue-tw-rss-public-metadata",
+            schema_hash=ANUE_RSS_NEWS_SCHEMA_HASH,
+            title_fallback="Anue Cnyes RSS item",
+            trace_id=trace_id,
+            max_records=self.max_records,
+        )

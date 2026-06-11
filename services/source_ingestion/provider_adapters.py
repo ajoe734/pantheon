@@ -25,7 +25,7 @@ from .connectors.us_public import (
     SecEdgarFilingAdapter,
     StooqDailyOhlcvAdapter,
 )
-from .connectors.yahoo_taiwan import YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
+from .connectors.yahoo_taiwan import AnueTaiwanRssAdapter, YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
 
 
 Handler = Callable[[Any, Mapping[str, Any], str], tuple[SourceRecord, ...]]
@@ -215,6 +215,14 @@ def _yahoo_rss(adapter: YahooTaiwanRssAdapter, request: Mapping[str, Any], trace
     )
 
 
+def _anue_rss(adapter: AnueTaiwanRssAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
+    return adapter.records_from_rss(
+        str(_require(request.get("rss_xml") or request.get("payload"), "rss_xml")),
+        feed_url=request.get("feed_url"),
+        trace_id=trace_id,
+    )
+
+
 def _mops_route(payload: Mapping[str, Any]) -> MopsRouteSpec:
     return MopsRouteSpec(
         route_id=str(payload["route_id"]),
@@ -335,6 +343,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         token="YahooTaiwanRssAdapter.records_from_rss",
         adapter_cls=YahooTaiwanRssAdapter,
         handler=_yahoo_rss,
+        config_keys=("feed_url", "max_records"),
+    ),
+    "AnueTaiwanRssAdapter.records_from_rss": ProviderAdapterSpec(
+        token="AnueTaiwanRssAdapter.records_from_rss",
+        adapter_cls=AnueTaiwanRssAdapter,
+        handler=_anue_rss,
         config_keys=("feed_url", "max_records"),
     ),
     "MopsSourceIngestAdapter.records_from_payload": ProviderAdapterSpec(
