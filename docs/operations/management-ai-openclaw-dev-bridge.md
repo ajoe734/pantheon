@@ -23,10 +23,10 @@ working on Management AI dev capability. The active frontend is
 
 Current verified dev deployment, 2026-06-11:
 
-- `pantheon@fd05226d68bd040441309c19352239bbb815bf12` on `dev` for BFF,
+- `pantheon@2a9bf5891d6c29b26a533fca3b9dd295feeca386` on `dev` for BFF,
   OpenClaw adapter repair-worktree preparation, assistant dev bridge readback,
-  and the self-hosted dev FE CORS allowlist. GitHub Actions run `27327401818`
-  completed `dev/root fd05226d68bd040441309c19352239bbb815bf12` and passed
+  and the self-hosted dev FE CORS allowlist. GitHub Actions run `27352642439`
+  completed `dev/root 2a9bf5891d6c29b26a533fca3b9dd295feeca386` and passed
   public BFF health/CORS smoke.
 - `execute-plans@721bc3c4fe22648c242c6e39c353939575a33637` on `dev` for the
   Management AI frontend control dialog, SA/SD skill-gated action, and
@@ -38,7 +38,7 @@ Current verified dev deployment, 2026-06-11:
   `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io` returned
   `providerStatus.used=true`, `providerStatus.status=completed`,
   `runtime=openclaw_gateway_cli_mount`, and `sandbox=read-only` for a
-  read-only Management AI ask (`traceId=mnl-trace-d0f1249bb3a9`).
+  read-only Management AI ask (`traceId=mnl-trace-4a11ef3297c2`).
 
 Current known gate: provider readiness and route availability can be healthy
 while control mode is configured but inactive. A positive VM-write claim still
