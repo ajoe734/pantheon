@@ -1,6 +1,6 @@
 # Execute-Plans Dev Frontend Hosting
 
-Date: 2026-06-08
+Date: 2026-06-11
 
 This is the canonical frontend hosting rule for Pantheon dev.
 
@@ -21,7 +21,7 @@ but they are not the dev frontend hosting source of truth.
 - Local checkout: `/home/lupin/code/execute-plans`
 - Preferred work location for risky edits: a clean task worktree outside the
   dirty checkout, for example `/tmp/execute-plans-<task>`
-- Delivery base as of 2026-06-08: `main`
+- Delivery base as of 2026-06-11: `dev`
 
 Do not use `front-ai-trading-system` for new work. That repository name is
 legacy-only. Do not recreate it, mirror new handoffs to it, or assign frontend
@@ -51,18 +51,27 @@ before routing work to the new target.
 
 ## Current Verified Dev Deployment
 
-Verified on 2026-06-08:
+Verified on 2026-06-11:
 
 - Backend/BFF repo: `ajoe734/pantheon`
 - Backend/BFF branch: `dev`
 - Backend/BFF merge commit:
-  `22b89367a56cdbb4fb8a7345fc7c4ad1d293a118`
+  `fd05226d68bd040441309c19352239bbb815bf12`
+- Backend/BFF deploy evidence:
+  GitHub Actions run `27327401818`, `Pantheon Nonprod Deploy`,
+  completed `dev/root fd05226d68bd040441309c19352239bbb815bf12` and passed
+  public BFF health/CORS smoke.
 - Frontend repo: `ajoe734/execute-plans`
-- Frontend branch: `main`
+- Frontend branch: `dev`
 - Frontend merge commit:
-  `8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf`
+  `721bc3c4fe22648c242c6e39c353939575a33637`
 - Frontend dev VM document root: `/var/www/pantheon-dev-fe/`
-- Frontend bundle observed after deployment: `assets/index-9w0t7Wkm.js`
+- Frontend deployment manifest:
+  `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json`
+  reports `app=execute-plans`, `sourceBranch=dev`,
+  `sourceRef=721bc3c4fe22648c242c6e39c353939575a33637`,
+  `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, and
+  `VITE_BFF_REAL_WRITES=false`.
 
 If an agent sees a different Lovable bundle, that is not the Pantheon dev FE.
 Validate the Pantheon-owned host and the GitHub commits above before changing
@@ -139,6 +148,10 @@ OpenClaw VM inspection goes through Management AI conversation routes such as
 `POST /bff/management/nl/ask`; write-capable repair also requires valid
 `openclaw.repair` metadata and a clean repair task worktree under the configured
 repair root.
+
+Operator POST routes in the final BFF contract require a stable
+`Idempotency-Key` header. `X-Idempotency-Key` is accepted only as a temporary
+compatibility alias. Do not place idempotency keys in the JSON body.
 
 ## CI Rule
 
