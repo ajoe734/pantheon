@@ -16,6 +16,7 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
 
     assert payload["schema_version"] == "financial_data_source_catalog.v1"
     assert {
+        "Anue Cnyes",
         "FINRA",
         "FRED",
         "FinMind",
@@ -26,13 +27,15 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
         "TWSE/TPEx",
         "Yahoo Taiwan Stock",
     } <= providers
-    assert payload["summary"]["data_source_count"] == 9
+    assert payload["summary"]["data_source_count"] == 10
     assert all(entry.source_kind == "data_source" for entry in entries.values())
     assert all(entry.lifecycle_state.value == "candidate" for entry in entries.values())
     assert entries["ds-finmind-tw-data"].metadata["template_status"] == "candidate_not_live_ingestion_claim"
     assert entries["ds-tej-tw-research-backfill"].source_class.value == "vendor_backfill"
     assert entries["ds-tej-tw-research-backfill"].metadata["purchased_table_allowlist_required"] is True
     assert entries["ds-yahoo-tw-news-broker"].metadata["not_official_reference_truth"] is True
+    assert entries["ds-anue-tw-news"].metadata["not_official_reference_truth"] is True
+    assert entries["ds-anue-tw-news"].metadata["template_status"] == "candidate_not_live_ingestion_claim"
 
 
 def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_sources() -> None:
@@ -44,6 +47,7 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert "template-tw-twse-tpex-official-market" in templates
     assert "template-tw-mops-official-disclosures" in templates
     assert "template-tw-yahoo-broker-top15" in templates
+    assert "template-tw-anue-news-rss" in templates
     assert "template-us-sec-edgar-filings" in templates
     assert "template-us-fred-macro" in templates
     assert "template-us-finra-short-sale" in templates
@@ -58,6 +62,13 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
         table["dataset_code"] for table in tej_template["fetch"]["candidate_tables"]
     }
     assert templates["template-tw-yahoo-stock-rss"]["fetch"]["full_text_allowed_by_default"] is False
+    assert templates["template-tw-yahoo-stock-rss"]["fetch"]["adapter"] == "YahooTaiwanRssAdapter.records_from_rss"
+    assert templates["template-tw-yahoo-broker-top15"]["fetch"]["adapter"] == (
+        "YahooTaiwanBrokerTopAdapter.records_from_html"
+    )
+    assert templates["template-tw-anue-news-rss"]["fetch"]["adapter"] == "AnueTaiwanRssAdapter.records_from_rss"
+    assert templates["template-tw-anue-news-rss"]["fetch"]["full_text_allowed_by_default"] is False
+    assert templates["template-tw-anue-news-rss"]["fetch"]["feed_url_ref"] == "operator_configured_rss_feed_url"
     assert templates["template-us-sec-edgar-filings"]["fetch"]["adapter"] == (
         "SecEdgarFilingAdapter.records_from_payload"
     )
@@ -95,5 +106,6 @@ def test_catalog_embeds_active_universe_scheduling_policy() -> None:
     assert policy["summary"]["archive_baseline_rule_count"] >= 3
     assert "tw-twse-tpex-official-market" in policy["summary"]["archive_baseline_connector_ids"]
     assert "tw-finmind-broker-daily-report" in policy["summary"]["candidate_detail_connector_ids"]
+    assert "tw-anue-news-rss" in policy["summary"]["candidate_detail_connector_ids"]
     assert "tw-tej-research-datasets" in policy["summary"]["candidate_detail_connector_ids"]
     assert payload["summary"]["active_universe_rule_count"] == policy["summary"]["rule_count"]
