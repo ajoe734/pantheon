@@ -6,18 +6,18 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Implement US public data sources: SEC EDGAR, FRED, FINRA, and public daily OHLCV fallback
-- Status: todo
-- Owner: Auto Worker
-- Reviewer: Codex
+- Status: in_progress
+- Owner: Codex
+- Reviewer: Claude2
 - Phase: DATASTRAT market-data completion
-- Last update: 2026-06-11T00:00:00Z
-- Next: Add missing public-source adapters and a working US daily OHLCV path.
+- Last update: 2026-06-11T03:19:31Z
+- Next: Add missing public-source adapters and a working or explicitly disabled US daily OHLCV path.
 
 ## Summary
-SEC EDGAR and FRED are catalog templates today, while FINRA and public daily OHLCV fallback are missing. Implement real adapters, schedules, normalized schemas, and source health for public US research data.
+SEC EDGAR and FRED were catalog templates, while FINRA and public daily OHLCV fallback were missing. Implement real adapters, schedules, normalized schemas, and source health for public US research data.
 
 ## Dependencies
-- DATASTRAT-MARKETDATA-FOUNDATION-001: todo · Adapter dispatch, storage, health, and scheduler bridge
+- DATASTRAT-MARKETDATA-FOUNDATION-001: todo - Adapter dispatch, storage, health, and scheduler bridge.
 
 ## Acceptance Criteria
 - `SecEdgarFilingAdapter` fetches submissions and company facts using configured User-Agent/contact identity.
