@@ -17,6 +17,8 @@ docs-site
 ai-task-archive
 support/evidence
 support/evidence/**
+lean/Tests
+lean/Tests/**
 current-work.md
 ai-status.json
 ai-activity-log.jsonl

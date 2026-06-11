@@ -65,3 +65,18 @@ def test_nonprod_deploy_preserves_known_runtime_state_without_dirty_flag() -> No
     assert "deploy-runtime-state-${PANTHEON_DEPLOY_ENV}" in deploy
     assert "preserving known deploy runtime state before checkout" in deploy
     assert "git stash push --include-untracked -m \"$stash_label\" -- \"${present_paths[@]}\"" in deploy
+
+
+def test_nonprod_deploy_prunes_dev_docker_storage_before_root_build() -> None:
+    deploy = _read("scripts/deploy_nonprod_vm.sh")
+
+    assert "PANTHEON_DEV_DOCKER_PRUNE" in deploy
+    assert "prune_dev_docker_storage_for_build" in deploy
+    assert '[[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]' in deploy
+    assert "docker builder prune -af" in deploy
+    assert "docker image prune -af" in deploy
+    assert "docker system df" in deploy
+    assert (
+        deploy.index("    prune_dev_docker_storage_for_build")
+        < deploy.index("docker compose -p pantheon -f docker-compose.yml up -d --build")
+    )
