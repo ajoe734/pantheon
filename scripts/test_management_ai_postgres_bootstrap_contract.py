@@ -54,3 +54,14 @@ def test_nonprod_deploy_preserves_dirty_managed_worktree_before_checkout() -> No
     assert "stashing local changes before checkout" in deploy
     assert "git stash push --include-untracked -m \"$stash_label\"" in deploy
     assert "managed deploy worktree is still dirty after preserve step" in deploy
+
+
+def test_nonprod_deploy_preserves_known_runtime_state_without_dirty_flag() -> None:
+    deploy = _read("scripts/deploy_nonprod_vm.sh")
+
+    assert "preserve_known_deploy_runtime_state" in deploy
+    assert ".orchestrator/metrics" in deploy
+    assert ".orchestrator/watchdog-state.json" in deploy
+    assert "deploy-runtime-state-${PANTHEON_DEPLOY_ENV}" in deploy
+    assert "preserving known deploy runtime state before checkout" in deploy
+    assert "git stash push --include-untracked -m \"$stash_label\" -- \"${present_paths[@]}\"" in deploy
