@@ -91,6 +91,8 @@ from .source_health import (
     SourceUsageDailyStore,
 )
 from .retirement_engine import RecommendationType, RetirementRecommendation, compute_recommendations
+from .connector_coverage_matrix import build_coverage_matrix, build_source_alerts
+from .gap_report import generate_market_data_gap_report, render_gap_report_markdown
 
 
 def _resolve_data_dir() -> Path:
@@ -2229,3 +2231,112 @@ def get_health_usage_snapshot() -> dict[str, Any]:
             for rt in RecommendationType
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Ops acceptance: coverage matrix, alerts, and gap report
+# (DATASTRAT-MARKETDATA-OPS-ACCEPT-010)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/source-ingest/coverage-matrix")
+def source_coverage_matrix() -> dict[str, Any]:
+    """Coverage matrix: planned financial-catalog connectors vs configured runtime connectors.
+
+    Returns per-connector coverage classification (missing / configured /
+    disabled / credential_unavailable / unhealthy / healthy) so the ops
+    acceptance dashboard can show rollout completeness at a glance.
+    """
+    catalog = financial_data_source_catalog_payload()
+    catalog_entries = catalog["entries"]
+
+    configured_by_id = {config.connector.connector_id: config for config in connector_store.list_configs()}
+    configured_ids = set(configured_by_id)
+
+    health_by_id: dict[str, Any] = {h.source_id: h.to_dict() for h in source_health_store.list()}
+    lifecycle_by_id: dict[str, str] = {
+        cid: configured_by_id[cid].connector.status.value
+        for cid in configured_ids
+    }
+
+    return build_coverage_matrix(
+        catalog_entries=catalog_entries,
+        configured_connector_ids=configured_ids,
+        health_by_connector_id=health_by_id,
+        lifecycle_by_connector_id=lifecycle_by_id,
+    )
+
+
+@app.get("/api/source-ingest/alerts")
+def list_source_alerts(include_missing: bool = True) -> dict[str, Any]:
+    """List sources that require operator attention.
+
+    Includes:
+    - Configured sources with health status != ok (stale/degraded/failed).
+    - Credential-unavailable sources (labelled separately so they are not
+      treated as hard failures when keys are not yet installed).
+    - When include_missing=true (default), catalog-planned connectors that
+      are not yet configured in the runtime.
+
+    This endpoint is the canonical alert surface for the source health
+    dashboard. Operators should resolve or acknowledge each alert.
+    """
+    health_records = [h.to_dict() for h in source_health_store.list()]
+    configured_ids = {config.connector.connector_id for config in connector_store.list_configs()}
+    catalog_entries = financial_data_source_catalog_payload()["entries"]
+
+    alerts = build_source_alerts(
+        catalog_entries=catalog_entries,
+        configured_connector_ids=configured_ids,
+        health_records=health_records,
+        include_missing=include_missing,
+    )
+
+    summary: dict[str, int] = {}
+    for alert in alerts:
+        at = str(alert.get("alert_type") or "unknown")
+        summary[at] = summary.get(at, 0) + 1
+
+    return {
+        "alert_count": len(alerts),
+        "alerts": alerts,
+        "summary": summary,
+    }
+
+
+class GapReportRequest(StrictBaseModel):
+    members: list[ActiveUniverseMemberBody]
+    rules: list[SourceUpdateRuleBody] = Field(default_factory=list)
+    run_date: str
+    default_max_symbols_per_job: int = 50
+    render_markdown: bool = False
+
+
+@app.post("/api/source-ingest/gap-report")
+def generate_gap_report(request: GapReportRequest) -> dict[str, Any]:
+    """Generate a market-data gap report for the given active-universe members and date.
+
+    Classifies each expected ingest job as credential / quota / provider_stale /
+    schema / parse / not-in-universe based on the source health records stored
+    in this service. A job is considered a gap when the connector is not healthy
+    or the latest watermark does not reach the requested run_date.
+
+    Set render_markdown=true to include a human-readable markdown summary in the
+    response. The machine-readable JSON report is always returned.
+    """
+    try:
+        rules = [rule.to_domain() for rule in request.rules] if request.rules else DEFAULT_SOURCE_UPDATE_RULES
+        health_records = source_health_store.list()
+        report = generate_market_data_gap_report(
+            members=[member.to_domain() for member in request.members],
+            rules=rules,
+            health_records=health_records,
+            run_date=request.run_date,
+            default_max_symbols_per_job=request.default_max_symbols_per_job,
+        )
+        payload: dict[str, Any] = {"report": report}
+        if request.render_markdown:
+            payload["markdown"] = render_gap_report_markdown(report)
+        return payload
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
