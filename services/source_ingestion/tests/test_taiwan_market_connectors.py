@@ -27,6 +27,127 @@ def test_mops_source_ingest_adapter_emits_official_filing_records() -> None:
     assert records[0].content_ref.startswith("mops://t05st02/2428/")
     assert records[0].metadata["source_class"] == "official_reference"
     assert records[0].metadata["route_id"] == "t05st02"
+    assert records[0].metadata["normalized_target"] == "tw_material_event"
+    assert records[0].metadata["schema_hash"] == "tw_material_event.v1"
+    assert records[0].metadata["schedule_profile"]["universe_tiers"] == [
+        "core_universe",
+        "candidate_universe",
+        "archive_universe",
+    ]
+
+
+def test_mops_monthly_revenue_rows_preserve_fiscal_and_availability_fields() -> None:
+    adapter = MopsSourceIngestAdapter(connector_id="conn-mops-test")
+    route = TaiwanMarketClient().mops_route("t05st10_ifrs")
+    payload = {
+        "result": {
+            "titles": [
+                {"main": "營收發布日期"},
+                {"main": "資料年月"},
+                {"main": "公司代號"},
+                {"main": "公司名稱"},
+                {"main": "當月營收"},
+                {"main": "去年同月增減(%)"},
+                {"main": "備註"},
+            ],
+            "data": [["115/06/10", "115/05", "2330", "台積電", "123,456,789", "39.6", ""]],
+        },
+        "datetime": "115/06/10 19:00:00",
+    }
+
+    record = adapter.records_from_payload(route, payload, trace_id="trace-mops-revenue")[0]
+    normalized = record.metadata["normalized_record"]
+
+    assert record.metadata["normalized_target"] == "tw_monthly_revenue"
+    assert record.metadata["fiscal_year"] == "115"
+    assert record.metadata["fiscal_month"] == "05"
+    assert record.metadata["announcement_date"] == "115/06/10"
+    assert record.metadata["available_time"] == "115/06/10 19:00:00"
+    assert normalized["raw_route_id"] == "t05st10_ifrs"
+    assert normalized["monthly_revenue"]["current_month_revenue"] == 123456789
+    assert normalized["monthly_revenue"]["year_over_year_pct"] == 39.6
+    assert record.metadata["schedule_profile"]["universe_tiers"] == ["core_universe"]
+
+
+def test_mops_financial_statement_and_restatement_gap_metadata() -> None:
+    adapter = MopsSourceIngestAdapter(connector_id="conn-mops-test")
+    route = TaiwanMarketClient().mops_route("t164sb04")
+    payload = {
+        "result": {
+            "data": [
+                {
+                    "公司代號": "2330",
+                    "公司名稱": "台積電",
+                    "年度": "115",
+                    "季別": "1",
+                    "公告日期": "115/05/15",
+                    "會計項目": "營業收入",
+                    "金額": "1,234,567",
+                }
+            ]
+        },
+        "datetime": "115/05/15 18:30:00",
+    }
+
+    record = adapter.records_from_payload(route, payload, trace_id="trace-mops-financial")[0]
+    normalized = record.metadata["normalized_record"]
+    gap_report = adapter.fetch_config()["restatement_correction_gap_report"]
+
+    assert record.metadata["normalized_target"] == "tw_financial_statement"
+    assert record.metadata["fiscal_year"] == "115"
+    assert record.metadata["fiscal_quarter"] == "1"
+    assert normalized["raw_route_id"] == "t164sb04"
+    assert normalized["financial_statement"]["statement_type"] == "income_statement"
+    assert normalized["financial_statement"]["line_items"]["會計項目"] == "營業收入"
+    assert any(route["route_id"] == "t56sb31_q1" for route in gap_report["represented_routes"])
+    assert any("correction" in route["tags"] for route in gap_report["represented_routes"])
+
+
+def test_mops_company_master_and_corporate_action_targets_are_normalized() -> None:
+    adapter = MopsSourceIngestAdapter(connector_id="conn-mops-test")
+    client = TaiwanMarketClient()
+
+    company_record = adapter.records_from_payload(
+        client.mops_route("t05st03"),
+        {
+            "result": {
+                "data": [
+                    {
+                        "公司代號": "2330",
+                        "公司名稱": "台灣積體電路製造股份有限公司",
+                        "產業別": "半導體業",
+                        "董事長": "劉德音",
+                    }
+                ]
+            },
+            "datetime": "115/06/10 08:00:00",
+        },
+        trace_id="trace-mops-company",
+    )[0]
+    action_record = adapter.records_from_payload(
+        client.mops_route("t05st09_2"),
+        {
+            "result": {
+                "data": [
+                    {
+                        "公司代號": "2330",
+                        "公司名稱": "台積電",
+                        "年度": "115",
+                        "公告日期": "115/06/20",
+                        "現金股利": "4.0",
+                    }
+                ]
+            },
+            "datetime": "115/06/20 18:00:00",
+        },
+        trace_id="trace-mops-action",
+    )[0]
+
+    assert company_record.metadata["normalized_target"] == "tw_company_master"
+    assert company_record.metadata["normalized_record"]["company_master"]["industry"] == "半導體業"
+    assert action_record.metadata["normalized_target"] == "tw_corporate_action"
+    assert action_record.metadata["normalized_record"]["corporate_action"]["action_type"] == "dividend"
+    assert action_record.metadata["normalized_record"]["corporate_action"]["cash_dividend"] == 4
 
 
 def test_tej_source_ingest_adapter_emits_research_market_records_without_raw_secret() -> None:
