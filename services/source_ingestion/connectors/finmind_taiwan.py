@@ -774,17 +774,15 @@ class FinMindLiveFetcher:
             FinMindFetchError: any other provider or network error.
         """
         token = self._require_token()
-        params: dict[str, str] = {"dataset": dataset, "token": token}
+        params: dict[str, str] = {"dataset": dataset}
         if symbol:
             params["data_id"] = symbol
         if start_date:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        redacted_params = {k: v for k, v in params.items() if k != "token"}
         url = _finmind_url(FINMIND_DATA_ENDPOINT, params)
-        redacted_url = _finmind_url(FINMIND_DATA_ENDPOINT, redacted_params)
-        return self._get(url, redacted_url=redacted_url)
+        return self._get(url, token=token)
 
     def fetch_broker_report(
         self,
@@ -796,12 +794,9 @@ class FinMindLiveFetcher:
         Returns ``(payload, quota_meta)``.
         """
         token = self._require_token()
-        params: dict[str, str] = {"data_id": symbol, "date": date, "token": token}
+        params: dict[str, str] = {"data_id": symbol, "date": date}
         url = _finmind_url(FINMIND_BROKER_DAILY_REPORT_ENDPOINT, params)
-        redacted_url = _finmind_url(
-            FINMIND_BROKER_DAILY_REPORT_ENDPOINT, {"data_id": symbol, "date": date}
-        )
-        return self._get(url, redacted_url=redacted_url)
+        return self._get(url, token=token)
 
     def fetch_storage_objects(
         self,
@@ -813,12 +808,9 @@ class FinMindLiveFetcher:
         Returns ``(payload, quota_meta)``.
         """
         token = self._require_token()
-        params: dict[str, str] = {"dataset": dataset, "date": date, "token": token}
+        params: dict[str, str] = {"dataset": dataset, "date": date}
         url = _finmind_url(FINMIND_STORAGE_OBJECTS_ENDPOINT, params)
-        redacted_url = _finmind_url(
-            FINMIND_STORAGE_OBJECTS_ENDPOINT, {"dataset": dataset, "date": date}
-        )
-        return self._get(url, redacted_url=redacted_url)
+        return self._get(url, token=token)
 
     # ------------------------------------------------------------------
     # internal helpers
@@ -835,19 +827,20 @@ class FinMindLiveFetcher:
 
     def _get(
         self,
-        url_with_token: str,
+        url: str,
         *,
-        redacted_url: str,
+        token: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """HTTP GET against FinMind API.  Token is not stored; only redacted_url is evidence-safe."""
+        """HTTP GET against FinMind API. Token is sent only as Authorization header."""
         request = urllib.request.Request(
-            url_with_token,
+            url,
             headers={
                 "Accept": "application/json",
+                "Authorization": f"Bearer {token}",
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
-        quota_meta: dict[str, Any] = {"request_url": redacted_url}
+        quota_meta: dict[str, Any] = {"request_url": url}
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 quota_meta.update(_extract_quota_meta(response.headers))

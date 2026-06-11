@@ -315,6 +315,7 @@ def test_registry_exposes_connector_status_policy_and_provider_examples(client) 
     assert {example["fetch_policy"]["mode"] for example in body["provider_examples"]} == {
         "static_records",
         "external_feed",
+        "provider_owned_adapter",
     }
     catalog = body["financial_data_source_catalog"]
     assert catalog["schema_version"] == "financial_data_source_catalog.v1"
