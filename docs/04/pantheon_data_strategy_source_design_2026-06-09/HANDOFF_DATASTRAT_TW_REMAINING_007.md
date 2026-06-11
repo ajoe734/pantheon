@@ -54,6 +54,12 @@ pytest services/source_ingestion/tests/test_active_universe.py services/source_i
 
 Result: `43 passed in 10.04s`.
 
+```bash
+pytest services/source_ingestion/tests services/source_ingestion/test_service.py -q
+```
+
+Result: `295 passed, 1 skipped in 60.99s`.
+
 ## Non-Scope
 
 - No live TDCC or TAIFEX HTTP client is enabled.

@@ -54,3 +54,4 @@ This file is task-scoped execution context for the per-task worktree. Treat
 
 - `python3 -m py_compile services/source_ingestion/active_universe.py services/source_ingestion/financial_source_catalog.py services/source_ingestion/market_data_storage.py services/source_ingestion/connectors/finmind_taiwan.py services/source_ingestion/connectors/yahoo_taiwan.py`
 - `pytest services/source_ingestion/tests/test_active_universe.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_yahoo_taiwan_connectors.py services/source_ingestion/tests/test_market_data_foundation.py -q` -> 43 passed.
+- `pytest services/source_ingestion/tests services/source_ingestion/test_service.py -q` -> 295 passed, 1 skipped.
