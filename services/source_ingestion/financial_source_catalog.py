@@ -17,8 +17,36 @@ from .registry.data_source_registry import DataSourceClass, DataSourceEntry, Dat
 
 FINANCIAL_DATA_SOURCE_CATALOG_SCHEMA_VERSION = "financial_data_source_catalog.v1"
 FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATE_SCHEMA_VERSION = "financial_data_source_config_template.v1"
-CATALOG_UPDATED_AT = "2026-06-09T00:00:00Z"
+CATALOG_UPDATED_AT = "2026-06-11T00:00:00Z"
 ACTIVE_UNIVERSE_POLICY_REF = "active_universe_scheduling_policy.v1"
+
+
+TEJ_PAID_BACKFILL_TABLE_CANDIDATES: tuple[dict[str, Any], ...] = (
+    {
+        "dataset_code": "TWN/APRCD1",
+        "table_code": "APRCD1",
+        "dataset_role": "tquant_historical_daily_price",
+        "normalized_target": "tw_price_daily",
+        "license_scope": "vendor_research",
+        "run_by_default": False,
+    },
+    {
+        "dataset_code": "TWN/AMTOP1",
+        "table_code": "AMTOP1",
+        "dataset_role": "broker_major_participant_gap_fill",
+        "normalized_target": "tw_broker_top",
+        "license_scope": "vendor_research",
+        "run_by_default": False,
+    },
+    {
+        "dataset_code": "TWN/ABSR20",
+        "table_code": "ABSR20",
+        "dataset_role": "broker_top20_branch_gap_fill",
+        "normalized_target": "tw_broker_top",
+        "license_scope": "vendor_research",
+        "run_by_default": False,
+    },
+)
 
 
 def _dataset(
@@ -254,6 +282,74 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
         },
     ),
     _entry(
+        data_source_id="ds-tej-tw-research-backfill",
+        provider="TEJ",
+        source_class=DataSourceClass.VENDOR_BACKFILL,
+        license_scope="vendor_research_paid",
+        entitlement_tags=("tej-api", "tej-paid-backfill", "tquant-history-optional"),
+        allowed_use=("research_data", "backtest_data", "feature_generation"),
+        update_frequency="manual_one_time_historical_backfill plus credentialed smoke",
+        connector_id="tw-tej-research-datasets",
+        datasets=(
+            _dataset(
+                "tw_price_daily",
+                "market_daily",
+                storage_tier="raw/normalized/features",
+                update_profile="manual_gap_fill_only",
+                storage_targets=("raw/tej/TWN/APRCD1", "normalized/tw_price_daily", "features/returns"),
+                universe_tiers=("core_universe", "candidate_universe", "archive_universe"),
+                backup_source="TWSE/TPEx official market data and FinMind before TEJ paid backfill",
+                metadata={
+                    "dataset_code": "TWN/APRCD1",
+                    "table_code": "APRCD1",
+                    "source_plan": "TQuant historical price gaps after public/FinMind coverage",
+                    "run_by_default": False,
+                },
+            ),
+            _dataset(
+                "tw_financial_fundamentals",
+                "financial_fundamental",
+                storage_tier="raw/normalized/features",
+                update_profile="manual_gap_fill_only",
+                storage_targets=("raw/tej/fundamentals", "normalized/tw_financial_statement"),
+                universe_tiers=("core_universe",),
+                backup_source="MOPS official disclosures and FinMind before TEJ paid backfill",
+                metadata={
+                    "purchased_table_allowlist_required": True,
+                    "dataset_code_source": "operator_entitlement_metadata",
+                    "run_by_default": False,
+                },
+            ),
+            _dataset(
+                "tw_broker_top",
+                "taiwan_chip",
+                storage_tier="raw/normalized/features",
+                update_profile="manual_gap_fill_only",
+                storage_targets=("raw/tej/TWN/AMTOP1", "raw/tej/TWN/ABSR20", "normalized/tw_broker_top"),
+                universe_tiers=("core_universe", "candidate_universe"),
+                backup_source="FinMind Sponsor report, Yahoo Taiwan latest fallback, then TEJ paid history",
+                metadata={
+                    "candidate_dataset_codes": ["TWN/AMTOP1", "TWN/ABSR20"],
+                    "max_rank": 20,
+                    "purchased_table_allowlist_required": True,
+                    "run_by_default": False,
+                },
+            ),
+        ),
+        metadata={
+            "preferred_role": "paid_taiwan_historical_gap_fill",
+            "does_not_replace_official_disclosure_truth": True,
+            "does_not_replace_mops_official_truth": True,
+            "avoid_full_branch_monthly_subscription_by_default": True,
+            "full_market_full_depth_forbidden_by_default": True,
+            "credential_health_without_key": "credential_unavailable",
+            "purchased_table_allowlist_required": True,
+            "table_inventory_cache_required": True,
+            "paid_backfill_table_candidates": [dict(table) for table in TEJ_PAID_BACKFILL_TABLE_CANDIDATES],
+            "config_template_ids": ["template-tw-tej-research-backfill"],
+        },
+    ),
+    _entry(
         data_source_id="ds-yahoo-tw-news-broker",
         provider="Yahoo Taiwan Stock",
         source_class=DataSourceClass.NEWS,
@@ -340,6 +436,53 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
 
 
 INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
+    {
+        "schema_version": FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATE_SCHEMA_VERSION,
+        "template_id": "template-tw-tej-research-backfill",
+        "data_source_id": "ds-tej-tw-research-backfill",
+        "connector_id": "tw-tej-research-datasets",
+        "source_type": "market",
+        "provider": "TEJ",
+        "auth": {"auth_type": "api_key", "secret_ref_id": "env://TEJ_API_KEY"},
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "TejSourceIngestAdapter",
+            "base_url_ref": "https://api.tej.com.tw",
+            "metadata_fetcher": "TaiwanMarketClient.fetch_tej_table_metadata",
+            "dataset_fetcher": "TaiwanMarketClient.fetch_tej_dataset",
+            "table_inventory_cache": {
+                "cache_key": "tej://table-inventory/tw-research-backfill",
+                "refresh_cadence": "manual_or_weekly_when_credentialed",
+                "credential_required": True,
+            },
+            "credential_smoke": {
+                "without_key_status": "credential_unavailable",
+                "with_key_checks": ["table_metadata", "small_dataset_read"],
+                "small_read_limit": 5,
+            },
+            "purchased_table_allowlist": [],
+            "allowlist_required": True,
+            "deny_unlisted_tables": True,
+            "candidate_tables": [dict(table) for table in TEJ_PAID_BACKFILL_TABLE_CANDIDATES],
+            "purchased_fundamental_tables": {
+                "dataset_code_source": "operator_entitlement_metadata",
+                "normalized_target": "tw_financial_statement",
+                "allowlist_required": True,
+            },
+            "backfill_request_schema": {
+                "required_fields": ["dataset_code", "start_date", "end_date", "symbol_universe", "entitlement_metadata"],
+                "date_range_field": "mdate",
+                "run_by_default": False,
+            },
+        },
+        "schedule": {
+            "cadence": "manual_one_time_historical_backfill",
+            "universe_tiers": ["core_universe", "candidate_universe"],
+            "archive_behavior": "gap_report_selected_price_only",
+            "full_market_default": False,
+        },
+        "lifecycle_state": "candidate",
+    },
     {
         "schema_version": FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATE_SCHEMA_VERSION,
         "template_id": "template-tw-finmind-datasets",

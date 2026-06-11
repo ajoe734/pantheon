@@ -430,10 +430,17 @@ class TestTaiwanReferenceHelpers(unittest.TestCase):
             storage_ref="gs://pantheon-data/raw/tw/tej/trail-20260424.parquet",
             checksum="sha256:ddd444",
             dataset_codes=["TRAIL/TAPRCD", "TRAIL/TATINST1", "TRAIL/TAIM1A"],
+            table_codes=["TAPRCD", "TATINST1", "TAIM1A"],
+            entitlement_scope="tej-trial-catalog",
+            purchased_table_allowlist=["TRAIL/TAPRCD", "TRAIL/TATINST1", "TRAIL/TAIM1A"],
         )
         valid, errors = RawDataset.validate(tej_raw)
         self.assertTrue(valid, errors)
         self.assertEqual(tej_raw.source_class, "research_grade")
+        self.assertEqual(tej_raw.metadata_json["table_codes"], ["TAPRCD", "TATINST1", "TAIM1A"])
+        self.assertEqual(tej_raw.metadata_json["license_scope"], "vendor_research")
+        self.assertTrue(tej_raw.metadata_json["point_in_time_available"])
+        self.assertEqual(tej_raw.metadata_json["available_time_policy"], "provider_available_time_or_ingest_time")
         self.assertTrue(tej_raw.metadata_json["does_not_replace_official_disclosure_truth"])
 
         norm = build_tw_normalized_dataset(
