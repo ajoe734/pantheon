@@ -1,27 +1,32 @@
 # Task Brief: DATASTRAT-MARKETDATA-FOUNDATION-001
 
-This file is generated for task-scoped execution context.
-Treat `ai-status.json` as durable task state only when explicitly updating state.
-Do not read `current-work.md` by default for implementation context.
+This file is task-scoped execution context. Treat `ai-status.json` as durable
+task state only when explicitly updating state. Do not read `current-work.md` by
+default for implementation context.
 
 ## Task
 - Title: Build market-data ingest foundation for provider adapters, storage, health, and gap reports
-- Status: todo
-- Owner: Auto Worker
-- Reviewer: Codex
+- Status: in_progress
+- Owner: Codex
+- Reviewer: Claude
 - Phase: DATASTRAT market-data completion
-- Last update: 2026-06-11T00:00:00Z
-- Next: Implement the cross-cutting runtime bridge before source-specific workers enable schedules.
+- Last update: 2026-06-11
+- Next: Implement and validate the cross-cutting runtime bridge before source-specific workers enable schedules.
 
 ## Summary
-Turn provider-owned adapter templates into runnable source-ingest jobs. Add the bounded adapter dispatcher, storage writers, source health auto-updates, active-universe scheduler integration, and weekly gap report shell required by all US/TW market-data sources.
+Build the shared US/Taiwan market-data ingest foundation: allowlisted
+provider-owned adapter dispatch, raw/normalized/features storage refs, source
+health metrics, weekly gap report shell, and active-universe scheduler fanout.
+This task does not implement source-specific live HTTP adapters or install
+credentials; those compose through the follow-up market-data source tasks.
 
 ## Dependencies
-- DATASTRAT-CATALOG-003: done · Financial data-source catalog and active-universe policy
-- DATASTRAT-USAGE-007: done · Source health, usage, and retirement recommendations
+- DATASTRAT-CATALOG-003: done - Financial data-source catalog and active-universe policy
+- DATASTRAT-USAGE-007: done - Source health, usage, and retirement recommendations
+- DATASTRAT-MARKETDATA-PLAN-001: done - Market data completion plan
 
 ## Acceptance Criteria
-- `provider_owned_adapter` fetch configs are dispatchable through an allowlisted adapter registry, not through arbitrary import strings.
+- `provider_owned_adapter` fetch configs are dispatchable through an allowlisted adapter registry, not arbitrary import strings.
 - Connector runs can write raw storage references, normalized row counts, and feature output references.
 - Successful jobs upsert `SourceHealth` with `last_success_at`, `latest_watermark`, row counts, rejected counts, schema hash, staleness, and quota/error metadata.
 - Failed jobs update `last_failure_at` and do not report success with zero rows unless the provider explicitly has no new data.
@@ -30,7 +35,8 @@ Turn provider-owned adapter templates into runnable source-ingest jobs. Add the 
 
 ## Implementation Notes
 - Primary files: `services/source_ingestion/configured.py`, `services/source_ingestion/scheduler.py`, `services/source_ingestion/main.py`, `services/source_ingestion/source_health.py`.
-- Add tests in `services/source_ingestion/tests/` that exercise a fake provider-owned adapter end to end through scheduled run.
+- New foundation modules may live under `services/source_ingestion/` when they are shared by all market-data sources.
+- Add tests in `services/source_ingestion/tests/` that exercise a fake provider-owned adapter end to end through scheduled or manual run paths.
 - Keep bulk market data out of `source_evidence.jsonl`; use raw object references in evidence metadata.
 - Reject inline API keys; only secret refs or runtime env resolution may be used.
 
