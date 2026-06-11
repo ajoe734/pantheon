@@ -93,9 +93,9 @@ PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 
 Latest verified dev root deploy, 2026-06-11:
 
-- GitHub Actions run `27327401818`
-- ref `fd05226d68bd040441309c19352239bbb815bf12`
-- CI log line: `deployment complete: dev/root fd05226d68bd040441309c19352239bbb815bf12`
+- GitHub Actions run `27352642439`
+- ref `2a9bf5891d6c29b26a533fca3b9dd295feeca386`
+- CI log line: `deployment complete: dev/root 2a9bf5891d6c29b26a533fca3b9dd295feeca386`
 - public BFF health/CORS smoke passed
 
 Post-deploy smoke:
