@@ -23,6 +23,9 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     )
     dataset_update = next(update for update in plan["connector_updates"] if update["connector_id"] == "tw-finmind-datasets")
     rss_update = next(update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-stock-rss")
+    anue_rss_update = next(
+        update for update in plan["connector_updates"] if update["connector_id"] == "tw-anue-news-rss"
+    )
     yahoo_fallback = next(
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-broker-top15"
     )
@@ -56,6 +59,10 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     assert dataset_update["symbols"] == ["2330", "2317"]
     assert dataset_update["dataset"] == "tw_daily_price_and_chip"
     assert rss_update["symbols"] == ["2330", "2317"]
+    assert rss_update["metadata"]["full_text_allowed_by_default"] is False
+    assert anue_rss_update["symbols"] == ["2330", "2317"]
+    assert anue_rss_update["metadata"]["feed_url_configurable"] is True
+    assert anue_rss_update["metadata"]["full_text_allowed_by_default"] is False
     assert yahoo_fallback["metadata"]["fallback_for_connector_id"] == "tw-finmind-broker-daily-report"
     assert tej_backfill["symbols"] == ["2330", "2317"]
     assert tej_backfill["metadata"]["purchased_table_allowlist_required"] is True
@@ -109,6 +116,7 @@ def test_active_universe_policy_summarizes_archive_baseline_and_detail_skip_rule
     assert policy["transition_event_schema"]["schema_version"] == "universe_transition.v1"
     assert "tw-finmind-broker-daily-report" not in policy["summary"]["archive_baseline_connector_ids"]
     assert "tw-twse-tpex-official-market" in policy["summary"]["archive_baseline_connector_ids"]
+    assert "tw-anue-news-rss" in policy["summary"]["candidate_detail_connector_ids"]
 
 
 def test_universe_transition_records_required_tier_change_fields() -> None:

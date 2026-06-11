@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BFF_BASE_URL="${BFF_BASE_URL:-https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io}"
-BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-pantheon-dev-browser:admin:mfa}"
+BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair}"
 CONTROL_PASSPHRASE="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE:-${CONTROL_MODE_PASSPHRASE:-}}"
 SESSION_ID="${SESSION_ID:-mgmt-ai-control-mode-smoke-$(date -u +%Y%m%dT%H%M%SZ)}"
 TASK_OWNER="${TASK_OWNER:-assistant-supervisor}"

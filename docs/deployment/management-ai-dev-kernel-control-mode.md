@@ -152,7 +152,7 @@ Optional overrides:
 
 ```env
 BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
-BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa
+BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair
 SESSION_ID=mgmt-ai-control-mode-smoke-manual
 TASK_OWNER=assistant-supervisor
 ```
@@ -172,6 +172,46 @@ If the script fails with `invalid_passphrase`, the runtime is healthy but the
 operator did not provide the current passphrase. If it fails with
 `not_active`, activation did not complete and `/dev-docs/generate` is correctly
 failing closed.
+
+## Positive OpenClaw Repair E2E Smoke
+
+The queue smoke above proves SA/SD generation and supervisor packet queueing,
+but it does not prove VM file writes through OpenClaw. The full repair smoke
+requires the same existing control-mode passphrase and intentionally writes only
+a sentinel file inside a clean repair task worktree.
+
+```bash
+PANTHEON_ASSISTANT_CONTROL_PASSPHRASE=<existing-control-mode-passphrase> scripts/smoke_management_ai_openclaw_repair_e2e.sh
+```
+
+Optional overrides:
+
+```env
+BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
+BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair
+SESSION_ID=mgmt-ai-openclaw-repair-smoke-manual
+REPAIR_REPO_KEY=execute-plans
+REPAIR_MERGE_TARGET=dev
+REPAIR_SCOPE=tmp/management-ai-openclaw-smoke
+TASK_OWNER=assistant-supervisor
+```
+
+The smoke verifies:
+
+- control mode activates as `kernel_repair`;
+- `/bff/assistant/repair-worktrees/prepare` returns a clean task worktree;
+- `/bff/management/nl/ask` forwards `openclaw.repair` metadata to the provider;
+- provider status reports `used=true`, `completed`, and
+  `workspaceClass=task_worktree`;
+- OpenClaw writes the sentinel file inside the declared repair scope;
+- `/bff/assistant/dev-docs/generate` returns HTTP `201` with
+  `queueTaskPacket=true`;
+- the supervisor drains the queued DevTaskPacket and reports a processed
+  receipt through `/bff/assistant/orchestrator/status`.
+
+The smoke does not commit, push, deploy, or touch broker/live/capital/runtime
+state. A failure at the sentinel step means read/status may work, but
+write-capable Management AI repair is not yet proven.
 
 ## Frontend Activation Preconditions
 

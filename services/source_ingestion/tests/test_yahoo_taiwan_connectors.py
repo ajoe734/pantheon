@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from services.source_ingestion.connectors.yahoo_taiwan import (
+    AnueTaiwanRssAdapter,
     YahooTaiwanBrokerTopAdapter,
     YahooTaiwanRssAdapter,
     parse_yahoo_broker_trading_html,
@@ -37,6 +38,22 @@ RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
       <guid>2330-test-guid</guid>
       <pubDate>Mon, 08 Jun 2026 06:30:00 GMT</pubDate>
       <description>台股新聞摘要。</description>
+    </item>
+  </channel>
+</rss>
+"""
+
+
+ANUE_RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Anue Cnyes</title>
+    <item>
+      <title>台積電 (2330-TW) 盤中買盤升溫</title>
+      <link>https://news.cnyes.com/news/id/2330-test</link>
+      <guid>anue-2330-test-guid</guid>
+      <dc:date>2026-06-08T14:40:00+08:00</dc:date>
+      <description>台股即時新聞摘要。</description>
     </item>
   </channel>
 </rss>
@@ -96,4 +113,32 @@ def test_yahoo_rss_adapter_emits_pit_valid_news_records() -> None:
     assert record.metadata["event_time"] == "2026-06-08T06:30:00Z"
     assert record.metadata["available_time"] == "2026-06-08T06:30:00Z"
     assert record.metadata["symbols"] == ["2330"]
+    assert record.metadata["external_source_policy"] == "news_social_alpha_pit_v1"
+    assert record.metadata["full_text_allowed_by_default"] is False
+    assert record.metadata["full_text_stored"] is False
+    assert record.metadata["dedupe_fields"] == ["provider", "source_url", "title_hash", "published_at"]
+
+
+def test_anue_rss_adapter_emits_summary_only_news_metadata_records() -> None:
+    adapter = AnueTaiwanRssAdapter(feed_url="https://feeds.example.test/anue.xml")
+    connector = adapter.connector()
+    records = adapter.records_from_rss(
+        ANUE_RSS_XML,
+        feed_url="https://feeds.example.test/anue.xml",
+        trace_id="trace-anue-rss-test",
+    )
+
+    assert connector.source_type.value == "news"
+    assert connector.metadata["entitlement_tags"] == ["anue-tw-rss-public-metadata"]
+    assert connector.metadata["summary_only_default"] is True
+    assert len(records) == 1
+    record = validate_external_source_record(records[0], connector=connector)
+    assert record.connector_id == "tw-anue-news-rss"
+    assert record.metadata["event_time"] == "2026-06-08T06:40:00Z"
+    assert record.metadata["available_time"] == "2026-06-08T06:40:00Z"
+    assert record.metadata["symbols"] == ["2330"]
+    assert record.metadata["summary"] == "台股即時新聞摘要。"
+    assert record.metadata["full_text_allowed_by_default"] is False
+    assert record.metadata["full_text_stored"] is False
+    assert record.metadata["dedupe_key"]
     assert record.metadata["external_source_policy"] == "news_social_alpha_pit_v1"

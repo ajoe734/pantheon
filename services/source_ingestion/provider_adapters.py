@@ -19,7 +19,13 @@ from .connectors.finmind_taiwan import (
     FinMindTaiwanDatasetAdapter,
 )
 from .connectors.taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
-from .connectors.yahoo_taiwan import YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
+from .connectors.us_public import (
+    FinraShortSaleAdapter,
+    FredMacroSeriesAdapter,
+    SecEdgarFilingAdapter,
+    StooqDailyOhlcvAdapter,
+)
+from .connectors.yahoo_taiwan import AnueTaiwanRssAdapter, YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
 
 
 Handler = Callable[[Any, Mapping[str, Any], str], tuple[SourceRecord, ...]]
@@ -209,6 +215,14 @@ def _yahoo_rss(adapter: YahooTaiwanRssAdapter, request: Mapping[str, Any], trace
     )
 
 
+def _anue_rss(adapter: AnueTaiwanRssAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
+    return adapter.records_from_rss(
+        str(_require(request.get("rss_xml") or request.get("payload"), "rss_xml")),
+        feed_url=request.get("feed_url"),
+        trace_id=trace_id,
+    )
+
+
 def _mops_route(payload: Mapping[str, Any]) -> MopsRouteSpec:
     return MopsRouteSpec(
         route_id=str(payload["route_id"]),
@@ -255,6 +269,51 @@ def _tej(adapter: TejSourceIngestAdapter, request: Mapping[str, Any], trace_id: 
     return adapter.records_from_rows(table, rows, trace_id=trace_id)
 
 
+def _sec_edgar(adapter: SecEdgarFilingAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
+    return adapter.records_from_payload(
+        str(_require(request.get("dataset"), "dataset")),
+        _mapping(_require(request.get("payload"), "payload")),
+        symbol=request.get("symbol"),
+        cik=request.get("cik"),
+        trace_id=trace_id,
+    )
+
+
+def _fred(adapter: FredMacroSeriesAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
+    series_id = str(_require(request.get("series_id"), "series_id"))
+    if request.get("csv_text") not in (None, ""):
+        return adapter.records_from_csv(series_id, str(request.get("csv_text")), trace_id=trace_id)
+    return adapter.records_from_observations_payload(
+        series_id,
+        _mapping(_require(request.get("payload"), "payload")),
+        source_url=request.get("source_url"),
+        fetch_mode=str(request.get("fetch_mode") or "api_or_fixture"),
+        trace_id=trace_id,
+    )
+
+
+def _finra_short_sale(
+    adapter: FinraShortSaleAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    return adapter.records_from_short_volume_text(
+        str(_require(request.get("text") or request.get("payload"), "text")),
+        trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
+        source_url=request.get("source_url"),
+        trace_id=trace_id,
+    )
+
+
+def _stooq_daily(adapter: StooqDailyOhlcvAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
+    return adapter.records_from_csv(
+        str(_require(request.get("symbol"), "symbol")),
+        str(_require(request.get("csv_text") or request.get("payload"), "csv_text")),
+        source_url=request.get("source_url"),
+        trace_id=trace_id,
+    )
+
+
 ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
     "FinMindTaiwanDatasetAdapter.records_from_data_payload": ProviderAdapterSpec(
         token="FinMindTaiwanDatasetAdapter.records_from_data_payload",
@@ -286,6 +345,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         handler=_yahoo_rss,
         config_keys=("feed_url", "max_records"),
     ),
+    "AnueTaiwanRssAdapter.records_from_rss": ProviderAdapterSpec(
+        token="AnueTaiwanRssAdapter.records_from_rss",
+        adapter_cls=AnueTaiwanRssAdapter,
+        handler=_anue_rss,
+        config_keys=("feed_url", "max_records"),
+    ),
     "MopsSourceIngestAdapter.records_from_payload": ProviderAdapterSpec(
         token="MopsSourceIngestAdapter.records_from_payload",
         adapter_cls=MopsSourceIngestAdapter,
@@ -297,5 +362,29 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=TejSourceIngestAdapter,
         handler=_tej,
         config_keys=("secret_ref_id", "max_records"),
+    ),
+    "SecEdgarFilingAdapter.records_from_payload": ProviderAdapterSpec(
+        token="SecEdgarFilingAdapter.records_from_payload",
+        adapter_cls=SecEdgarFilingAdapter,
+        handler=_sec_edgar,
+        config_keys=("user_agent", "user_agent_env", "max_records"),
+    ),
+    "FredMacroSeriesAdapter.records_from_observations_payload": ProviderAdapterSpec(
+        token="FredMacroSeriesAdapter.records_from_observations_payload",
+        adapter_cls=FredMacroSeriesAdapter,
+        handler=_fred,
+        config_keys=("secret_ref_id", "max_records"),
+    ),
+    "FinraShortSaleAdapter.records_from_short_volume_text": ProviderAdapterSpec(
+        token="FinraShortSaleAdapter.records_from_short_volume_text",
+        adapter_cls=FinraShortSaleAdapter,
+        handler=_finra_short_sale,
+        config_keys=("max_records", "expected_publication_delay_hours"),
+    ),
+    "StooqDailyOhlcvAdapter.records_from_csv": ProviderAdapterSpec(
+        token="StooqDailyOhlcvAdapter.records_from_csv",
+        adapter_cls=StooqDailyOhlcvAdapter,
+        handler=_stooq_daily,
+        config_keys=("max_records", "connector_status", "disabled_reason"),
     ),
 }

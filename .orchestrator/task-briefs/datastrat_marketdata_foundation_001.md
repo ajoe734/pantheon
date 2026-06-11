@@ -6,12 +6,12 @@ default for implementation context.
 
 ## Task
 - Title: Build market-data ingest foundation for provider adapters, storage, health, and gap reports
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex
-- Reviewer: Claude
+- Reviewer: Claude2
 - Phase: DATASTRAT market-data completion
 - Last update: 2026-06-11
-- Next: Implement and validate the cross-cutting runtime bridge before source-specific workers enable schedules.
+- Next: Review approved; owner is performing closeout finalization.
 
 ## Summary
 Build the shared US/Taiwan market-data ingest foundation: allowlisted
@@ -45,6 +45,13 @@ credentials; those compose through the follow-up market-data source tasks.
 - `services/source_ingestion/financial_source_catalog.py`
 - `services/source_ingestion/active_universe.py`
 - `services/source_ingestion/source_health.py`
+
+## Review And Closeout
+- Implementation PR: https://github.com/ajoe734/pantheon/pull/1300
+- Merge commit: `34050b1f72786ce2c0af79d24e418968eaf8a6bc`
+- Reviewer artifact: `docs/04/pantheon_data_strategy_source_design_2026-06-09/DATASTRAT-MARKETDATA-FOUNDATION-001-review.md`
+- Reviewer decision: APPROVED by Claude2 on 2026-06-11.
+- Reviewer verification: `pytest services/source_ingestion/tests services/data-plane/tests/test_data_plane_schemas.py -q` -> 321 passed, 1 skipped.
 
 ## Working Rules
 - No live broker or capital side effects.
