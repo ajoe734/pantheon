@@ -276,6 +276,83 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         },
     ),
     SourceUpdateRule(
+        connector_id="tw-tdcc-shareholding-distribution",
+        dataset="tdcc_shareholding_distribution",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="weekly_after_tdcc_publication",
+        priority=40,
+        reason="TDCC weekly shareholding distribution supports holding-concentration features for active Taiwan symbols only",
+        metadata={
+            "detail_level": "weekly_shareholding_distribution",
+            "source_role": "official_reference",
+            "normalized_target": "tdcc_shareholding_distribution",
+            "storage_targets": [
+                "raw/tdcc/shareholding_distribution",
+                "normalized/tdcc_shareholding_distribution",
+                "features/tdcc_holding_concentration",
+            ],
+            "raw_storage_policy": {
+                "compression": "gzip",
+                "retention_days": 2555,
+                "partition": "raw/tdcc/shareholding_distribution/week=YYYY-WW/",
+            },
+            "archive_behavior": "skip_except_repair_selected",
+            "repair_override_required": True,
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="tw-taifex-futures-options-chip",
+        dataset="taifex_futures_chip",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="daily_after_taifex_publication",
+        priority=45,
+        reason="TAIFEX futures participant and open-interest context is market-level Taiwan chip evidence, not per-symbol archive fanout",
+        metadata={
+            "detail_level": "daily_derivatives_participant_flow",
+            "source_role": "official_reference",
+            "normalized_target": "taifex_futures_chip",
+            "symbol_scope": "market_context_no_symbol_filter",
+            "storage_targets": [
+                "raw/taifex/futures_chip",
+                "normalized/taifex_futures_chip",
+                "features/taifex_oi_regime",
+            ],
+            "raw_storage_policy": {
+                "compression": "gzip",
+                "retention_days": 2555,
+                "partition": "raw/taifex/futures_chip/date=YYYY-MM-DD/",
+            },
+            "archive_behavior": "skip_symbol_archive_detail",
+            "repair_override_required": True,
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="tw-taifex-futures-options-chip",
+        dataset="taifex_options_chip",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="daily_after_taifex_publication",
+        priority=46,
+        reason="TAIFEX options put/call and open-interest context is market-level Taiwan regime evidence, not per-symbol archive fanout",
+        metadata={
+            "detail_level": "daily_options_participant_flow",
+            "source_role": "official_reference",
+            "normalized_target": "taifex_options_chip",
+            "symbol_scope": "market_context_no_symbol_filter",
+            "storage_targets": [
+                "raw/taifex/options_chip",
+                "normalized/taifex_options_chip",
+                "features/taifex_put_call_regime",
+            ],
+            "raw_storage_policy": {
+                "compression": "gzip",
+                "retention_days": 2555,
+                "partition": "raw/taifex/options_chip/date=YYYY-MM-DD/",
+            },
+            "archive_behavior": "skip_symbol_archive_detail",
+            "repair_override_required": True,
+        },
+    ),
+    SourceUpdateRule(
         connector_id="tw-yahoo-broker-top15",
         dataset="tw_broker_top",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
@@ -479,6 +556,9 @@ def build_active_universe_update_plan(
             if member.market == rule.market and member.tier in set(rule.eligible_tiers)
         ]
         symbols = _unique_symbols(member.symbol for member in eligible)
+        symbol_scope = str(rule.metadata.get("symbol_scope") or "").strip()
+        if symbol_scope in {"global_no_symbol_filter", "market_context_no_symbol_filter"}:
+            symbols = []
         if rule.max_symbols_per_run is not None:
             symbols = symbols[: int(rule.max_symbols_per_run)]
         for member in normalized_members:
@@ -551,7 +631,7 @@ def build_active_universe_job_fanout(
         )
         symbols = _unique_symbols(member.symbol for member in eligible)
         symbol_scope = str(rule.metadata.get("symbol_scope") or "").strip()
-        if symbol_scope == "global_no_symbol_filter":
+        if symbol_scope in {"global_no_symbol_filter", "market_context_no_symbol_filter"}:
             symbols = []
             batches = [[]]
         elif symbols:

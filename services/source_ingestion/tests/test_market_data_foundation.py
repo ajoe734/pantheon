@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import importlib
 import json
 import os
@@ -80,17 +81,19 @@ def _news_connector(connector_id: str = "tw-yahoo-stock-rss") -> dict:
     }
 
 
-def _market_connector(connector_id: str = "conn-market-foundation") -> dict:
+def _market_connector(connector_id: str = "conn-market-foundation", *, metadata: dict | None = None) -> dict:
+    connector_metadata = {
+        "dataset": "tw_price_daily",
+        "feature_targets": ["features/tw_returns"],
+        "schema_hash": "tw_price_daily.test.v1",
+    }
+    connector_metadata.update(metadata or {})
     return {
         "connector_id": connector_id,
         "source_type": "market",
         "provider": "Foundation Test Market",
         "license_scope": "internal",
-        "metadata": {
-            "dataset": "tw_price_daily",
-            "feature_targets": ["features/tw_returns"],
-            "schema_hash": "tw_price_daily.test.v1",
-        },
+        "metadata": connector_metadata,
     }
 
 
@@ -148,6 +151,63 @@ def test_provider_owned_adapter_run_writes_storage_health_and_usage(client) -> N
     usage = test_client.get("/api/source-ingest/usage?source_id=tw-yahoo-stock-rss")
     assert usage.status_code == 200, usage.text
     assert usage.json()["usage_records"][0]["ingest_run_count"] == 1
+
+
+def test_market_data_storage_refs_include_raw_retention_and_gzip_policy(client) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _market_connector(
+                "conn-high-volume-market",
+                metadata={
+                    "dataset": "tw_broker_top",
+                    "feature_targets": ["features/broker_top_concentration"],
+                    "schema_hash": "tw_broker_top.test.v1",
+                    "raw_storage_policy": {
+                        "compression": "gzip",
+                        "retention_days": 2555,
+                        "retention_policy_ref": "market-data://raw-retention/tw-chip-7y",
+                        "storage_class": "warm",
+                    },
+                },
+            ),
+            "fetch": {
+                "mode": "static_records",
+                "records": [
+                    {
+                        "source_id": "src-high-volume-market-1",
+                        "title": "Broker top row",
+                        "content_ref": "market://tw_broker_top/2330/2026-06-08",
+                        "metadata": {
+                            "dataset": "tw_broker_top",
+                            "date": "2026-06-08",
+                            "symbol": "2330",
+                            "body": "bulk market row",
+                            "raw_row": {"broker": "test", "buy_qty": 100},
+                        },
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        json={"connector_id": "conn-high-volume-market", "trace_id": "trace-high-volume-market"},
+    )
+
+    assert response.status_code == 201, response.text
+    raw_ref = response.json()["storage_refs"]["raw_refs"][0]
+    assert raw_ref["compression"] == "gzip"
+    assert raw_ref["retention_days"] == 2555
+    assert raw_ref["retention_policy_ref"] == "market-data://raw-retention/tw-chip-7y"
+    assert raw_ref["storage_class"] == "warm"
+    assert raw_ref["uri"].endswith(".jsonl.gz")
+    with gzip.open(raw_ref["uri"], "rt", encoding="utf-8") as handle:
+        raw_line = json.loads(handle.readline())
+    assert raw_line["source_id"] == "src-high-volume-market-1"
 
 
 def test_zero_row_runs_fail_unless_provider_marks_no_new_data(client) -> None:
@@ -292,4 +352,7 @@ def test_gap_report_cli_classifies_credential_and_universe_gaps(tmp_path) -> Non
     report = json.loads(json_path.read_text(encoding="utf-8"))
     assert report["gap_summary"]["credential"] >= 1
     assert report["gap_summary"]["not-in-universe"] >= 1
+    gap_connectors = {gap["connector_id"] for gap in report["gaps"]}
+    assert "tw-tdcc-shareholding-distribution" in gap_connectors
+    assert "tw-taifex-futures-options-chip" in gap_connectors
     assert "credential" in output_path.read_text(encoding="utf-8")

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from services.source_ingestion.configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore
 from services.source_ingestion.connectors.finmind_taiwan import (
     FINMIND_BASE_URL,
     FINMIND_BROKER_REPORT_DATASET,
@@ -103,6 +104,10 @@ def test_finmind_broker_daily_report_adapter_emits_tw_broker_top_records() -> No
     assert connector.auth_policy.secret_ref.secret_ref_id == "env://FINMIND_API_TOKEN"
     assert connector.metadata["source_plan"] == "finmind_first_low_cost_paid_layer"
     assert connector.metadata["fallback_connector_id"] == "tw-yahoo-broker-top15"
+    assert connector.metadata["archive_behavior"] == "skip"
+    assert connector.metadata["max_rank_policy"]["default_max_rank"] == 2
+    assert connector.metadata["max_rank_policy"]["full_branch_storage_allowed_by_default"] is False
+    assert connector.metadata["raw_storage_policy"]["compression"] == "gzip"
     assert len(records) == 3
     assert records[0].connector_id == "tw-finmind-broker-daily-report"
     assert records[0].metadata["dataset"] == "tw_broker_top"
@@ -119,6 +124,9 @@ def test_finmind_generic_dataset_adapter_emits_research_records_without_raw_toke
     )
 
     encoded = json.dumps(records[0].to_dict(), ensure_ascii=False)
+    connector = adapter.connector()
+    assert connector.metadata["archive_behavior"] == "price_baseline_only_elsewhere"
+    assert connector.metadata["raw_storage_policy"]["dataset_overrides"]["TaiwanStockNews"]["retention_days"] == 730
     assert records[0].metadata["provider"] == "FinMind"
     assert records[0].metadata["dataset"] == "TaiwanStockInstitutionalInvestorsBuySell"
     assert "FINMIND_API_TOKEN" not in encoded
@@ -126,6 +134,7 @@ def test_finmind_generic_dataset_adapter_emits_research_records_without_raw_toke
 
 def test_finmind_sponsorpro_storage_object_records_redact_signed_url() -> None:
     adapter = FinMindTaiwanBrokerBulkBackfillAdapter()
+    connector = adapter.connector()
     records = adapter.records_from_storage_objects_payload(
         {
             "data": [
@@ -141,6 +150,9 @@ def test_finmind_sponsorpro_storage_object_records_redact_signed_url() -> None:
     )
 
     encoded = json.dumps(records[0].to_dict(), ensure_ascii=False)
+    assert connector.metadata["raw_storage_policy"]["retention_policy_ref"] == (
+        "market-data://raw-retention/tw-broker-bulk-7y"
+    )
     assert records[0].metadata["signed_url_present"] is True
     assert records[0].metadata["signed_url_redacted"] is True
     assert records[0].metadata["raw_storage_partition"] == (
@@ -148,6 +160,34 @@ def test_finmind_sponsorpro_storage_object_records_redact_signed_url() -> None:
     )
     assert "raw-signed-token" not in encoded
     assert "https://signed.example.test" not in encoded
+
+
+def test_finmind_fetch_config_uses_provider_owned_adapter_contract(tmp_path) -> None:
+    adapter = FinMindTaiwanDatasetAdapter(max_records=5)
+    fetch_config = dict(adapter.fetch_config())
+    fetch_config["request"] = {
+        "dataset": "TaiwanStockPrice",
+        "payload": {"data": [{"date": "2026-06-08", "stock_id": "2330", "close": 955.0}]},
+        "run_date": "2026-06-08",
+    }
+
+    store = JsonlConfiguredConnectorStore(tmp_path / "connector_config.jsonl")
+    configured = store.upsert_config(adapter.connector(), fetch_config)
+    batch = ConfiguredConnectorFetcher(store).fetch_batch(
+        configured.connector.connector_id,
+        None,
+        trace_id="trace-finmind-provider-owned",
+    )
+
+    assert configured.fetch["mode"] == "provider_owned_adapter"
+    assert configured.fetch["adapter"] == "FinMindTaiwanDatasetAdapter.records_from_data_payload"
+    assert configured.fetch["adapter_config"]["secret_ref_id"] == "env://FINMIND_API_TOKEN"
+    assert configured.fetch["request"]["dataset"] == "TaiwanStockPrice"
+    assert len(batch.records) == 1
+    assert batch.records[0].metadata["provider_owned_adapter"] == (
+        "FinMindTaiwanDatasetAdapter.records_from_data_payload"
+    )
+    assert batch.records[0].metadata["ingest_job"]["dataset"] == "TaiwanStockPrice"
 
 
 # ---------------------------------------------------------------------------
@@ -245,25 +285,27 @@ def test_live_fetcher_dataset_returns_payload_and_quota_meta(
     assert "valid-token" not in json.dumps(quota_meta)
 
 
-def test_live_fetcher_redacts_token_from_request_url(
+def test_live_fetcher_sends_token_in_authorization_header_not_request_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("FINMIND_API_TOKEN", "secret-token-value")
     price_body = {"msg": "success", "status": 200, "data": []}
     mock_resp = _mock_http_response(price_body)
 
-    captured_urls: list[str] = []
+    captured_requests: list[urllib.request.Request] = []
 
     def capture_urlopen(request: urllib.request.Request, *, timeout: float) -> MagicMock:
-        captured_urls.append(request.full_url)
+        captured_requests.append(request)
         return mock_resp
 
     fetcher = FinMindLiveFetcher()
     with patch("urllib.request.urlopen", side_effect=capture_urlopen):
         payload, quota_meta = fetcher.fetch_dataset("TaiwanStockPrice", symbol="2330")
 
-    # The live URL carries the token, but the stored quota_meta URL must not
-    assert any("secret-token-value" in u for u in captured_urls), "live URL should contain token"
+    assert payload["status"] == 200
+    headers = {key.lower(): value for key, value in captured_requests[0].header_items()}
+    assert headers["authorization"] == "Bearer secret-token-value"
+    assert all("secret-token-value" not in request.full_url for request in captured_requests)
     assert "secret-token-value" not in quota_meta["request_url"]
     assert "secret-token-value" not in json.dumps(quota_meta)
 
@@ -445,4 +487,3 @@ def test_fetch_plan_symbols_are_uppercased() -> None:
 def test_fetch_plan_empty_tiers_produce_no_specs() -> None:
     plan = build_finmind_fetch_plan({}, "2026-06-08")
     assert plan == []
-

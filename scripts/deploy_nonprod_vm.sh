@@ -36,6 +36,7 @@ DEV_MANAGEMENT_AI_DB_NAME="${DEV_MANAGEMENT_AI_DB_NAME:-pantheon}"
 DEV_MANAGEMENT_AI_DATABASE_URL="${DEV_MANAGEMENT_AI_DATABASE_URL:-}"
 DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
+PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-true}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
@@ -254,6 +255,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_stub_capabilities_configured=$([[ -n "${PANTHEON_BFF_STUB_CAPABILITIES:-}" ]] && echo true || echo false)"
   info "dev_status_root_host=${PANTHEON_STATUS_ROOT_HOST:-}"
   info "dev_status_root_container=${PANTHEON_STATUS_ROOT_CONTAINER:-}"
+  info "dev_docker_prune=${PANTHEON_DEV_DOCKER_PRUNE}"
   info "management_ai_store_backend=${MANAGEMENT_AI_STORE_BACKEND:-}"
   info "management_ai_store_schema=${MANAGEMENT_AI_STORE_SCHEMA:-}"
   info "management_ai_database_user=${DEV_MANAGEMENT_AI_DB_USER}"
@@ -315,6 +317,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_BFF_STUB_CAPABILITIES=$(shell_quote "${PANTHEON_BFF_STUB_CAPABILITIES:-}")"
   command_prefix+=" PANTHEON_STATUS_ROOT_HOST=$(shell_quote "${PANTHEON_STATUS_ROOT_HOST:-}")"
   command_prefix+=" PANTHEON_STATUS_ROOT_CONTAINER=$(shell_quote "${PANTHEON_STATUS_ROOT_CONTAINER:-}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-true}")"
   command_prefix+=" MANAGEMENT_AI_STORE_BACKEND=$(shell_quote "${MANAGEMENT_AI_STORE_BACKEND:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_SCHEMA=$(shell_quote "${MANAGEMENT_AI_STORE_SCHEMA:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
@@ -746,6 +749,35 @@ dump_dev_root_failure_diagnostics() {
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 postgres || true
 }
 
+docker_storage_diagnostics() {
+  local label="$1"
+
+  info "docker storage diagnostics (${label}): filesystem usage"
+  df -h . /var/lib/docker /var/lib/containerd 2>/dev/null || df -h . || true
+  info "docker storage diagnostics (${label}): docker system df"
+  docker system df || true
+}
+
+prune_dev_docker_storage_for_build() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
+    return
+  fi
+
+  if [[ "${PANTHEON_DEV_DOCKER_PRUNE:-true}" != "true" ]]; then
+    info "dev Docker prune disabled before root build"
+    docker_storage_diagnostics "before build"
+    return
+  fi
+
+  docker_storage_diagnostics "before prune"
+  info "pruning dev Docker build cache and unused containers/images before root build"
+  docker builder prune -af || true
+  docker container prune -f || true
+  docker image prune -af || true
+  docker system prune -f || true
+  docker_storage_diagnostics "after prune"
+}
+
 cd "${PANTHEON_REMOTE_DIR}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -774,6 +806,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ensure_dev_management_ai_postgres_role
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
+    prune_dev_docker_storage_for_build
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     PANTHEON_ENV=dev \
