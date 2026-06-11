@@ -7,14 +7,21 @@ Do not read `current-work.md` by default for implementation context.
 ## Task
 - Title: Implement TWSE/TPEx official market-data adapter and scheduler path
 - Status: todo
-- Owner: Auto Worker
-- Reviewer: Codex
+- Owner: Codex
+- Reviewer: Claude2
 - Phase: DATASTRAT market-data completion
 - Last update: 2026-06-11T00:00:00Z
-- Next: Build `TaiwanOfficialMarketDatasetAdapter` and enable official daily price/chip summaries.
+- Next: Auto-reassigned DATASTRAT-MARKETDATA-TW-OFFICIAL-002 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.
 
 ## Summary
-Make TWSE/TPEx official public data a real source-ingest connector. Cover daily price baseline for all active-universe tiers and official chip summaries for core/candidate symbols.
+Make TWSE/TPEx official public data a real source-ingest connector. Cover daily
+price baseline for all active-universe tiers and official chip summaries for
+core/candidate symbols.
+
+The worker dispatch summary mentioned TDCC and TAIFEX as Taiwan official public
+sources. The canonical market-data completion plan keeps TDCC holdings and
+TAIFEX futures/options chip in `DATASTRAT-MARKETDATA-TW-REMAINING-007`; this
+task should inventory those follow-up surfaces but not claim their fetch path.
 
 ## Dependencies
 - DATASTRAT-MARKETDATA-FOUNDATION-001: todo · Adapter dispatch, storage, health, and scheduler bridge
