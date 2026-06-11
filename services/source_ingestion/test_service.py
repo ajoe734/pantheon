@@ -319,7 +319,8 @@ def test_registry_exposes_connector_status_policy_and_provider_examples(client) 
     }
     catalog = body["financial_data_source_catalog"]
     assert catalog["schema_version"] == "financial_data_source_catalog.v1"
-    assert catalog["summary"]["data_source_count"] == 7
+    assert catalog["summary"]["data_source_count"] == len(catalog["entries"])
+    assert catalog["summary"]["data_source_count"] >= 10
     assert "FinMind" in catalog["summary"]["providers"]
     assert "TEJ" in catalog["summary"]["providers"]
     assert body["active_universe_policy"]["schema_version"] == "active_universe_scheduling_policy.v1"
