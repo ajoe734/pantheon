@@ -73,7 +73,7 @@ def test_provider_examples_share_configured_fetch_contract(tmp_path) -> None:
         connector = provider.connector()
         config = store.upsert_config(connector, provider.fetch_config())
         assert config.connector.connector_id == connector.connector_id
-        assert config.fetch["mode"] in {"static_records", "external_feed"}
+        assert config.fetch["mode"] in {"static_records", "external_feed", "provider_owned_adapter"}
 
     replayed = JsonlConfiguredConnectorStore(tmp_path / "connector_config.jsonl")
     assert {config.connector.connector_id for config in replayed.list_configs()} == {
@@ -130,5 +130,15 @@ def test_fetch_config_validation_rejects_unsafe_urls_secrets_and_overlarge_paylo
                 "url": "https://feeds.example.test/feed.json",
                 "allowed_url_prefixes": ["https://feeds.example.test/"],
                 "timeout_seconds": 31,
+            },
+        )
+
+    with pytest.raises(SourceEvidenceError, match="not allowlisted"):
+        store.upsert_config(
+            connector,
+            {
+                "mode": "provider_owned_adapter",
+                "adapter": "os.system",
+                "request": {},
             },
         )

@@ -87,6 +87,9 @@ class TejTableSpec:
     source_category: str
     data_range: str | None = None
     description: str | None = None
+    license_scope: str = "vendor_research"
+    entitlement_tag: str | None = None
+    point_in_time_available: bool = True
 
     @property
     def dataset_code(self) -> str:
@@ -102,6 +105,9 @@ class TejTableSpec:
             "source_category": self.source_category,
             "data_range": self.data_range,
             "description": self.description,
+            "license_scope": self.license_scope,
+            "entitlement_tag": self.entitlement_tag,
+            "point_in_time_available": self.point_in_time_available,
         }
 
 
@@ -323,7 +329,7 @@ class TaiwanMarketClient:
             category="financials",
             source_type="filing",
             endpoint_path="t56sb31_q1",
-            tags=("mops", "restatement"),
+            tags=("mops", "restatement", "correction"),
         ),
         MopsRouteSpec(
             route_id="t05st09_2",
@@ -428,6 +434,39 @@ class TaiwanMarketClient:
         "TAOPBAS": "derivatives",
         "TAOPTION": "derivatives",
     }
+
+    TEJ_PAID_BACKFILL_TABLES: tuple[TejTableSpec, ...] = (
+        TejTableSpec(
+            db_code="TWN",
+            table_code="APRCD1",
+            title_zh="TQuant historical daily price",
+            group_name="TQuant historical market data",
+            source_category="daily_price",
+            data_range="licensed_history",
+            description="Paid TEJ/TQuant daily price history for gaps older than public or FinMind coverage.",
+            entitlement_tag="tej-tquant-history",
+        ),
+        TejTableSpec(
+            db_code="TWN",
+            table_code="AMTOP1",
+            title_zh="Broker major participant summary",
+            group_name="Taiwan broker trading",
+            source_category="broker_top",
+            data_range="licensed_history",
+            description="Paid broker major participant gap-fill candidate, only when licensed.",
+            entitlement_tag="tej-broker-amtop1",
+        ),
+        TejTableSpec(
+            db_code="TWN",
+            table_code="ABSR20",
+            title_zh="Top20 branch summary",
+            group_name="Taiwan broker trading",
+            source_category="broker_top",
+            data_range="licensed_history",
+            description="Paid top20 branch summary gap-fill candidate, only when licensed.",
+            entitlement_tag="tej-broker-absr20",
+        ),
+    )
 
     SOURCE_SPECS = {
         "twse": TaiwanSourceSpec(
@@ -639,6 +678,20 @@ class TaiwanMarketClient:
         payload = self.get_json("tej", self.TEJ_TRIAL_CATALOG_PATH)
         return self.tej_trial_table_inventory_from_payload(payload)
 
+    def tej_paid_backfill_table_catalog(
+        self,
+        *,
+        purchased_table_allowlist: Sequence[str] | None = None,
+    ) -> tuple[TejTableSpec, ...]:
+        if not purchased_table_allowlist:
+            return self.TEJ_PAID_BACKFILL_TABLES
+        allowlist = {str(item).strip().upper() for item in purchased_table_allowlist if str(item).strip()}
+        return tuple(
+            spec
+            for spec in self.TEJ_PAID_BACKFILL_TABLES
+            if spec.dataset_code.upper() in allowlist or spec.table_code.upper() in allowlist
+        )
+
     def tej_trial_table_inventory_from_payload(self, payload: Mapping[str, Any]) -> tuple[TejTableSpec, ...]:
         tables = payload.get("tables")
         if not isinstance(tables, list):
@@ -659,6 +712,7 @@ class TaiwanMarketClient:
                     source_category=self.TEJ_TRIAL_TABLE_CATEGORIES.get(table_code, "vendor_reference"),
                     data_range=str(table.get("dataRange") or "").strip() or None,
                     description=str(table.get("description") or "").strip() or None,
+                    entitlement_tag="tej-trial-catalog",
                 )
             )
         return tuple(specs)
@@ -760,19 +814,42 @@ class TaiwanMarketClient:
         *,
         dataset_code: str,
         api_endpoint: str = "tej://dataset",
+        table_code: str | None = None,
+        license_scope: str = "vendor_research",
+        available_time: str | None = None,
+        point_in_time_available: bool = True,
     ) -> TaiwanResearchDatasetRecord:
         metadata = self.build_metadata("tej", api_endpoint)
         symbol = str(_first_present(record, "coid", "symbol", "股票代號") or "")
         as_of_date = str(_first_present(record, "mdate", "date", "資料日") or "")
         if not symbol or not as_of_date:
             raise ValueError("TEJ dataset requires symbol and as_of_date")
-        values = {key: value for key, value in record.items() if key not in {"coid", "symbol", "股票代號", "mdate", "date", "資料日"}}
+        resolved_table_code = str(table_code or dataset_code.strip("/").split("/")[-1]).strip()
+        resolved_available_time = str(
+            available_time
+            or _first_present(record, "available_time", "available_at", "pub_date", "mdate", "date", "資料日")
+            or as_of_date
+        )
+        values = {
+            key: value
+            for key, value in record.items()
+            if key not in {"coid", "symbol", "股票代號", "mdate", "date", "資料日", "available_time", "available_at"}
+        }
         return TaiwanResearchDatasetRecord(
             dataset_code=dataset_code,
             symbol=symbol,
             as_of_date=as_of_date,
             values=values,
-            source_metadata={"raw_record": dict(record)},
+            source_metadata={
+                "raw_record": dict(record),
+                "provider": "TEJ API",
+                "dataset_code": dataset_code,
+                "table_code": resolved_table_code,
+                "license_scope": str(license_scope),
+                "available_time": resolved_available_time,
+                "point_in_time_available": bool(point_in_time_available),
+                "access_scope": ["research"],
+            },
             governance_metadata=metadata.to_dict(),
         )
 

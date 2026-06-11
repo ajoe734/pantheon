@@ -207,7 +207,25 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         cadence="10m_to_30m",
         priority=20,
         reason="cheap news metadata for symbols still under research",
-        metadata={"detail_level": "rss_metadata", "archive_behavior": "skip"},
+        metadata={
+            "detail_level": "rss_metadata",
+            "archive_behavior": "skip",
+            "full_text_allowed_by_default": False,
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="tw-anue-news-rss",
+        dataset="tw_news_metadata",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="10m_to_30m",
+        priority=21,
+        reason="secondary public Taiwan finance news metadata for active research symbols",
+        metadata={
+            "detail_level": "rss_metadata",
+            "archive_behavior": "skip",
+            "full_text_allowed_by_default": False,
+            "feed_url_configurable": True,
+        },
     ),
     SourceUpdateRule(
         connector_id="tw-mops-official-disclosures",
@@ -219,21 +237,40 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         metadata={
             "detail_level": "official_event_metadata",
             "source_role": "official_reference",
-            "storage_targets": ["raw/mops", "normalized/tw_news_event"],
+            "normalized_target": "tw_material_event",
+            "storage_targets": ["raw/mops", "normalized/tw_material_event"],
             "archive_behavior": "material_events_only",
         },
     ),
     SourceUpdateRule(
         connector_id="tw-mops-official-disclosures",
-        dataset="tw_financial_fundamentals",
+        dataset="tw_monthly_revenue",
         eligible_tiers=(UniverseTier.CORE,),
-        cadence="daily_scan_monthly_quarterly_events",
+        cadence="daily_scan_monthly_event_facts",
         priority=30,
-        reason="core universe keeps full MOPS monthly revenue and quarterly filing refresh",
+        reason="core universe keeps full MOPS monthly revenue refresh from official disclosure routes",
         metadata={
-            "datasets": ["tw_monthly_revenue", "tw_financial_statement"],
+            "normalized_target": "tw_monthly_revenue",
             "source_role": "official_reference",
-            "storage_targets": ["normalized/tw_monthly_revenue", "normalized/tw_financial_statement"],
+            "storage_targets": ["normalized/tw_monthly_revenue"],
+            "backup_source": "TEJ research-grade fallback only",
+            "candidate_behavior": "defer_until_promoted_to_core",
+            "archive_behavior": "skip_except_material_events",
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="tw-mops-official-disclosures",
+        dataset="tw_financial_statement",
+        eligible_tiers=(UniverseTier.CORE,),
+        cadence="daily_scan_quarterly_event_facts",
+        priority=31,
+        reason="core universe keeps MOPS financial statement and restatement/correction route refresh",
+        metadata={
+            "normalized_target": "tw_financial_statement",
+            "source_role": "official_reference",
+            "storage_targets": ["normalized/tw_financial_statement"],
+            "restatement_correction_gap_report": "mops_restatement_correction_gap_report.v1",
+            "backup_source": "TEJ research-grade fallback only",
             "candidate_behavior": "defer_until_promoted_to_core",
             "archive_behavior": "skip_except_material_events",
         },
@@ -269,6 +306,22 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         },
     ),
     SourceUpdateRule(
+        connector_id="tw-tej-research-datasets",
+        dataset="tw_paid_historical_gap_fill",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="manual_one_time_historical_backfill",
+        priority=220,
+        reason="TEJ paid tables fill older or vendor-specific Taiwan gaps only after public, FinMind, and Yahoo sources are exhausted",
+        metadata={
+            "candidate_dataset_codes": ["TWN/APRCD1", "TWN/AMTOP1", "TWN/ABSR20"],
+            "normalization_targets": ["tw_price_daily", "tw_broker_top", "tw_financial_statement"],
+            "purchased_table_allowlist_required": True,
+            "credential_secret_ref_id": "env://TEJ_API_KEY",
+            "archive_behavior": "gap_report_selected_price_only",
+            "run_by_default": False,
+        },
+    ),
+    SourceUpdateRule(
         connector_id="us-sec-edgar-filings",
         dataset="sec_filing_event",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
@@ -297,6 +350,40 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "symbol_scope": "global_no_symbol_filter",
             "storage_targets": ["normalized/macro_fred_observation", "features/macro_regime_features"],
             "archive_behavior": "not_symbol_scoped",
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="us-finra-short-sale",
+        dataset="us_short_volume_daily",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="daily_after_finra_publication_window",
+        market="US",
+        priority=85,
+        max_symbols_per_run=500,
+        reason="FINRA public daily short-volume files provide US short-sale pressure context for active research symbols",
+        metadata={
+            "detail_level": "daily_short_volume",
+            "source_role": "public_short_sale_reference",
+            "storage_targets": ["raw/finra/regsho", "normalized/us_short_volume_daily"],
+            "expected_publication_delay_hours": 26,
+            "archive_behavior": "skip",
+        },
+    ),
+    SourceUpdateRule(
+        connector_id="us-stooq-daily-ohlcv",
+        dataset="us_price_daily",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
+        cadence="daily_after_close",
+        market="US",
+        priority=95,
+        max_symbols_per_run=200,
+        reason="Stooq is the public US daily OHLCV fallback only after runtime endpoint verification",
+        metadata={
+            "detail_level": "daily_ohlcv_public_fallback",
+            "source_role": "disabled_public_fallback_until_runtime_smoke",
+            "storage_targets": ["raw/stooq", "normalized/us_price_daily", "features/us_returns"],
+            "disabled_reason": "stooq_endpoint_unverified_2026-06-11",
+            "archive_behavior": "daily_price_only_when_enabled",
         },
     ),
 )
@@ -425,6 +512,84 @@ def build_active_universe_update_plan(
             "candidate_count": len(members_by_tier[UniverseTier.CANDIDATE.value]),
             "archive_count": len(members_by_tier[UniverseTier.ARCHIVE.value]),
             "archive_detail_updates_skipped": sorted(skipped_archives),
+        },
+    }
+
+
+def build_active_universe_job_fanout(
+    members: Sequence[ActiveUniverseMember | Mapping[str, Any]],
+    *,
+    rules: Sequence[SourceUpdateRule | Mapping[str, Any]] = DEFAULT_SOURCE_UPDATE_RULES,
+    run_date: str,
+    default_max_symbols_per_job: int = 50,
+) -> dict[str, Any]:
+    if default_max_symbols_per_job < 1:
+        raise ValueError("default_max_symbols_per_job must be >= 1")
+    normalized_members = tuple(_member(member) for member in members)
+    normalized_rules = tuple(_rule(rule) for rule in rules)
+    plan = build_active_universe_update_plan(normalized_members, rules=normalized_rules)
+
+    jobs: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for rule in sorted(normalized_rules, key=lambda item: (item.priority, item.connector_id, item.dataset)):
+        eligible = [
+            member
+            for member in normalized_members
+            if member.market == rule.market and member.tier in set(rule.eligible_tiers)
+        ]
+        skipped.extend(
+            {
+                "symbol": member.symbol,
+                "market": member.market,
+                "tier": member.tier.value,
+                "connector_id": rule.connector_id,
+                "dataset": rule.dataset,
+                "reason": "not-in-universe",
+            }
+            for member in normalized_members
+            if member.market == rule.market and member.tier not in set(rule.eligible_tiers)
+        )
+        symbols = _unique_symbols(member.symbol for member in eligible)
+        symbol_scope = str(rule.metadata.get("symbol_scope") or "").strip()
+        if symbol_scope == "global_no_symbol_filter":
+            symbols = []
+            batches = [[]]
+        elif symbols:
+            batch_size = int(rule.max_symbols_per_run or default_max_symbols_per_job)
+            batches = [symbols[index : index + batch_size] for index in range(0, len(symbols), batch_size)]
+        else:
+            batches = []
+
+        for batch_index, batch in enumerate(batches, start=1):
+            jobs.append(
+                {
+                    "schema_version": "active_universe_ingest_job.v1",
+                    "connector_id": rule.connector_id,
+                    "dataset": rule.dataset,
+                    "run_date": run_date,
+                    "market": rule.market,
+                    "cadence": rule.cadence,
+                    "priority": rule.priority,
+                    "symbols": list(batch),
+                    "symbol_count": len(batch),
+                    "batch_index": batch_index,
+                    "batch_count": len(batches),
+                    "eligible_tiers": [tier.value for tier in rule.eligible_tiers],
+                    "metadata": dict(rule.metadata),
+                }
+            )
+
+    return {
+        "schema_version": "active_universe_ingest_fanout.v1",
+        "run_date": run_date,
+        "plan": plan,
+        "jobs": jobs,
+        "skipped": skipped,
+        "summary": {
+            "job_count": len(jobs),
+            "skipped_count": len(skipped),
+            "connector_count": len({job["connector_id"] for job in jobs}),
+            "default_max_symbols_per_job": default_max_symbols_per_job,
         },
     }
 

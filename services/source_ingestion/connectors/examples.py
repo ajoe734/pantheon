@@ -24,7 +24,8 @@ from .finmind_taiwan import (
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistProvider
 from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
-from .yahoo_taiwan import YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
+from .taiwan_official import TaiwanOfficialMarketDatasetAdapter
+from .yahoo_taiwan import AnueTaiwanRssAdapter, YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
 
 
 @dataclass(frozen=True)
@@ -265,6 +266,7 @@ def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
                 tags=("example", "taiwan", "mops", "official_reference", "filing"),
             ),
         ),
+        TaiwanOfficialMarketDatasetAdapter(),
         TejSourceIngestAdapter(
             connector_id="example-tw-tej-research-datasets",
             source_metadata=SourceMetadata(
@@ -321,6 +323,15 @@ def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
                 homepage_url="https://tw.stock.yahoo.com/",
                 owner="Yahoo Taiwan Stock",
                 tags=("example", "taiwan", "yahoo", "rss", "news"),
+            ),
+        ),
+        AnueTaiwanRssAdapter(
+            connector_id="example-tw-anue-news-rss",
+            source_metadata=SourceMetadata(
+                display_name="Anue Cnyes news RSS",
+                homepage_url="https://news.cnyes.com/",
+                owner="Anue Cnyes",
+                tags=("example", "taiwan", "anue", "cnyes", "rss", "news"),
             ),
         ),
     )

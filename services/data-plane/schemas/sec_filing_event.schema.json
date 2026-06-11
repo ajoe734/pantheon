@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecFilingEvent",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_table",
+    "provider",
+    "cik",
+    "accession_number",
+    "form_type",
+    "filing_date",
+    "available_time"
+  ],
+  "properties": {
+    "schema_version": {"const": "sec_filing_event.v1"},
+    "target_table": {"const": "sec_filing_event"},
+    "provider": {"const": "SEC EDGAR"},
+    "cik": {"type": "string", "pattern": "^\\d{10}$"},
+    "symbol": {"type": ["string", "null"]},
+    "symbol_canonical": {"type": ["string", "null"]},
+    "company_name": {"type": ["string", "null"]},
+    "accession_number": {"type": "string"},
+    "form_type": {"type": "string"},
+    "filing_date": {"type": "string"},
+    "report_date": {"type": ["string", "null"]},
+    "accepted_at": {"type": ["string", "null"]},
+    "available_time": {"type": "string"},
+    "primary_document_url": {"type": ["string", "null"]},
+    "raw_row": {"type": "object"}
+  },
+  "additionalProperties": true
+}
