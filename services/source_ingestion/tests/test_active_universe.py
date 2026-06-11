@@ -26,6 +26,9 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     yahoo_fallback = next(
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-broker-top15"
     )
+    tej_backfill = next(
+        update for update in plan["connector_updates"] if update["connector_id"] == "tw-tej-research-datasets"
+    )
     official_baseline = next(
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-twse-tpex-official-market"
     )
@@ -33,6 +36,16 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
         update
         for update in plan["connector_updates"]
         if update["connector_id"] == "tw-mops-official-disclosures" and update["dataset"] == "tw_material_events"
+    )
+    mops_revenue = next(
+        update
+        for update in plan["connector_updates"]
+        if update["connector_id"] == "tw-mops-official-disclosures" and update["dataset"] == "tw_monthly_revenue"
+    )
+    mops_financials = next(
+        update
+        for update in plan["connector_updates"]
+        if update["connector_id"] == "tw-mops-official-disclosures" and update["dataset"] == "tw_financial_statement"
     )
 
     assert plan["schema_version"] == "active_universe_update_plan.v1"
@@ -44,10 +57,18 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     assert dataset_update["dataset"] == "tw_daily_price_and_chip"
     assert rss_update["symbols"] == ["2330", "2317"]
     assert yahoo_fallback["metadata"]["fallback_for_connector_id"] == "tw-finmind-broker-daily-report"
+    assert tej_backfill["symbols"] == ["2330", "2317"]
+    assert tej_backfill["metadata"]["purchased_table_allowlist_required"] is True
+    assert tej_backfill["metadata"]["run_by_default"] is False
     assert official_baseline["symbols"] == ["2330", "2317", "6488"]
     assert official_baseline["metadata"]["archive_behavior"] == "daily_price_only"
     assert mops_events["symbols"] == ["2330", "2317", "6488"]
     assert mops_events["metadata"]["archive_behavior"] == "material_events_only"
+    assert mops_events["metadata"]["normalized_target"] == "tw_material_event"
+    assert mops_revenue["symbols"] == ["2330"]
+    assert mops_revenue["metadata"]["normalized_target"] == "tw_monthly_revenue"
+    assert mops_financials["symbols"] == ["2330"]
+    assert mops_financials["metadata"]["restatement_correction_gap_report"] == "mops_restatement_correction_gap_report.v1"
     assert plan["summary"]["archive_detail_updates_skipped"] == ["6488"]
     assert plan["summary"]["core_count"] == 1
     assert plan["summary"]["candidate_count"] == 1

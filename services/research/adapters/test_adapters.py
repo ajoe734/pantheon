@@ -398,19 +398,34 @@ class TestTaiwanMarketClient(unittest.TestCase):
         self.assertEqual(by_code["AIND"].dataset_code, "TRAIL/AIND")
         self.assertEqual(by_code["TATINST1"].source_category, "institutional_flow")
         self.assertEqual(by_code["TAIM1A"].source_category, "financials")
+        self.assertEqual(by_code["TAIM1A"].entitlement_tag, "tej-trial-catalog")
+
+    def test_tej_paid_backfill_table_catalog_filters_purchased_allowlist(self):
+        catalog = self.client.tej_paid_backfill_table_catalog()
+        filtered = self.client.tej_paid_backfill_table_catalog(purchased_table_allowlist=["AMTOP1", "TWN/ABSR20"])
+
+        self.assertIn("TWN/APRCD1", {spec.dataset_code for spec in catalog})
+        self.assertEqual({spec.dataset_code for spec in filtered}, {"TWN/AMTOP1", "TWN/ABSR20"})
+        self.assertTrue(all(spec.license_scope == "vendor_research" for spec in filtered))
 
     def test_tej_dataset_normalization_keeps_vendor_boundary(self):
         normalized = self.client.normalize_tej_dataset(
             {
                 "coid": "2330",
                 "mdate": "2026-04-24",
+                "available_time": "2026-04-25T01:00:00Z",
                 "pe_ratio": 18.2,
                 "foreign_holding_pct": 72.4,
             },
             dataset_code="TWN/APRCD1",
+            table_code="APRCD1",
         )
         self.assertEqual(normalized.dataset_code, "TWN/APRCD1")
         self.assertEqual(normalized.values["pe_ratio"], 18.2)
+        self.assertEqual(normalized.source_metadata["table_code"], "APRCD1")
+        self.assertEqual(normalized.source_metadata["license_scope"], "vendor_research")
+        self.assertEqual(normalized.source_metadata["available_time"], "2026-04-25T01:00:00Z")
+        self.assertTrue(normalized.source_metadata["point_in_time_available"])
         self.assertIn("does not replace official disclosure truth", normalized.governance_metadata["governance_context"])
 
 

@@ -46,6 +46,7 @@ from .active_universe import (
     ActiveUniverseMember,
     SourceUpdateRule,
     UniverseTier,
+    build_active_universe_job_fanout,
     build_active_universe_update_plan,
 )
 from .registry.proposals import (
@@ -77,10 +78,18 @@ from .external_sources import (
 )
 from .financial_source_catalog import financial_data_source_catalog_payload
 from .ingest_manager import IngestManager
+from .market_data_storage import MarketDataStorageWriter
 from .pg_store import build_source_evidence_repository
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
-from .source_health import SourceHealth, SourceHealthError, SourceHealthStore, SourceUsageDaily, SourceUsageDailyStore
+from .source_health import (
+    SourceHealth,
+    SourceHealthError,
+    SourceHealthStatus,
+    SourceHealthStore,
+    SourceUsageDaily,
+    SourceUsageDailyStore,
+)
 from .retirement_engine import RecommendationType, RetirementRecommendation, compute_recommendations
 
 
@@ -100,6 +109,7 @@ AUDIT_STORE_PATH = Path(os.getenv("SOURCE_INGEST_AUDIT_PATH", str(DATA_DIR / "so
 CONNECTOR_SCHEDULE_CONFIG_PATH = Path(os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_PATH", str(DATA_DIR / "connector_schedule.jsonl")))
 SOURCE_HEALTH_STORE_PATH = Path(os.getenv("SOURCE_INGEST_HEALTH_STORE_PATH", str(DATA_DIR / "source_health.jsonl")))
 SOURCE_USAGE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_USAGE_STORE_PATH", str(DATA_DIR / "source_usage_daily.jsonl")))
+MARKET_DATA_STORAGE_ROOT = Path(os.getenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(DATA_DIR / "market_data_store")))
 SOURCE_RECORD_SCHEMA_PATH = Path(__file__).with_name("source_record.schema.json")
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
@@ -125,6 +135,7 @@ scheduler = IngestionScheduler(manager=manager, store=store, dead_letter_queue=d
 replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
 source_health_store = SourceHealthStore.from_jsonl(SOURCE_HEALTH_STORE_PATH)
 source_usage_store = SourceUsageDailyStore.from_jsonl(SOURCE_USAGE_STORE_PATH)
+market_data_storage_writer = MarketDataStorageWriter(MARKET_DATA_STORAGE_ROOT)
 register_fastapi_health_routes(
     app,
     "pantheon-source-ingest",
@@ -144,6 +155,7 @@ register_fastapi_health_routes(
         "store_path": str(SCHEDULE_STORE_PATH),
         "connector_store_path": str(CONNECTOR_STORE_PATH),
         "source_evidence_path": str(SOURCE_EVIDENCE_STORE_PATH),
+        "market_data_storage_root": str(MARKET_DATA_STORAGE_ROOT),
         "dlq_path": str(DLQ_STORE_PATH),
         "audit_path": str(AUDIT_STORE_PATH),
         "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
@@ -251,7 +263,7 @@ class ConfiguredFetchRecordBody(StrictBaseModel):
 
 
 class ConfiguredFetchBody(StrictBaseModel):
-    mode: Literal["static_records", "external_feed"] = "static_records"
+    mode: Literal["static_records", "external_feed", "provider_owned_adapter"] = "static_records"
     records: list[ConfiguredFetchRecordBody] = Field(default_factory=list)
     url: str | None = None
     allowed_url_prefixes: list[str] = Field(default_factory=list)
@@ -260,6 +272,11 @@ class ConfiguredFetchBody(StrictBaseModel):
     max_records: int = 100
     default_access_scope: list[str] = Field(default_factory=lambda: ["public"])
     respect_robots_txt: bool = True
+    adapter: str | None = None
+    adapter_config: dict[str, Any] = Field(default_factory=dict)
+    request: dict[str, Any] = Field(default_factory=dict)
+    allow_empty: bool = False
+    empty_reason: str = ""
     next_watermark: str | None = None
     fail_until_attempt: int = 0
     failure_reason: str = "configured connector fetch failed"
@@ -269,6 +286,8 @@ class ConfiguredFetchBody(StrictBaseModel):
             "mode": self.mode,
             "records": [record.to_config() for record in self.records],
             "next_watermark": self.next_watermark,
+            "allow_empty": self.allow_empty,
+            "empty_reason": self.empty_reason,
             "fail_until_attempt": self.fail_until_attempt,
             "failure_reason": self.failure_reason,
         }
@@ -282,6 +301,15 @@ class ConfiguredFetchBody(StrictBaseModel):
                     "max_records": self.max_records,
                     "default_access_scope": self.default_access_scope,
                     "respect_robots_txt": self.respect_robots_txt,
+                }
+            )
+        if self.mode == "provider_owned_adapter":
+            payload.update(
+                {
+                    "adapter": self.adapter,
+                    "adapter_config": self.adapter_config,
+                    "request": self.request,
+                    "max_records": self.max_records,
                 }
             )
         return payload
@@ -372,6 +400,15 @@ class ActiveUniversePlanRequest(StrictBaseModel):
     rules: list[SourceUpdateRuleBody] = Field(default_factory=list)
 
 
+class ActiveUniverseScheduleRequest(StrictBaseModel):
+    members: list[ActiveUniverseMemberBody]
+    rules: list[SourceUpdateRuleBody] = Field(default_factory=list)
+    run_date: str
+    default_max_symbols_per_job: int = 50
+    enqueue: bool = True
+    trace_id: str | None = None
+
+
 class SetConnectorLifecycleRequest(StrictBaseModel):
     status: ConnectorStatus
     reason: str
@@ -433,6 +470,8 @@ def _fetch_policy_summary(fetch: dict[str, Any] | None) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "configured": True,
         "mode": mode,
+        "allow_empty": bool(fetch.get("allow_empty", False)),
+        "empty_reason": fetch.get("empty_reason"),
         "fail_until_attempt": int(fetch.get("fail_until_attempt") or 0),
     }
     if mode == "external_feed":
@@ -453,6 +492,16 @@ def _fetch_policy_summary(fetch: dict[str, Any] | None) -> dict[str, Any]:
         summary.update(
             {
                 "records_count": len(fetch.get("records") or []),
+                "next_watermark": fetch.get("next_watermark"),
+            }
+        )
+    elif mode == "provider_owned_adapter":
+        summary.update(
+            {
+                "adapter": fetch.get("adapter"),
+                "adapter_config_keys": sorted((fetch.get("adapter_config") or {}).keys()),
+                "request_keys": sorted((fetch.get("request") or {}).keys()),
+                "max_records": fetch.get("max_records"),
                 "next_watermark": fetch.get("next_watermark"),
             }
         )
@@ -749,8 +798,18 @@ def _inline_fetch(records: tuple[SourceRecord, ...], next_watermark: str | None)
     return lambda _watermark: IngestBatch(records=records, next_watermark=next_watermark)
 
 
-def _configured_fetch(connector_id: str):
-    return lambda watermark: configured_fetcher.fetch_batch(connector_id, watermark)
+def _configured_fetch(
+    connector_id: str,
+    *,
+    trace_id: str = "",
+    job_parameters: dict[str, Any] | None = None,
+):
+    return lambda watermark: configured_fetcher.fetch_batch(
+        connector_id,
+        watermark,
+        trace_id=trace_id,
+        job_parameters=job_parameters,
+    )
 
 
 def _append_audit_actions(actions: tuple[Any, ...]) -> None:
@@ -812,8 +871,51 @@ def _evidence_item_for_record(record: SourceRecord, run: Any) -> EvidenceItem:
     )
 
 
-def _persist_source_evidence_refs(result: Any) -> dict[str, Any]:
-    source_records = [record for record in result.records if not record.is_rejected]
+def _market_raw_refs_for_record(record: SourceRecord, storage_refs: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not storage_refs:
+        return []
+    dataset = str(record.metadata.get("dataset") or record.metadata.get("source_dataset") or "")
+    raw_refs = [dict(ref) for ref in storage_refs.get("raw_refs") or []]
+    if not dataset:
+        return raw_refs
+    matched = [ref for ref in raw_refs if str(ref.get("dataset") or "") == dataset]
+    return matched or raw_refs
+
+
+def _compact_bulk_market_record(record: SourceRecord, storage_refs: dict[str, Any] | None) -> SourceRecord:
+    if record.source_type.value != "market":
+        return record
+    metadata = dict(record.metadata)
+    removed = []
+    for key in ("raw_row", "raw_rows", "raw_payload", "payload", "body"):
+        if key in metadata:
+            metadata.pop(key, None)
+            removed.append(key)
+    raw_refs = _market_raw_refs_for_record(record, storage_refs)
+    if raw_refs:
+        metadata["raw_storage_refs"] = raw_refs
+    if removed:
+        metadata["bulk_payload_redacted_from_evidence"] = True
+        metadata["bulk_payload_redacted_fields"] = removed
+    return SourceRecord(
+        source_id=record.source_id,
+        connector_id=record.connector_id,
+        source_type=record.source_type.value,
+        title=record.title,
+        content_ref=record.content_ref,
+        status=record.status.value,
+        metadata=metadata,
+        trace_id=record.trace_id,
+        created_at=record.created_at,
+    )
+
+
+def _persist_source_evidence_refs(result: Any, storage_refs: dict[str, Any] | None = None) -> dict[str, Any]:
+    source_records = [
+        _compact_bulk_market_record(record, storage_refs)
+        for record in result.records
+        if not record.is_rejected
+    ]
     if not source_records:
         return {
             "source_ids": [],
@@ -905,6 +1007,121 @@ def _persist_source_evidence_refs(result: Any) -> dict[str, Any]:
     }
 
 
+def _persist_market_data_storage_refs(result: Any) -> dict[str, Any]:
+    connector = manager.get_connector(result.run.connector_id)
+    if connector is None:
+        return {
+            "schema_version": "market_data_storage_manifest.v1",
+            "ingest_run_id": result.run.ingest_run_id,
+            "raw_refs": [],
+            "normalized_refs": [],
+            "feature_refs": [],
+            "summary": {"raw_ref_count": 0, "normalized_ref_count": 0, "feature_ref_count": 0, "normalized_row_count": 0},
+        }
+    return market_data_storage_writer.write_run(result=result, connector=connector).to_dict()
+
+
+def _run_finished_at_iso(run: Any) -> str:
+    value = run.to_dict().get("finished_at") or run.to_dict().get("started_at")
+    return str(value or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+
+
+def _run_date(run: Any) -> str:
+    return _run_finished_at_iso(run)[:10]
+
+
+def _record_ingest_usage(connector_id: str, run: Any) -> None:
+    date = _run_date(run)
+    existing = source_usage_store.get(date, connector_id)
+    source_usage_store.upsert(
+        SourceUsageDaily(
+            date=date,
+            source_id=connector_id,
+            source_kind="data_source",
+            ingest_run_count=(existing.ingest_run_count if existing else 0) + 1,
+            query_count=existing.query_count if existing else 0,
+            search_hit_count=existing.search_hit_count if existing else 0,
+            persona_match_count=existing.persona_match_count if existing else 0,
+            strategy_seed_yield_count=existing.strategy_seed_yield_count if existing else 0,
+            strategy_promotion_count=existing.strategy_promotion_count if existing else 0,
+            experiment_dependency_count=existing.experiment_dependency_count if existing else 0,
+            active_strategy_dependency_count=existing.active_strategy_dependency_count if existing else 0,
+            cost_estimate=existing.cost_estimate if existing else None,
+        )
+    )
+
+
+def _health_status_for_run(run: Any) -> str:
+    if run.status.value == "completed":
+        return SourceHealthStatus.DEGRADED.value if run.rejected_count else SourceHealthStatus.OK.value
+    if run.status.value == "rejected":
+        return SourceHealthStatus.DEGRADED.value
+    return SourceHealthStatus.FAILED.value
+
+
+def _source_error_for_result(result: Any) -> str | None:
+    if result.run.status.value == "completed":
+        return None
+    if result.dlq_entries:
+        return str(result.dlq_entries[0].reason)
+    event_messages = [event.message for event in result.run.events if event.message]
+    return str(event_messages[-1]) if event_messages else f"source ingest run status={result.run.status.value}"
+
+
+def _provider_metadata_from_records(result: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for record in result.records:
+        record_metadata = dict(record.metadata)
+        for key in ("quota", "rate_limit", "provider_quota", "provider_rate_limit", "source_error"):
+            if key in record_metadata and key not in metadata:
+                metadata[key] = record_metadata[key]
+    return metadata
+
+
+def _update_source_health_and_usage(
+    *,
+    connector: SourceConnector,
+    result: Any,
+    storage_refs: dict[str, Any],
+) -> None:
+    finished_at = _run_finished_at_iso(result.run)
+    existing = source_health_store.get(connector.connector_id)
+    previous_failures = int((existing.metadata.get("failure_count") if existing else 0) or 0)
+    status = _health_status_for_run(result.run)
+    source_error = _source_error_for_result(result)
+    failure_count = previous_failures + (0 if result.run.status.value == "completed" else 1)
+    fetch_state = connector_store.get_fetch_state(connector.connector_id)
+    config = connector_store.get_config(connector.connector_id)
+    total_attempts = max(1, int(fetch_state.get("attempts") or 0))
+    failed_attempts = int(fetch_state.get("failed_attempts") or 0)
+    watermark = result.watermark.value if result.watermark else None
+    health = SourceHealth(
+        source_id=connector.connector_id,
+        source_kind="data_source",
+        status=status,
+        last_success_at=finished_at if result.run.status.value == "completed" else (existing.last_success_at if existing else None),
+        last_failure_at=finished_at if result.run.status.value != "completed" else (existing.last_failure_at if existing else None),
+        latest_watermark=watermark,
+        row_count_last_run=int(result.run.normalized_count or 0),
+        rejected_count_last_run=int(result.run.rejected_count or 0),
+        schema_hash=_connector_schema_hash(connector, config.fetch if config else None),
+        staleness_seconds=_connector_freshness_summary(connector.connector_id).get("staleness_seconds"),
+        error_rate_7d=min(1.0, failed_attempts / total_attempts),
+        cost_estimate_30d=existing.cost_estimate_30d if existing else None,
+        metadata={
+            **(dict(existing.metadata) if existing else {}),
+            "last_ingest_run_id": result.run.ingest_run_id,
+            "last_run_status": result.run.status.value,
+            "source_error": source_error,
+            "failure_count": failure_count,
+            "storage_refs": storage_refs,
+            **_provider_metadata_from_records(result),
+        },
+    )
+    source_health_store.upsert(health)
+    _record_ingest_usage(connector.connector_id, result.run)
+
+
 def _result_payload(result: Any, evidence_refs: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "run": result.run.to_dict(),
@@ -917,6 +1134,7 @@ def _result_payload(result: Any, evidence_refs: dict[str, Any] | None = None) ->
             "evidence_bundle_id": None,
             "knowledge_object_ids": [],
         },
+        "storage_refs": (evidence_refs or {}).get("storage_refs"),
         "dlq_entries": [entry.to_dict() for entry in result.dlq_entries],
         "audit_actions": [action.to_dict() for action in result.audit_actions],
         "frontier_id": getattr(result, "frontier_id", None),
@@ -940,7 +1158,10 @@ def _run_job(
         frontier_id=frontier_id,
     )
     _append_audit_actions(result.audit_actions)
-    evidence_refs = _persist_source_evidence_refs(result)
+    storage_refs = _persist_market_data_storage_refs(result)
+    evidence_refs = _persist_source_evidence_refs(result, storage_refs=storage_refs)
+    evidence_refs["storage_refs"] = storage_refs
+    _update_source_health_and_usage(connector=connector, result=result, storage_refs=storage_refs)
     if result.run.status.value == "completed":
         _notify_search_index_refresh(result.run.ingest_run_id)
     return result, evidence_refs
@@ -964,7 +1185,7 @@ def _run_ingest_request(request: TriggerIngestJobRequest) -> dict[str, Any]:
                     raise SourceEvidenceError("record source_type must match job connector")
             fetch_batch = _inline_fetch(records, request.next_watermark)
         else:
-            fetch_batch = _configured_fetch(connector.connector_id)
+            fetch_batch = _configured_fetch(connector.connector_id, trace_id=request.trace_id)
         result, evidence_refs = _run_job(
             connector=connector,
             trace_id=request.trace_id,
@@ -1017,7 +1238,11 @@ def _run_frontier_item(item: Any) -> tuple[Any, dict[str, Any], Any]:
             connector=connector,
             trace_id=item.trace_id or f"frontier-{item.frontier_id}",
             trigger_type=item.trigger_type,
-            fetch_batch=_configured_fetch(item.connector_id),
+            fetch_batch=_configured_fetch(
+                item.connector_id,
+                trace_id=item.trace_id or f"frontier-{item.frontier_id}",
+                job_parameters=dict(item.job_parameters),
+            ),
             frontier_id=item.frontier_id,
         )
     except Exception as exc:
@@ -1064,7 +1289,7 @@ def _replay_source_event(event: Any) -> str:
         connector=connector,
         trace_id=event.trace_id,
         trigger_type="dlq_replay",
-        fetch_batch=_configured_fetch(connector.connector_id),
+        fetch_batch=_configured_fetch(connector.connector_id, trace_id=event.trace_id),
     )
     if result.run.status.value != "completed":
         raise SourceEvidenceError(f"DLQ replay did not complete ingest run: {result.run.status.value}")
@@ -1158,6 +1383,7 @@ def health() -> dict[str, Any]:
         "store_path": str(SCHEDULE_STORE_PATH),
         "connector_store_path": str(CONNECTOR_STORE_PATH),
         "source_evidence_path": str(SOURCE_EVIDENCE_STORE_PATH),
+        "market_data_storage_root": str(MARKET_DATA_STORAGE_ROOT),
         "dlq_path": str(DLQ_STORE_PATH),
         "audit_path": str(AUDIT_STORE_PATH),
         "run_count": len(store.list_runs()),
@@ -1236,6 +1462,54 @@ def active_universe_plan(request: ActiveUniversePlanRequest) -> dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/source-ingest/active-universe/schedule")
+def active_universe_schedule(request: ActiveUniverseScheduleRequest) -> dict[str, Any]:
+    try:
+        rules = [rule.to_domain() for rule in request.rules] if request.rules else DEFAULT_SOURCE_UPDATE_RULES
+        fanout = build_active_universe_job_fanout(
+            [member.to_domain() for member in request.members],
+            rules=rules,
+            run_date=request.run_date,
+            default_max_symbols_per_job=request.default_max_symbols_per_job,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    enqueued: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = list(fanout["skipped"])
+    if request.enqueue:
+        now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        for job in fanout["jobs"]:
+            connector_id = str(job["connector_id"])
+            config = connector_store.get_config(connector_id)
+            if config is None:
+                skipped.append({**job, "reason": "connector-config-missing"})
+                continue
+            if config.connector.status == ConnectorStatus.DISABLED:
+                skipped.append({**job, "reason": "connector-disabled"})
+                continue
+            frontier = store.enqueue_frontier(
+                connector_id=connector_id,
+                trace_id=request.trace_id or f"active-universe-{connector_id}-{request.run_date}",
+                trigger_type="active_universe_scheduled",
+                max_attempts=FRONTIER_MAX_ATTEMPTS,
+                available_at=now_iso,
+                job_parameters=job,
+            )
+            enqueued.append(frontier.to_dict())
+
+    return {
+        **fanout,
+        "enqueued": enqueued,
+        "skipped": skipped,
+        "summary": {
+            **fanout["summary"],
+            "enqueued_count": len(enqueued),
+            "skipped_count": len(skipped),
+        },
+    }
 
 
 @app.get("/api/source-ingest/schemas/source-record")

@@ -28,6 +28,11 @@ from .finmind_taiwan import (
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistEntry, RepoAllowlistProvider
 from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
+from .taiwan_official import (
+    TAIWAN_OFFICIAL_ENDPOINTS,
+    TW_OFFICIAL_CONNECTOR_ID,
+    TaiwanOfficialMarketDatasetAdapter,
+)
 from .yahoo_taiwan import (
     YahooTaiwanBrokerTopAdapter,
     YahooTaiwanRssAdapter,
@@ -60,7 +65,10 @@ __all__ = [
     "RepoAllowlistEntry",
     "RepoAllowlistProvider",
     "StaticRecordsProviderExample",
+    "TAIWAN_OFFICIAL_ENDPOINTS",
+    "TW_OFFICIAL_CONNECTOR_ID",
     "MopsSourceIngestAdapter",
+    "TaiwanOfficialMarketDatasetAdapter",
     "TejSourceIngestAdapter",
     "YahooTaiwanBrokerTopAdapter",
     "YahooTaiwanRssAdapter",

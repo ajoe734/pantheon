@@ -216,8 +216,15 @@ def build_tej_raw_dataset(
     storage_ref: str,
     checksum: str,
     dataset_codes: list[str],
+    table_codes: list[str] | None = None,
+    license_scope: str = "vendor_research",
+    entitlement_scope: str | None = None,
+    purchased_table_allowlist: list[str] | None = None,
+    point_in_time_available: bool = True,
+    available_time_policy: str = "provider_available_time_or_ingest_time",
     frequency: str = "daily",
 ) -> RawDataset:
+    resolved_table_codes = list(table_codes or [str(code).strip("/").split("/")[-1] for code in dataset_codes])
     return RawDataset(
         dataset_id=dataset_id,
         source_class="research_grade",
@@ -233,6 +240,12 @@ def build_tej_raw_dataset(
             "dataset_type": "vendor_research_dataset",
             "frequency": frequency,
             "dataset_codes": list(dataset_codes),
+            "table_codes": resolved_table_codes,
+            "license_scope": license_scope,
+            "entitlement_scope": entitlement_scope,
+            "purchased_table_allowlist": list(purchased_table_allowlist or []),
+            "point_in_time_available": bool(point_in_time_available),
+            "available_time_policy": available_time_policy,
             "governed_role": "tw_research_grade_fundamentals_ownership_market_data",
             "does_not_replace_official_disclosure_truth": True,
         },
