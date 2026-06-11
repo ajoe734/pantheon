@@ -26,6 +26,9 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     yahoo_fallback = next(
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-broker-top15"
     )
+    tej_backfill = next(
+        update for update in plan["connector_updates"] if update["connector_id"] == "tw-tej-research-datasets"
+    )
     official_baseline = next(
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-twse-tpex-official-market"
     )
@@ -54,6 +57,9 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     assert dataset_update["dataset"] == "tw_daily_price_and_chip"
     assert rss_update["symbols"] == ["2330", "2317"]
     assert yahoo_fallback["metadata"]["fallback_for_connector_id"] == "tw-finmind-broker-daily-report"
+    assert tej_backfill["symbols"] == ["2330", "2317"]
+    assert tej_backfill["metadata"]["purchased_table_allowlist_required"] is True
+    assert tej_backfill["metadata"]["run_by_default"] is False
     assert official_baseline["symbols"] == ["2330", "2317", "6488"]
     assert official_baseline["metadata"]["archive_behavior"] == "daily_price_only"
     assert mops_events["symbols"] == ["2330", "2317", "6488"]

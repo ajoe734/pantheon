@@ -15,11 +15,13 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
     entries = {entry.data_source_id: entry for entry in initial_financial_data_source_entries()}
 
     assert payload["schema_version"] == "financial_data_source_catalog.v1"
-    assert {"FinMind", "TWSE/TPEx", "MOPS", "Yahoo Taiwan Stock", "SEC EDGAR", "FRED"} <= providers
-    assert payload["summary"]["data_source_count"] == 6
+    assert {"FinMind", "TWSE/TPEx", "MOPS", "TEJ", "Yahoo Taiwan Stock", "SEC EDGAR", "FRED"} <= providers
+    assert payload["summary"]["data_source_count"] == 7
     assert all(entry.source_kind == "data_source" for entry in entries.values())
     assert all(entry.lifecycle_state.value == "candidate" for entry in entries.values())
     assert entries["ds-finmind-tw-data"].metadata["template_status"] == "candidate_not_live_ingestion_claim"
+    assert entries["ds-tej-tw-research-backfill"].source_class.value == "vendor_backfill"
+    assert entries["ds-tej-tw-research-backfill"].metadata["purchased_table_allowlist_required"] is True
     assert entries["ds-yahoo-tw-news-broker"].metadata["not_official_reference_truth"] is True
 
 
@@ -28,6 +30,7 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     encoded = json.dumps(templates, sort_keys=True)
 
     assert "template-tw-finmind-datasets" in templates
+    assert "template-tw-tej-research-backfill" in templates
     assert "template-tw-twse-tpex-official-market" in templates
     assert "template-tw-mops-official-disclosures" in templates
     assert "template-tw-yahoo-broker-top15" in templates
@@ -35,6 +38,13 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert "template-us-fred-macro" in templates
     assert "raw-key" not in encoded
     assert templates["template-tw-finmind-broker-daily-report"]["fetch"]["normalized_target"] == "tw_broker_top"
+    tej_template = templates["template-tw-tej-research-backfill"]
+    assert tej_template["auth"]["secret_ref_id"] == "env://TEJ_API_KEY"
+    assert tej_template["fetch"]["allowlist_required"] is True
+    assert tej_template["fetch"]["credential_smoke"]["without_key_status"] == "credential_unavailable"
+    assert {"TWN/APRCD1", "TWN/AMTOP1", "TWN/ABSR20"} <= {
+        table["dataset_code"] for table in tej_template["fetch"]["candidate_tables"]
+    }
     assert templates["template-tw-yahoo-stock-rss"]["fetch"]["full_text_allowed_by_default"] is False
     assert templates["template-us-fred-macro"]["fetch"]["symbol_scope"] == "global_no_symbol_filter"
     mops_template = templates["template-tw-mops-official-disclosures"]
@@ -62,4 +72,5 @@ def test_catalog_embeds_active_universe_scheduling_policy() -> None:
     assert policy["summary"]["archive_baseline_rule_count"] >= 3
     assert "tw-twse-tpex-official-market" in policy["summary"]["archive_baseline_connector_ids"]
     assert "tw-finmind-broker-daily-report" in policy["summary"]["candidate_detail_connector_ids"]
+    assert "tw-tej-research-datasets" in policy["summary"]["candidate_detail_connector_ids"]
     assert payload["summary"]["active_universe_rule_count"] == policy["summary"]["rule_count"]

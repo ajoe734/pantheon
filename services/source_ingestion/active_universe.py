@@ -288,6 +288,22 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         },
     ),
     SourceUpdateRule(
+        connector_id="tw-tej-research-datasets",
+        dataset="tw_paid_historical_gap_fill",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="manual_one_time_historical_backfill",
+        priority=220,
+        reason="TEJ paid tables fill older or vendor-specific Taiwan gaps only after public, FinMind, and Yahoo sources are exhausted",
+        metadata={
+            "candidate_dataset_codes": ["TWN/APRCD1", "TWN/AMTOP1", "TWN/ABSR20"],
+            "normalization_targets": ["tw_price_daily", "tw_broker_top", "tw_financial_statement"],
+            "purchased_table_allowlist_required": True,
+            "credential_secret_ref_id": "env://TEJ_API_KEY",
+            "archive_behavior": "gap_report_selected_price_only",
+            "run_by_default": False,
+        },
+    ),
+    SourceUpdateRule(
         connector_id="us-sec-edgar-filings",
         dataset="sec_filing_event",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
