@@ -151,8 +151,13 @@ def test_mops_company_master_and_corporate_action_targets_are_normalized() -> No
 
 
 def test_tej_source_ingest_adapter_emits_research_market_records_without_raw_secret() -> None:
-    adapter = TejSourceIngestAdapter(connector_id="conn-tej-test", secret_ref_id="env://TEJ_API_KEY")
+    adapter = TejSourceIngestAdapter(
+        connector_id="conn-tej-test",
+        secret_ref_id="env://TEJ_API_KEY",
+        purchased_table_allowlist=("TWN/AMTOP1",),
+    )
     connector = adapter.connector()
+    fetch_config = adapter.fetch_config()
     table = TaiwanMarketClient().tej_trial_table_inventory_from_payload(
         {"tables": [{"tableName": "TATINST1", "cName": "三大法人買賣超", "groupName": "公司交易面資料"}]}
     )[0]
@@ -166,7 +171,59 @@ def test_tej_source_ingest_adapter_emits_research_market_records_without_raw_sec
     assert connector.source_type.value == "market"
     assert connector.auth_policy.secret_ref.secret_ref_id == "env://TEJ_API_KEY"
     assert connector.metadata["source_class"] == "research_grade"
+    assert connector.metadata["run_by_default"] is False
+    assert fetch_config["secret_ref_id"] == "env://TEJ_API_KEY"
+    assert fetch_config["allowlist_required"] is True
     assert records[0].content_ref.startswith("tej://TRAIL/TATINST1/2330/")
     assert records[0].metadata["source_class"] == "research_grade"
     assert records[0].metadata["dataset_code"] == "TRAIL/TATINST1"
+    assert records[0].metadata["table_code"] == "TATINST1"
+    assert records[0].metadata["license_scope"] == "vendor_research"
+    assert records[0].metadata["point_in_time_available"] is True
+    assert records[0].metadata["schema_hash"] == "tej_taiwan_research_dataset.v1"
     assert "TEJ_API_KEY" not in records[0].metadata["body"]
+
+
+def test_tej_adapter_reports_credential_unavailable_health_without_key() -> None:
+    adapter = TejSourceIngestAdapter(connector_id="conn-tej-test")
+
+    health = adapter.credential_health(api_key_available=False, checked_at="2026-06-11T00:00:00Z")
+
+    assert health.source_id == "conn-tej-test"
+    assert health.source_kind == "data_source"
+    assert health.status == "degraded"
+    assert health.metadata["reason"] == "credential_unavailable"
+    assert health.metadata["required_secret_ref_id"] == "env://TEJ_API_KEY"
+
+
+def test_tej_backfill_planner_requires_allowlisted_paid_table_and_keeps_secret_ref_only() -> None:
+    adapter = TejSourceIngestAdapter(
+        connector_id="conn-tej-test",
+        purchased_table_allowlist=("AMTOP1",),
+    )
+
+    ready_plan = adapter.plan_historical_backfill(
+        dataset_code="TWN/AMTOP1",
+        start_date="2020-01-01",
+        end_date="2020-01-31",
+        symbol_universe=["2330", "2317", "2330"],
+        entitlement_metadata={"quote_id": "tej-quote-2026-06", "purchased_table_allowlist": ["AMTOP1"]},
+    )
+    blocked_plan = adapter.plan_historical_backfill(
+        dataset_code="TWN/ABSR20",
+        start_date="2020-01-01",
+        end_date="2020-01-31",
+        symbol_universe=["2330"],
+        entitlement_metadata={"quote_id": "tej-quote-2026-06"},
+    )
+
+    assert ready_plan["schema_version"] == "tej_taiwan_backfill_plan.v1"
+    assert ready_plan["dataset_code"] == "TWN/AMTOP1"
+    assert ready_plan["table_code"] == "AMTOP1"
+    assert ready_plan["symbol_universe"] == ["2330", "2317"]
+    assert ready_plan["plan_state"] == "ready"
+    assert ready_plan["run_by_default"] is False
+    assert ready_plan["secret_ref_id"] == "env://TEJ_API_KEY"
+    assert ready_plan["jobs"][0]["license_scope"] == "vendor_research"
+    assert ready_plan["jobs"][0]["point_in_time_available"] is True
+    assert blocked_plan["plan_state"] == "requires_entitlement_confirmation"
