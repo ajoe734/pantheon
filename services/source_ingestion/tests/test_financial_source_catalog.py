@@ -37,6 +37,21 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert templates["template-tw-finmind-broker-daily-report"]["fetch"]["normalized_target"] == "tw_broker_top"
     assert templates["template-tw-yahoo-stock-rss"]["fetch"]["full_text_allowed_by_default"] is False
     assert templates["template-us-fred-macro"]["fetch"]["symbol_scope"] == "global_no_symbol_filter"
+    mops_template = templates["template-tw-mops-official-disclosures"]
+    assert mops_template["fetch"]["normalized_targets"] == [
+        "tw_material_event",
+        "tw_monthly_revenue",
+        "tw_financial_statement",
+        "tw_company_master",
+        "tw_corporate_action",
+    ]
+    assert mops_template["schedule"]["event_universe_tiers"] == [
+        "core_universe",
+        "candidate_universe",
+        "archive_universe",
+    ]
+    assert mops_template["schedule"]["fundamental_universe_tiers"] == ["core_universe"]
+    assert mops_template["fetch"]["restatement_correction_gap_report"] == "mops_restatement_correction_gap_report.v1"
 
 
 def test_catalog_embeds_active_universe_scheduling_policy() -> None:

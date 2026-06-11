@@ -323,7 +323,7 @@ class TaiwanMarketClient:
             category="financials",
             source_type="filing",
             endpoint_path="t56sb31_q1",
-            tags=("mops", "restatement"),
+            tags=("mops", "restatement", "correction"),
         ),
         MopsRouteSpec(
             route_id="t05st09_2",
