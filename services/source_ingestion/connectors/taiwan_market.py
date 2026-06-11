@@ -420,10 +420,13 @@ class MopsSourceIngestAdapter(SourceConnectorProvider):
     def fetch_config(self) -> Mapping[str, Any]:
         routes = TaiwanMarketClient.MOPS_RECOMMENDED_ROUTES
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "MopsSourceIngestAdapter.records_from_payload",
+            "adapter": "MopsSourceIngestAdapter.records_from_payload",
+            "adapter_config": {
+                "max_records": self.max_records,
+            },
+            "request": {},
             "recommended_routes": [route.to_dict() for route in routes],
             "normalized_targets": sorted({_route_normalized_target(route) for route in routes}),
             "route_update_strategy": list(_route_update_strategy(routes)),
@@ -583,10 +586,14 @@ class TejSourceIngestAdapter(SourceConnectorProvider):
             purchased_table_allowlist=self.purchased_table_allowlist
         )
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "TejSourceIngestAdapter.records_from_rows",
+            "adapter": "TejSourceIngestAdapter.records_from_rows",
+            "adapter_config": {
+                "secret_ref_id": self.secret_ref_id,
+                "max_records": self.max_records,
+            },
+            "request": {},
             "base_url": "https://api.tej.com.tw",
             "metadata_fetcher": "TaiwanMarketClient.fetch_tej_table_metadata",
             "dataset_fetcher": "TaiwanMarketClient.fetch_tej_dataset",
