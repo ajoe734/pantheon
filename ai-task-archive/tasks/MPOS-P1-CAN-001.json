@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-CAN-001",
+  "archived_at": "2026-06-09T16:31:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-CAN-001",
+    "title": "Complete canary execution mode across artifact loader and runtime binding",
+    "summary_zh": "補齊 canary 在 artifact loader、RuntimeBinding、runtime-manager、telemetry identity check 裡的一致 execution mode，不再只靠 paper/live 模糊路徑。",
+    "phase": "EPIC MPOS / P1 execution telemetry and canary",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P1-GOV-001"
+    ],
+    "artifacts": [
+      "services/execution/artifact_loader.py",
+      "services/execution/runtime-manager/runtime_binding.py",
+      "services/runtime-manager/service.py",
+      "services/telemetry/telemetry_event.schema.json",
+      "services/telemetry/ingest_svc.py"
+    ],
+    "acceptance": [
+      "Canary is an explicit load and runtime mode wherever paper and live are represented",
+      "Canary scale guard and rollback target are enforced before runtime binding",
+      "Telemetry events for canary validate binding stage and plan identity",
+      "Tests cover canary allowed load canary scale violation and canary rollback target missing"
+    ],
+    "next": "Closeout complete: implementation PR #1245 and closeout PR #1246 merged into dev; focused validation re-run locally (239 passed); GitHub required checks green.",
+    "last_update": "2026-06-09T16:31:32Z",
+    "auto_created_by": "codex_mpos_gap_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過：四項驗收標準全部達成",
+      "canary scale guard、rollback target 強制執行、telemetry binding identity cross-check 均通過測試 (239 passed)"
+    ],
+    "review_file": "/tmp/mpos-p1-can-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T16:31:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-can-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-CAN-001",
+      "git_clean_required": false,
+      "commit": "6c4d5f1d5bc9b1403b6d2751f55fd936ee9b0d7e",
+      "commit_subject": "MPOS-P1-CAN-001: refresh closeout record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MPOS-P1-CAN-001",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest -q services/execution/test_artifact_loader.py services/execution/runtime-manager/test_runtime_binding.py services/runtime-manager/test_runtime_manager.py services/telemetry/test_capture.py services/telemetry/test_ingest_shock_absorption.py services/telemetry/test_paper_runtime_ingest_contract.py services/telemetry/test_tel001_rebaseline_schema.py services/telemetry/test_main_routes.py tests/e2e/test_canary_telemetry_to_evolution.py -> 239 passed; PR #1246 prior push checks passed except cancelled duplicate Smoke acceptance after checkout stall"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-CAN-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "809b14547e81421a80b6af751593ca4e218917cf",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-CAN-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned MPOS-P1-CAN-001 away from unavailable lane Codex (disabled, sidecar-only, or auth-down); reviewer Codex -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-09T14:40:36Z",
+      "resolved_at": "2026-06-09T15:49:54Z"
+    },
+    {
+      "task_id": "MPOS-P1-CAN-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-09T15:49:54Z",
+      "resolved_at": "2026-06-09T15:49:58Z"
+    },
+    {
+      "task_id": "MPOS-P1-CAN-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation merged in PR #1245 (merge b5e2a258391424a80eaeb40172819d45317324c6; head 52419772d504c611914303a870771fd1f44932b1). Focused validation passed: python3 -m pytest -q services/execution/test_artifact_loader.py services/execution/runtime-manager/test_runtime_binding.py services/runtime-manager/test_runtime_manager.py services/telemetry/test_capture.py services/telemetry/test_ingest_shock_absorption.py services/telemetry/test_paper_runtime_ingest_contract.py services/telemetry/test_tel001_rebaseline_schema.py services/telemetry/test_main_routes.py tests/e2e/test_canary_telemetry_to_evolution.py (239 passed). Owner done is blocked until Claude marks review_approved.",
+      "status": "done",
+      "created_at": "2026-06-09T16:05:43Z",
+      "resolved_at": "2026-06-09T16:15:26Z"
+    },
+    {
+      "task_id": "MPOS-P1-CAN-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all four acceptance criteria verified — canary explicit mode in all enums, scale guard enforced before binding, telemetry evidence contract E-1 through E-4 pass, 239 tests green. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T16:15:26Z",
+      "resolved_at": "2026-06-09T16:31:32Z"
+    }
+  ],
+  "blockers": []
+}

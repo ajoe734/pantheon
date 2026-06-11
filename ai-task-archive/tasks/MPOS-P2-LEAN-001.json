@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P2-LEAN-001",
+  "archived_at": "2026-06-10T00:06:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P2-LEAN-001",
+    "title": "Harden LEAN runtime adapter contract for approved artifact only execution",
+    "summary_zh": "強化 LEAN execution substrate contract，證明 runtime 只吃 approved artifact、approved config、pool risk policy、RuntimeBinding，且 broker credential/runtime state/PnL/position 按 capital pool 隔離。",
+    "phase": "EPIC MPOS / P2 LEAN runtime hardening",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P1-TEL-001",
+      "MPOS-P0-E2E-001"
+    ],
+    "artifacts": [
+      "services/execution",
+      "services/runtime-manager",
+      "services/capital",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Fake LEAN adapter contract rejects unapproved artifacts and unapproved configs",
+      "Runtime binding is required before any simulated execution starts",
+      "Cross pool credential runtime state position and pnl access is rejected",
+      "Kill switch remains runtime manager controlled and audited",
+      "Contract tests cover approved path and unauthorized path"
+    ],
+    "next": "Owner finalized approved LEAN runtime hardening after PR #1251, #1253, and #1254 merged; closeout validation passed: 52 LEAN runtime tests, 37 governance binding checks, 1 BFF smoke, 54 runtime-manager tests.",
+    "last_update": "2026-06-10T00:06:30Z",
+    "auto_created_by": "codex_mpos_gap_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過",
+      "bootstrap contract 強制 approved artifact、config、risk policy 三重門檻",
+      "drain 需要已解析 RuntimeBinding",
+      "HTTP 端點按 capital pool 隔離",
+      "live broker 硬鎖 False",
+      "無後續追蹤事項"
+    ],
+    "review_file": "/tmp/mpos-p2-lean-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-10T00:06:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p2-lean-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P2-LEAN-001",
+      "git_clean_required": false,
+      "commit": "c1ca7f6240381bdc024542f5c03c4ea35cae9bf5",
+      "commit_subject": "MPOS-P2-LEAN-001: finalize post-merge record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief final owner-tip closeout record.",
+        "Not changing": "LEAN runtime implementation, runtime-manager kill-switch behavior, capital pool policy, or evidence test scope.",
+        "Composes with": "merged PR #1251, merged PR #1253, and ai-status done closeout after this record merges.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MPOS-P2-LEAN-001",
+        "Reviewer": "Claude2",
+        "Verified": "52 LEAN runtime unittest; 37 governance binding; 1 BFF smoke; 54 runtime-manager."
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P2-LEAN-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6d8b4fc15aae0bbb66589b5db7ee2e2fa8c6cb0b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P2-LEAN-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned MPOS-P2-LEAN-001 away from unavailable lane Codex (disabled, sidecar-only, or auth-down); owner Codex -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-09T14:40:40Z",
+      "resolved_at": "2026-06-09T23:36:22Z"
+    },
+    {
+      "task_id": "MPOS-P2-LEAN-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-09T23:36:22Z",
+      "resolved_at": "2026-06-09T23:36:30Z"
+    },
+    {
+      "task_id": "MPOS-P2-LEAN-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ready for review. PR #1251 merged into dev at 2bcc3079503a90bb7962cc0c642d35b94342fc8f. Final task commit b829d7790b59d64a8919b6f3b89266180fbae9f7. Hardened LEAN bootstrap approved artifact/config/risk-policy guard, binding-required paper drain, cross-pool runtime state guard, and evidence note. Validation: lean runtime focused suite 52 passed; governance paper runtime binding 37 PASS; BFF paper loop smoke 1 passed; runtime-manager suite 54 passed.",
+      "status": "done",
+      "created_at": "2026-06-09T23:47:22Z",
+      "resolved_at": "2026-06-09T23:52:33Z"
+    },
+    {
+      "task_id": "MPOS-P2-LEAN-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: bootstrap contract enforces approved artifact/config/risk-policy gates, drain requires binding, pool guard on HTTP endpoints, live broker locked out. 52+37+1+54 tests pass. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-09T23:52:33Z",
+      "resolved_at": "2026-06-10T00:06:31Z"
+    }
+  ],
+  "blockers": []
+}

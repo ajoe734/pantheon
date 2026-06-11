@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+  "archived_at": "2026-06-11T05:48:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+    "title": "Market data acceptance monitoring and rollout verification",
+    "summary_zh": "總驗收美台股資料源完整度：source health dashboard、gap report、active universe scheduler、connector coverage matrix、nonprod smoke，確認不正常的 source 會告警。",
+    "phase": "Market data completion",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-MARKETDATA-FOUNDATION-001",
+      "DATASTRAT-MARKETDATA-TW-OFFICIAL-002",
+      "DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+      "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "DATASTRAT-MARKETDATA-TW-MOPS-005",
+      "DATASTRAT-MARKETDATA-TW-TEJ-006",
+      "DATASTRAT-MARKETDATA-TW-REMAINING-007",
+      "DATASTRAT-MARKETDATA-US-PUBLIC-008",
+      "DATASTRAT-MARKETDATA-US-PAID-BROKER-009"
+    ],
+    "artifacts": [
+      ".orchestrator/task-briefs/datastrat_marketdata_ops_accept_010.md",
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/MARKET_DATA_COMPLETION_PLAN_2026-06-11.md",
+      "docs-site",
+      "tests"
+    ],
+    "acceptance": [
+      "All source tasks have merged PRs or explicit backend-not-ready exceptions; health dashboard shows last_success row_count watermark schema_hash staleness source_error; gap report generated; nonprod source ingestion smoke passes; final PR merged to dev when complete"
+    ],
+    "next": "Closeout: connector_coverage_matrix.py + 3 ops-accept endpoints + 23 acceptance tests merged via PR #1318 (fd05226d into dev). Verified: 23 ops-accept tests pass, 354 passed 1 skipped full source_ingestion suite. Task brief dispatch update (todo→review_approved) retained as unstaged metadata; implementation durable.",
+    "last_update": "2026-06-11T05:48:31Z",
+    "task_class": "implementation",
+    "auto_created_by": "Codex-marketdata-dispatch-2026-06-11",
+    "review_notes_zh": [
+      "審查通過：coverage matrix、source alerts、gap report endpoint 與 23 個 ops acceptance tests 覆蓋 missing/configured/disabled/credential_unavailable/unhealthy/healthy、alert labelling、gap classification、catalog smoke。",
+      "驗證通過：python3 -m pytest services/source_ingestion/tests/test_ops_accept_coverage_alerts.py services/source_ingestion/tests/ -q（354 passed, 1 skipped）。",
+      "PR #1318 已合併到 dev，merge commit fd05226d68bd040441309c19352239bbb815bf12；GitHub Branch CI Gate 與 Orchestrator Sync checks 為 SUCCESS；依賴 DATASTRAT-MARKETDATA-001 到 009 均已 archived done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-11T05:48:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-marketdata-ops-accept-010",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+      "git_clean_required": false,
+      "commit": "fd05226d68bd040441309c19352239bbb815bf12",
+      "commit_subject": "Merge pull request #1318 from ajoe734/task/DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "DATASTRAT-MARKETDATA-OPS-ACCEPT-010": "coverage matrix, alerts, gap report"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fd05226d68bd040441309c19352239bbb815bf12",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implemented ops acceptance monitoring: connector_coverage_matrix.py (new), 3 new API endpoints (coverage-matrix, alerts, gap-report), and 23 acceptance tests. All 354 source_ingestion tests pass. Please review the coverage matrix logic, alert classification, gap report API contract, and test coverage for the acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-06-11T05:29:53Z",
+      "resolved_at": "2026-06-11T05:30:07Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implemented ops acceptance monitoring: connector_coverage_matrix.py (new), 3 new API endpoints (coverage-matrix, alerts, gap-report), and 23 acceptance tests. All 354 source_ingestion tests pass. Commit b9aefcd3. Please review coverage matrix logic, alert classification, gap report API contract, and test coverage.",
+      "status": "done",
+      "created_at": "2026-06-11T05:30:07Z",
+      "resolved_at": "2026-06-11T05:30:20Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implemented ops acceptance monitoring: connector_coverage_matrix.py, 3 new API endpoints (coverage-matrix alerts gap-report), 23 acceptance tests. All 354 source_ingestion tests pass. Commit b9aefcd3 on task/DATASTRAT-MARKETDATA-OPS-ACCEPT-010.",
+      "status": "done",
+      "created_at": "2026-06-11T05:30:20Z",
+      "resolved_at": "2026-06-11T05:30:55Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implemented ops acceptance monitoring: connector_coverage_matrix.py, GET /api/source-ingest/coverage-matrix, GET /api/source-ingest/alerts, POST /api/source-ingest/gap-report, 23 acceptance tests. All 354 source_ingestion tests pass. Commit b9aefcd3.",
+      "status": "done",
+      "created_at": "2026-06-11T05:31:04Z",
+      "resolved_at": "2026-06-11T05:39:07Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: ops acceptance monitoring is merged to dev, dependencies are done, and source_ingestion validation passes. Returned to Claude2 for final closeout.",
+      "status": "done",
+      "created_at": "2026-06-11T05:39:07Z",
+      "resolved_at": "2026-06-11T05:48:32Z"
+    }
+  ],
+  "blockers": []
+}

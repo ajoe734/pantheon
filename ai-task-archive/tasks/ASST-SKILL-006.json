@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "ASST-SKILL-006",
+  "archived_at": "2026-06-10T00:13:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "ASST-SKILL-006",
+    "title": "Consolidate gating and audit into descriptor policy and add EPIC regression",
+    "summary_zh": "把散落各 route 的 mode/role/confirm-token 門禁收斂到 descriptor+policy 一次解析，補 EPIC 回歸：deny-first 保持、未授權 skill fail-closed、每次 invoke 一筆 audit、provider 憑證不外洩。",
+    "phase": "EPIC ASST-SKILL / Policy + audit regression",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "ASST-SKILL-004",
+      "ASST-SKILL-005"
+    ],
+    "artifacts": [
+      "docs/decisions/assistant-capability-skill-catalog-ownership.md;services/openclaw-gateway-adapter/tool_workflow_bridge.py;services/control-plane/bff/assistant;services/control-plane/bff/tests/test_assistant_security.py"
+    ],
+    "acceptance": [
+      "Mode role and confirm-token gating is resolved once from descriptor plus policy;OpenClaw tool policy remains deny-first and unknown skills fail closed;Every skill invocation writes exactly one audit record with trace id;No skill path lets provider credentials transit BFF or FE;Prompt injection cannot expand the effective skill set;Regression suite runs in local validation and CI"
+    ],
+    "next": "Gate+audit consolidation EPIC finalized. PR #1250 merged into dev at 2026-06-10T00:07:54Z. HEAD is ancestor of origin/dev (verified). Task work commit c28d46ba carries full trailers (LLM-Agent: Claude2, Task-ID: ASST-SKILL-006, Reviewer: Claude); HEAD is routine merge commit exempt from trailer check. 72+41=113 tests pass. Descriptor+policy admission consolidation, EPIC regression (deny-first, fail-closed, one-audit-per-invoke, no credential leak) delivered.",
+    "last_update": "2026-06-10T00:13:04Z",
+    "auto_created_by": "dispatch_assistant_skill_catalog_2026-06-08",
+    "review_notes_zh": [
+      "審查通過：descriptor+policy 單次解析、deny-first 保持、每次 invoke 一筆 audit、provider 憑證不外洩、94+41 測試全過",
+      "後續追蹤：無，請 Claude2 進行 closeout"
+    ],
+    "review_file": "/tmp/asst-skill-006-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-10T00:13:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/asst-skill-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/ASST-SKILL-006",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/ASST-SKILL-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9739df805e6d7a409eb482540fc9ea820b2f9002",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "ASST-SKILL-006",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Implementation complete. Anchor commit (700e864e) + final EPIC commit (c28d46ba). PR #1250 open: https://github.com/ajoe734/pantheon/pull/1250. Key changes: (1) descriptor+policy single parse via _evaluate_descriptor_admission + authorize_assistant_skill in tool_workflow_bridge.py; (2) invoke_tool/trigger_workflow/start_assistant_provider_reauth all route through descriptor admission; (3) provider reauth responses run through redact_assistant_payload; (4) EPIC regression section in test_assistant_security.py — 4 named tests pin deny-first/fail-closed/one-audit/no-credential-leak; (5) 72+41 target tests pass. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-06-09T23:41:10Z",
+      "resolved_at": "2026-06-09T23:45:57Z"
+    },
+    {
+      "task_id": "ASST-SKILL-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: descriptor admission consolidation, EPIC regression, and credential redaction all verified. 94+41 tests pass. Returning to Claude2 for finalization.",
+      "status": "done",
+      "created_at": "2026-06-09T23:45:57Z",
+      "resolved_at": "2026-06-10T00:00:57Z"
+    },
+    {
+      "task_id": "ASST-SKILL-006",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Implementation complete: descriptor admission consolidation, EPIC regression (deny-first, fail-closed, one audit per invoke, no credential leak). 72+41 tests pass. Ready for review.",
+      "status": "done",
+      "created_at": "2026-06-10T00:01:04Z",
+      "resolved_at": "2026-06-10T00:03:12Z"
+    },
+    {
+      "task_id": "ASST-SKILL-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Restoring review_approved: prior Claude approval (review_notes_zh present). Descriptor admission consolidation, EPIC regression, and credential redaction verified. 72+41 tests pass. Proceeding to closeout.",
+      "status": "done",
+      "created_at": "2026-06-10T00:03:24Z",
+      "resolved_at": "2026-06-10T00:13:04Z"
+    }
+  ],
+  "blockers": []
+}

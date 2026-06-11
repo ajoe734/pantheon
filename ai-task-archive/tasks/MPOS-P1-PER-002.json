@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-PER-002",
+  "archived_at": "2026-06-10T01:30:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-PER-002",
+    "title": "Prove Persona A/B/C research-to-proposal OODA packets",
+    "summary_zh": "補三個 persona 各自從 Observe/Orient 到 PersonaAllocationProposal 的證據鏈，避免多人格 synthesis 只吃手寫 proposal fixture。",
+    "phase": "Sprint MPOS-P1 / Persona OODA evidence",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P0-VAL-001",
+      "MPOS-P1-PER-001",
+      "MPOS-P0-E2E-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "tests/e2e/test_multi_persona_ooda_packet.py",
+      "tests/e2e/test_source_to_strategy_spec.py",
+      "tests/e2e/test_strategy_spec_to_experiment_run.py",
+      "services/source_ingestion/strategy_seed_builder.py",
+      "services/research/strategy_spec/conversion.py",
+      "services/optimizer-svc/portfolio_synthesis/models.py"
+    ],
+    "acceptance": [
+      "Persona A B C each start from source or strategy evidence;each packet includes StrategySpecSeed or StrategySpec and ExperimentRun or OOS validation;each packet records regime risk mandate fit evidence quality and no-order-route proof;each PersonaAllocationProposal evidence_refs point back to its packet;ineligible or suspended persona remains excluded by policy or health gate"
+    ],
+    "next": "Owner finalization complete: PR #1259 merged into dev (450fc5fc), all 4 declared e2e tests pass locally (test_multi_persona_ooda_packet, test_source_to_strategy_spec, test_strategy_spec_to_experiment_run, test_persona_abc_ooda_evidence_chain). Persona A/B/C OODA packets proven from source evidence through PersonaAllocationProposal with deterministic evidence IDs. HEAD (450fc5fc) is a GitHub-generated merge commit without LLM trailers; task deliverable commits 9890d9d1 and 9f94911f carry required Claude/Codex trailers and are both in dev. No new commit: deliverable is durable in merged PR #1259 and only dirty file is supervisor-generated task-brief mirror.",
+    "last_update": "2026-06-10T01:30:49Z",
+    "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+    "gap_ids": [
+      "G2"
+    ],
+    "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+    "task_class": "mpos_full_loop_gap_closure",
+    "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "PR #1259 已 merge，GitHub checks 全綠；本機重跑宣告的 4 個 e2e 測試通過；補了 deterministic id fix 避免 MPOS-P1-PER-002 evidence packet 在 pytest 後漂移。"
+    ],
+    "review_file": "https://github.com/ajoe734/pantheon/pull/1259",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-10T01:30:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-per-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-PER-002",
+      "git_clean_required": false,
+      "git_clean": false,
+      "dirty_entry_count": 2,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-PER-002",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "450fc5fc14991268c6a64bef08385e50da5b8a11",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-PER-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Please review test_persona_abc_ooda_evidence_chain.py (commit 9890d9d1). The test proves Persona A/B/C each walk: Observe (EvidenceBundle→StrategySpecSeed) → Orient (regime/OOS/no-order-route) → Decide (PersonaAllocationProposal with evidence_refs back to seed+orient). Persona D (suspended) excluded by health gate. Synthesis produces AllocationPolicyArtifact from 3 proposals. 4 tests pass. Evidence packet at support/evidence/MPOS-P1-PER-002/full_packet.json. All 12 acceptance gates pass per MPOS_GAP_ASSESSMENT §6 MPOS-P1-PER-002.",
+      "status": "done",
+      "created_at": "2026-06-10T01:16:07Z",
+      "resolved_at": "2026-06-10T01:23:54Z"
+    },
+    {
+      "task_id": "MPOS-P1-PER-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved after PR #1259 merge 450fc5fc14991268c6a64bef08385e50da5b8a11; owner may finalize done.",
+      "status": "done",
+      "created_at": "2026-06-10T01:23:54Z",
+      "resolved_at": "2026-06-10T01:30:50Z"
+    }
+  ],
+  "blockers": []
+}

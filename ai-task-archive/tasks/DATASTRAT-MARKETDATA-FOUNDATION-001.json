@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-MARKETDATA-FOUNDATION-001",
+  "archived_at": "2026-06-11T03:27:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-MARKETDATA-FOUNDATION-001",
+    "title": "Market data ingest foundation: registry storage health gaps",
+    "summary_zh": "建立美台股資料源共用 ingest foundation：source registry、raw/normalized/features storage、source health metrics、gap report、active universe scheduler 基礎。參考 docs/04/pantheon_data_strategy_source_design_2026-06-09/MARKET_DATA_COMPLETION_PLAN_2026-06-11.md 與 .orchestrator/task-briefs/datastrat_marketdata_foundation_001.md。",
+    "phase": "Market data completion",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/MARKET_DATA_COMPLETION_PLAN_2026-06-11.md",
+      ".orchestrator/task-briefs/datastrat_marketdata_foundation_001.md",
+      "services/source_ingestion",
+      "tests"
+    ],
+    "acceptance": [
+      "source registry can describe official paid scraped auth cadence backfill; raw normalized features storage paths or tables exist; health records last_success_at row_count watermark schema_hash staleness source_error; active universe scheduler exposes core candidate archive policy; local tests pass; PR merged to dev when complete"
+    ],
+    "next": "Done: implementation PR #1300 and closeout PR #1303 merged to dev; focused validation passed (321 passed, 1 skipped).",
+    "last_update": "2026-06-11T03:27:04Z",
+    "task_class": "implementation",
+    "auto_created_by": "Codex-marketdata-dispatch-2026-06-11",
+    "review_notes_zh": [
+      "審查通過：provider adapter allowlist、storage writers、health/usage stores、gap report、active universe fanout 全部實作完整",
+      "測試：321 passed, 1 skipped（在本 worktree 重新驗證）",
+      "後續追蹤：US adapter 待 008/009、object storage 待 OPS-ACCEPT-010"
+    ],
+    "review_file": "docs/04/pantheon_data_strategy_source_design_2026-06-09/DATASTRAT-MARKETDATA-FOUNDATION-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-11T03:27:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-marketdata-foundation-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-MARKETDATA-FOUNDATION-001",
+      "git_clean_required": false,
+      "commit": "640f61c3c0627ddac1a006f8d3ce2ed7762b0fd8",
+      "commit_subject": "DATASTRAT-MARKETDATA-FOUNDATION-001: record closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@openai.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout notes and reviewer approval artifact.",
+        "Not changing": "source-ingestion runtime implementation, canonical architecture docs, or source-specific adapter tasks.",
+        "Composes with": "merged implementation PR #1300 and downstream market-data source tasks.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-MARKETDATA-FOUNDATION-001",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/source_ingestion/tests services/data-plane/tests/test_data_plane_schemas.py -q (321 passed, 1 skipped)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-MARKETDATA-FOUNDATION-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2aa9a5cea0d79b88f37c62c15b6b022435e46e36",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-FOUNDATION-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #1300 (merge 34050b1f72786ce2c0af79d24e418968eaf8a6bc; head 80cdea90f03e5d9a88853f0ad42e6e4ee689ee51). Validation: pytest services/source_ingestion/tests services/data-plane/tests/test_data_plane_schemas.py -q => 300 passed, 1 skipped. Please review/approve so owner can run final done closeout.",
+      "status": "done",
+      "created_at": "2026-06-11T01:43:25Z",
+      "resolved_at": "2026-06-11T03:20:02Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-FOUNDATION-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: foundation deliverables verified — adapter bridge, storage writers, health/usage stores, gap report, and active universe fanout all complete. 321 tests passed. Returned to owner Codex for done closeout.",
+      "status": "done",
+      "created_at": "2026-06-11T03:20:02Z",
+      "resolved_at": "2026-06-11T03:27:05Z"
+    }
+  ],
+  "blockers": []
+}
