@@ -376,9 +376,41 @@ snapshot_remote_state() {
   info "snapshot written: ${dir}"
 }
 
+preserve_known_deploy_runtime_state() {
+  local known_paths=(
+    ".orchestrator/metrics"
+    ".orchestrator/watchdog-state.json"
+  )
+  local present_paths=()
+  local path
+  local runtime_status
+  local stash_label
+
+  for path in "${known_paths[@]}"; do
+    if [[ -e "$path" ]]; then
+      present_paths+=("$path")
+    fi
+  done
+
+  if [[ "${#present_paths[@]}" -eq 0 ]]; then
+    return
+  fi
+
+  runtime_status="$(git status --porcelain -- "${present_paths[@]}")"
+  if [[ -z "$runtime_status" ]]; then
+    return
+  fi
+
+  stash_label="deploy-runtime-state-${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}-${PANTHEON_DEPLOY_SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
+  info "preserving known deploy runtime state before checkout (${stash_label})"
+  git stash push --include-untracked -m "$stash_label" -- "${present_paths[@]}" >/dev/null
+}
+
 require_clean_checkout() {
   local status
   local stash_label
+
+  preserve_known_deploy_runtime_state
 
   status="$(git status --porcelain)"
   if [[ -n "$status" && "${PANTHEON_ALLOW_DIRTY_DEPLOY}" != "true" ]]; then
