@@ -1072,7 +1072,15 @@ def _provider_metadata_from_records(result: Any) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     for record in result.records:
         record_metadata = dict(record.metadata)
-        for key in ("quota", "rate_limit", "provider_quota", "provider_rate_limit", "source_error"):
+        for key in (
+            "quota",
+            "rate_limit",
+            "provider_quota",
+            "provider_rate_limit",
+            "source_error",
+            "readback_file_hash",
+            "readback_timestamp",
+        ):
             if key in record_metadata and key not in metadata:
                 metadata[key] = record_metadata[key]
     return metadata

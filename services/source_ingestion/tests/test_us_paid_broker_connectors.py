@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from datetime import datetime, timezone
 
 import pytest
 
@@ -26,7 +25,23 @@ from services.source_ingestion.connectors import (
     ShioajiBrokerReadbackAdapter,
     SourceEvidenceError,
 )
+from services.source_ingestion.provider_adapters import execute_provider_owned_adapter, provider_adapter_tokens
 from services.source_ingestion.source_health import SourceHealthStatus
+
+
+def _completed_result(connector_id: str, records=()) -> SimpleNamespace:
+    record_tuple = tuple(records)
+    return SimpleNamespace(
+        watermark=SimpleNamespace(value="2026-06-10"),
+        records=record_tuple,
+        run=SimpleNamespace(
+            ingest_run_id=f"run-{connector_id}",
+            status="completed",
+            finished_at="2026-06-10T12:00:00Z",
+            normalized_count=len(record_tuple),
+            rejected_count=0,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +292,17 @@ class TestAlphaVantageUsEquityDailyAdapter:
         with pytest.raises(SourceEvidenceError, match="JSON object"):
             adapter.records_from_time_series_payload("AAPL", [1, 2])
 
+    def test_records_can_use_payload_symbol(self) -> None:
+        adapter = AlphaVantageUsEquityDailyAdapter()
+        records = adapter.records_from_time_series_payload("", ALPHA_VANTAGE_TIME_SERIES)
+        assert records[0].metadata["symbol"] == "AAPL"
+
+    def test_records_require_symbol_when_payload_has_no_metadata_symbol(self) -> None:
+        adapter = AlphaVantageUsEquityDailyAdapter()
+        payload = {"Time Series (Daily)": ALPHA_VANTAGE_TIME_SERIES["Time Series (Daily)"]}
+        with pytest.raises(SourceEvidenceError, match="symbol is required"):
+            adapter.records_from_time_series_payload("", payload)
+
     def test_max_records_respected(self) -> None:
         adapter = AlphaVantageUsEquityDailyAdapter(max_records=1)
         records = adapter.records_from_time_series_payload("AAPL", ALPHA_VANTAGE_TIME_SERIES)
@@ -360,6 +386,8 @@ class TestIbkrBrokerReadbackAdapter:
         assert meta["research_primary"] is False
         assert meta["license_scope"] == "broker_execution_readback_only"
         assert meta["schema_hash"] == "broker_readback_evidence.v1"
+        assert meta["readback_file_hash"]
+        assert meta["readback_timestamp"]
 
     def test_records_access_scope_is_audit_only(self) -> None:
         adapter = IbkrBrokerReadbackAdapter()
@@ -409,6 +437,14 @@ class TestIbkrBrokerReadbackAdapter:
         adapter = IbkrBrokerReadbackAdapter()
         assert adapter.resolve_readback_path() is None
 
+    def test_source_health_carries_readback_file_metadata(self) -> None:
+        adapter = IbkrBrokerReadbackAdapter()
+        records = adapter.records_from_readback_file("/tmp/ibkr.json", IBKR_READBACK_PAYLOAD)
+        health = adapter.source_health_from_result(_completed_result(IBKR_READBACK_CONNECTOR_ID, records))
+        assert health.status == SourceHealthStatus.OK.value
+        assert health.metadata["readback_file_hash"] == records[0].metadata["readback_file_hash"]
+        assert health.metadata["readback_timestamp"] == records[0].metadata["readback_timestamp"]
+
 
 # ---------------------------------------------------------------------------
 # Shioaji readback fixtures
@@ -457,6 +493,8 @@ class TestShioajiBrokerReadbackAdapter:
         assert meta["research_primary"] is False
         assert meta["market_scope"] == "taiwan"
         assert ".TW" in meta.get("normalized_row", {}).get("symbol_canonical", "")
+        assert meta["readback_file_hash"]
+        assert meta["readback_timestamp"]
 
     def test_taiwan_symbol_canonical(self) -> None:
         adapter = ShioajiBrokerReadbackAdapter()
@@ -479,6 +517,14 @@ class TestShioajiBrokerReadbackAdapter:
         assert config["order_placement_forbidden"] is True
         assert config["capital_mutation_forbidden"] is True
 
+    def test_source_health_carries_readback_file_metadata(self) -> None:
+        adapter = ShioajiBrokerReadbackAdapter()
+        records = adapter.records_from_readback_file("/tmp/shioaji.json", SHIOAJI_READBACK_PAYLOAD)
+        health = adapter.source_health_from_result(_completed_result(SHIOAJI_READBACK_CONNECTOR_ID, records))
+        assert health.status == SourceHealthStatus.OK.value
+        assert health.metadata["readback_file_hash"] == records[0].metadata["readback_file_hash"]
+        assert health.metadata["readback_timestamp"] == records[0].metadata["readback_timestamp"]
+
 
 # ---------------------------------------------------------------------------
 # Cross-adapter invariant tests
@@ -486,6 +532,65 @@ class TestShioajiBrokerReadbackAdapter:
 
 class TestAdapterInvariants:
     """Verify design invariants hold across all paid/broker adapters."""
+
+    def test_provider_owned_tokens_are_allowlisted(self) -> None:
+        tokens = set(provider_adapter_tokens())
+        assert "PolygonUsEquityDailyAdapter.records_from_aggs_payload" in tokens
+        assert "AlphaVantageUsEquityDailyAdapter.records_from_time_series_payload" in tokens
+        assert "IbkrBrokerReadbackAdapter.records_from_readback_file" in tokens
+        assert "ShioajiBrokerReadbackAdapter.records_from_readback_file" in tokens
+
+    def test_provider_owned_dispatch_executes_paid_daily_fixtures(self) -> None:
+        polygon = PolygonUsEquityDailyAdapter()
+        polygon_records = execute_provider_owned_adapter(
+            connector=polygon.connector(),
+            fetch=polygon.fetch_config(),
+            trace_id="trace-provider-polygon",
+            job_parameters={"symbol": "AAPL", "payload": POLYGON_AGGS_RESPONSE},
+        )
+        assert len(polygon_records) == 2
+        assert polygon_records[0].metadata["provider_owned_adapter"] == (
+            "PolygonUsEquityDailyAdapter.records_from_aggs_payload"
+        )
+
+        alpha_vantage = AlphaVantageUsEquityDailyAdapter()
+        av_records = execute_provider_owned_adapter(
+            connector=alpha_vantage.connector(),
+            fetch=alpha_vantage.fetch_config(),
+            trace_id="trace-provider-alpha-vantage",
+            job_parameters={"symbol": "AAPL", "payload": ALPHA_VANTAGE_TIME_SERIES},
+        )
+        assert len(av_records) == 2
+        assert av_records[0].metadata["provider_owned_adapter"] == (
+            "AlphaVantageUsEquityDailyAdapter.records_from_time_series_payload"
+        )
+
+    def test_provider_owned_dispatch_executes_broker_readback_fixtures(self) -> None:
+        ibkr = IbkrBrokerReadbackAdapter()
+        ibkr_records = execute_provider_owned_adapter(
+            connector=ibkr.connector(),
+            fetch=ibkr.fetch_config(),
+            trace_id="trace-provider-ibkr",
+            job_parameters={"file_path": "/tmp/ibkr.json", "payload": IBKR_READBACK_PAYLOAD},
+        )
+        assert len(ibkr_records) == 2
+        assert ibkr_records[0].metadata["provider_owned_adapter"] == (
+            "IbkrBrokerReadbackAdapter.records_from_readback_file"
+        )
+        assert ibkr_records[0].metadata["readback_file_hash"]
+
+        shioaji = ShioajiBrokerReadbackAdapter()
+        shioaji_records = execute_provider_owned_adapter(
+            connector=shioaji.connector(),
+            fetch=shioaji.fetch_config(),
+            trace_id="trace-provider-shioaji",
+            job_parameters={"file_path": "/tmp/shioaji.json", "payload": SHIOAJI_READBACK_PAYLOAD},
+        )
+        assert len(shioaji_records) == 2
+        assert shioaji_records[0].metadata["provider_owned_adapter"] == (
+            "ShioajiBrokerReadbackAdapter.records_from_readback_file"
+        )
+        assert shioaji_records[0].metadata["readback_file_hash"]
 
     def test_paid_adapters_require_entitlement(self) -> None:
         for adapter_cls in (PolygonUsEquityDailyAdapter, AlphaVantageUsEquityDailyAdapter):

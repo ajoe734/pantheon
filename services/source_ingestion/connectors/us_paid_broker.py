@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .base import (
@@ -57,6 +58,27 @@ def _utc_now() -> str:
 def _stable_hash(payload: Mapping[str, Any]) -> str:
     body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(body).hexdigest()[:16]
+
+
+def _sha16(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _readback_fingerprint(file_path: str, payload: Any) -> tuple[str, str]:
+    path = Path(file_path)
+    if file_path and path.exists() and path.is_file():
+        try:
+            stat = path.stat()
+            updated_at = (
+                datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+            return _sha16(path.read_bytes()), updated_at
+        except OSError:
+            pass
+    return _stable_hash({"file_path": file_path, "payload": payload}), _utc_now()
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -167,6 +189,16 @@ def _health_from_result(
             **dict(metadata or {}),
         },
     )
+
+
+def _readback_metadata_from_result(result: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for record in getattr(result, "records", ()) or ():
+        record_metadata = dict(getattr(record, "metadata", {}) or {})
+        for key in ("readback_file_hash", "readback_timestamp", "source_file"):
+            if key in record_metadata and key not in metadata:
+                metadata[key] = record_metadata[key]
+    return metadata
 
 
 def _ms_timestamp_to_date(ts_ms: Any) -> str | None:
@@ -531,7 +563,11 @@ class AlphaVantageUsEquityDailyAdapter(SourceConnectorProvider):
         information = _text(payload.get("Information") or payload.get("Note") or "")
         if "thank you for using alpha vantage" in information.lower() or "api call frequency" in information.lower():
             raise SourceEvidenceError(f"Alpha Vantage quota or plan limit reached: {information}")
-        symbol_value = _symbol(symbol)
+        meta = payload.get("Meta Data")
+        payload_symbol = meta.get("2. Symbol") if isinstance(meta, Mapping) else ""
+        symbol_value = _symbol(symbol or payload_symbol)
+        if not symbol_value:
+            raise SourceEvidenceError("symbol is required for Alpha Vantage records")
         time_series = payload.get("Time Series (Daily)") or payload.get("Time Series (Daily Adjusted)")
         if not isinstance(time_series, Mapping):
             return tuple()
@@ -737,6 +773,7 @@ class IbkrBrokerReadbackAdapter(SourceConnectorProvider):
                 raise SourceEvidenceError("IBKR readback payload must be a list of fill/quote dicts")
         else:
             rows = [dict(row) for row in payload if isinstance(row, Mapping)]
+        readback_file_hash, readback_timestamp = _readback_fingerprint(file_path, rows)
         records: list[SourceRecord] = []
         for row in rows:
             symbol_value = _symbol(row.get("symbol") or row.get("ticker") or "")
@@ -744,6 +781,11 @@ class IbkrBrokerReadbackAdapter(SourceConnectorProvider):
                 continue
             readback_type = _text(row.get("type") or row.get("readback_type") or "fill_readback")
             trade_date = _text(row.get("date") or row.get("trade_date") or "")
+            row_timestamp = _text(
+                row.get("readback_timestamp") or row.get("timestamp") or row.get("updated_at"),
+                readback_timestamp,
+            )
+            event_time = trade_date or row_timestamp
             normalized_row = {
                 "schema_version": BROKER_READBACK_SCHEMA_HASH,
                 "target_table": "broker_readback_evidence",
@@ -752,7 +794,10 @@ class IbkrBrokerReadbackAdapter(SourceConnectorProvider):
                 "symbol": symbol_value or None,
                 "symbol_canonical": f"{symbol_value}.US" if symbol_value else None,
                 "trade_date": trade_date or None,
-                "available_time": trade_date or _utc_now(),
+                "event_time": event_time,
+                "available_time": row_timestamp,
+                "readback_timestamp": row_timestamp,
+                "readback_file_hash": readback_file_hash,
                 "source_file": file_path,
                 "raw_row": dict(row),
                 "research_primary": False,
@@ -773,8 +818,10 @@ class IbkrBrokerReadbackAdapter(SourceConnectorProvider):
                         "readback_type": readback_type,
                         "symbol": symbol_value or None,
                         "trade_date": trade_date or None,
-                        "event_time": trade_date or _utc_now(),
-                        "available_time": trade_date or _utc_now(),
+                        "event_time": event_time,
+                        "available_time": row_timestamp,
+                        "readback_timestamp": row_timestamp,
+                        "readback_file_hash": readback_file_hash,
                         "source_file": file_path,
                         "normalized_row": normalized_row,
                         "raw_row": dict(row),
@@ -811,7 +858,7 @@ class IbkrBrokerReadbackAdapter(SourceConnectorProvider):
             connector_id=self.connector_id,
             schema_hash=BROKER_READBACK_SCHEMA_HASH,
             result=result,
-            metadata={"readback_file_env": self.readback_file_env},
+            metadata={"readback_file_env": self.readback_file_env, **_readback_metadata_from_result(result)},
         )
 
 
@@ -909,6 +956,7 @@ class ShioajiBrokerReadbackAdapter(SourceConnectorProvider):
                 raise SourceEvidenceError("Shioaji readback payload must be a list of fill/quote dicts")
         else:
             rows = [dict(row) for row in payload if isinstance(row, Mapping)]
+        readback_file_hash, readback_timestamp = _readback_fingerprint(file_path, rows)
         records: list[SourceRecord] = []
         for row in rows:
             symbol_value = _symbol(row.get("symbol") or row.get("code") or "")
@@ -916,6 +964,11 @@ class ShioajiBrokerReadbackAdapter(SourceConnectorProvider):
                 continue
             readback_type = _text(row.get("type") or row.get("readback_type") or "fill_readback")
             trade_date = _text(row.get("date") or row.get("trade_date") or "")
+            row_timestamp = _text(
+                row.get("readback_timestamp") or row.get("timestamp") or row.get("updated_at"),
+                readback_timestamp,
+            )
+            event_time = trade_date or row_timestamp
             normalized_row = {
                 "schema_version": BROKER_READBACK_SCHEMA_HASH,
                 "target_table": "broker_readback_evidence",
@@ -924,7 +977,10 @@ class ShioajiBrokerReadbackAdapter(SourceConnectorProvider):
                 "symbol": symbol_value or None,
                 "symbol_canonical": f"{symbol_value}.TW" if symbol_value else None,
                 "trade_date": trade_date or None,
-                "available_time": trade_date or _utc_now(),
+                "event_time": event_time,
+                "available_time": row_timestamp,
+                "readback_timestamp": row_timestamp,
+                "readback_file_hash": readback_file_hash,
                 "source_file": file_path,
                 "raw_row": dict(row),
                 "research_primary": False,
@@ -946,8 +1002,10 @@ class ShioajiBrokerReadbackAdapter(SourceConnectorProvider):
                         "readback_type": readback_type,
                         "symbol": symbol_value or None,
                         "trade_date": trade_date or None,
-                        "event_time": trade_date or _utc_now(),
-                        "available_time": trade_date or _utc_now(),
+                        "event_time": event_time,
+                        "available_time": row_timestamp,
+                        "readback_timestamp": row_timestamp,
+                        "readback_file_hash": readback_file_hash,
                         "source_file": file_path,
                         "normalized_row": normalized_row,
                         "raw_row": dict(row),
@@ -985,5 +1043,9 @@ class ShioajiBrokerReadbackAdapter(SourceConnectorProvider):
             connector_id=self.connector_id,
             schema_hash=BROKER_READBACK_SCHEMA_HASH,
             result=result,
-            metadata={"readback_file_env": self.readback_file_env, "market_scope": "taiwan"},
+            metadata={
+                "readback_file_env": self.readback_file_env,
+                "market_scope": "taiwan",
+                **_readback_metadata_from_result(result),
+            },
         )
