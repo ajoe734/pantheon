@@ -29,7 +29,8 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
         "TWSE/TPEx",
         "Yahoo Taiwan Stock",
     } <= providers
-    assert payload["summary"]["data_source_count"] == 12
+    assert payload["summary"]["data_source_count"] == 16
+    assert {"Polygon", "Alpha Vantage", "IBKR", "Shioaji"} <= providers
     assert all(entry.source_kind == "data_source" for entry in entries.values())
     assert all(entry.lifecycle_state.value == "candidate" for entry in entries.values())
     assert entries["ds-finmind-tw-data"].metadata["template_status"] == "candidate_not_live_ingestion_claim"
@@ -60,6 +61,10 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert "template-us-fred-macro" in templates
     assert "template-us-finra-short-sale" in templates
     assert "template-us-stooq-daily-ohlcv" in templates
+    assert "template-us-polygon-daily-ohlcv" in templates
+    assert "template-us-alpha-vantage-daily-ohlcv" in templates
+    assert "template-us-ibkr-broker-readback" in templates
+    assert "template-tw-shioaji-broker-readback" in templates
     assert "raw-key" not in encoded
     assert templates["template-tw-finmind-broker-daily-report"]["fetch"]["normalized_target"] == "tw_broker_top"
     tej_template = templates["template-tw-tej-research-backfill"]
@@ -99,6 +104,20 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert taifex_template["fetch"]["symbol_scope"] == "market_context_no_symbol_filter"
     assert taifex_template["schedule"]["archive_behavior"] == "skip_symbol_archive_detail"
     assert taifex_template["storage"]["raw_storage_policy"]["retention_days"] == 2555
+    polygon_template = templates["template-us-polygon-daily-ohlcv"]
+    assert polygon_template["auth"]["auth_type"] == "api_key"
+    assert polygon_template["auth"]["secret_ref_id"] == "env://POLYGON_API_KEY"
+    assert polygon_template["auth"]["credential_health_without_key"] == "credential_unavailable"
+    assert polygon_template["fetch"]["adjusted"] is True
+    av_template = templates["template-us-alpha-vantage-daily-ohlcv"]
+    assert av_template["lifecycle_state"] == "disabled"
+    assert av_template["fetch"]["full_universe_scan_forbidden"] is True
+    ibkr_template = templates["template-us-ibkr-broker-readback"]
+    assert ibkr_template["fetch"]["order_placement_forbidden"] is True
+    assert ibkr_template["fetch"]["research_primary_forbidden"] is True
+    shioaji_template = templates["template-tw-shioaji-broker-readback"]
+    assert shioaji_template["fetch"]["order_placement_forbidden"] is True
+    assert shioaji_template["fetch"]["research_primary_forbidden"] is True
     mops_template = templates["template-tw-mops-official-disclosures"]
     assert mops_template["fetch"]["normalized_targets"] == [
         "tw_material_event",
