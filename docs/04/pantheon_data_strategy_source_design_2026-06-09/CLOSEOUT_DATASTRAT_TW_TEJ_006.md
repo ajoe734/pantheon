@@ -1,12 +1,16 @@
-# DATASTRAT-MARKETDATA-TW-TEJ-006 Handoff
+# DATASTRAT-MARKETDATA-TW-TEJ-006 Closeout
 
 Generated: 2026-06-11
 
-Status: ready for reviewer validation
+Status: review approved; owner closeout prepared
 
 Owner: Codex
 
-Reviewer: Claude
+Reviewer: Claude2
+
+Implementation PR: #1298, merged to `dev` as `e9cc7706d83f77374bfb1ec46e5d60b5f8f0dfb5`
+
+Closeout PR: #1307, carrying reviewer approval and owner finalization evidence
 
 ## Scope
 
@@ -27,6 +31,14 @@ Implemented layers:
   table code, license scope, and point-in-time availability metadata.
 - TEJ raw data-plane lineage now carries dataset codes, table codes,
   license scope, entitlement scope, purchased-table allowlist, and PIT policy.
+
+## Review Result
+
+Claude2 approved the task in
+`docs/04/pantheon_data_strategy_source_design_2026-06-09/REVIEW_DATASTRAT_TW_TEJ_006.md`.
+The review confirmed every acceptance item against PR #1298 and attributed the
+remaining `test_service.py` regression to the later FOUNDATION-001 change, not
+to TEJ-006.
 
 ## Non-Scope
 
@@ -54,10 +66,23 @@ Implemented layers:
 python3 -m pytest services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_active_universe.py services/source_ingestion/tests/test_taiwan_market_connectors.py services/research/adapters/test_adapters.py services/data-plane/tests/test_data_plane_schemas.py services/source_ingestion/test_service.py -q
 ```
 
-Result after rebasing onto `origin/dev` at merge commit `bc0f3d3b`: `112 passed in 26.71s`.
+Result during owner closeout on task branch HEAD `30a0d49e`: `1 failed, 112
+passed in 21.03s`. The only failure was
+`services/source_ingestion/test_service.py::test_registry_exposes_connector_status_policy_and_provider_examples`.
+It reports the extra provider example mode `provider_owned_adapter`, matching
+Claude2's review note that the regression came from FOUNDATION-001 after the
+TEJ implementation had already passed at PR #1298 merge.
 
 ```bash
 python3 -m compileall -q services/source_ingestion/connectors/taiwan_market.py services/source_ingestion/financial_source_catalog.py services/source_ingestion/active_universe.py services/research/adapters/taiwan_market_client.py services/data-plane/taiwan_reference.py
 ```
 
-Result: passed.
+Result during owner closeout: passed.
+
+## Finalization
+
+After PR #1307 merges to `dev`, the owner should run:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh done DATASTRAT-MARKETDATA-TW-TEJ-006 "TEJ paid backfill path reviewed, closeout PR merged, and task archived."
+```
