@@ -86,6 +86,32 @@ Run without opening unblock tasks:
 python3 scripts/git/auto_integrator.py --execute --no-open-unblock
 ```
 
+## Scheduled Runner
+
+`scripts/run-auto-integrator.sh` is the cron-friendly wrapper. It defaults to
+`--execute --max-tasks 1` and passes the canonical status/config paths into the
+Python integrator:
+
+```bash
+PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
+  bash scripts/run-auto-integrator.sh
+```
+
+Use `AUTO_INTEGRATOR_DRY_RUN=1` for a non-mutating scheduled smoke and
+`AUTO_INTEGRATOR_MAX_TASKS=<n>` to override the default one-task limit.
+
+Install the cron runner with:
+
+```bash
+python3 scripts/auto_integrator_install.py \
+  --repo /home/lupin/pantheon-ci-deploy/dev-root \
+  --status-root /home/lupin/code/pantheon
+```
+
+The installed line is tagged `# pantheon-auto-integrator`, runs every five
+minutes by default, and writes logs to
+`$PANTHEON_STATUS_ROOT/.orchestrator/logs/auto-integrator-cron.log`.
+
 ## Non-goals
 
 - No automatic conflict resolution.
