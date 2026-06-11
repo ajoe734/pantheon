@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from services.research.adapters.taiwan_market_client import MopsRouteSpec, TaiwanMarketClient, TejTableSpec
@@ -21,6 +22,21 @@ from .base import (
     SourceMetadata,
     SourceRecord,
 )
+from ..source_health import SourceHealth, SourceHealthStatus
+
+
+TEJ_BACKFILL_SCHEMA_HASH = "tej_taiwan_backfill_plan.v1"
+TEJ_RECORD_SCHEMA_HASH = "tej_taiwan_research_dataset.v1"
+_SENSITIVE_METADATA_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer_token",
+    "password",
+    "secret",
+    "secret_key",
+    "token",
+}
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -291,6 +307,55 @@ def _restatement_gap_report(routes: Sequence[MopsRouteSpec]) -> dict[str, Any]:
     }
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalized_dataset_code(value: str) -> str:
+    text = str(value or "").strip().strip("/")
+    if "/" not in text:
+        raise ValueError("TEJ dataset_code must be in DB/TABLE form")
+    db_code, table_code = (part.strip().upper() for part in text.split("/", 1))
+    if not db_code or not table_code:
+        raise ValueError("TEJ dataset_code must include non-empty DB and TABLE")
+    return f"{db_code}/{table_code}"
+
+
+def _normalized_allowlist_entry(value: Any) -> str | None:
+    text = str(value or "").strip().strip("/").upper()
+    if not text:
+        return None
+    return _normalized_dataset_code(text) if "/" in text else text
+
+
+def _table_code(dataset_code: str) -> str:
+    return _normalized_dataset_code(dataset_code).split("/", 1)[1]
+
+
+def _public_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in dict(metadata or {}).items():
+        normalized_key = str(key).strip().lower()
+        if normalized_key in _SENSITIVE_METADATA_KEYS:
+            raise ValueError(f"entitlement metadata must not include inline credential field: {key}")
+        if isinstance(value, Mapping):
+            result[str(key)] = _public_metadata(value)
+        else:
+            result[str(key)] = value
+    return result
+
+
+def _normalize_symbol_universe(symbols: Sequence[str]) -> list[str]:
+    result: list[str] = []
+    for symbol in symbols:
+        text = str(symbol or "").strip().upper()
+        if text and text not in result:
+            result.append(text)
+    if not result:
+        raise ValueError("symbol_universe must contain at least one symbol")
+    return result
+
+
 @dataclass(frozen=True)
 class MopsSourceIngestAdapter(SourceConnectorProvider):
     connector_id: str = "tw-mops-official-disclosures"
@@ -355,10 +420,13 @@ class MopsSourceIngestAdapter(SourceConnectorProvider):
     def fetch_config(self) -> Mapping[str, Any]:
         routes = TaiwanMarketClient.MOPS_RECOMMENDED_ROUTES
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "MopsSourceIngestAdapter.records_from_payload",
+            "adapter": "MopsSourceIngestAdapter.records_from_payload",
+            "adapter_config": {
+                "max_records": self.max_records,
+            },
+            "request": {},
             "recommended_routes": [route.to_dict() for route in routes],
             "normalized_targets": sorted({_route_normalized_target(route) for route in routes}),
             "route_update_strategy": list(_route_update_strategy(routes)),
@@ -446,10 +514,25 @@ class TejSourceIngestAdapter(SourceConnectorProvider):
     connector_id: str = "tw-tej-research-datasets"
     secret_ref_id: str = "env://TEJ_API_KEY"
     max_records: int = 100
+    purchased_table_allowlist: Sequence[str] = field(default_factory=tuple)
     source_metadata: SourceMetadata | Mapping[str, Any] | None = None
     connector_metadata: Mapping[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "purchased_table_allowlist",
+            tuple(
+                entry
+                for entry in (_normalized_allowlist_entry(item) for item in self.purchased_table_allowlist)
+                if entry
+            ),
+        )
+
     def connector(self) -> SourceConnector:
+        paid_tables = TaiwanMarketClient().tej_paid_backfill_table_catalog(
+            purchased_table_allowlist=self.purchased_table_allowlist
+        )
         return SourceConnector(
             connector_id=self.connector_id,
             source_type="market",
@@ -488,17 +571,151 @@ class TejSourceIngestAdapter(SourceConnectorProvider):
             metadata={
                 "source_class": "research_grade",
                 "does_not_replace_official_disclosure_truth": True,
-                "trial_table_count": 25,
+                "catalog_role": "paid_historical_gap_fill_and_research_supplement",
+                "run_by_default": False,
+                "table_inventory_cache_required": True,
+                "purchased_table_allowlist": list(self.purchased_table_allowlist),
+                "paid_backfill_table_candidates": [table.to_dict() for table in paid_tables],
+                "schema_hash": TEJ_RECORD_SCHEMA_HASH,
                 **dict(self.connector_metadata),
             },
         )
 
     def fetch_config(self) -> Mapping[str, Any]:
+        paid_tables = TaiwanMarketClient().tej_paid_backfill_table_catalog(
+            purchased_table_allowlist=self.purchased_table_allowlist
+        )
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "TejSourceIngestAdapter.records_from_rows",
+            "adapter": "TejSourceIngestAdapter.records_from_rows",
+            "adapter_config": {
+                "secret_ref_id": self.secret_ref_id,
+                "max_records": self.max_records,
+            },
+            "request": {},
+            "base_url": "https://api.tej.com.tw",
+            "metadata_fetcher": "TaiwanMarketClient.fetch_tej_table_metadata",
+            "dataset_fetcher": "TaiwanMarketClient.fetch_tej_dataset",
+            "table_inventory_cache": {
+                "cache_key": "tej://table-inventory/tw-research-backfill",
+                "refresh_cadence": "manual_or_weekly_when_credentialed",
+                "credential_required": True,
+            },
+            "credential_smoke": {
+                "without_key_status": "credential_unavailable",
+                "with_key_checks": ["table_metadata", "small_dataset_read"],
+                "small_read_limit": min(self.max_records, 5),
+            },
+            "secret_ref_id": self.secret_ref_id,
+            "purchased_table_allowlist": list(self.purchased_table_allowlist),
+            "allowlist_required": True,
+            "deny_unlisted_tables": True,
+            "run_by_default": False,
+            "paid_backfill_table_candidates": [table.to_dict() for table in paid_tables],
+        }
+
+    def credential_health(
+        self,
+        *,
+        api_key_available: bool,
+        table_inventory_count: int = 0,
+        checked_at: str | None = None,
+    ) -> SourceHealth:
+        timestamp = checked_at or _utc_now()
+        if not api_key_available:
+            return SourceHealth(
+                source_id=self.connector_id,
+                source_kind="data_source",
+                status=SourceHealthStatus.DEGRADED.value,
+                last_failure_at=timestamp,
+                row_count_last_run=0,
+                rejected_count_last_run=0,
+                error_rate_7d=1.0,
+                metadata={
+                    "reason": "credential_unavailable",
+                    "credential_unavailable": True,
+                    "required_secret_ref_id": self.secret_ref_id,
+                    "does_not_replace_official_disclosure_truth": True,
+                },
+            )
+        return SourceHealth(
+            source_id=self.connector_id,
+            source_kind="data_source",
+            status=SourceHealthStatus.OK.value,
+            last_success_at=timestamp,
+            row_count_last_run=max(0, int(table_inventory_count)),
+            metadata={
+                "credential_unavailable": False,
+                "table_inventory_count": max(0, int(table_inventory_count)),
+                "required_secret_ref_id": self.secret_ref_id,
+            },
+        )
+
+    def plan_historical_backfill(
+        self,
+        *,
+        dataset_code: str,
+        start_date: str,
+        end_date: str,
+        symbol_universe: Sequence[str],
+        entitlement_metadata: Mapping[str, Any] | None = None,
+        license_scope: str = "vendor_research",
+        priority_reason: str = "fill historical gaps older than public/FinMind/Yahoo coverage",
+    ) -> dict[str, Any]:
+        normalized_dataset_code = _normalized_dataset_code(dataset_code)
+        symbols = _normalize_symbol_universe(symbol_universe)
+        start_text = _text(start_date)
+        end_text = _text(end_date)
+        if not start_text or not end_text:
+            raise ValueError("start_date and end_date are required")
+        if start_text > end_text:
+            raise ValueError("start_date must be <= end_date")
+
+        entitlement = _public_metadata(entitlement_metadata)
+        table_code = _table_code(normalized_dataset_code)
+        raw_metadata_allowlist = entitlement.get("purchased_table_allowlist", ())
+        if isinstance(raw_metadata_allowlist, str):
+            raw_metadata_allowlist = (raw_metadata_allowlist,)
+        metadata_allowlist = {
+            entry
+            for entry in (_normalized_allowlist_entry(item) for item in raw_metadata_allowlist)
+            if entry
+        }
+        combined_allowlist = set(self.purchased_table_allowlist) | metadata_allowlist
+        table_allowed = normalized_dataset_code in combined_allowlist or table_code in combined_allowlist
+        plan_state = "ready" if table_allowed else "requires_entitlement_confirmation"
+        jobs = [
+            {
+                "connector_id": self.connector_id,
+                "dataset_code": normalized_dataset_code,
+                "table_code": table_code,
+                "symbol": symbol,
+                "start_date": start_text,
+                "end_date": end_text,
+                "params": {"coid": symbol, "mdate_gte": start_text, "mdate_lte": end_text},
+                "license_scope": license_scope,
+                "point_in_time_available": True,
+            }
+            for symbol in symbols
+        ]
+        return {
+            "schema_version": TEJ_BACKFILL_SCHEMA_HASH,
+            "connector_id": self.connector_id,
+            "dataset_code": normalized_dataset_code,
+            "table_code": table_code,
+            "date_range": {"start_date": start_text, "end_date": end_text},
+            "symbol_universe": symbols,
+            "symbol_count": len(symbols),
+            "job_count": len(jobs),
+            "jobs": jobs,
+            "entitlement_metadata": entitlement,
+            "purchased_table_allowlist": list(self.purchased_table_allowlist),
+            "license_scope": license_scope,
+            "plan_state": plan_state,
+            "run_by_default": False,
+            "priority_reason": priority_reason,
+            "does_not_replace_official_disclosure_truth": True,
             "secret_ref_id": self.secret_ref_id,
         }
 
@@ -513,6 +730,9 @@ class TejSourceIngestAdapter(SourceConnectorProvider):
         for row in list(rows)[: self.max_records]:
             symbol = _text(row.get("coid") or row.get("symbol") or row.get("股票代號"))
             as_of_date = _text(row.get("mdate") or row.get("date") or row.get("資料日"))
+            available_time = _text(
+                row.get("available_time") or row.get("available_at") or row.get("pub_date") or as_of_date
+            )
             row_hash = _stable_hash({"dataset": table.dataset_code, "row": dict(row)})
             content_ref = f"tej://{table.dataset_code}/{symbol or 'market'}/{as_of_date or row_hash}/{row_hash}"
             records.append(
@@ -532,11 +752,14 @@ class TejSourceIngestAdapter(SourceConnectorProvider):
                         "symbol": symbol or None,
                         "as_of_date": as_of_date or None,
                         "event_time": as_of_date or None,
-                        "available_time": as_of_date or None,
+                        "available_time": available_time or None,
+                        "point_in_time_available": table.point_in_time_available,
                         "raw_row": dict(row),
                         "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
                         "access_scope": ["research"],
-                        "license_scope": "vendor_research",
+                        "license_scope": table.license_scope,
+                        "entitlement_tag": table.entitlement_tag,
+                        "schema_hash": TEJ_RECORD_SCHEMA_HASH,
                     },
                     trace_id=trace_id,
                 )

@@ -288,6 +288,22 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         },
     ),
     SourceUpdateRule(
+        connector_id="tw-tej-research-datasets",
+        dataset="tw_paid_historical_gap_fill",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE),
+        cadence="manual_one_time_historical_backfill",
+        priority=220,
+        reason="TEJ paid tables fill older or vendor-specific Taiwan gaps only after public, FinMind, and Yahoo sources are exhausted",
+        metadata={
+            "candidate_dataset_codes": ["TWN/APRCD1", "TWN/AMTOP1", "TWN/ABSR20"],
+            "normalization_targets": ["tw_price_daily", "tw_broker_top", "tw_financial_statement"],
+            "purchased_table_allowlist_required": True,
+            "credential_secret_ref_id": "env://TEJ_API_KEY",
+            "archive_behavior": "gap_report_selected_price_only",
+            "run_by_default": False,
+        },
+    ),
+    SourceUpdateRule(
         connector_id="us-sec-edgar-filings",
         dataset="sec_filing_event",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
@@ -444,6 +460,84 @@ def build_active_universe_update_plan(
             "candidate_count": len(members_by_tier[UniverseTier.CANDIDATE.value]),
             "archive_count": len(members_by_tier[UniverseTier.ARCHIVE.value]),
             "archive_detail_updates_skipped": sorted(skipped_archives),
+        },
+    }
+
+
+def build_active_universe_job_fanout(
+    members: Sequence[ActiveUniverseMember | Mapping[str, Any]],
+    *,
+    rules: Sequence[SourceUpdateRule | Mapping[str, Any]] = DEFAULT_SOURCE_UPDATE_RULES,
+    run_date: str,
+    default_max_symbols_per_job: int = 50,
+) -> dict[str, Any]:
+    if default_max_symbols_per_job < 1:
+        raise ValueError("default_max_symbols_per_job must be >= 1")
+    normalized_members = tuple(_member(member) for member in members)
+    normalized_rules = tuple(_rule(rule) for rule in rules)
+    plan = build_active_universe_update_plan(normalized_members, rules=normalized_rules)
+
+    jobs: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for rule in sorted(normalized_rules, key=lambda item: (item.priority, item.connector_id, item.dataset)):
+        eligible = [
+            member
+            for member in normalized_members
+            if member.market == rule.market and member.tier in set(rule.eligible_tiers)
+        ]
+        skipped.extend(
+            {
+                "symbol": member.symbol,
+                "market": member.market,
+                "tier": member.tier.value,
+                "connector_id": rule.connector_id,
+                "dataset": rule.dataset,
+                "reason": "not-in-universe",
+            }
+            for member in normalized_members
+            if member.market == rule.market and member.tier not in set(rule.eligible_tiers)
+        )
+        symbols = _unique_symbols(member.symbol for member in eligible)
+        symbol_scope = str(rule.metadata.get("symbol_scope") or "").strip()
+        if symbol_scope == "global_no_symbol_filter":
+            symbols = []
+            batches = [[]]
+        elif symbols:
+            batch_size = int(rule.max_symbols_per_run or default_max_symbols_per_job)
+            batches = [symbols[index : index + batch_size] for index in range(0, len(symbols), batch_size)]
+        else:
+            batches = []
+
+        for batch_index, batch in enumerate(batches, start=1):
+            jobs.append(
+                {
+                    "schema_version": "active_universe_ingest_job.v1",
+                    "connector_id": rule.connector_id,
+                    "dataset": rule.dataset,
+                    "run_date": run_date,
+                    "market": rule.market,
+                    "cadence": rule.cadence,
+                    "priority": rule.priority,
+                    "symbols": list(batch),
+                    "symbol_count": len(batch),
+                    "batch_index": batch_index,
+                    "batch_count": len(batches),
+                    "eligible_tiers": [tier.value for tier in rule.eligible_tiers],
+                    "metadata": dict(rule.metadata),
+                }
+            )
+
+    return {
+        "schema_version": "active_universe_ingest_fanout.v1",
+        "run_date": run_date,
+        "plan": plan,
+        "jobs": jobs,
+        "skipped": skipped,
+        "summary": {
+            "job_count": len(jobs),
+            "skipped_count": len(skipped),
+            "connector_count": len({job["connector_id"] for job in jobs}),
+            "default_max_symbols_per_job": default_max_symbols_per_job,
         },
     }
 

@@ -318,8 +318,9 @@ def test_registry_exposes_connector_status_policy_and_provider_examples(client) 
     }
     catalog = body["financial_data_source_catalog"]
     assert catalog["schema_version"] == "financial_data_source_catalog.v1"
-    assert catalog["summary"]["data_source_count"] == 6
+    assert catalog["summary"]["data_source_count"] == 7
     assert "FinMind" in catalog["summary"]["providers"]
+    assert "TEJ" in catalog["summary"]["providers"]
     assert body["active_universe_policy"]["schema_version"] == "active_universe_scheduling_policy.v1"
 
 
@@ -332,6 +333,7 @@ def test_financial_data_source_catalog_endpoint_exposes_templates(client) -> Non
     body = response.json()
     template_ids = {template["template_id"] for template in body["config_templates"]}
     assert body["catalog_status"] == "template_only_not_live_ingestion_claim"
+    assert "template-tw-tej-research-backfill" in template_ids
     assert "template-tw-mops-official-disclosures" in template_ids
     assert "template-us-sec-edgar-filings" in template_ids
     assert body["active_universe_policy"]["summary"]["archive_baseline_rule_count"] >= 3

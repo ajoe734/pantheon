@@ -24,6 +24,7 @@ from .finmind_taiwan import (
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistProvider
 from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
+from .taiwan_official import TaiwanOfficialMarketDatasetAdapter
 from .yahoo_taiwan import YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
 
 
@@ -265,6 +266,7 @@ def example_provider_catalog() -> tuple[SourceConnectorProvider, ...]:
                 tags=("example", "taiwan", "mops", "official_reference", "filing"),
             ),
         ),
+        TaiwanOfficialMarketDatasetAdapter(),
         TejSourceIngestAdapter(
             connector_id="example-tw-tej-research-datasets",
             source_metadata=SourceMetadata(

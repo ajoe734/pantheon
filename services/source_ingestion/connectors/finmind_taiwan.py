@@ -228,10 +228,15 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "FinMindTaiwanDatasetAdapter.records_from_data_payload",
+            "adapter": "FinMindTaiwanDatasetAdapter.records_from_data_payload",
+            "adapter_config": {
+                "secret_ref_id": self.secret_ref_id,
+                "max_records": self.max_records,
+                "entitlement_tier": self.entitlement_tier,
+            },
+            "request": {},
             "base_url": FINMIND_BASE_URL,
             "endpoint": FINMIND_DATA_ENDPOINT,
             "secret_ref_id": self.secret_ref_id,
@@ -353,10 +358,15 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
+            "adapter": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
+            "adapter_config": {
+                "secret_ref_id": self.secret_ref_id,
+                "max_rank": self.max_rank,
+                "entitlement_tier": self.entitlement_tier,
+            },
+            "request": {},
             "base_url": FINMIND_BASE_URL,
             "endpoint": FINMIND_BROKER_DAILY_REPORT_ENDPOINT,
             "secret_ref_id": self.secret_ref_id,
@@ -559,10 +569,13 @@ class FinMindTaiwanBrokerBulkBackfillAdapter(SourceConnectorProvider):
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
+            "adapter": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
+            "adapter_config": {
+                "secret_ref_id": self.secret_ref_id,
+            },
+            "request": {},
             "base_url": FINMIND_BASE_URL,
             "endpoint": FINMIND_STORAGE_OBJECTS_ENDPOINT,
             "secret_ref_id": self.secret_ref_id,
