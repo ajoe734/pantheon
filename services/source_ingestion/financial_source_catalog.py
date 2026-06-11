@@ -432,6 +432,70 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
             "config_template_ids": ["template-us-fred-macro"],
         },
     ),
+    _entry(
+        data_source_id="ds-finra-short-sale",
+        provider="FINRA",
+        source_class=DataSourceClass.SHORT_INTEREST,
+        license_scope="public_short_sale_reference",
+        allowed_use=("research_data", "backtest_data", "feature_generation", "monitoring"),
+        update_frequency="daily_after_finra_publication_window plus licensed half-month short-interest follow-up",
+        connector_id="us-finra-short-sale",
+        datasets=(
+            _dataset(
+                "us_short_volume_daily",
+                "short_interest",
+                storage_tier="raw/normalized/features",
+                update_profile="daily_after_finra_publication_window",
+                storage_targets=("raw/finra/regsho", "normalized/us_short_volume_daily", "features/us_short_volume_pressure"),
+                universe_tiers=("core_universe", "candidate_universe"),
+                notes="FINRA public daily short-volume files. Missing current-day files are pending until the expected publication window passes.",
+                metadata={"expected_publication_delay_hours": 26},
+            ),
+            _dataset(
+                "us_short_interest",
+                "short_interest",
+                storage_tier="normalized/features",
+                update_profile="licensed_half_month_followup",
+                storage_targets=("normalized/us_short_interest", "features/us_short_interest_pressure"),
+                universe_tiers=("core_universe", "candidate_universe"),
+                notes="Half-month short-interest files are represented as a licensed follow-up surface, not enabled by default.",
+                metadata={"run_by_default": False, "availability": "licensed_or_endpoint_confirmed"},
+            ),
+        ),
+        metadata={
+            "preferred_role": "public_us_short_sale_reference",
+            "config_template_ids": ["template-us-finra-short-sale"],
+        },
+    ),
+    _entry(
+        data_source_id="ds-stooq-us-daily-ohlcv",
+        provider="Stooq",
+        source_class=DataSourceClass.MARKET_DAILY,
+        license_scope="public_market_reference",
+        allowed_use=("research_data", "backtest_data", "feature_generation", "monitoring"),
+        update_frequency="daily_after_close_when_endpoint_verified",
+        connector_id="us-stooq-daily-ohlcv",
+        datasets=(
+            _dataset(
+                "us_price_daily",
+                "market_daily",
+                storage_tier="raw/normalized/features",
+                update_profile="daily_after_close_disabled_until_runtime_smoke",
+                storage_targets=("raw/stooq", "normalized/us_price_daily", "features/us_returns"),
+                universe_tiers=("core_universe", "candidate_universe", "archive_universe"),
+                notes="Public US daily OHLCV fallback. Disabled until a working Stooq endpoint is verified from runtime.",
+                metadata={
+                    "disabled_reason": "stooq_endpoint_unverified_2026-06-11",
+                    "corporate_action_adjustment_policy": "provider_close_unadjusted_until_verified",
+                },
+            ),
+        ),
+        metadata={
+            "preferred_role": "disabled_public_us_daily_price_fallback",
+            "config_template_ids": ["template-us-stooq-daily-ohlcv"],
+            "disabled_reason": "stooq_endpoint_unverified_2026-06-11",
+        },
+    ),
 )
 
 
@@ -669,7 +733,7 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
         "auth": {"auth_type": "none", "policy_note": "bounded client must set a compliant user-agent"},
         "fetch": {
             "mode": "provider_owned_adapter",
-            "adapter": "SecEdgarFilingAdapter",
+            "adapter": "SecEdgarFilingAdapter.records_from_payload",
             "dataset": "sec_filing_event",
         },
         "schedule": {
@@ -689,7 +753,7 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
         "auth": {"auth_type": "none", "optional_secret_ref_id": "env://FRED_API_KEY"},
         "fetch": {
             "mode": "provider_owned_adapter",
-            "adapter": "FredMacroSeriesAdapter",
+            "adapter": "FredMacroSeriesAdapter.records_from_observations_payload",
             "dataset": "macro_fred_observation",
             "symbol_scope": "global_no_symbol_filter",
         },
@@ -699,6 +763,50 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
             "archive_behavior": "not_symbol_scoped",
         },
         "lifecycle_state": "candidate",
+    },
+    {
+        "schema_version": FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATE_SCHEMA_VERSION,
+        "template_id": "template-us-finra-short-sale",
+        "data_source_id": "ds-finra-short-sale",
+        "connector_id": "us-finra-short-sale",
+        "source_type": "market",
+        "provider": "FINRA",
+        "auth": {"auth_type": "none"},
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "FinraShortSaleAdapter.records_from_short_volume_text",
+            "dataset": "us_short_volume_daily",
+            "expected_publication_delay_hours": 26,
+            "licensed_followup_datasets": ["us_short_interest"],
+        },
+        "schedule": {
+            "cadence": "daily_after_finra_publication_window",
+            "universe_tiers": ["core_universe", "candidate_universe"],
+            "archive_behavior": "skip",
+        },
+        "lifecycle_state": "candidate",
+    },
+    {
+        "schema_version": FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATE_SCHEMA_VERSION,
+        "template_id": "template-us-stooq-daily-ohlcv",
+        "data_source_id": "ds-stooq-us-daily-ohlcv",
+        "connector_id": "us-stooq-daily-ohlcv",
+        "source_type": "market",
+        "provider": "Stooq",
+        "auth": {"auth_type": "none"},
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "StooqDailyOhlcvAdapter.records_from_csv",
+            "dataset": "us_price_daily",
+            "disabled_reason": "stooq_endpoint_unverified_2026-06-11",
+            "corporate_action_adjustment_policy": "provider_close_unadjusted_until_verified",
+        },
+        "schedule": {
+            "cadence": "daily_after_close",
+            "universe_tiers": ["core_universe", "candidate_universe", "archive_universe"],
+            "archive_behavior": "daily_price_only_when_enabled",
+        },
+        "lifecycle_state": "disabled",
     },
 )
 

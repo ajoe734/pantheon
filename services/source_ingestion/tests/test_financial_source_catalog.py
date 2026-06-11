@@ -15,8 +15,18 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
     entries = {entry.data_source_id: entry for entry in initial_financial_data_source_entries()}
 
     assert payload["schema_version"] == "financial_data_source_catalog.v1"
-    assert {"FinMind", "TWSE/TPEx", "MOPS", "TEJ", "Yahoo Taiwan Stock", "SEC EDGAR", "FRED"} <= providers
-    assert payload["summary"]["data_source_count"] == 7
+    assert {
+        "FINRA",
+        "FRED",
+        "FinMind",
+        "MOPS",
+        "SEC EDGAR",
+        "Stooq",
+        "TEJ",
+        "TWSE/TPEx",
+        "Yahoo Taiwan Stock",
+    } <= providers
+    assert payload["summary"]["data_source_count"] == 9
     assert all(entry.source_kind == "data_source" for entry in entries.values())
     assert all(entry.lifecycle_state.value == "candidate" for entry in entries.values())
     assert entries["ds-finmind-tw-data"].metadata["template_status"] == "candidate_not_live_ingestion_claim"
@@ -36,6 +46,8 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert "template-tw-yahoo-broker-top15" in templates
     assert "template-us-sec-edgar-filings" in templates
     assert "template-us-fred-macro" in templates
+    assert "template-us-finra-short-sale" in templates
+    assert "template-us-stooq-daily-ohlcv" in templates
     assert "raw-key" not in encoded
     assert templates["template-tw-finmind-broker-daily-report"]["fetch"]["normalized_target"] == "tw_broker_top"
     tej_template = templates["template-tw-tej-research-backfill"]
@@ -46,7 +58,18 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
         table["dataset_code"] for table in tej_template["fetch"]["candidate_tables"]
     }
     assert templates["template-tw-yahoo-stock-rss"]["fetch"]["full_text_allowed_by_default"] is False
+    assert templates["template-us-sec-edgar-filings"]["fetch"]["adapter"] == (
+        "SecEdgarFilingAdapter.records_from_payload"
+    )
+    assert templates["template-us-fred-macro"]["fetch"]["adapter"] == (
+        "FredMacroSeriesAdapter.records_from_observations_payload"
+    )
     assert templates["template-us-fred-macro"]["fetch"]["symbol_scope"] == "global_no_symbol_filter"
+    assert templates["template-us-finra-short-sale"]["fetch"]["expected_publication_delay_hours"] == 26
+    assert templates["template-us-stooq-daily-ohlcv"]["lifecycle_state"] == "disabled"
+    assert templates["template-us-stooq-daily-ohlcv"]["fetch"]["disabled_reason"] == (
+        "stooq_endpoint_unverified_2026-06-11"
+    )
     mops_template = templates["template-tw-mops-official-disclosures"]
     assert mops_template["fetch"]["normalized_targets"] == [
         "tw_material_event",

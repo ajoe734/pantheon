@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "USPriceDaily",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_table",
+    "provider",
+    "symbol",
+    "symbol_canonical",
+    "trade_date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "currency",
+    "adjustment_policy",
+    "available_time"
+  ],
+  "properties": {
+    "schema_version": {"const": "us_price_daily.v1"},
+    "target_table": {"const": "us_price_daily"},
+    "provider": {"type": "string"},
+    "symbol": {"type": "string"},
+    "symbol_canonical": {"type": "string", "pattern": "^[A-Z0-9.-]+\\.US$"},
+    "trade_date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "open": {"type": ["number", "null"]},
+    "high": {"type": ["number", "null"]},
+    "low": {"type": ["number", "null"]},
+    "close": {"type": ["number", "null"]},
+    "volume": {"type": ["integer", "null"], "minimum": 0},
+    "currency": {"type": "string"},
+    "adjustment_policy": {"type": "string"},
+    "available_time": {"type": "string"},
+    "raw_row": {"type": "object"}
+  },
+  "additionalProperties": true
+}

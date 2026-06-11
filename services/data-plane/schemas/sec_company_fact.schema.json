@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecCompanyFact",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_table",
+    "provider",
+    "cik",
+    "taxonomy",
+    "concept",
+    "unit",
+    "value",
+    "filed_date",
+    "available_time"
+  ],
+  "properties": {
+    "schema_version": {"const": "sec_company_fact.v1"},
+    "target_table": {"const": "sec_company_fact"},
+    "provider": {"const": "SEC EDGAR"},
+    "cik": {"type": "string", "pattern": "^\\d{10}$"},
+    "symbol": {"type": ["string", "null"]},
+    "symbol_canonical": {"type": ["string", "null"]},
+    "company_name": {"type": ["string", "null"]},
+    "taxonomy": {"type": "string"},
+    "concept": {"type": "string"},
+    "unit": {"type": "string"},
+    "value": {},
+    "fiscal_year": {"type": ["integer", "string", "null"]},
+    "fiscal_period": {"type": ["string", "null"]},
+    "form_type": {"type": ["string", "null"]},
+    "filed_date": {"type": "string"},
+    "end_date": {"type": ["string", "null"]},
+    "available_time": {"type": "string"},
+    "raw_row": {"type": "object"}
+  },
+  "additionalProperties": true
+}
