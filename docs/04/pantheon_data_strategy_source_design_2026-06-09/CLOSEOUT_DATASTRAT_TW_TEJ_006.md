@@ -54,7 +54,7 @@ Implemented layers:
 python3 -m pytest services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_active_universe.py services/source_ingestion/tests/test_taiwan_market_connectors.py services/research/adapters/test_adapters.py services/data-plane/tests/test_data_plane_schemas.py services/source_ingestion/test_service.py -q
 ```
 
-Result: `109 passed in 19.69s`.
+Result after rebasing onto `origin/dev` at merge commit `bc0f3d3b`: `112 passed in 26.71s`.
 
 ```bash
 python3 -m compileall -q services/source_ingestion/connectors/taiwan_market.py services/source_ingestion/financial_source_catalog.py services/source_ingestion/active_universe.py services/research/adapters/taiwan_market_client.py services/data-plane/taiwan_reference.py
