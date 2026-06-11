@@ -5,6 +5,7 @@ from services.source_ingestion.active_universe import (
     UniverseTier,
     UniverseTransition,
     active_universe_policy_payload,
+    build_active_universe_job_fanout,
     build_active_universe_update_plan,
 )
 
@@ -50,6 +51,21 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
         for update in plan["connector_updates"]
         if update["connector_id"] == "tw-mops-official-disclosures" and update["dataset"] == "tw_financial_statement"
     )
+    tdcc = next(
+        update
+        for update in plan["connector_updates"]
+        if update["connector_id"] == "tw-tdcc-shareholding-distribution"
+    )
+    taifex_futures = next(
+        update
+        for update in plan["connector_updates"]
+        if update["connector_id"] == "tw-taifex-futures-options-chip" and update["dataset"] == "taifex_futures_chip"
+    )
+    taifex_options = next(
+        update
+        for update in plan["connector_updates"]
+        if update["connector_id"] == "tw-taifex-futures-options-chip" and update["dataset"] == "taifex_options_chip"
+    )
 
     assert plan["schema_version"] == "active_universe_update_plan.v1"
     assert plan["policy_ref"] == "active_universe_scheduling_policy.v1"
@@ -76,6 +92,15 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     assert mops_revenue["metadata"]["normalized_target"] == "tw_monthly_revenue"
     assert mops_financials["symbols"] == ["2330"]
     assert mops_financials["metadata"]["restatement_correction_gap_report"] == "mops_restatement_correction_gap_report.v1"
+    assert tdcc["symbols"] == ["2330", "2317"]
+    assert tdcc["cadence"] == "weekly_after_tdcc_publication"
+    assert tdcc["metadata"]["raw_storage_policy"]["compression"] == "gzip"
+    assert tdcc["metadata"]["archive_behavior"] == "skip_except_repair_selected"
+    assert taifex_futures["symbols"] == []
+    assert taifex_futures["metadata"]["symbol_scope"] == "market_context_no_symbol_filter"
+    assert taifex_futures["metadata"]["raw_storage_policy"]["retention_days"] == 2555
+    assert taifex_options["symbols"] == []
+    assert taifex_options["metadata"]["normalized_target"] == "taifex_options_chip"
     assert plan["summary"]["archive_detail_updates_skipped"] == ["6488"]
     assert plan["summary"]["core_count"] == 1
     assert plan["summary"]["candidate_count"] == 1
@@ -117,6 +142,30 @@ def test_active_universe_policy_summarizes_archive_baseline_and_detail_skip_rule
     assert "tw-finmind-broker-daily-report" not in policy["summary"]["archive_baseline_connector_ids"]
     assert "tw-twse-tpex-official-market" in policy["summary"]["archive_baseline_connector_ids"]
     assert "tw-anue-news-rss" in policy["summary"]["candidate_detail_connector_ids"]
+    assert "tw-tdcc-shareholding-distribution" in policy["summary"]["candidate_detail_connector_ids"]
+    assert "tw-taifex-futures-options-chip" in policy["summary"]["candidate_detail_connector_ids"]
+
+
+def test_active_universe_fanout_keeps_taifex_market_context_unsymbolized() -> None:
+    fanout = build_active_universe_job_fanout(
+        [
+            {"symbol": "2330", "tier": "core_universe"},
+            {"symbol": "2317", "tier": "candidate_universe"},
+            {"symbol": "6488", "tier": "archive_universe"},
+        ],
+        run_date="2026-06-10",
+    )
+
+    taifex_jobs = [
+        job
+        for job in fanout["jobs"]
+        if job["connector_id"] == "tw-taifex-futures-options-chip"
+    ]
+
+    assert {job["dataset"] for job in taifex_jobs} == {"taifex_futures_chip", "taifex_options_chip"}
+    assert all(job["symbols"] == [] for job in taifex_jobs)
+    assert all(job["symbol_count"] == 0 for job in taifex_jobs)
+    assert all(job["metadata"]["symbol_scope"] == "market_context_no_symbol_filter" for job in taifex_jobs)
 
 
 def test_universe_transition_records_required_tier_change_fields() -> None:

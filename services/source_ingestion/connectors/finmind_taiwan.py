@@ -221,6 +221,19 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
                 ],
                 "entitlement_tier": self.entitlement_tier,
                 "dataset_catalog": [dict(item) for item in FINMIND_TAIWAN_DATASETS],
+                "active_universe_tiers": ["core_universe", "candidate_universe"],
+                "archive_behavior": "price_baseline_only_elsewhere",
+                "raw_storage_policy": {
+                    "compression": "gzip",
+                    "retention_days": 2555,
+                    "retention_policy_ref": "market-data://raw-retention/tw-finmind-7y",
+                    "dataset_overrides": {
+                        "TaiwanStockNews": {
+                            "retention_days": 730,
+                            "retention_policy_ref": "market-data://raw-retention/tw-news-metadata-2y",
+                        }
+                    },
+                },
                 "schema_hash": FINMIND_DATASET_SCHEMA_HASH,
                 **dict(self.connector_metadata),
             },
@@ -349,6 +362,17 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                 "completeness": "top20_buy_sell_aggregated_from_full_branch_daily_report",
                 "entitlement_tier": self.entitlement_tier,
                 "active_universe_tiers": ["core_universe", "candidate_universe"],
+                "archive_behavior": "skip",
+                "max_rank_policy": {
+                    "default_max_rank": self.max_rank,
+                    "stored_rank_scope": "top_buy_and_top_sell_only",
+                    "full_branch_storage_allowed_by_default": False,
+                },
+                "raw_storage_policy": {
+                    "compression": "gzip",
+                    "retention_days": 2555,
+                    "retention_policy_ref": "market-data://raw-retention/tw-broker-top-7y",
+                },
                 "fallback_connector_id": "tw-yahoo-broker-top15",
                 "expected_rows_per_symbol": self.max_rank * 2,
                 "schema_hash": BROKER_TOP_SCHEMA_HASH,
@@ -562,6 +586,11 @@ class FinMindTaiwanBrokerBulkBackfillAdapter(SourceConnectorProvider):
                 "bulk_download": True,
                 "signed_url_redaction_required": True,
                 "raw_storage_partition": "raw/finmind/TaiwanStockTradingDailyReport/date=YYYY-MM-DD/",
+                "raw_storage_policy": {
+                    "compression": "gzip",
+                    "retention_days": 2555,
+                    "retention_policy_ref": "market-data://raw-retention/tw-broker-bulk-7y",
+                },
                 "schema_hash": FINMIND_STORAGE_OBJECT_SCHEMA_HASH,
                 **dict(self.connector_metadata),
             },
