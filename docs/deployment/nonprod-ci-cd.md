@@ -1,6 +1,6 @@
 # Nonprod CI/CD
 
-Status date: 2026-06-09
+Status date: 2026-06-11
 
 This is the repo-local CI/CD operating record for Pantheon dev and
 staging-live.
@@ -69,6 +69,13 @@ Automatic dev deploy runs when a `publish/v*` snapshot branch is pushed. Manual
 image-publish runs do not auto-deploy dev; use the manual deploy entry when
 that is desired.
 
+Normal dev delivery enters through GitHub Actions, not through an operator
+locally SSHing to the VM and running Compose by hand. Use `Pantheon Nonprod
+Deploy` with `environment=dev`, `component=root`, and `ref=<commit-sha>` when
+the target commit must be deployed before the next publish snapshot. The deploy
+script still executes on the dev VM through CI-managed `gcloud compute ssh`;
+that VM execution is an implementation detail of the CI deploy lane.
+
 Target:
 
 - VM: `pantheon-lupin-dev`
@@ -83,6 +90,13 @@ PANTHEON_ENV=dev
 PANTHEON_LIVE_BROKER_ENABLED=false
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 ```
+
+Latest verified dev root deploy, 2026-06-11:
+
+- GitHub Actions run `27327401818`
+- ref `fd05226d68bd040441309c19352239bbb815bf12`
+- CI log line: `deployment complete: dev/root fd05226d68bd040441309c19352239bbb815bf12`
+- public BFF health/CORS smoke passed
 
 Post-deploy smoke:
 
