@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: US paid and broker data fallback planning
-- Status: review_ready
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Codex
-- Next: Awaiting Codex review. All adapters implemented, tests passing (349 passed, 1 skipped), 3 anchor commits on branch task/DATASTRAT-MARKETDATA-US-PAID-BROKER-009.
+- Next: Codex review fix committed and PR #1313 opened with auto-merge; source_ingestion validation passed 356 passed 1 skipped.
 
 ## Summary
 設計 Polygon Alpha Vantage IBKR 等美股付費/券商資料備援接法，先不硬依賴付費 key，但要能在有 key 時接入日線與 broker fallback。
