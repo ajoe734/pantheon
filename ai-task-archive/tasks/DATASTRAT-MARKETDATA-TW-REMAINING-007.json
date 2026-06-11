@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-MARKETDATA-TW-REMAINING-007",
+  "archived_at": "2026-06-11T05:17:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-MARKETDATA-TW-REMAINING-007",
+    "title": "Taiwan remaining gaps: chip finance news storage and throttling",
+    "summary_zh": "補齊台股資料完整性缺口：分點只抓 active universe top15/top20、新聞/財報/籌碼分級更新、大量資料 raw retention 與壓縮，以及 archive universe 暫停細節更新。",
+    "phase": "Market data completion",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+      "DATASTRAT-MARKETDATA-TW-OFFICIAL-002"
+    ],
+    "artifacts": [
+      ".orchestrator/task-briefs/datastrat_marketdata_tw_remaining_007.md",
+      "services/source_ingestion",
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09",
+      "tests"
+    ],
+    "acceptance": [
+      "core candidate archive universe policy enforced for expensive datasets; broker top table stores only top15/top20 unless explicitly backfill mode; daily weekly intraday cadences separated; raw retention compression documented; gap report covers Taiwan datasets; PR merged to dev when complete"
+    ],
+    "next": "Owner finalized approved Taiwan remaining market-data controls after closeout PR #1317 merged into dev at c362f23214afa2bb4df7e789c071b1c81534820e.",
+    "last_update": "2026-06-11T05:17:41Z",
+    "task_class": "implementation",
+    "auto_created_by": "Codex-marketdata-dispatch-2026-06-11",
+    "review_notes_zh": [
+      "審查通過：TDCC/TAIFEX 模板明確標記 disabled/pending，archive symbol 正確限制為 baseline price + material events，gzip raw storage refs 與 source evidence compaction 相容，gap report 覆蓋兩個官方台股資料集。43 個測試全部通過。"
+    ],
+    "review_file": "docs/04/pantheon_data_strategy_source_design_2026-06-09/REVIEW_DATASTRAT_TW_REMAINING_007.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-11T05:17:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-marketdata-tw-remaining-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-MARKETDATA-TW-REMAINING-007",
+      "git_clean_required": false,
+      "commit": "8b20700b92af914b2f37ac700b48319d35766af3",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/DATASTRAT-MARKETDATA-TW-REMAINING-007",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@openai.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-MARKETDATA-TW-REMAINING-007",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c362f23214afa2bb4df7e789c071b1c81534820e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-REMAINING-007",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-11T04:22:45Z",
+      "resolved_at": "2026-06-11T04:22:50Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-REMAINING-007",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation ready for review in PR #1314: TDCC/TAIFEX gap visibility, active-universe throttling, top-N storage metadata, raw retention/compression refs, and handoff evidence. Verification: py_compile targeted files; pytest services/source_ingestion/tests services/source_ingestion/test_service.py -q -> 295 passed, 1 skipped.",
+      "status": "done",
+      "created_at": "2026-06-11T04:46:38Z",
+      "resolved_at": "2026-06-11T05:10:16Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-REMAINING-007",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved. All acceptance criteria met. TDCC/TAIFEX templates disabled and clearly non-live. Archive symbols correctly limited to baseline only. Gzip raw storage metadata-compatible. Tests pass. Returned to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-11T05:10:16Z",
+      "resolved_at": "2026-06-11T05:17:42Z"
+    }
+  ],
+  "blockers": []
+}

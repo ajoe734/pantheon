@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-VERIFY-001",
+  "archived_at": "2026-06-10T12:50:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-VERIFY-001",
+    "title": "Produce supervisor closure packet for MPOS full-loop proof",
+    "summary_zh": "彙整所有 MPOS P1 修補任務的 PR、commit、CI 與本機驗證，產生 supervisor 可審的完整閉環證據包。",
+    "phase": "Sprint MPOS-P1 / Supervisor closure evidence",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P1-PER-002",
+      "MPOS-P1-E2E-002",
+      "MPOS-P1-CONSULT-001",
+      "MPOS-P1-RISK-002",
+      "MPOS-P1-MEM-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      ".orchestrator/task-briefs",
+      "current-work.md",
+      "dashboard-bundle.json",
+      "tests/e2e",
+      "services/telemetry/lineage_read/service.py"
+    ],
+    "acceptance": [
+      "Build one supervisor-visible closure packet for all MPOS P1 gates;include task PR commit and check refs for all implementation tasks;include requirement matrix against MPOS gap dispatch doc;include local validation commands and CI status;mark live or canary broker activation as intentionally fail-closed when not activated"
+    ],
+    "next": "Supervisor closure packet finalized and merged to dev (PR #1270 main packet + PR #1274 closeout record). All 5 MPOS P1 gap tasks G1-G5 documented with PR/commit/CI evidence; 125 passed 7 skipped local validation; live broker activation confirmed fail-closed. Task complete.",
+    "last_update": "2026-06-10T12:50:37Z",
+    "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+    "gap_ids": [
+      "G1",
+      "G2",
+      "G3",
+      "G4",
+      "G5"
+    ],
+    "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+    "task_class": "mpos_full_loop_gap_closure",
+    "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：所有 P1 gap 閉環證據已確認；125 passed 7 skipped 本機驗證一致；活動 broker 正確標記為 fail-closed；回傳 owner Claude 進行最終收尾"
+    ],
+    "review_file": "support/evidence/MPOS-P1-VERIFY-001/review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-10T12:50:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-verify-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-VERIFY-001",
+      "git_clean_required": false,
+      "commit": "ed1ce6cb201921c4382f2fc3698098068633dcd8",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MPOS-P1-VERIFY-001",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-VERIFY-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6ed42d4b4df9557de0fd634a04bac3856e4b38e5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-VERIFY-001",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned MPOS-P1-VERIFY-001 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-10T00:47:18Z",
+      "resolved_at": "2026-06-10T03:01:34Z"
+    },
+    {
+      "task_id": "MPOS-P1-VERIFY-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Supervisor closure packet for all MPOS P1 gap gates is complete and merged in PR #1270 (d9a63d76 into dev). Artifact: docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_P1_VERIFY_CLOSURE_PACKET.md. Covers: G1 (E2E-002 PR #1265), G2 (PER-002 PR #1259), G3 (CONSULT-001 PR #1263), G4 (RISK-002 PRs #1261/#1266), G5 (MEM-002 PRs #1267-1269). Local validation: 125 passed 7 skipped. Live broker intentionally fail-closed. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-06-10T03:07:56Z",
+      "resolved_at": "2026-06-10T08:34:47Z"
+    },
+    {
+      "task_id": "MPOS-P1-VERIFY-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex to Claude2: Codex reviewer has had 5+ consecutive dispatch failures (~303s each, since 03:07Z) due to stale worktree lease for mpos-p1-verify-001 held by the prior owner (Claude, last_used_at=2026-06-10T03:01:34Z). Codex cannot acquire the isolated worktree; the review_ready_dispatch keeps being pruned and re-queued in a loop. Claude2 is verified, auth_ready, not in dispatch_pauses, and will use a fresh run_id and worktree path that bypasses the stale lease.",
+      "status": "done",
+      "created_at": "2026-06-10T08:34:47Z",
+      "resolved_at": "2026-06-10T12:15:20Z"
+    },
+    {
+      "task_id": "MPOS-P1-VERIFY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: closure packet complete, all 5 P1 gap tasks confirmed closed, local tests 125 passed 7 skipped match packet; returning to owner Claude for finalization",
+      "status": "done",
+      "created_at": "2026-06-10T12:15:20Z",
+      "resolved_at": "2026-06-10T12:17:00Z"
+    },
+    {
+      "task_id": "MPOS-P1-VERIFY-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review already completed and committed (support/evidence/MPOS-P1-VERIFY-001/review_claude2.md). Formalizing review status transition from in_progress through review to review_approved.",
+      "status": "done",
+      "created_at": "2026-06-10T12:40:30Z",
+      "resolved_at": "2026-06-10T12:40:44Z"
+    },
+    {
+      "task_id": "MPOS-P1-VERIFY-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved and returned to owner Claude for finalization",
+      "status": "done",
+      "created_at": "2026-06-10T12:40:44Z",
+      "resolved_at": "2026-06-10T12:50:38Z"
+    }
+  ],
+  "blockers": []
+}

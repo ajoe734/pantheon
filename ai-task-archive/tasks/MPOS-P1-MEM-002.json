@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-MEM-002",
+  "archived_at": "2026-06-10T03:01:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-MEM-002",
+    "title": "Automate persona and sponsor Learn feedback writeback",
+    "summary_zh": "把 runtime telemetry、postmortem、evolution 結果自動寫回 persona memory 與 sponsor-attributed institutional memory。",
+    "phase": "Sprint MPOS-P1 / Learn feedback attribution",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P1-MEM-001",
+      "MPOS-P1-E2E-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "services/memory/main.py",
+      "services/memory/persona_memory_store.py",
+      "services/memory/institutional_memory_store.py",
+      "services/telemetry/feedback_adapter.py",
+      "services/incident/incident.py",
+      "services/evolution/postmortem_bridge.py",
+      "services/memory/test_main.py"
+    ],
+    "acceptance": [
+      "Telemetry postmortem or evolution outcomes create persona memory writebacks;sponsor-attributed institutional memory includes sponsor persona and contributing persona ids;contributor memory entries link proposal ids and runtime telemetry evidence;writeback is idempotent by source event id;tests cover success duplicate replay missing persona attribution and unauthorized writeback"
+    ],
+    "next": "Owner finalized approved Learn feedback writeback. Implementation PR #1267, review approval PR #1268, and closeout PR #1269 merged to dev; focused pytest and diff-check validation passed.",
+    "last_update": "2026-06-10T03:01:10Z",
+    "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+    "gap_ids": [
+      "G5"
+    ],
+    "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+    "task_class": "mpos_full_loop_gap_closure",
+    "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+    "auto_generated": true,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-10T03:01:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-mem-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-MEM-002",
+      "git_clean_required": false,
+      "commit": "ca88bc5c3d614d7ae3f7a1ac7ba8d5c7eb95adf6",
+      "commit_subject": "MPOS-P1-MEM-002: finalize closeout record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout brief for Learn feedback writeback.",
+        "Not changing": "memory writeback implementation, telemetry/incident/evolution adapters, canonical architecture docs, or broker/live authority.",
+        "Composes with": "merged implementation PR #1267 and review approval PR #1268 before owner done archival.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MPOS-P1-MEM-002",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/memory/test_main.py services/memory/test_persona_memory_store.py services/memory/test_institutional_memory_store.py -q; (cd services/telemetry && python3 -m pytest test_feedback_adapter.py -q); python3 -m pytest services/incident/test_incident.py services/evolution/test_postmortem_bridge.py -q; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-MEM-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "327f30a990acffccb30f4b6d98f366c2b6c5a427",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-MEM-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned MPOS-P1-MEM-002 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-10T00:47:16Z",
+      "resolved_at": "2026-06-10T02:36:07Z"
+    },
+    {
+      "task_id": "MPOS-P1-MEM-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review. Implementation PR #1267 merged into dev at 4e0e52d7dd6acb7c601da2e1f6be7cefb3e8c62f; task commit 03fb70acc2cf7a8b856f869ebcc22e00b60eb510. Scope: memory Learn feedback writeback endpoint/adapter, source-event idempotency, telemetry/incident/evolution payload builders, and focused acceptance tests. Local validation: memory unittest suite, telemetry feedback adapter unittest, incident/evolution unittest, py_compile, git diff --check. Note: MPOS-P1-E2E-002 remains active, so this proves event-level writeback contract with synthetic runtime telemetry evidence rather than full paper LEAN E2E.",
+      "status": "done",
+      "created_at": "2026-06-10T02:46:21Z",
+      "resolved_at": "2026-06-10T02:53:55Z"
+    },
+    {
+      "task_id": "MPOS-P1-MEM-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. Implementation verified: 17 test_main.py tests pass (including 5 new learn-feedback writeback tests), 56 memory store tests pass, 29 feedback_adapter tests pass, 94 incident/postmortem_bridge tests pass. All acceptance criteria met: persona and institutional memory writebacks created from telemetry/postmortem/evolution outcomes; sponsor persona id propagated to institutional entries; contributor entries carry proposal_ids and runtime_telemetry_evidence; idempotent replay returns HTTP 200 on duplicate source_event_id; unauthorized authority rejected 403. Owner must finalize.",
+      "status": "done",
+      "created_at": "2026-06-10T02:53:55Z",
+      "resolved_at": "2026-06-10T03:01:11Z"
+    }
+  ],
+  "blockers": []
+}
