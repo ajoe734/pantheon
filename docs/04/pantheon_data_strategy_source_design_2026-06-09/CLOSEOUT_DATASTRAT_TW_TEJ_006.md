@@ -66,8 +66,8 @@ to TEJ-006.
 python3 -m pytest services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_active_universe.py services/source_ingestion/tests/test_taiwan_market_connectors.py services/research/adapters/test_adapters.py services/data-plane/tests/test_data_plane_schemas.py services/source_ingestion/test_service.py -q
 ```
 
-Result during owner closeout on task branch HEAD `30a0d49e`: `1 failed, 112
-passed in 21.03s`. The only failure was
+Result during owner closeout on merged PR head `a4144643`: `1 failed, 112
+passed in 18.62s`. The only failure was
 `services/source_ingestion/test_service.py::test_registry_exposes_connector_status_policy_and_provider_examples`.
 It reports the extra provider example mode `provider_owned_adapter`, matching
 Claude2's review note that the regression came from FOUNDATION-001 after the
