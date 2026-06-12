@@ -1251,6 +1251,61 @@ class TestLineageReadModel(unittest.TestCase):
         self.assertFalse(order_context["outside_rth"])
         self.assertTrue(order_context["readonly_market_data"])
 
+    def test_order_rejection_lineage_preserves_sizing_math(self):
+        """Zero-share rejection context must keep requested and computed quantity."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-zero-share-rejection",
+            "event_type": "order_rejection",
+            "created_at": "2026-06-12T16:30:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-zero-001",
+            "runtime_id": "runtime-zero",
+            "capital_pool_id": "pool-zero",
+            "artifact_id": "artifact-zero",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-zero",
+            "persona_capital_binding_id": "pcb-zero",
+            "trace_id": "trace-zero",
+            "target": {
+                "strategy_id": "strat-zero",
+                "registry_id": "reg-zero",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "requested_quantity": 10.0,
+                "computed_quantity": 0.0,
+                "fill_quantity": 0.0,
+                "fill_rate": 0.0,
+            },
+            "metadata": {
+                "adapter": "lean_paper_runtime",
+                "broker": "lean_paper",
+                "order_status": "rejected",
+                "reject_reason": "cash_value_resolved_to_zero_shares",
+                "quantity_type": "CASH_VALUE",
+                "price": 800.0,
+                "broker_submission_status": "rejected_before_broker",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "paper",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-zero", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-zero-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["reject_reason"], "cash_value_resolved_to_zero_shares")
+        self.assertEqual(order_context["quantity_type"], "CASH_VALUE")
+        self.assertEqual(order_context["requested_quantity"], 10.0)
+        self.assertEqual(order_context["computed_quantity"], 0.0)
+        self.assertEqual(order_context["fill_rate"], 0.0)
+        self.assertFalse(order_context["submitted_to_broker"])
+
     def test_query_lineage_records_normalizes_semantic_refs(self):
         """Telemetry raw fields must normalize to semantic read-model fields."""
         adapter = FeedbackStoreAdapter()

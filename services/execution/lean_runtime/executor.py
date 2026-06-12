@@ -573,6 +573,36 @@ def _record_bracket_order_logged(
         recorder(lean_symbol, **kwargs)
 
 
+def _record_order_rejection(
+    algo: Any,
+    lean_symbol: Any,
+    signal_id: str,
+    *,
+    reject_reason: str,
+    requested_quantity: float,
+    computed_quantity: float,
+    quantity_type: str,
+    order_type: str,
+    price: float | None = None,
+) -> None:
+    recorder = getattr(algo, "RecordOrderRejected", None)
+    if not callable(recorder):
+        return
+    kwargs = {
+        "signal_id": signal_id,
+        "reject_reason": reject_reason,
+        "requested_quantity": float(requested_quantity),
+        "computed_quantity": float(computed_quantity),
+        "quantity_type": quantity_type,
+        "order_type": order_type,
+        "broker_submission_status": "rejected_before_broker",
+        "submitted_to_broker": False,
+    }
+    if price is not None:
+        kwargs["price"] = float(price)
+    recorder(lean_symbol, **kwargs)
+
+
 def _place_order(
     algo: Any,
     lean_symbol: Any,
@@ -599,6 +629,16 @@ def _place_order(
                 "[%s] SHARES quantity %.4f rounded to 0 — order not placed",
                 signal_id, quantity,
             )
+            _record_order_rejection(
+                algo,
+                lean_symbol,
+                signal_id,
+                reject_reason="shares_quantity_rounded_to_zero",
+                requested_quantity=quantity,
+                computed_quantity=shares,
+                quantity_type=quantity_type,
+                order_type=order_type,
+            )
             return
         if abs(round(quantity) - quantity) > 0.01:
             log.info(
@@ -623,6 +663,17 @@ def _place_order(
             log.warning(
                 "[%s] CASH_VALUE %.2f / price %.4f = 0 shares — order not placed",
                 signal_id, quantity, price,
+            )
+            _record_order_rejection(
+                algo,
+                lean_symbol,
+                signal_id,
+                reject_reason="cash_value_resolved_to_zero_shares",
+                requested_quantity=quantity,
+                computed_quantity=shares,
+                quantity_type=quantity_type,
+                order_type=order_type,
+                price=price,
             )
             return
         log.info(
