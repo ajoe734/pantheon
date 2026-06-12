@@ -111,6 +111,7 @@ class SeedMaterializationService:
         idempotency_key: str | None = None,
         created_at: datetime | str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        negative_memory_records: Sequence[Mapping[str, Any] | Any] = (),
     ) -> SeedMaterializationResult:
         """Materialize one EvidenceBundle into one idempotent StrategySpecSeed."""
 
@@ -139,6 +140,12 @@ class SeedMaterializationService:
                     materialized_at=_utc_now_iso(),
                 )
 
+        store_negative_memory_records = tuple(self._store.list_negative_memory_records())
+        combined_negative_memory_records = (
+            *store_negative_memory_records,
+            *tuple(negative_memory_records),
+        )
+
         try:
             seed = self._builder.build_seed(
                 bundle,
@@ -152,6 +159,7 @@ class SeedMaterializationService:
                     "requested_by": actor,
                     **(dict(metadata) if metadata else {}),
                 },
+                negative_memory_records=combined_negative_memory_records,
             )
         except StrategySpecSeedError as exc:
             raise SeedMaterializationError(str(exc)) from exc
@@ -181,6 +189,7 @@ def materialize_seed_from_bundle(
     idempotency_key: str | None = None,
     created_at: datetime | str | None = None,
     metadata: Mapping[str, Any] | None = None,
+    negative_memory_records: Sequence[Mapping[str, Any] | Any] = (),
 ) -> SeedMaterializationResult:
     """Convenience wrapper for one-shot EvidenceBundle -> StrategySpecSeed materialization."""
     return SeedMaterializationService(store=store, created_by=requested_by).materialize(
@@ -192,6 +201,7 @@ def materialize_seed_from_bundle(
         idempotency_key=idempotency_key,
         created_at=created_at,
         metadata=metadata,
+        negative_memory_records=negative_memory_records,
     )
 
 

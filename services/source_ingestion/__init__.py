@@ -17,6 +17,12 @@ from .interaction_source_store import (
     InteractionSourceSurface,
     InteractionVisibility,
 )
+from .negative_memory import (
+    NegativeMemoryKind,
+    NegativeMemoryMatch,
+    NegativeMemoryWarningLevel,
+    match_negative_memory,
+)
 from .scheduler import (
     CrawlFrontierItem,
     IngestionScheduler,
@@ -41,8 +47,12 @@ __all__ = [
     "InteractionSourceRecordStore",
     "InteractionSourceSurface",
     "InteractionVisibility",
+    "NegativeMemoryKind",
+    "NegativeMemoryMatch",
+    "NegativeMemoryWarningLevel",
     "IngestionScheduler",
     "JsonlIngestScheduleStore",
+    "match_negative_memory",
     "ScheduledIngestResult",
     "SourceWatermark",
     "classify_interaction_intent",

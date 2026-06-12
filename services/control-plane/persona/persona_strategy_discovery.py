@@ -721,6 +721,7 @@ class PersonaStrategyDiscoveryService:
                 "candidate_source_status": candidate.source_status,
                 "candidate_license_scope": candidate.license_scope,
                 "candidate_execution_mode_hint": candidate.execution_mode_hint,
+                "negative_memory_match": candidate.metadata.get("negative_memory_match"),
             },
         )
 
@@ -752,7 +753,10 @@ def match_persona_strategies(
 def _candidate_from_seed(seed: StrategySpecSeed | Mapping[str, Any]) -> StrategyCandidate:
     seed_obj = seed if hasattr(seed, "to_dict") else None
     raw = seed_obj.to_dict() if seed_obj is not None else dict(seed)  # type: ignore[arg-type]
-    metadata = _mapping(raw.get("metadata"))
+    metadata = dict(_mapping(raw.get("metadata")))
+    negative_memory_match = _mapping(raw.get("negative_memory_match") or metadata.get("negative_memory_match"))
+    if negative_memory_match:
+        metadata["negative_memory_match"] = dict(negative_memory_match)
     lineage = _mapping(raw.get("lineage"))
     source_ids = _unique_strings(_flatten_strings([raw.get("source_ids"), raw.get("source_id")]))
     allowed_use = _unique_strings(
@@ -934,6 +938,9 @@ def _candidate_hard_blockers(
     backend_text = " ".join(candidate.backend_preferences).lower()
     if any(token in backend_text for token in _FORBIDDEN_DISCOVERY_TOKENS):
         blockers.append("strategy_requires_execution_route_during_discovery")
+    negative_memory_match = _mapping(candidate.metadata.get("negative_memory_match"))
+    if str(negative_memory_match.get("warning_level") or "").lower() == "blocking":
+        blockers.append("negative_memory_blocking_match")
     return blockers
 
 
