@@ -341,6 +341,33 @@ class TestBindingIsolation(unittest.TestCase):
 
     # --- drain integration: binding filter applied end-to-end ---
 
+    def test_drain_records_duplicate_signal_noop_feedback(self):
+        """Duplicate signal IDs are idempotent and still emit terminal no-order feedback."""
+        duplicate_signal = _make_signal("s-duplicate")
+        duplicate_signal["metadata"] = {"alpha_source": "unit_duplicate_filter", "market_data": {"close": 152.0}}
+        store = MagicMock()
+        store.get_pending.return_value = [duplicate_signal]
+        c = SignalConsumer(store_client=store)
+        c._processed_signal_ids.add("s-duplicate")
+        algo = _NoopRecordingAlgo(datetime.now(timezone.utc).replace(tzinfo=None))
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            c.drain(algo=algo)
+        mock_exec.assert_not_called()
+        self.assertEqual(c._processed_signal_ids, {"s-duplicate"})
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "duplicate_signal_id")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 152.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "duplicate_signal_id")
+        self.assertEqual(noop["metadata"]["duplicate_signal_id"], "s-duplicate")
+        self.assertTrue(noop["metadata"]["idempotent_replay"])
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_duplicate_filter")
+
     def test_drain_records_wrong_binding_noop_feedback(self):
         """Signals for a different binding emit terminal no-order feedback."""
         wrong_binding_signal = _make_signal("s-wrong", binding_id="b-other")

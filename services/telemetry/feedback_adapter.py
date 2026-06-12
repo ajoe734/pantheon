@@ -142,6 +142,8 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "filter_reason",
     "expected_binding_id",
     "signal_binding_id",
+    "duplicate_signal_id",
+    "idempotent_replay",
     "position_quantity",
     "target_quantity",
     "target_percent",

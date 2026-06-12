@@ -95,6 +95,15 @@ class SignalConsumer:
             if signal is None:
                 continue
             if self._is_duplicate(signal):
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "duplicate_signal_id",
+                    extra_metadata={
+                        "duplicate_signal_id": signal["signal_id"],
+                        "idempotent_replay": True,
+                    },
+                )
                 continue
             staleness_reason = self._staleness_reason(signal, algo)
             if staleness_reason:
