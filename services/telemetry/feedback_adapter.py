@@ -140,6 +140,8 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "noop_reason",
     "decision_status",
     "filter_reason",
+    "expected_binding_id",
+    "signal_binding_id",
     "position_quantity",
     "target_quantity",
     "target_percent",

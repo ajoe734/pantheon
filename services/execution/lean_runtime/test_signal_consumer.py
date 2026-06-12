@@ -341,16 +341,31 @@ class TestBindingIsolation(unittest.TestCase):
 
     # --- drain integration: binding filter applied end-to-end ---
 
-    def test_drain_discards_wrong_binding_signal(self):
-        """Signals for a different binding are discarded during drain."""
+    def test_drain_records_wrong_binding_noop_feedback(self):
+        """Signals for a different binding emit terminal no-order feedback."""
         wrong_binding_signal = _make_signal("s-wrong", binding_id="b-other")
+        wrong_binding_signal["metadata"] = {"alpha_source": "unit_binding_filter", "market_data": {"close": 151.0}}
         store = MagicMock()
         store.get_pending.return_value = [wrong_binding_signal]
         c = SignalConsumer(store_client=store, binding_id="b-mine")
+        algo = _NoopRecordingAlgo(datetime.now(timezone.utc).replace(tzinfo=None))
         with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
-            c.drain(algo=self._mock_algo())
+            c.drain(algo=algo)
         mock_exec.assert_not_called()
-        self.assertNotIn("s-wrong", c._processed_signal_ids)
+        self.assertIn("s-wrong", c._processed_signal_ids)
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "binding_mismatch")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 151.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "binding_mismatch")
+        self.assertEqual(noop["metadata"]["expected_binding_id"], "b-mine")
+        self.assertEqual(noop["metadata"]["signal_binding_id"], "b-other")
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_binding_filter")
 
     def test_drain_executes_matching_binding_signal(self):
         """Signals for the consumer's binding are executed normally."""

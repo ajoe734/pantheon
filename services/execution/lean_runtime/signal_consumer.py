@@ -101,6 +101,15 @@ class SignalConsumer:
                 self._record_filtered_signal_noop(signal, algo, staleness_reason)
                 continue
             if self._is_wrong_binding(signal):
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "binding_mismatch",
+                    extra_metadata={
+                        "expected_binding_id": self._binding_id,
+                        "signal_binding_id": str(signal.get("binding_id") or "").strip(),
+                    },
+                )
                 continue
             if signal.get("run_id"):
                 self._buffer_rebalance(signal)
@@ -213,7 +222,13 @@ class SignalConsumer:
 
         return None
 
-    def _record_filtered_signal_noop(self, signal: dict, algo: Any | None, noop_reason: str) -> None:
+    def _record_filtered_signal_noop(
+        self,
+        signal: dict,
+        algo: Any | None,
+        noop_reason: str,
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> None:
         sid = signal["signal_id"]
         if algo is None:
             self._processed_signal_ids.add(sid)
@@ -224,6 +239,10 @@ class SignalConsumer:
             return
         metadata = _signal_context_metadata(signal)
         metadata["filter_reason"] = noop_reason
+        if extra_metadata:
+            metadata.update(
+                {key: value for key, value in extra_metadata.items() if value not in (None, "")}
+            )
         price = _signal_market_price(signal)
         kwargs = {
             "signal_id": sid,
