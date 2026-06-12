@@ -22793,6 +22793,15 @@ def _require_strategy_seed_review_role(identity: OperatorIdentity) -> None:
 
 def _strategy_seed_review_error(exc: Exception) -> HTTPException:
     code = getattr(exc, "code", "")
+    if code == "idempotency_conflict":
+        return _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            str(exc),
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
     if code in {"seed_not_found", "merge_target_not_found"}:
         return _bff_error(
             404,
@@ -23225,6 +23234,7 @@ def _strategy_seed_review_result(
     decision: SeedReviewDecision,
     snapshot_at: str,
     resolved_key: str,
+    replayed: bool = False,
 ) -> Dict[str, Any]:
     return {
         "data": {
@@ -23242,7 +23252,7 @@ def _strategy_seed_review_result(
             "execution_route": "none",
             "idempotency": {
                 "idempotencyKey": resolved_key,
-                "replayed": False,
+                "replayed": replayed,
             },
         },
     }
@@ -23277,6 +23287,7 @@ def _strategy_seed_review_response(
             target_refs=_strategy_seed_target_refs(payload),
             created_at=payload.get("created_at") or snapshot_at,
             idempotency_key=resolved_key,
+            request_hash=request_hash,
         )
     except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
         raise _strategy_seed_review_error(exc) from exc
@@ -23285,6 +23296,7 @@ def _strategy_seed_review_response(
         decision=decision,
         snapshot_at=snapshot_at,
         resolved_key=resolved_key,
+        replayed=bool(getattr(decision, "idempotent_replay", False)),
     )
     _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY[resolved_key] = {
         "request_hash": request_hash,
@@ -23335,6 +23347,7 @@ def _strategy_seed_merge_response(
             target_refs=_strategy_seed_target_refs(payload),
             created_at=payload.get("created_at") or snapshot_at,
             idempotency_key=resolved_key,
+            request_hash=request_hash,
         )
     except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
         raise _strategy_seed_review_error(exc) from exc
@@ -23343,6 +23356,7 @@ def _strategy_seed_merge_response(
         decision=decision,
         snapshot_at=snapshot_at,
         resolved_key=resolved_key,
+        replayed=bool(getattr(decision, "idempotent_replay", False)),
     )
     _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY[resolved_key] = {
         "request_hash": request_hash,

@@ -182,6 +182,26 @@ def test_strategy_seed_review_accept_convert_and_idempotent_replay() -> None:
         assert replay.status_code == 202, replay.text
         assert replay.json()["meta"]["idempotency"]["replayed"] is True
 
+        bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
+        durable_replay = client.post(
+            f"/bff/management/strategy-seeds/{SEED_ID}/review",
+            json={"action": "accept", "reason": "Enough governed evidence."},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "seed-review-accept-bff"},
+        )
+        assert durable_replay.status_code == 202, durable_replay.text
+        assert durable_replay.json()["data"]["status"] == "accepted"
+        assert durable_replay.json()["meta"]["idempotency"]["replayed"] is True
+
+        bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
+        conflict = client.post(
+            f"/bff/management/strategy-seeds/{SEED_ID}/review",
+            json={"action": "accept", "reason": "Different payload."},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "seed-review-accept-bff"},
+        )
+        assert conflict.status_code == 409, conflict.text
+        assert _error(conflict.json())["code"] == "IDEMPOTENCY_CONFLICT"
+        assert _error(conflict.json())["details"]["precondition_failed"] == "idempotency_conflict"
+
         convert = client.post(
             f"/bff/management/strategy-seeds/{SEED_ID}/review",
             json={
