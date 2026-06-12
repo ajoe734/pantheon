@@ -54,8 +54,10 @@ class _FakeTelemetryEmitter:
     def emit_heartbeat(self, metadata=None):
         return self.emit("heartbeat", {"heartbeat": 1}, metadata=metadata)
 
-    def emit_pnl_snapshot(self, pnl, metadata=None):
-        return self.emit("pnl_snapshot", {"pnl": float(pnl)}, metadata=metadata)
+    def emit_pnl_snapshot(self, pnl, metadata=None, extra_metrics=None):
+        metrics = {"pnl": float(pnl)}
+        metrics.update(extra_metrics or {})
+        return self.emit("pnl_snapshot", metrics, metadata=metadata)
 
     def snapshot(self):
         return {

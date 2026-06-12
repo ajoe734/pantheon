@@ -598,8 +598,16 @@ class RuntimeTelemetryEmitter:
     def emit_heartbeat(self, metadata: dict[str, Any] | None = None) -> bool:
         return self.emit("heartbeat", {"heartbeat": 1}, metadata=metadata)
 
-    def emit_pnl_snapshot(self, pnl: float, metadata: dict[str, Any] | None = None) -> bool:
-        return self.emit("pnl_snapshot", {"pnl": float(pnl)}, metadata=metadata)
+    def emit_pnl_snapshot(
+        self,
+        pnl: float,
+        metadata: dict[str, Any] | None = None,
+        extra_metrics: dict[str, Any] | None = None,
+    ) -> bool:
+        metrics: dict[str, Any] = {"pnl": float(pnl)}
+        if extra_metrics:
+            metrics.update(extra_metrics)
+        return self.emit("pnl_snapshot", metrics, metadata=metadata)
 
     def _base_metadata(self, binding: dict[str, Any]) -> dict[str, Any]:
         metadata: dict[str, Any] = {
@@ -728,6 +736,7 @@ class PaperRuntimeService:
         self._poll_count = 0
         self._processed_signal_count = 0
         self._execution_event_count = 0
+        self._fill_event_count = 0
         self._recent_order_events: list[dict[str, Any]] = []
 
     def start(self) -> None:
@@ -827,6 +836,8 @@ class PaperRuntimeService:
     def _handle_order_event(self, event: OrderEvent) -> None:
         event_payload = event.to_dict()
         self._execution_event_count += 1
+        if event.event_type == "paper_fill_simulated":
+            self._fill_event_count += 1
         self._recent_order_events.append(event_payload)
         self._recent_order_events = self._recent_order_events[-20:]
         telemetry_metadata = {
@@ -890,7 +901,21 @@ class PaperRuntimeService:
                 "is_real_capital": False,
                 "capital_scale_pct": 0,
             },
+            extra_metrics=self._performance_snapshot_metrics(),
         )
+
+    def _performance_snapshot_metrics(self) -> dict[str, Any]:
+        processed = int(self._processed_signal_count)
+        fill_rate = (float(self._fill_event_count) / processed) if processed > 0 else 0.0
+        return {
+            "processed_signal_count": processed,
+            "execution_event_count": int(self._execution_event_count),
+            "fill_event_count": int(self._fill_event_count),
+            "fill_rate": round(fill_rate, 6),
+            "open_position_count": len(self._algo.positions()),
+            "open_bracket_order_count": len(self._algo.open_bracket_orders()),
+            "avg_slippage_bps": 0.0,
+        }
 
     def _emit_deploy_started(self) -> None:
         if self._telemetry.enabled:
