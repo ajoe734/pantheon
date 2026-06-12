@@ -61,17 +61,31 @@ def test_stale_signal_filtered_fresh_order_feedback_memory_e2e(tmp_path, monkeyp
     snapshot = runtime.drain_once()
 
     assert snapshot["status"] == "ok"
-    assert snapshot["paper_state"]["processed_signal_count"] == 1
+    assert snapshot["paper_state"]["processed_signal_count"] == 2
+    assert snapshot["paper_state"]["execution_event_count"] == 2
     positions = {position["symbol"]: position for position in snapshot["paper_state"]["positions"]}
     assert set(positions) == {"GOOGL"}
     assert positions["GOOGL"]["quantity"] == 6.0
     assert positions["GOOGL"]["price"] == 175.0
     fill_events = [event for event in telemetry.events if event["event_type"] == "paper_fill_simulated"]
+    noop_events = [event for event in telemetry.events if event["event_type"] == "paper_order_simulated"]
     assert len(fill_events) == 1
+    assert len(noop_events) == 1
     fill_event = fill_events[0]
     assert fill_event["metadata"]["signal_id"] == "fresh-googl-shares-013"
     assert fill_event["metadata"]["alpha_source"] == "fresh_signal_quant"
     assert "stale-amzn-shares-013" not in {event["metadata"].get("signal_id") for event in fill_events}
+    noop_event = noop_events[0]
+    assert noop_event["metadata"]["signal_id"] == "stale-amzn-shares-013"
+    assert noop_event["metadata"]["noop_reason"] == "stale_signal"
+    assert noop_event["metadata"]["filter_reason"] == "stale_signal"
+    assert noop_event["metadata"]["broker_submission_status"] == "not_submitted_signal_filtered"
+    assert noop_event["metadata"]["submitted_to_broker"] is False
+    pnl_event = [event for event in telemetry.events if event["event_type"] == "pnl_snapshot"][-1]
+    assert pnl_event["metrics"]["processed_signal_count"] == 2
+    assert pnl_event["metrics"]["execution_event_count"] == 2
+    assert pnl_event["metrics"]["fill_event_count"] == 1
+    assert pnl_event["metrics"]["fill_rate"] == 0.5
 
     feedback_adapter = FeedbackStoreAdapter(feedback_store_path=str(tmp_path / "feedback-store.jsonl"))
     stored_fill = feedback_adapter.ingest_telemetry_event(
@@ -84,13 +98,13 @@ def test_stale_signal_filtered_fresh_order_feedback_memory_e2e(tmp_path, monkeyp
         sponsor_persona_id="persona-staleness-sponsor",
         contributing_persona_ids=["persona-staleness-ops"],
         summary=(
-            "Signal freshness filtering consumed fetched AMZN/GOOGL data, discarded the stale AMZN signal, "
-            "executed only the fresh GOOGL signal, and received a paper fill."
+            "Signal freshness filtering consumed fetched AMZN/GOOGL data, emitted no-order feedback for "
+            "the stale AMZN signal, executed the fresh GOOGL signal, and received one paper fill."
         ),
         contributor_feedback=[
             {
                 "persona_id": "persona-staleness-ops",
-                "summary": "Feedback confirmed stale signals do not reach paper order execution.",
+                "summary": "Feedback confirmed stale signals produce no-order feedback and do not reach broker execution.",
                 "proposal_ids": ["fresh-googl-shares-013"],
                 "tags": ["signal_staleness", "fresh_signal", "paper_fill"],
             }

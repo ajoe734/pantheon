@@ -37,7 +37,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from .executor import execute, ExecutionError
+from .executor import execute, ExecutionError, _signal_context_metadata, _signal_market_price
 from .symbol_parser import SymbolParseError
 
 try:
@@ -96,7 +96,9 @@ class SignalConsumer:
                 continue
             if self._is_duplicate(signal):
                 continue
-            if self._is_stale(signal, algo):
+            staleness_reason = self._staleness_reason(signal, algo)
+            if staleness_reason:
+                self._record_filtered_signal_noop(signal, algo, staleness_reason)
                 continue
             if self._is_wrong_binding(signal):
                 continue
@@ -163,6 +165,9 @@ class SignalConsumer:
         return False
 
     def _is_stale(self, signal: dict, algo: Any | None = None) -> bool:
+        return self._staleness_reason(signal, algo) is not None
+
+    def _staleness_reason(self, signal: dict, algo: Any | None = None) -> str | None:
         """
         Staleness check. Uses algo.Time if available (real-time or backtest time),
         falling back to current UTC time.
@@ -198,15 +203,43 @@ class SignalConsumer:
         if diff_seconds > 86400:
             log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale", 
                         sid, now.isoformat(), ts.isoformat())
-            return True
+            return "stale_signal"
             
         # Reject signals >1h in future (anomaly check for clock drift)
         if diff_seconds < -3600:
              log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous", 
                          sid, now.isoformat(), ts.isoformat())
-             return True
+             return "future_signal_anomaly"
 
-        return False
+        return None
+
+    def _record_filtered_signal_noop(self, signal: dict, algo: Any | None, noop_reason: str) -> None:
+        sid = signal["signal_id"]
+        if algo is None:
+            self._processed_signal_ids.add(sid)
+            return
+        recorder = getattr(algo, "RecordSignalNoop", None)
+        if not callable(recorder):
+            self._processed_signal_ids.add(sid)
+            return
+        metadata = _signal_context_metadata(signal)
+        metadata["filter_reason"] = noop_reason
+        price = _signal_market_price(signal)
+        kwargs = {
+            "signal_id": sid,
+            "noop_reason": noop_reason,
+            "requested_quantity": float(signal.get("quantity") or 0.0),
+            "computed_quantity": 0.0,
+            "quantity_type": signal.get("quantity_type", "UNKNOWN"),
+            "order_type": signal.get("order_type", "MARKET"),
+            "broker_submission_status": "not_submitted_signal_filtered",
+            "submitted_to_broker": False,
+            "metadata": metadata,
+        }
+        if price is not None:
+            kwargs["price"] = price
+        recorder(signal["symbol"], **kwargs)
+        self._processed_signal_ids.add(sid)
 
     def _is_wrong_binding(self, signal: dict) -> bool:
         """Defense-in-depth: discard signals routed to a different binding.
