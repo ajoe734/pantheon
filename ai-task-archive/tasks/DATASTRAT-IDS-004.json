@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-IDS-004",
+  "archived_at": "2026-06-12T03:29:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-IDS-004",
+    "title": "Trainer-to-seed bridge",
+    "summary_zh": "消費 committed Trainer event(trainer_commit/explicit_seed_submission,絕不收 raw)->InteractionSourceRecord->classify->redact->SeedCandidate;支援多種 seed_kind;記 TrainerSeedExtractionRef。",
+    "phase": "EPIC DATASTRAT-IDS / Trainer bridge",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-IDS-002",
+      "DATASTRAT-IDS-003",
+      "DATASTRAT-IDS-007"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/EPIC_INTERACTION_DERIVED_SEEDS.md",
+      "services/source_ingestion",
+      "services/control-plane"
+    ],
+    "acceptance": [
+      "只有 committed 內容進入;raw teaching log 被拒;產出的 SeedCandidate 進 review inbox;TrainerSeedExtractionRef lineage 記錄"
+    ],
+    "next": "PR #1375 merged to dev at 9fd4b67bc5465d4df1f4018081d2ce46b8fa4d28; owner closeout commit 83212d244ce788ec5daa6ec674fc582e7537e36d validated with source 94 passed, BFF 38 passed, py_compile, and git diff --check.",
+    "last_update": "2026-06-12T03:29:51Z",
+    "auto_created_by": "dispatch_datastrat_seedflow_ids_2026-06-12",
+    "review_notes_zh": [
+      "審查通過：TrainerSeedBridge 實作符合所有驗收條件",
+      "88 source ingestion + 38 BFF 測試全過",
+      "IDS 安全層（IDS-002/003/007）正確串接",
+      "raw_teaching_log 拒絕機制與 seed lineage 記錄完整"
+    ],
+    "review_file": "docs/04/pantheon_data_strategy_source_design_2026-06-09/REVIEW_DATASTRAT_IDS_004.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-12T03:29:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-ids-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-IDS-004",
+      "git_clean_required": false,
+      "commit": "83212d244ce788ec5daa6ec674fc582e7537e36d",
+      "commit_subject": "DATASTRAT-IDS-004: record owner closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "DATASTRAT-IDS-004 closeout task brief and final owner validation record.",
+        "Not changing": "TrainerSeedBridge runtime behavior, BFF trainer replay behavior, seed review inbox semantics, IDS-005 bridge behavior, or canonical architecture policy.",
+        "Composes with": "latest origin/dev including DATASTRAT-IDS-005 closeout artifacts and the previously merged DATASTRAT-IDS-004 implementation PR #1373.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-IDS-004",
+        "Reviewer": "Claude2",
+        "Verified": "pytest source trainer/agora/safety/store 94 passed; pytest BFF trainer replay + seed review 38 passed with 12 existing datetime.utcnow warnings; py_compile trainer/agora/BFF; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-IDS-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9fd4b67bc5465d4df1f4018081d2ce46b8fa4d28",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-IDS-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-12T02:46:55Z",
+      "resolved_at": "2026-06-12T02:47:12Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-004",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation PR #1373 merged to dev at 7a6d5ee4709b99f6ed364107047d9967f03c64ec. TrainerSeedBridge accepts only trainer_commit/explicit_seed_submission, refuses raw logs, writes draft StrategySpecSeed review-inbox candidates with TrainerSeedExtractionRef lineage, and BFF Trainer commit responses expose seed_extraction. Review artifact: docs/04/pantheon_data_strategy_source_design_2026-06-09/HANDOFF_DATASTRAT_IDS_004.md. Validation: source suite 94 passed, BFF focused suite 38 passed with existing datetime.utcnow warnings, py_compile passed.",
+      "status": "done",
+      "created_at": "2026-06-12T03:15:42Z",
+      "resolved_at": "2026-06-12T03:21:05Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-004",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: TrainerSeedBridge implements all acceptance criteria; 88+38 tests pass; raw-log gate, redaction chain, and TrainerSeedExtractionRef lineage all verified.",
+      "status": "done",
+      "created_at": "2026-06-12T03:21:05Z",
+      "resolved_at": "2026-06-12T03:29:52Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-IDS-005",
+  "archived_at": "2026-06-12T03:20:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-IDS-005",
+    "title": "Agora/Committee/Postmortem-to-seed bridge",
+    "summary_zh": "ConsultMemo/CommitteeVerdict/RedTeamMemo/SeedProposal->SeedCandidate(raw transcript 僅 evidence);Postmortem/Evolution->Risk/Execution/Negative seed;記 AgoraSeedExtractionRef。",
+    "phase": "EPIC DATASTRAT-IDS / Agora bridge",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-IDS-002",
+      "DATASTRAT-IDS-003",
+      "DATASTRAT-IDS-007"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/EPIC_INTERACTION_DERIVED_SEEDS.md",
+      "services/source_ingestion",
+      "services/control-plane"
+    ],
+    "acceptance": [
+      "raw transcript 不得進 seed queue;只有 memo/verdict/proposal 可;AgoraSeedExtractionRef lineage 記錄;依來源 trust 區分處理"
+    ],
+    "next": "Closed after PR #1374 merged into dev (merge 8a43dde5eace3e3557ce14b1f53b7034cf3fe22d). Owner closeout validation passed: py_compile agora_seed_bridge/__init__, focused pytest 103 passed with 4 existing datetime.utcnow warnings, git diff --check.",
+    "last_update": "2026-06-12T03:20:06Z",
+    "auto_created_by": "dispatch_datastrat_seedflow_ids_2026-06-12",
+    "review_notes_zh": [
+      "實作完整，所有驗收標準通過",
+      "raw transcript 封鎖機制正確，兩個測試覆蓋",
+      "AgoraSeedExtractionRef lineage 正確記錄在 lineage 與 metadata",
+      "信任等級差異正確 (committee 0.90, red-team 0.88, ordinary memo 0.65)",
+      "IDS-002/003/007 安全管道全部套用"
+    ],
+    "review_file": "docs/04/pantheon_data_strategy_source_design_2026-06-09/REVIEW_DATASTRAT_IDS_005.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-12T03:20:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-ids-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-IDS-005",
+      "git_clean_required": false,
+      "commit": "6b12eda5f48fee345afab6eea47180b1899f8543",
+      "commit_subject": "DATASTRAT-IDS-005: record final closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "DATASTRAT-IDS-005 closeout record and reviewer approval artifact.",
+        "Not changing": "IDS-005 bridge runtime behavior, DATASTRAT-SEEDFLOW-002 inbox behavior, IDS-004 trainer bridge, or canonical architecture policy.",
+        "Composes with": "latest origin/dev including DATASTRAT-SEEDFLOW-002 and DATASTRAT-IDS-004 merges.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-IDS-005",
+        "Reviewer": "Claude2",
+        "Verified": "py_compile agora_seed_bridge/__init__; pytest source_ingestion IDS-005/safety/store/trainer plus seed review BFF 103 passed, 4 existing datetime.utcnow warnings; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-IDS-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8a43dde5eace3e3557ce14b1f53b7034cf3fe22d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-IDS-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Ready for Claude2 review: IDS-005 bridge implemented and merged via PR #1371 (merge commit ea09618c5da39c7d610f478fb49fd4824e9c5aff). Local validation passed: py_compile; IDS-005 focused 6 passed; merged-dev regression 88 passed with 4 existing datetime.utcnow warnings in read_store.py. Handoff artifact: docs/04/pantheon_data_strategy_source_design_2026-06-09/HANDOFF_DATASTRAT_IDS_005.md.",
+      "status": "done",
+      "created_at": "2026-06-12T02:59:44Z",
+      "resolved_at": "2026-06-12T03:05:18Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: IDS-005 bridge correctly implements all EPIC acceptance criteria. Raw transcript blocked, AgoraSeedExtractionRef lineage recorded, trust differentiation correct, safety pipeline (IDS-002/003/007) applied, 6 tests pass. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-12T03:05:18Z",
+      "resolved_at": "2026-06-12T03:20:07Z"
+    }
+  ],
+  "blockers": []
+}
