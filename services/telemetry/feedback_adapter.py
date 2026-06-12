@@ -138,6 +138,18 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "requested_quantity",
     "computed_quantity",
     "quantity_type",
+    "bracket_order_id",
+    "bracket_leg_count",
+    "leg_count",
+    "legs",
+    "submitted_legs",
+    "submission",
+    "stop_loss_pct",
+    "take_profit_pct",
+    "entry_price",
+    "entry_quantity",
+    "guard_stage",
+    "guard_reason",
     "noop_reason",
     "decision_status",
     "filter_reason",
@@ -426,6 +438,17 @@ class FeedbackStoreAdapter:
                 value = metadata.get(field)
                 if value not in (None, "", [], {}):
                     context[field] = value
+            submission = metadata.get("submission")
+            if isinstance(submission, dict):
+                bracket_order_id = submission.get("bracket_order_id")
+                if "bracket_order_id" not in context and bracket_order_id not in (None, "", [], {}):
+                    context["bracket_order_id"] = bracket_order_id
+                leg_count = submission.get("leg_count")
+                if "bracket_leg_count" not in context and leg_count not in (None, "", [], {}):
+                    context["bracket_leg_count"] = leg_count
+                submitted_legs = submission.get("legs")
+                if "submitted_legs" not in context and submitted_legs not in (None, "", [], {}):
+                    context["submitted_legs"] = submitted_legs
         metrics = event.get("metrics")
         if isinstance(metrics, dict):
             for field in ORDER_ADAPTER_METRIC_FIELDS:

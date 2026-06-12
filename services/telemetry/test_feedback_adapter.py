@@ -1122,6 +1122,102 @@ class TestLineageReadModel(unittest.TestCase):
         self.assertEqual(order_context["open_bracket_order_count"], 0)
         self.assertEqual(order_context["pnl"], 0.0)
 
+    def test_bracket_order_lineage_preserves_child_order_submission(self):
+        """Submitted bracket child order details must remain queryable after recovery."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-bracket-submitted-paper",
+            "event_type": "bracket_order_logged",
+            "created_at": "2026-06-12T15:42:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-bracket-001",
+            "runtime_id": "runtime-bracket",
+            "capital_pool_id": "pool-bracket",
+            "artifact_id": "artifact-bracket",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-bracket",
+            "persona_capital_binding_id": "pcb-bracket",
+            "trace_id": "trace-bracket",
+            "target": {
+                "strategy_id": "strat-bracket",
+                "registry_id": "reg-bracket",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "action": "bracket_submitted_to_broker",
+                "submitted_to_broker": True,
+            },
+            "metadata": {
+                "signal_id": "quant-breakout-msft-bracket-040",
+                "alpha_source": "pure_quant_breakout_model",
+                "stop_loss_pct": 0.03,
+                "take_profit_pct": 0.06,
+                "entry_price": 300.0,
+                "entry_quantity": 5.0,
+                "legs": [
+                    {
+                        "leg_type": "stop_loss",
+                        "order_type": "STOP_MARKET",
+                        "quantity": -5.0,
+                        "stop_price": 291.0,
+                    },
+                    {
+                        "leg_type": "take_profit",
+                        "order_type": "LIMIT",
+                        "quantity": -5.0,
+                        "limit_price": 318.0,
+                    },
+                ],
+                "submission": {
+                    "bracket_order_id": "bracket-msft-040",
+                    "leg_count": 2,
+                    "legs": [
+                        {
+                            "bracket_order_id": "bracket-msft-040",
+                            "leg_id": "bracket-msft-040-1",
+                            "leg_type": "stop_loss",
+                            "order_type": "STOP_MARKET",
+                            "quantity": -5.0,
+                            "stop_price": 291.0,
+                            "status": "open",
+                        },
+                        {
+                            "bracket_order_id": "bracket-msft-040",
+                            "leg_id": "bracket-msft-040-2",
+                            "leg_type": "take_profit",
+                            "order_type": "LIMIT",
+                            "quantity": -5.0,
+                            "limit_price": 318.0,
+                            "status": "open",
+                        },
+                    ],
+                },
+                "guard_stage": "paper",
+                "guard_reason": "paper/sim bracket execution guard passed",
+                "broker_submission_status": "submitted_to_broker",
+                "submitted_to_broker": True,
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-bracket", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-bracket-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["bracket_order_id"], "bracket-msft-040")
+        self.assertEqual(order_context["bracket_leg_count"], 2)
+        self.assertEqual(order_context["stop_loss_pct"], 0.03)
+        self.assertEqual(order_context["take_profit_pct"], 0.06)
+        self.assertEqual(order_context["entry_price"], 300.0)
+        self.assertEqual(order_context["entry_quantity"], 5.0)
+        self.assertEqual(order_context["guard_stage"], "paper")
+        self.assertTrue(order_context["submitted_to_broker"])
+        self.assertEqual(order_context["submitted_legs"][0]["leg_id"], "bracket-msft-040-1")
+        self.assertEqual(order_context["submitted_legs"][1]["limit_price"], 318.0)
+
     def test_order_cancel_lineage_preserves_cancel_ack(self):
         """Cancel acknowledgements must keep reason, actor, and unfilled quantity."""
         adapter = FeedbackStoreAdapter()
