@@ -1,0 +1,182 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/interaction-source-record/v1",
+  "title": "Pantheon InteractionSourceRecord",
+  "description": "Governed evidence wrapper for user, persona, committee, notebook, and postmortem interactions that may later be classified into strategy seed candidates. Raw interaction content remains evidence-only and is referenced by raw_ref; it is never inlined in this record.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "interaction_id",
+    "record_kind",
+    "source_surface",
+    "actor_type",
+    "persona_refs",
+    "session_id",
+    "raw_ref",
+    "summary",
+    "evidence_refs",
+    "visibility",
+    "redaction_status",
+    "created_at",
+    "updated_at",
+    "metadata"
+  ],
+  "propertyNames": {
+    "not": {
+      "enum": [
+        "raw_text",
+        "raw_content",
+        "raw_prompt",
+        "prompt",
+        "transcript",
+        "messages",
+        "message",
+        "body",
+        "content"
+      ]
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["interaction_source_record.v1"]
+    },
+    "interaction_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable idempotency key for the governed interaction evidence wrapper."
+    },
+    "record_kind": {
+      "type": "string",
+      "const": "interaction_source_record",
+      "description": "Discriminator that keeps interaction-derived seed evidence separate from data-source and strategy-seed-source registry records."
+    },
+    "source_surface": {
+      "type": "string",
+      "enum": [
+        "trainer",
+        "ask_personas",
+        "committee",
+        "decision_journal",
+        "notebook",
+        "postmortem",
+        "agora",
+        "red_team",
+        "management_ai",
+        "operator_console",
+        "research_chat",
+        "other"
+      ],
+      "description": "Product surface where the interaction was committed or captured. Use other only when a downstream bridge records the exact surface in metadata.surface_name."
+    },
+    "actor_type": {
+      "type": "string",
+      "enum": ["user", "operator", "persona", "agent", "system", "reviewer", "researcher"]
+    },
+    "persona_refs": {
+      "type": "array",
+      "description": "Personas involved in or targeted by this interaction. Empty is allowed for user/operator-only interactions.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "raw_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Reference to the raw interaction evidence artifact. This is a pointer only, not raw text."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short governed summary suitable for classification and review cards."
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Evidence references that support the summary. At least one item should match raw_ref.",
+      "items": {
+        "type": "object",
+        "required": ["ref", "kind"],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "raw_interaction",
+              "committed_event",
+              "memo",
+              "verdict",
+              "postmortem",
+              "notebook_entry",
+              "source_record",
+              "evidence_bundle",
+              "audit_event",
+              "artifact"
+            ]
+          },
+          "content_hash": {
+            "type": ["string", "null"]
+          },
+          "created_at": {
+            "type": ["string", "null"]
+          },
+          "metadata": {
+            "$ref": "#/definitions/raw_safe_metadata"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "visibility": {
+      "type": "string",
+      "enum": ["private", "persona", "desk", "shared"],
+      "description": "Initial visibility boundary. IDS-002 may further reduce or fail this boundary during redaction/scope checks."
+    },
+    "redaction_status": {
+      "type": "string",
+      "enum": ["pending", "passed", "failed"],
+      "description": "Required redaction state at the InteractionSourceRecord boundary. Downstream seed bridges must not accept failed records."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "$ref": "#/definitions/raw_safe_metadata"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "raw_safe_metadata": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "enum": [
+            "raw_text",
+            "raw_content",
+            "raw_prompt",
+            "prompt",
+            "transcript",
+            "messages",
+            "message",
+            "body",
+            "content"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
