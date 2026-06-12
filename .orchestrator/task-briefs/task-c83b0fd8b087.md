@@ -23,6 +23,8 @@ Extend execute-plans:management-ai, pantheon:bff-assistant, pantheon:openclaw-de
 - docs/04/sa_sd_pkt_8a09145d0735_smoke_management_ai_openclaw_repair_work/requirement_capture.md
 - docs/04/sa_sd_pkt_8a09145d0735_smoke_management_ai_openclaw_repair_work/system_analysis.md
 - docs/04/sa_sd_pkt_8a09145d0735_smoke_management_ai_openclaw_repair_work/system_design.md
+- docs/02-architecture/sa_sd_pkt_8a09145d0735_smoke_management_ai_openclaw_repair_work_architecture.md
+- docs/05-ui/sa_sd_pkt_8a09145d0735_smoke_management_ai_openclaw_repair_work_ui.md
 - services/control-plane/bff/execute-plans:management-ai/
 - services/control-plane/bff/pantheon:bff-assistant/
 - services/control-plane/bff/pantheon:openclaw-dev-bridge/
@@ -37,7 +39,9 @@ Extend execute-plans:management-ai, pantheon:bff-assistant, pantheon:openclaw-de
 - Generated docs include source citations from conversation and context pack
 - Execution tasks include owner, reviewer, dependencies, artifacts, and acceptance
 - Artifacts land in docs/04/, docs/02-architecture/, docs/05-ui/, and .orchestrator/task-briefs/
+- Regression coverage proves repair-worktree prepare, archive locations, and queued DevTaskPacket document paths
 
 ## Source Citations
 
 - `management_nl`: /bff/management/ai/conversations/mgmt-ai-openclaw-repair-smoke-20260612T004311Z — Source conversation used for requirement extraction
+- `smoke_script`: scripts/smoke_management_ai_openclaw_repair_e2e.sh — Executable dev-only smoke route for repair write, SA/SD generation, and queue drain
