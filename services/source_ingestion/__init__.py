@@ -1,6 +1,15 @@
 """Governed source ingestion primitives for the SD-03 source/evidence plane."""
 
 from .ingest_manager import IngestManager
+from .agora_seed_bridge import (
+    AgoraSeedArtifactKind,
+    AgoraSeedBridge,
+    AgoraSeedBridgeError,
+    AgoraSeedExtractionResult,
+    AgoraTrustProfile,
+    InteractionSeedKind,
+    extract_agora_seed,
+)
 from .interaction_intent_classifier import (
     IntentClassification,
     InteractionIntentClassificationError,
@@ -23,6 +32,14 @@ from .negative_memory import (
     NegativeMemoryWarningLevel,
     match_negative_memory,
 )
+from .trainer_seed_bridge import (
+    TrainerSeedBridge,
+    TrainerSeedBridgeError,
+    TrainerSeedBridgeResult,
+    TrainerSeedExtractionRef,
+    TrainerSeedKind,
+    trainer_seed_kind_from_text,
+)
 from .scheduler import (
     CrawlFrontierItem,
     IngestionScheduler,
@@ -33,10 +50,16 @@ from .scheduler import (
 )
 
 __all__ = [
+    "AgoraSeedArtifactKind",
+    "AgoraSeedBridge",
+    "AgoraSeedBridgeError",
+    "AgoraSeedExtractionResult",
+    "AgoraTrustProfile",
     "CrawlFrontierItem",
     "IngestBatch",
     "IngestManager",
     "IntentClassification",
+    "InteractionSeedKind",
     "InteractionActorType",
     "InteractionIntentClassificationError",
     "InteractionIntentClassifier",
@@ -50,10 +73,17 @@ __all__ = [
     "NegativeMemoryKind",
     "NegativeMemoryMatch",
     "NegativeMemoryWarningLevel",
+    "TrainerSeedBridge",
+    "TrainerSeedBridgeError",
+    "TrainerSeedBridgeResult",
+    "TrainerSeedExtractionRef",
+    "TrainerSeedKind",
     "IngestionScheduler",
     "JsonlIngestScheduleStore",
     "match_negative_memory",
     "ScheduledIngestResult",
     "SourceWatermark",
     "classify_interaction_intent",
+    "trainer_seed_kind_from_text",
+    "extract_agora_seed",
 ]

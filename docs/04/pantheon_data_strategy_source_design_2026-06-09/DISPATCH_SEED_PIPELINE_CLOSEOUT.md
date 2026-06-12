@@ -104,3 +104,36 @@ a BFF read model (the "Strategy Seed Inbox").
 ### Out of scope
 - Frontend / Lovable inbox UI (separate FE packet once the read model is live).
 - Negative-memory matching on the seed card (lands with the interaction EPIC, #4).
+
+### Review state machine contract
+
+`StrategySpecSeed` review state machine v1 keeps the seed path research-only.
+Review decisions append a `SeedReviewDecision` audit record under seed lineage
+with `reviewer_id`, `decision`, `reason`, `target_refs`, and `created_at`; no
+review action may create a registry-approved artifact, `DeploymentPlan`,
+`RuntimeBinding`, broker route, or execution route.
+
+Allowed transitions:
+
+| Current status | Allowed action | Next status |
+|---|---|---|
+| `draft` | `accept` | `accepted` |
+| `draft` | `reject` | `rejected` |
+| `draft` | `request-evidence` | `needs_more_evidence` |
+| `draft` | `archive` | `archived_as_insight` |
+| `draft` | `merge` | `merged` |
+| `needs_more_evidence` | `accept` | `accepted` |
+| `needs_more_evidence` | `reject` | `rejected` |
+| `needs_more_evidence` | `request-evidence` | `needs_more_evidence` |
+| `needs_more_evidence` | `archive` | `archived_as_insight` |
+| `needs_more_evidence` | `merge` | `merged` |
+| `accepted` | `convert-to-spec-seed` | `promoted_to_strategy_spec` |
+| `accepted` | `reject` | `rejected` |
+| `accepted` | `request-evidence` | `needs_more_evidence` |
+| `accepted` | `archive` | `archived_as_insight` |
+| `accepted` | `merge` | `merged` |
+
+Terminal review statuses are `rejected`, `archived_as_insight`, and `merged`;
+they refuse further review transitions. `promoted_to_strategy_spec` is not a
+review terminal state, but it leaves the review inbox action set and becomes
+eligible for the SEEDFLOW-001 `submit-replication` bridge only.

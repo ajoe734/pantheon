@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from read_store import ReadSurfaceStore, _default_read_data
+from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -21,6 +22,12 @@ OPERATOR_AUTH = "Bearer test-operator:operator"
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
+        tracked_env = {
+            "STRATEGY_SEED_STORE_PATH": os.environ.get("STRATEGY_SEED_STORE_PATH"),
+            "INTERACTION_SOURCE_STORE_PATH": os.environ.get("INTERACTION_SOURCE_STORE_PATH"),
+        }
+        os.environ["STRATEGY_SEED_STORE_PATH"] = os.path.join(td, "strategy_seeds.jsonl")
+        os.environ["INTERACTION_SOURCE_STORE_PATH"] = os.path.join(td, "interaction_records.jsonl")
         bff_main.read_store = ReadSurfaceStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=True,
@@ -30,6 +37,11 @@ def _seeded_client():
             yield client
         finally:
             bff_main.read_store = original_store
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def test_tw04_list_replay_returns_session_list():
@@ -322,6 +334,21 @@ def test_tw04_commit_succeeds_and_appends_event():
         assert artifact_refs["before_artifact_ref"] is not None
         assert artifact_refs["after_artifact_ref"] is not None
         assert artifact_refs["after_artifact_ref"] is not None
+        seed_extraction = payload["seed_extraction"]
+        assert seed_extraction["status"] == "created"
+        assert seed_extraction["seed_kind"] == "risk_constraint"
+        assert seed_extraction["trainer_seed_extraction_ref"]["event_type"] == "trainer_commit"
+        assert seed_extraction["review_inbox"]["route"] == "/bff/management/strategy-seeds"
+        inbox = client.get(
+            "/bff/management/strategy-seeds",
+            params={"source_kind": "trainer", "status": "draft"},
+            headers={"Authorization": OPERATOR_AUTH},
+        )
+        assert inbox.status_code == 200, inbox.text
+        assert any(item["seed_id"] == seed_extraction["seed_id"] for item in inbox.json()["data"])
+        stored = StrategySpecSeedStore().get(seed_extraction["seed_id"])
+        assert stored is not None
+        assert stored.lineage["trainer_seed_extraction_ref"]["event_id"] == payload["event"]["event_id"]
         assert payload["meta"]["surfaces"]["trainer_replay"] in {"ok", "stale"}
 
 
