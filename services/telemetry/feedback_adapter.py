@@ -82,6 +82,7 @@ ALPHA_LINEAGE_METADATA_FIELDS = (
     "strategy_id",
     "source_worker",
     "run_id",
+    "binding_id",
     "alpha_source",
     "confidence_score",
     "model_id",
