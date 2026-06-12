@@ -12,6 +12,8 @@ REPORT_DOC = (
     / "docs/04/pantheon_persona_oss_interaction_audit_2026-06-12"
     / "PERSONA_OSS_INTERACTION_AUDIT_2026-06-12.md"
 )
+RUNTIME_HARNESS = ROOT / "services/persona/oss_runtime.py"
+RUNTIME_E2E_TEST = ROOT / "tests/e2e/test_persona_oss_runtime_matrix.py"
 
 
 PERSONA_OSS_COMPONENTS = {
@@ -57,16 +59,38 @@ PROOF_REFERENCES = [
 
 
 SCENARIOS = [
-    "Persona Runtime Session Through OpenClaw",
-    "Observe Evidence With vectorbt, statsmodels, and MLflow",
-    "Supervised Alpha / Rolling OOS With Qlib",
-    "Derivatives Risk Evidence With QuantLib",
-    "Persona Policy Optimization With DSPy",
-    "Behavior Cloning And Preference Learning With imitation And TRL",
-    "Research-Only RL With FinRL, RLlib, And Ray Tune",
-    "Optional W&B Tracking",
-    "Multi-Persona OODA Proposal Synthesis",
+    "OpenClaw Runtime Session",
+    "DSPy Persona Optimization",
+    "Imitation Behavior Cloning",
+    "TRL Preference Learning",
+    "Qlib Supervised Alpha",
+    "vectorbt Historical Backtest",
+    "statsmodels Regime Interpretation",
+    "QuantLib Pricing/Risk Interpretation",
+    "FinRL Offline Policy Evidence",
+    "RLlib Offline Train/Eval Evidence",
+    "Ray Tune Optimizer Evidence",
+    "MLflow Experiment Tracking",
+    "W&B Offline Experiment Tracking",
+    "vectorbt -> MLflow -> LEAN Handoff Packet",
 ]
+
+RUNTIME_COMPONENT_DISPLAYS = {
+    "openclaw": "OpenClaw",
+    "dspy": "DSPy",
+    "imitation": "imitation",
+    "trl": "TRL",
+    "qlib": "Qlib",
+    "vectorbt": "vectorbt",
+    "statsmodels": "statsmodels",
+    "quantlib": "QuantLib",
+    "finrl": "FinRL",
+    "rllib": "RLlib",
+    "ray_tune": "Ray Tune",
+    "mlflow": "MLflow",
+    "wandb": "W&B",
+    "lean_handoff": "lean_handoff",
+}
 
 
 def _table_statuses(path: Path, bold_names: bool = False) -> dict[str, str]:
@@ -112,15 +136,32 @@ def test_persona_oss_report_covers_only_persona_facing_components() -> None:
         assert f"`{status}`" in report
 
     out_of_scope_terms = [
-        "LEAN Launcher",
+        "LEAN algorithm execution",
+        "LEAN Launcher process management",
         "broker adapter internals",
-        "RuntimeBinding mutation",
-        "RuntimeBootstrapRequest creation",
-        "capital binding",
-        "paper/canary/live promotion",
+        "Runtime ownership after execution review accepts a handoff",
+        "Capital approval",
+        "paper/canary/live promotion decisions",
     ]
     for term in out_of_scope_terms:
         assert term in report
+
+
+def test_persona_oss_report_points_to_runtime_harness_and_e2e_matrix() -> None:
+    report = REPORT_DOC.read_text(encoding="utf-8")
+    harness = RUNTIME_HARNESS.read_text(encoding="utf-8")
+    e2e = RUNTIME_E2E_TEST.read_text(encoding="utf-8")
+
+    assert "services/persona/oss_runtime.py" in report
+    assert "tests/e2e/test_persona_oss_runtime_matrix.py" in report
+    assert "PersonaOSSRequest" in report
+    assert "PersonaOSSResult" in report
+    assert "response-driven OODA follow-up" in report
+
+    for component, display in RUNTIME_COMPONENT_DISPLAYS.items():
+        assert f'"{component}"' in harness
+        assert f"`{display}`" in report
+    assert "run_persona_oss_matrix" in e2e
 
 
 def test_persona_oss_report_cites_existing_proof_tests() -> None:
@@ -137,13 +178,14 @@ def test_persona_oss_report_includes_all_e2e_scenarios() -> None:
     for scenario in SCENARIOS:
         assert scenario in report
 
-    forbidden_scope = [
-        "No LEAN",
-        "broker adapter",
-        "RuntimeBinding",
-        "separate downstream gates",
+    required_runtime_terms = [
+        "does not launch LEAN",
+        "broker adapters",
+        "stops at the handoff packet",
+        "runtime bootstrap request",
+        "PantheonRuntimeContext.from_mapping()",
     ]
-    for term in forbidden_scope:
+    for term in required_runtime_terms:
         assert term in report
 
 
