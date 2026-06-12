@@ -14,6 +14,7 @@ REPORT_DOC = (
 )
 RUNTIME_HARNESS = ROOT / "services/persona/oss_runtime.py"
 RUNTIME_E2E_TEST = ROOT / "tests/e2e/test_persona_oss_runtime_matrix.py"
+RUNTIME_100_E2E_TEST = ROOT / "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py"
 
 
 PERSONA_OSS_COMPONENTS = {
@@ -91,6 +92,32 @@ RUNTIME_COMPONENT_DISPLAYS = {
     "wandb": "W&B",
     "lean_handoff": "lean_handoff",
 }
+
+ROUND_TRIP_COMPONENT_COUNTS = {
+    "openclaw": 8,
+    "dspy": 7,
+    "imitation": 7,
+    "trl": 7,
+    "qlib": 8,
+    "vectorbt": 10,
+    "statsmodels": 7,
+    "quantlib": 7,
+    "finrl": 7,
+    "rllib": 7,
+    "ray_tune": 6,
+    "mlflow": 7,
+    "wandb": 6,
+    "lean_handoff": 6,
+}
+
+ALPHA_SEED_REFERENCES = [
+    "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md",
+    "tests/e2e/fixtures/strategy_spec_for_experiment.json",
+    "tests/e2e/fixtures/experiment_run_for_admission.json",
+    "tests/e2e/fixtures/candidate_artifact_for_decision.json",
+    "tests/e2e/test_persona_abc_ooda_evidence_chain.py",
+    "services/source_ingestion/tests/test_strategy_seed_builder.py",
+]
 
 
 def _table_statuses(path: Path, bold_names: bool = False) -> dict[str, str]:
@@ -187,6 +214,34 @@ def test_persona_oss_report_includes_all_e2e_scenarios() -> None:
     ]
     for term in required_runtime_terms:
         assert term in report
+
+
+def test_persona_oss_report_includes_100_alpha_seed_roundtrip_matrix() -> None:
+    report = REPORT_DOC.read_text(encoding="utf-8")
+    e2e = RUNTIME_100_E2E_TEST.read_text(encoding="utf-8")
+
+    assert "100 Alpha-Seed Round-Trip Spec Matrix" in report
+    assert "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py" in report
+    assert "persona -> OSS -> persona" in report
+    assert "assertion_label" in report
+    assert "payload fingerprint" in report
+    assert "run_persona_oss_request()" in report
+    assert "ROUND_TRIP_SPECS" in e2e
+    assert "run_persona_oss_request(request)" in e2e
+    assert "assertion_label" in e2e
+    assert "_fingerprint(spec.payload)" in e2e
+
+    for component, count in ROUND_TRIP_COMPONENT_COUNTS.items():
+        assert f"| `{component}` | {count} |" in report
+        assert f'("{component}", {count})' in e2e
+
+    assert sum(ROUND_TRIP_COMPONENT_COUNTS.values()) == 100
+    assert "assert len(ROUND_TRIP_SPECS) == 100" in e2e
+
+    for reference in ALPHA_SEED_REFERENCES:
+        assert reference in report
+        assert reference in e2e
+        assert (ROOT / reference).exists()
 
 
 def test_openclaw_persona_boundary_denies_downstream_execution() -> None:

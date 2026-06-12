@@ -195,6 +195,51 @@ and source vectorbt metrics. The response moves persona to `act`.
 This scenario stops at the handoff packet. It does not launch LEAN, inspect LEAN
 algorithm internals, place orders, or touch broker adapters.
 
+## 100 Alpha-Seed Round-Trip Spec Matrix
+
+The executable 100-case matrix is
+`tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py`. It is intentionally
+not 100 copies of vectorbt. It distributes persona requests across every
+persona-facing OSS/component path and asserts that each response returns enough
+component-specific evidence for the persona's OODA follow-up.
+
+It exercises 100 persona -> OSS -> persona round trips. Each spec case has a
+unique `spec_id`, `intent`, `assertion_label`, payload fingerprint, and alpha
+seed binding. Every case calls `run_persona_oss_request()` with a concrete
+`PersonaOSSRequest`, then checks the returned `PersonaOSSResult`,
+persona/session/request identity, OODA phase, next action, evidence refs, and
+component-specific payload echo or lineage.
+
+| Component | Case count | Distinct persona assertion focus |
+|---|---:|---|
+| `openclaw` | 8 | Session type, operator id, active upstream state, alpha seed context bundle |
+| `dspy` | 7 | Prompt bundle strategy/version and parent seed spec lineage |
+| `imitation` | 7 | Behavior policy registry lineage, epoch count, training seed |
+| `trl` | 7 | Preference model strategy id, beta, strategy family, feedback prefix |
+| `qlib` | 8 | Supervised alpha config, estimator/leaves values, usable metrics |
+| `vectorbt` | 10 | Historical backtest template windows, cash, fees, instrument metrics |
+| `statsmodels` | 7 | Regime dataset metadata, series suffixing, factor/price counts |
+| `quantlib` | 7 | Pricing dataset metadata, valuation date, shifted instrument ids |
+| `finrl` | 7 | Offline RL policy lineage, seed, learning rate, lookback window |
+| `rllib` | 7 | Offline train/eval policy lineage, seed, learning rate, lookback window |
+| `ray_tune` | 6 | Optimizer id, search strategy, trial count, top-k, trigger |
+| `mlflow` | 7 | vectorbt-produced registry entry synced to MLflow tracking URI |
+| `wandb` | 6 | vectorbt-produced registry entry synced to offline W&B local store |
+| `lean_handoff` | 6 | vectorbt -> MLflow evidence materialized into runtime handoff packet |
+
+The matrix is backed by existing alpha strategy seed sources in the repository,
+not invented strategy ids:
+
+- `services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md`
+- `tests/e2e/fixtures/strategy_spec_for_experiment.json`
+- `tests/e2e/fixtures/experiment_run_for_admission.json`
+- `tests/e2e/fixtures/candidate_artifact_for_decision.json`
+- `tests/e2e/test_persona_abc_ooda_evidence_chain.py`
+- `services/source_ingestion/tests/test_strategy_seed_builder.py`
+
+The test file verifies those source files exist and contain the expected seed
+anchors before it runs the 100 round trips.
+
 ## Existing Adapter Proof References
 
 These tests remain the component-level proof set beneath the persona runtime
@@ -226,12 +271,14 @@ matrix:
 
 Current branch validation:
 
+- `python3 -m pytest tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py -q`
+- Result: `101 passed in 6.82s`
+- `python3 -m pytest tests/docs/test_persona_oss_interaction_audit.py tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py -q`
+- Result: `109 passed in 11.83s`
 - `python3 -m pytest tests/e2e/test_persona_oss_runtime_matrix.py -q`
 - Result: `7 passed in 0.72s`
-- `python3 -m pytest tests/docs/test_persona_oss_interaction_audit.py -q`
-- Result: `7 passed in 0.53s`
-- `python3 -m pytest tests/e2e/test_persona_oss_runtime_matrix.py tests/docs/test_persona_oss_interaction_audit.py services/openclaw-gateway-adapter/test_session_lifecycle.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py services/learning/dspy/test_adapter.py services/learning/imitation/test_adapter.py services/learning/trl/test_adapter.py services/research/qlib/test_adapter.py services/research/vectorbt/test_adapter.py services/research/statsmodels/test_adapter.py services/research/quantlib/test_adapter.py services/research/finrl/test_adapter.py services/research/rllib/test_adapter.py services/research/rllib/test_ray_tune_adapter.py services/registry/experiments/test_adapter.py tests/integrations/test_wandb_sync.py -q`
-- Result: `315 passed, 1 skipped, 5 subtests passed in 45.64s`
+- `python3 -m pytest tests/e2e/test_persona_oss_runtime_matrix.py tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py tests/docs/test_persona_oss_interaction_audit.py services/openclaw-gateway-adapter/test_session_lifecycle.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py services/learning/dspy/test_adapter.py services/learning/imitation/test_adapter.py services/learning/trl/test_adapter.py services/research/qlib/test_adapter.py services/research/vectorbt/test_adapter.py services/research/statsmodels/test_adapter.py services/research/quantlib/test_adapter.py services/research/finrl/test_adapter.py services/research/rllib/test_adapter.py services/research/rllib/test_ray_tune_adapter.py services/registry/experiments/test_adapter.py tests/integrations/test_wandb_sync.py -q`
+- Result: `417 passed, 1 skipped, 5 subtests passed in 50.79s`
 
 The E2E tests assert that every component in `PERSONA_OSS_COMPONENTS` produces a
 completed `PersonaOSSResult`, non-empty primary output, expected OODA follow-up,
