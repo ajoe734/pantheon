@@ -1343,6 +1343,8 @@ class TestLineageReadModel(unittest.TestCase):
                     "noop_reason": "hold_signal",
                     "decision_status": "no_order",
                     "order_status": "not_submitted",
+                    "signal_action": "HOLD",
+                    "signal_direction": "LONG",
                     "quantity_type": "SHARES",
                     "price": 420.0,
                     "broker_submission_status": "not_submitted_signal_noop",
@@ -1376,6 +1378,8 @@ class TestLineageReadModel(unittest.TestCase):
             self.assertEqual(order_context["noop_reason"], "hold_signal")
             self.assertEqual(order_context["decision_status"], "no_order")
             self.assertEqual(order_context["order_status"], "not_submitted")
+            self.assertEqual(order_context["signal_action"], "HOLD")
+            self.assertEqual(order_context["signal_direction"], "LONG")
             self.assertEqual(order_context["fill_rate"], 0.0)
             self.assertEqual(order_context["noop_count"], 1)
             self.assertFalse(order_context["submitted_to_broker"])
