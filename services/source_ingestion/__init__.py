@@ -1,6 +1,15 @@
 """Governed source ingestion primitives for the SD-03 source/evidence plane."""
 
 from .ingest_manager import IngestManager
+from .agora_seed_bridge import (
+    AgoraSeedArtifactKind,
+    AgoraSeedBridge,
+    AgoraSeedBridgeError,
+    AgoraSeedExtractionResult,
+    AgoraTrustProfile,
+    InteractionSeedKind,
+    extract_agora_seed,
+)
 from .interaction_intent_classifier import (
     IntentClassification,
     InteractionIntentClassificationError,
@@ -41,10 +50,16 @@ from .scheduler import (
 )
 
 __all__ = [
+    "AgoraSeedArtifactKind",
+    "AgoraSeedBridge",
+    "AgoraSeedBridgeError",
+    "AgoraSeedExtractionResult",
+    "AgoraTrustProfile",
     "CrawlFrontierItem",
     "IngestBatch",
     "IngestManager",
     "IntentClassification",
+    "InteractionSeedKind",
     "InteractionActorType",
     "InteractionIntentClassificationError",
     "InteractionIntentClassifier",
@@ -70,4 +85,5 @@ __all__ = [
     "SourceWatermark",
     "classify_interaction_intent",
     "trainer_seed_kind_from_text",
+    "extract_agora_seed",
 ]
