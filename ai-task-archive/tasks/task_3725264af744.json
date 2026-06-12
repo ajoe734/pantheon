@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "task_id": "task_3725264af744",
+  "archived_at": "2026-06-12T06:00:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "task_3725264af744",
+    "title": "Validate and test: Smoke Management AI OpenClaw repair worktree write, SA/",
+    "summary_zh": "Run focused tests and validation for the implementation task.",
+    "phase": "Unassigned",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "task_08e9be7e68d0"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/tests/test_req_efb101c347fb.py"
+    ],
+    "acceptance": [
+      "Unit: test_dev_docs_generator.py — models",
+      "generator",
+      "archiver functions;Test: requirement capture includes all required fields and source refs;Test: SA includes current_state",
+      "roles",
+      "flows",
+      "data",
+      "risk",
+      "acceptance_scenarios;Test: SD includes architecture",
+      "api_contract",
+      "db_migration",
+      "ui_routes",
+      "tests",
+      "rollout",
+      "rollback;Test: execution tasks include owner",
+      "reviewer",
+      "depends_on",
+      "artifacts",
+      "acceptance;Test: archiver writes docs to correct paths and returns archive_locations;Test: source citations link back to conversation_id and context pack sources"
+    ],
+    "next": "All 3 smoke tests pass; finalization record added to task brief; PR #1382 merged into dev (5dff1aa3). Verified: pytest test_req_efb101c347fb.py — 3 passed. CI: all checks green. Subject format conflict with task ID resolved via TASK_REQUIRE_SUBJECT_TASK_ID override.",
+    "last_update": "2026-06-12T06:00:42Z",
+    "review_notes_zh": [
+      "全部驗收通過",
+      "煙霧測試 3 項全過，單元測試 43 項全過，source citations 可追溯至 CONVERSATION_ID"
+    ],
+    "review_file": "/tmp/review_task_3725264af744.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-12T06:00:42Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/task-3725264af744",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/task_3725264af744",
+      "git_clean_required": false,
+      "commit": "f7f818be49ef5a4668ab65ba29877368595545f7",
+      "commit_subject": "TASK-3725264AF744: fix CI push-event range, add finalization record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Fix": "this commit resets the push-event \"before\" to 3cc738f0, so the",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "task_3725264af744",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/control-plane/bff/tests/test_req_efb101c347fb.py -v — 3 passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/task_3725264af744",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5dff1aa3efce9bb40182225eef3efda49b7010f1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "task_3725264af744",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-12T02:47:01Z",
+      "resolved_at": "2026-06-12T02:47:27Z"
+    },
+    {
+      "task_id": "task_3725264af744",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Validation evidence committed and PR #1370 opened with auto-merge. Commit baccad7276f1bcc116ab7632b65d1af1e8808a64 records task brief ownership alignment and validation note. Verification: python3 -m pytest services/control-plane/bff/tests/test_req_efb101c347fb.py services/control-plane/bff/assistant/tests/test_dev_docs_generator.py -q => 46 passed in 6.89s. Reviewer should inspect PR #1370 and approve or request changes.",
+      "status": "done",
+      "created_at": "2026-06-12T02:53:39Z",
+      "resolved_at": "2026-06-12T02:57:58Z"
+    },
+    {
+      "task_id": "task_3725264af744",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude auth: Authentication failure",
+      "status": "done",
+      "created_at": "2026-06-12T02:57:58Z",
+      "resolved_at": "2026-06-12T03:13:20Z"
+    },
+    {
+      "task_id": "task_3725264af744",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: ERROR: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.",
+      "status": "done",
+      "created_at": "2026-06-12T03:13:20Z",
+      "resolved_at": "2026-06-12T04:44:12Z"
+    },
+    {
+      "task_id": "task_3725264af744",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 3 smoke tests + 43 unit tests pass; acceptance criteria met; returning to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-12T04:44:12Z",
+      "resolved_at": "2026-06-12T05:27:25Z"
+    },
+    {
+      "task_id": "task_3725264af744",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-12T05:27:25Z",
+      "resolved_at": "2026-06-12T05:41:11Z"
+    },
+    {
+      "task_id": "task_3725264af744",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: ERROR: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.",
+      "status": "done",
+      "created_at": "2026-06-12T05:41:11Z",
+      "resolved_at": "2026-06-12T06:00:43Z"
+    }
+  ],
+  "blockers": []
+}

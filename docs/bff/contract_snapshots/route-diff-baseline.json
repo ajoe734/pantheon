@@ -1368,6 +1368,20 @@
       },
       {
         "family": "unknown",
+        "key": "GET /bff/management/strategy-seeds",
+        "method": "GET",
+        "path": "/bff/management/strategy-seeds",
+        "status": "implemented"
+      },
+      {
+        "family": "unknown",
+        "key": "GET /bff/management/strategy-seeds/{param}",
+        "method": "GET",
+        "path": "/bff/management/strategy-seeds/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "unknown",
         "key": "GET /bff/management/trading-pulse",
         "method": "GET",
         "path": "/bff/management/trading-pulse",
@@ -2177,6 +2191,20 @@
       },
       {
         "family": "unknown",
+        "key": "POST /bff/management/strategy-seeds/{param}/merge",
+        "method": "POST",
+        "path": "/bff/management/strategy-seeds/{param}/merge",
+        "status": "implemented"
+      },
+      {
+        "family": "unknown",
+        "key": "POST /bff/management/strategy-seeds/{param}/review",
+        "method": "POST",
+        "path": "/bff/management/strategy-seeds/{param}/review",
+        "status": "implemented"
+      },
+      {
+        "family": "unknown",
         "key": "POST /bff/management/strategy-seeds/{param}/submit-replication",
         "method": "POST",
         "path": "/bff/management/strategy-seeds/{param}/submit-replication",
@@ -2431,17 +2459,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 493,
-    "failure_count": 330,
+    "backend_routes": 497,
+    "failure_count": 334,
     "failures": {
-      "backend_missing_frontend": 324,
+      "backend_missing_frontend": 328,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 6
     },
     "frontend_routes": 178,
-    "mode_failure_count": 330,
+    "mode_failure_count": 334,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

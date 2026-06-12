@@ -17,6 +17,13 @@ from typing import Any, Mapping, Sequence
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
 from services.source_ingestion.connectors.base import SourceRecord
+from services.source_ingestion.ids_audit import (
+    IDSAuditEmitter,
+    IDSAuditEventStore,
+    IDSAuditOutcome,
+    IDSAuditStep,
+    make_pipeline_id,
+)
 from services.source_ingestion.interaction_intent_classifier import (
     IntentClassification,
     InteractionIntentClassifier,
@@ -147,10 +154,16 @@ _NON_SEED_INTENTS = frozenset(
 class AgoraSeedBridge:
     """Create draft StrategySpecSeed records from governed IDS-005 artifacts."""
 
-    def __init__(self, store: StrategySpecSeedStore | None = None) -> None:
+    def __init__(
+        self,
+        store: StrategySpecSeedStore | None = None,
+        *,
+        audit_store: IDSAuditEventStore | None = None,
+    ) -> None:
         self._store = store
         self._classifier = InteractionIntentClassifier()
         self._builder = StrategySpecSeedBuilder()
+        self._audit_store = audit_store
 
     def extract_seed(
         self,
@@ -167,17 +180,71 @@ class AgoraSeedBridge:
         interaction = _coerce_record(record)
         kind = _artifact_kind(interaction, artifact_kind)
         source_ref = _artifact_ref(interaction, artifact_ref)
+        pipeline_id = make_pipeline_id(interaction.source_surface.value, interaction.session_id, interaction.interaction_id)
+        auditor = IDSAuditEmitter(self._audit_store, pipeline_id=pipeline_id)
+
+        auditor.emit(
+            IDSAuditStep.RECORD,
+            source_surface=interaction.source_surface.value,
+            outcome=IDSAuditOutcome.SUCCESS,
+            interaction_id=interaction.interaction_id,
+            actor=created_by,
+            details={
+                "artifact_kind": kind.value,
+                "raw_ref": interaction.raw_ref,
+                "redaction_status": interaction.redaction_status.value,
+                "visibility": interaction.visibility.value,
+            },
+        )
 
         redaction = apply_redaction(interaction, context)
         guarded_record = redaction.record
+        if redaction.failed:
+            auditor.emit(
+                IDSAuditStep.REDACT,
+                source_surface=interaction.source_surface.value,
+                outcome=IDSAuditOutcome.FAILED,
+                interaction_id=interaction.interaction_id,
+                actor=created_by,
+                details={"findings": list(redaction.findings), "was_redacted": redaction.was_redacted},
+            )
+        else:
+            auditor.emit(
+                IDSAuditStep.REDACT,
+                source_surface=interaction.source_surface.value,
+                outcome=IDSAuditOutcome.SUCCESS,
+                interaction_id=interaction.interaction_id,
+                actor=created_by,
+                details={"findings": list(redaction.findings), "was_redacted": redaction.was_redacted},
+            )
         guard_seed_candidate(guarded_record)
 
         classification = self._classifier.classify(guarded_record)
         if classification.archive_only or classification.primary_intent in _NON_SEED_INTENTS:
+            auditor.emit(
+                IDSAuditStep.CLASSIFY,
+                source_surface=interaction.source_surface.value,
+                outcome=IDSAuditOutcome.ARCHIVE_ONLY,
+                interaction_id=interaction.interaction_id,
+                actor=created_by,
+                details={"primary_intent": classification.primary_intent.value, "archive_only": True},
+            )
             raise AgoraSeedBridgeError(
                 "interaction intent is not eligible for the IDS-005 seed queue: "
                 f"{classification.primary_intent.value}"
             )
+        auditor.emit(
+            IDSAuditStep.CLASSIFY,
+            source_surface=interaction.source_surface.value,
+            outcome=IDSAuditOutcome.SUCCESS,
+            interaction_id=interaction.interaction_id,
+            actor=created_by,
+            details={
+                "primary_intent": classification.primary_intent.value,
+                "confidence": classification.confidence,
+                "requires_human_review": classification.requires_human_review,
+            },
+        )
 
         effective_seed_kind = _seed_kind(guarded_record, classification, seed_kind, kind)
         trust_profile = _trust_profile(kind, guarded_record.source_surface, classification)
@@ -228,7 +295,30 @@ class AgoraSeedBridge:
                 negative_memory_records=negative_memory_records,
             )
         except StrategySpecSeedError as exc:
+            auditor.emit(
+                IDSAuditStep.CANDIDATE,
+                source_surface=interaction.source_surface.value,
+                outcome=IDSAuditOutcome.FAILED,
+                interaction_id=interaction.interaction_id,
+                actor=created_by,
+                details={"reason": str(exc)},
+            )
             raise AgoraSeedBridgeError(str(exc)) from exc
+
+        neg_match = seed.negative_memory_match
+        neg_match_level = str((neg_match or {}).get("warning_level") or "info")
+        auditor.emit(
+            IDSAuditStep.NEGATIVE_MATCH,
+            source_surface=interaction.source_surface.value,
+            outcome=IDSAuditOutcome.BLOCKED if neg_match_level == "blocking" else IDSAuditOutcome.SUCCESS,
+            interaction_id=interaction.interaction_id,
+            actor=created_by,
+            details={
+                "warning_level": neg_match_level,
+                "similarity": float((neg_match or {}).get("similarity") or 0.0),
+                "matched_memory_id": (neg_match or {}).get("matched_memory_id"),
+            },
+        )
 
         seed = _attach_extraction_ref(seed, extraction_ref)
         stored = False
@@ -238,6 +328,23 @@ class AgoraSeedBridge:
             except StrategySpecSeedStoreError as exc:
                 raise AgoraSeedBridgeError(str(exc)) from exc
             stored = True
+
+        auditor.emit(
+            IDSAuditStep.CANDIDATE,
+            source_surface=interaction.source_surface.value,
+            outcome=IDSAuditOutcome.SUCCESS,
+            interaction_id=interaction.interaction_id,
+            seed_id=seed.seed_id,
+            actor=created_by,
+            details={
+                "seed_id": seed.seed_id,
+                "stored": stored,
+                "seed_kind": effective_seed_kind.value,
+                "artifact_kind": kind.value,
+                "raw_ref": interaction.raw_ref,
+                "raw_ref_role": "evidence_only",
+            },
+        )
 
         return AgoraSeedExtractionResult(
             seed=seed,
@@ -259,10 +366,11 @@ def extract_agora_seed(
     negative_memory_records: Sequence[Mapping[str, Any] | Any] = (),
     created_by: str = "Codex",
     created_at: datetime | str | None = None,
+    audit_store: IDSAuditEventStore | None = None,
 ) -> AgoraSeedExtractionResult:
     """One-shot IDS-005 extraction helper."""
 
-    return AgoraSeedBridge(store=store).extract_seed(
+    return AgoraSeedBridge(store=store, audit_store=audit_store).extract_seed(
         record,
         context=context,
         artifact_kind=artifact_kind,
