@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-12T01:01:38Z",
+  "updated_at": "2026-06-12T01:28:51Z",
   "counts": {
-    "total": 1456,
-    "completed": 1433,
+    "total": 1457,
+    "completed": 1434,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "DATASTRAT-SEEDFLOW-001",
     "DATASTRAT-IDS-001",
     "DATASTRAT-MARKETDATA-OPS-ACCEPT-010",
     "DATASTRAT-MARKETDATA-TW-REMAINING-007",
@@ -25,7 +26,6 @@
     "MPOS-P2-BACKEND-001",
     "MPOS-P1-RISK-002",
     "MPOS-P1-PER-002",
-    "DATASTRAT-PERSONA-005",
-    "ASST-SKILL-006"
+    "DATASTRAT-PERSONA-005"
   ]
 }
