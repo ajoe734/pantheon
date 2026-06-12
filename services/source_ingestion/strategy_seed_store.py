@@ -25,6 +25,8 @@ from services.source_ingestion.strategy_seed_builder import (
     StrategySpecSeedStatus,
 )
 
+_IDS_AUDIT_OPTIONAL = True  # lazy import to avoid circular dependency
+
 _FORBIDDEN_EXECUTION_HINTS = frozenset(
     [
         "broker",
@@ -207,7 +209,7 @@ class StrategySpecSeedStore:
     and upserts rather than duplicates.
     """
 
-    def __init__(self, path: str | Path | None = None) -> None:
+    def __init__(self, path: str | Path | None = None, *, audit_store: Any = None) -> None:
         resolved = (
             Path(path)
             if path
@@ -219,6 +221,7 @@ class StrategySpecSeedStore:
             )
         )
         self._store = JsonlRegistryStore(resolved, id_field="seed_id")
+        self._audit_store = audit_store
 
     @property
     def path(self) -> Path:
@@ -314,6 +317,7 @@ class StrategySpecSeedStore:
             request_hash=request_hash,
         )
         updated = self._save_review_transition(seed, to_status, decision_record)
+        self._emit_review_audit(updated, decision_record, action)
         return updated, decision_record
 
     def merge_seed(
@@ -477,6 +481,41 @@ class StrategySpecSeedStore:
         updated = StrategySpecSeed.from_dict(payload)
         self.save(updated)
         return updated
+
+    def _emit_review_audit(
+        self,
+        seed: StrategySpecSeed,
+        decision: SeedReviewDecision,
+        action: SeedReviewDecisionAction,
+    ) -> None:
+        if self._audit_store is None:
+            return
+        from services.source_ingestion.ids_audit import IDSAuditEmitter, IDSAuditOutcome, IDSAuditStep, make_pipeline_id
+        interaction_id = str(
+            (seed.lineage or {}).get("interaction_source_record_id")
+            or seed.metadata.get("interaction_source_record_id")
+            or ""
+        ).strip() or None
+        source_surface = str(seed.metadata.get("source_surface") or "unknown")
+        pipeline_id = make_pipeline_id(source_surface, seed.seed_id, decision.decision_id)
+        auditor = IDSAuditEmitter(self._audit_store, pipeline_id=pipeline_id)
+        step = IDSAuditStep.ACCEPT if action == SeedReviewDecisionAction.ACCEPT else IDSAuditStep.REJECT
+        outcome = IDSAuditOutcome.SUCCESS
+        auditor.emit(
+            step,
+            source_surface=source_surface,
+            outcome=outcome,
+            interaction_id=interaction_id,
+            seed_id=seed.seed_id,
+            actor=decision.reviewer_id,
+            details={
+                "seed_id": seed.seed_id,
+                "decision": decision.decision,
+                "from_status": decision.from_status,
+                "to_status": decision.to_status,
+                "reason": decision.reason,
+            },
+        )
 
     def get_by_bundle_idempotent(
         self,

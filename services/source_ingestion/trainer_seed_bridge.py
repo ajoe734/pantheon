@@ -44,6 +44,13 @@ from services.source_ingestion.strategy_seed_builder import (
     StrategySpecSeed,
     StrategySpecSeedStatus,
 )
+from services.source_ingestion.ids_audit import (
+    IDSAuditEmitter,
+    IDSAuditEventStore,
+    IDSAuditOutcome,
+    IDSAuditStep,
+    make_pipeline_id,
+)
 from services.source_ingestion.strategy_seed_store import (
     StrategySpecSeedStore,
     StrategySpecSeedStoreError,
@@ -174,10 +181,12 @@ class TrainerSeedBridge:
         interaction_store: InteractionSourceRecordStore | None = None,
         seed_store: StrategySpecSeedStore | None = None,
         created_by: str = "Codex",
+        audit_store: IDSAuditEventStore | None = None,
     ) -> None:
         self._interaction_store = interaction_store or InteractionSourceRecordStore()
         self._seed_store = seed_store or StrategySpecSeedStore()
         self._created_by = created_by
+        self._audit_store = audit_store
 
     def ingest_event(
         self,
@@ -213,6 +222,9 @@ class TrainerSeedBridge:
             or f"interaction-{_short_hash([session_id, event_id, seed_kind.value])}"
         )
 
+        pipeline_id = make_pipeline_id(InteractionSourceSurface.TRAINER.value, session_id, event_id)
+        auditor = IDSAuditEmitter(self._audit_store, pipeline_id=pipeline_id)
+
         pending_record = InteractionSourceRecord(
             interaction_id=interaction_id,
             source_surface=InteractionSourceSurface.TRAINER.value,
@@ -235,8 +247,31 @@ class TrainerSeedBridge:
             ),
         )
 
+        auditor.emit(
+            IDSAuditStep.RECORD,
+            source_surface=InteractionSourceSurface.TRAINER.value,
+            outcome=IDSAuditOutcome.SUCCESS,
+            interaction_id=interaction_id,
+            actor=committed_by,
+            details={
+                "event_type": event_type,
+                "seed_kind": seed_kind.value,
+                "raw_ref": raw_ref,
+                "redaction_status": pending_record.redaction_status.value,
+                "visibility": pending_record.visibility.value,
+            },
+        )
+
         classification = classify_interaction_intent(pending_record)
         if classification.archive_only:
+            auditor.emit(
+                IDSAuditStep.CLASSIFY,
+                source_surface=InteractionSourceSurface.TRAINER.value,
+                outcome=IDSAuditOutcome.ARCHIVE_ONLY,
+                interaction_id=interaction_id,
+                actor=committed_by,
+                details={"primary_intent": classification.primary_intent.value, "archive_only": True},
+            )
             raise TrainerSeedBridgeError(
                 "archive_only_intent",
                 (
@@ -246,6 +281,18 @@ class TrainerSeedBridge:
             )
         expected_intents = _SEED_KIND_TO_ALLOWED_INTENTS[seed_kind]
         if classification.primary_intent not in expected_intents:
+            auditor.emit(
+                IDSAuditStep.CLASSIFY,
+                source_surface=InteractionSourceSurface.TRAINER.value,
+                outcome=IDSAuditOutcome.FAILED,
+                interaction_id=interaction_id,
+                actor=committed_by,
+                details={
+                    "primary_intent": classification.primary_intent.value,
+                    "seed_kind": seed_kind.value,
+                    "mismatch": True,
+                },
+            )
             raise TrainerSeedBridgeError(
                 "intent_seed_kind_mismatch",
                 (
@@ -253,6 +300,18 @@ class TrainerSeedBridge:
                     f"classified as {classification.primary_intent.value!r}."
                 ),
             )
+        auditor.emit(
+            IDSAuditStep.CLASSIFY,
+            source_surface=InteractionSourceSurface.TRAINER.value,
+            outcome=IDSAuditOutcome.SUCCESS,
+            interaction_id=interaction_id,
+            actor=committed_by,
+            details={
+                "primary_intent": classification.primary_intent.value,
+                "confidence": classification.confidence,
+                "requires_human_review": classification.requires_human_review,
+            },
+        )
 
         redaction = apply_redaction(
             pending_record,
@@ -264,6 +323,14 @@ class TrainerSeedBridge:
             ),
         )
         if redaction.failed:
+            auditor.emit(
+                IDSAuditStep.REDACT,
+                source_surface=InteractionSourceSurface.TRAINER.value,
+                outcome=IDSAuditOutcome.FAILED,
+                interaction_id=interaction_id,
+                actor=committed_by,
+                details={"findings": list(redaction.findings), "was_redacted": redaction.was_redacted},
+            )
             raise TrainerSeedBridgeError(
                 "redaction_failed",
                 (
@@ -271,9 +338,25 @@ class TrainerSeedBridge:
                     f"a SeedCandidate: {', '.join(redaction.findings)}"
                 ),
             )
+        auditor.emit(
+            IDSAuditStep.REDACT,
+            source_surface=InteractionSourceSurface.TRAINER.value,
+            outcome=IDSAuditOutcome.SUCCESS,
+            interaction_id=interaction_id,
+            actor=committed_by,
+            details={"findings": list(redaction.findings), "was_redacted": redaction.was_redacted},
+        )
         try:
             guard_seed_candidate(redaction.record)
         except SeedCandidateBlockedError as exc:
+            auditor.emit(
+                IDSAuditStep.CANDIDATE,
+                source_surface=InteractionSourceSurface.TRAINER.value,
+                outcome=IDSAuditOutcome.BLOCKED,
+                interaction_id=interaction_id,
+                actor=committed_by,
+                details={"reason": str(exc)},
+            )
             raise TrainerSeedBridgeError("seed_candidate_blocked", str(exc)) from exc
 
         self._interaction_store.save(redaction.record)
@@ -348,7 +431,30 @@ class TrainerSeedBridge:
                 negative_memory_records=negative_memory_records,
             )
         except SeedMaterializationError as exc:
+            auditor.emit(
+                IDSAuditStep.CANDIDATE,
+                source_surface=InteractionSourceSurface.TRAINER.value,
+                outcome=IDSAuditOutcome.FAILED,
+                interaction_id=interaction_id,
+                actor=committed_by,
+                details={"reason": str(exc)},
+            )
             raise TrainerSeedBridgeError("materialization_failed", str(exc)) from exc
+
+        neg_match = materialized.seed.negative_memory_match
+        neg_match_level = str((neg_match or {}).get("warning_level") or "info")
+        auditor.emit(
+            IDSAuditStep.NEGATIVE_MATCH,
+            source_surface=InteractionSourceSurface.TRAINER.value,
+            outcome=IDSAuditOutcome.BLOCKED if neg_match_level == "blocking" else IDSAuditOutcome.SUCCESS,
+            interaction_id=interaction_id,
+            actor=committed_by,
+            details={
+                "warning_level": neg_match_level,
+                "similarity": float((neg_match or {}).get("similarity") or 0.0),
+                "matched_memory_id": (neg_match or {}).get("matched_memory_id"),
+            },
+        )
 
         extraction_ref = TrainerSeedExtractionRef(
             extraction_id=f"trainer-seed-extraction-{_short_hash([session_id, event_id, materialized.seed.seed_id])}",
@@ -375,6 +481,23 @@ class TrainerSeedBridge:
             self._seed_store.save(updated_seed)
         except StrategySpecSeedStoreError as exc:
             raise TrainerSeedBridgeError("seed_store_error", str(exc)) from exc
+
+        auditor.emit(
+            IDSAuditStep.CANDIDATE,
+            source_surface=InteractionSourceSurface.TRAINER.value,
+            outcome=IDSAuditOutcome.SUCCESS,
+            interaction_id=interaction_id,
+            seed_id=updated_seed.seed_id,
+            actor=committed_by,
+            details={
+                "seed_id": updated_seed.seed_id,
+                "was_created": materialized.was_created,
+                "seed_kind": seed_kind.value,
+                "review_inbox_status": StrategySpecSeedStatus.DRAFT.value,
+                "raw_ref": raw_ref,
+                "raw_ref_role": "evidence_only",
+            },
+        )
 
         return TrainerSeedBridgeResult(
             interaction_record=redaction.record,
