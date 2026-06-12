@@ -32,6 +32,14 @@ from .negative_memory import (
     NegativeMemoryWarningLevel,
     match_negative_memory,
 )
+from .trainer_seed_bridge import (
+    TrainerSeedBridge,
+    TrainerSeedBridgeError,
+    TrainerSeedBridgeResult,
+    TrainerSeedExtractionRef,
+    TrainerSeedKind,
+    trainer_seed_kind_from_text,
+)
 from .scheduler import (
     CrawlFrontierItem,
     IngestionScheduler,
@@ -65,11 +73,17 @@ __all__ = [
     "NegativeMemoryKind",
     "NegativeMemoryMatch",
     "NegativeMemoryWarningLevel",
+    "TrainerSeedBridge",
+    "TrainerSeedBridgeError",
+    "TrainerSeedBridgeResult",
+    "TrainerSeedExtractionRef",
+    "TrainerSeedKind",
     "IngestionScheduler",
     "JsonlIngestScheduleStore",
     "match_negative_memory",
     "ScheduledIngestResult",
     "SourceWatermark",
     "classify_interaction_intent",
+    "trainer_seed_kind_from_text",
     "extract_agora_seed",
 ]
