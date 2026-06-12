@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,7 @@ def test_queue_and_drain_packet_inbox_materializes_tasks(tmp_path: Path, monkeyp
     assert queued["status"] == "queued"
     pending = repo_root / ".orchestrator" / "assistant-dev-packets" / "pending" / "pkt_inbox_live.json"
     assert pending.exists()
+    assert stat.S_IMODE(pending.stat().st_mode) == 0o664
 
     result = drain_task_packet_inbox(repo_root=str(repo_root), limit=4)
 

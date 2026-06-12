@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 from typing import Any
 
@@ -268,6 +269,7 @@ def test_dev_docs_generate_can_queue_signed_task_packet_for_supervisor_inbox(tmp
 
     queued_path = tmp_path / ".orchestrator" / "assistant-dev-packets" / "pending" / f"{task_packet['packetId']}.json"
     assert queued_path.exists()
+    assert stat.S_IMODE(queued_path.stat().st_mode) == 0o664
     queued = json.loads(queued_path.read_text(encoding="utf-8"))
     assert queued["source"] == "bff_assistant_dev_docs_generate"
     assert queued["taskPacket"]["packetId"] == task_packet["packetId"]
