@@ -24,3 +24,5 @@ discovery.
   close-out: Seed->Replication bridge + Seed Review Inbox (EPIC DATASTRAT-SEEDFLOW).
 - `EPIC_INTERACTION_DERIVED_SEEDS.md` — full task breakdown for the interaction-
   derived seeds half (EPIC DATASTRAT-IDS), with the safety-first ordering rule.
+- `CLOSEOUT_DATASTRAT_IDS_007.md` — owner closeout for the IDS-007
+  negative-memory matcher safety guard.
