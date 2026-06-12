@@ -150,6 +150,7 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "entry_quantity",
     "guard_stage",
     "guard_reason",
+    "reason",
     "noop_reason",
     "decision_status",
     "filter_reason",
