@@ -57,7 +57,14 @@ def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
         json.dump(payload, fh, indent=2, sort_keys=True, ensure_ascii=True)
         fh.write("\n")
         tmp_name = fh.name
-    Path(tmp_name).replace(path)
+    tmp_path = Path(tmp_name)
+    try:
+        parent_stat = path.parent.stat()
+        os.chown(tmp_path, parent_stat.st_uid, parent_stat.st_gid)
+    except OSError:
+        pass
+    tmp_path.chmod(0o664)
+    tmp_path.replace(path)
 
 
 def _read_json(path: Path) -> Dict[str, Any]:
