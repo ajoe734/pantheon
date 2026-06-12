@@ -31462,6 +31462,68 @@ def _mgmt_nl_record_control_audit(
     return audit_ref
 
 
+def _management_nl_publish_completed_events(
+    *,
+    session_id: str,
+    message_id: str,
+    assistant_turn_id: str,
+    trace_id: str,
+    focus: str,
+    provider_status: Dict[str, Any],
+    action_count: int,
+    audit_log_href: str,
+    conversation_href: str,
+    control_command: Optional[str] = None,
+) -> None:
+    provider_state = str(provider_status.get("status") or "unknown")
+    completed_event: Dict[str, Any] = {
+        "session_id": session_id,
+        "sessionId": session_id,
+        "message_id": message_id,
+        "messageId": message_id,
+        "assistant_turn_id": assistant_turn_id,
+        "assistantTurnId": assistant_turn_id,
+        "trace_id": trace_id,
+        "traceId": trace_id,
+        "focus": focus,
+        "status": "completed",
+        "lifecycleStatus": "completed",
+        "lifecycle_status": "completed",
+        "providerStatus": provider_status,
+        "provider_status": provider_status,
+        "providerStatusState": provider_state,
+        "provider_status_state": provider_state,
+        "actionCount": action_count,
+        "action_count": action_count,
+    }
+    if control_command is not None:
+        completed_event["controlCommand"] = control_command
+        completed_event["control_command"] = control_command
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "ask.message.completed",
+        completed_event,
+    )
+    _publish_event(
+        _sse_buffers["ask"],
+        _sse_subscribers["ask"],
+        "management.nl.ask.completed",
+        {
+            **completed_event,
+            "auditLog": {"href": audit_log_href, "traceId": trace_id, "trace_id": trace_id},
+            "audit_log": {"href": audit_log_href, "traceId": trace_id, "trace_id": trace_id},
+            "conversation": {
+                "href": conversation_href,
+                "sessionId": session_id,
+                "session_id": session_id,
+                "traceId": trace_id,
+                "trace_id": trace_id,
+            },
+        },
+    )
+
+
 def _mgmt_nl_handle_control_command(
     *,
     control_command: Dict[str, Any],
@@ -31634,9 +31696,13 @@ def _mgmt_nl_handle_control_command(
         },
     )
 
+    exchange_status = "completed"
     result = {
         "status": "accepted",
         "data": {
+            "status": exchange_status,
+            "lifecycleStatus": exchange_status,
+            "lifecycle_status": exchange_status,
             "answer": answer,
             "sessionId": session_id,
             "session_id": session_id,
@@ -31689,6 +31755,9 @@ def _mgmt_nl_handle_control_command(
             "redaction": redaction,
         },
         "meta": {
+            "status": exchange_status,
+            "lifecycleStatus": exchange_status,
+            "lifecycle_status": exchange_status,
             "snapshot_at": now,
             "surfaces": {"management_nl_control_command": {"status": "ok", "source": "bff_interceptor"}},
             "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
@@ -31743,6 +31812,18 @@ def _mgmt_nl_handle_control_command(
         trace_id=trace_id,
         provider_status=provider_status,
         ui_actions=[],
+    )
+    _management_nl_publish_completed_events(
+        session_id=session_id,
+        message_id=message_id,
+        assistant_turn_id=assistant_turn_id,
+        trace_id=trace_id,
+        focus=focus,
+        provider_status=provider_status,
+        action_count=0,
+        audit_log_href=audit_log_href,
+        conversation_href=conversation_href,
+        control_command=command_kind,
     )
     _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
@@ -33513,9 +33594,13 @@ async def bff_management_nl_ask(
         {"session_id": session_id, "message_id": message_id, "trace_id": trace_id, "focus": focus},
     )
 
+    exchange_status = "completed"
     result = {
         "status": "accepted",
         "data": {
+            "status": exchange_status,
+            "lifecycleStatus": exchange_status,
+            "lifecycle_status": exchange_status,
             "answer": answer,
             "sessionId": session_id,
             "session_id": session_id,
@@ -33565,6 +33650,9 @@ async def bff_management_nl_ask(
             "evidence_refs": processed_evidence_refs,
         },
         "meta": {
+            "status": exchange_status,
+            "lifecycleStatus": exchange_status,
+            "lifecycle_status": exchange_status,
             "snapshot_at": now,
             "surfaces": surfaces,
             "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
@@ -33614,6 +33702,17 @@ async def bff_management_nl_ask(
         trace_id=trace_id,
         provider_status=provider_status,
         ui_actions=actions,
+    )
+    _management_nl_publish_completed_events(
+        session_id=session_id,
+        message_id=message_id,
+        assistant_turn_id=assistant_turn_id,
+        trace_id=trace_id,
+        focus=focus,
+        provider_status=provider_status,
+        action_count=len(actions),
+        audit_log_href=audit_log_href,
+        conversation_href=conversation_href,
     )
     _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
@@ -39827,6 +39926,8 @@ SSE_ASK_EVENT_TYPES = {
     "ask.session.completed",
     "ask.session.failed",
     "consult_memo_published",
+    "management.nl.ask.accepted",
+    "management.nl.ask.completed",
 }
 
 _SSE_RESYNC_ROUTES: Dict[str, tuple[str, ...]] = {
