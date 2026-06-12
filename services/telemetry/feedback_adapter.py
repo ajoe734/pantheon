@@ -32,6 +32,7 @@ TELEMETRY_EVENT_TYPES = {
     "slippage_observation",
     "fill_observation",
     "paper_fill_simulated",
+    "bracket_order_logged",
     "fill_received",
     "order_submitted",
     "order_accepted",
