@@ -316,6 +316,37 @@ class TestSandboxCancelAndGetStatus(unittest.TestCase):
         fetched = adapter.get_status(order.order_id)
         self.assertEqual(fetched.order_id, order.order_id)
 
+    def test_get_status_projects_filled_trade_status(self):
+        mock_api = _make_mock_api()
+        adapter = ShioajiBrokerAdapter(
+            sandbox_enabled=True,
+            _api=mock_api,
+            submit_spacing_seconds=_TEST_SPACING_SECONDS,
+        )
+        order = adapter.submit(
+            **{
+                **_ORDER_KWARGS,
+                "order_type": "limit",
+                "limit_price": 580.0,
+                "qty": 3.0,
+            }
+        )
+        mock_api.place_order.return_value.status = SimpleNamespace(
+            id="mock-trade-001",
+            status="Filled",
+            status_code="0",
+            msg="filled by sandbox",
+        )
+
+        fetched = adapter.get_status(order.order_id)
+
+        self.assertEqual(fetched.status, "filled")
+        self.assertEqual(fetched.fill_qty, 3.0)
+        self.assertEqual(fetched.fill_price, 580.0)
+        self.assertIsNotNone(fetched.filled_at)
+        self.assertEqual(fetched.shioaji_order_status, "Filled")
+        self.assertEqual(fetched.shioaji_order_status_message, "filled by sandbox")
+
     def test_cancel_calls_api_cancel_order(self):
         mock_api = _make_mock_api()
         adapter = ShioajiBrokerAdapter(sandbox_enabled=True, _api=mock_api)
