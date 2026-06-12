@@ -17,6 +17,12 @@ from typing import Any, Mapping, Sequence
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
 from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
+from services.source_ingestion.negative_memory import (
+    NegativeMemoryError,
+    NegativeMemoryMatch,
+    match_negative_memory,
+    no_negative_memory_match,
+)
 
 
 class StrategySpecSeedError(ValueError):
@@ -51,6 +57,7 @@ class StrategySpecSeed:
     risk_notes: Sequence[str]
     confidence: float
     status: StrategySpecSeedStatus | str = StrategySpecSeedStatus.DRAFT
+    negative_memory_match: Mapping[str, Any] | NegativeMemoryMatch | None = None
     source_ids: Sequence[str] = field(default_factory=tuple)
     evidence_item_ids: Sequence[str] = field(default_factory=tuple)
     citation_refs: Sequence[str] = field(default_factory=tuple)
@@ -80,6 +87,7 @@ class StrategySpecSeed:
         object.__setattr__(self, "risk_notes", _strings(self.risk_notes))
         object.__setattr__(self, "confidence", _bounded_confidence(self.confidence))
         object.__setattr__(self, "status", status)
+        object.__setattr__(self, "negative_memory_match", _coerce_negative_memory_match(self.negative_memory_match))
         object.__setattr__(self, "source_ids", source_ids)
         object.__setattr__(self, "evidence_item_ids", _strings(self.evidence_item_ids))
         object.__setattr__(self, "citation_refs", _strings(self.citation_refs))
@@ -104,6 +112,7 @@ class StrategySpecSeed:
             "risk_notes": list(self.risk_notes),
             "confidence": self.confidence,
             "status": self.status.value,
+            "negative_memory_match": dict(self.negative_memory_match),
             "source_ids": list(self.source_ids),
             "evidence_item_ids": list(self.evidence_item_ids),
             "citation_refs": list(self.citation_refs),
@@ -131,6 +140,7 @@ class StrategySpecSeed:
             risk_notes=list(data.get("risk_notes") or ()),
             confidence=float(data.get("confidence", 0.0)),
             status=str(data.get("status", StrategySpecSeedStatus.DRAFT.value)),
+            negative_memory_match=data.get("negative_memory_match"),
             source_ids=list(data.get("source_ids") or ()),
             evidence_item_ids=list(data.get("evidence_item_ids") or ()),
             citation_refs=list(data.get("citation_refs") or ()),
@@ -155,6 +165,7 @@ class StrategySpecSeedBuilder:
         created_by: str = "Codex",
         created_at: datetime | str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        negative_memory_records: Sequence[Mapping[str, Any] | Any] = (),
     ) -> StrategySpecSeed:
         bundle = _coerce_bundle(evidence_bundle)
         if not bundle.evidence_bundle_id:
@@ -245,6 +256,42 @@ class StrategySpecSeedBuilder:
         }
         if records:
             lineage["source_record_refs"] = [record.content_ref for record in records]
+        seed_metadata = {
+            "builder": "StrategySpecSeedBuilder",
+            "builder_version": "1.0",
+            "source_license_scope": bundle.license_scope,
+            "access_scope": list(bundle.access_scope),
+            "entitlement_tags": list(bundle.entitlement_tags),
+            "research_only": True,
+            "registry_write_performed": False,
+            "execution_route": "none",
+            **dict(metadata or {}),
+        }
+        negative_memory_match = match_negative_memory(
+            {
+                "seed_id": effective_seed_id,
+                "source_id": source_id,
+                "evidence_bundle_id": bundle.evidence_bundle_id,
+                "hypothesis": hypothesis,
+                "asset_class": list(asset_class),
+                "market_scope": list(market_scope),
+                "holding_period": holding_period,
+                "required_data": list(required_data),
+                "backend_hint": backend_hint,
+                "feature_hints": list(feature_hints),
+                "label_hints": list(label_hints),
+                "risk_notes": list(risk_notes),
+                "confidence": confidence,
+                "status": StrategySpecSeedStatus.DRAFT.value,
+                "source_ids": list(source_ids),
+                "evidence_item_ids": list(evidence_item_ids),
+                "citation_refs": list(citation_refs),
+                "trace_refs": list(trace_refs),
+                "lineage": lineage,
+                "metadata": seed_metadata,
+            },
+            negative_memory_records,
+        ).to_dict()
 
         return StrategySpecSeed(
             seed_id=effective_seed_id,
@@ -261,6 +308,7 @@ class StrategySpecSeedBuilder:
             risk_notes=risk_notes,
             confidence=confidence,
             status=StrategySpecSeedStatus.DRAFT,
+            negative_memory_match=negative_memory_match,
             source_ids=source_ids,
             evidence_item_ids=evidence_item_ids,
             citation_refs=citation_refs,
@@ -268,17 +316,7 @@ class StrategySpecSeedBuilder:
             lineage=lineage,
             created_by=created_by,
             created_at=created_at or _utc_now(),
-            metadata={
-                "builder": "StrategySpecSeedBuilder",
-                "builder_version": "1.0",
-                "source_license_scope": bundle.license_scope,
-                "access_scope": list(bundle.access_scope),
-                "entitlement_tags": list(bundle.entitlement_tags),
-                "research_only": True,
-                "registry_write_performed": False,
-                "execution_route": "none",
-                **dict(metadata or {}),
-            },
+            metadata=seed_metadata,
         )
 
 
@@ -347,6 +385,16 @@ def _coerce_status(value: StrategySpecSeedStatus | str) -> StrategySpecSeedStatu
     except ValueError as exc:
         allowed = ", ".join(item.value for item in StrategySpecSeedStatus)
         raise StrategySpecSeedError(f"status must be one of: {allowed}") from exc
+
+
+def _coerce_negative_memory_match(value: Mapping[str, Any] | NegativeMemoryMatch | None) -> dict[str, Any]:
+    try:
+        match = value if isinstance(value, NegativeMemoryMatch) else NegativeMemoryMatch.from_dict(value)
+    except NegativeMemoryError as exc:
+        raise StrategySpecSeedError(str(exc)) from exc
+    if match is None:
+        match = no_negative_memory_match()
+    return match.to_dict()
 
 
 def _strings(values: Sequence[Any] | Any | None) -> tuple[str, ...]:

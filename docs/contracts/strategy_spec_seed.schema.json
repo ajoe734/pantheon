@@ -103,6 +103,48 @@
       "type": "string",
       "enum": ["draft", "promoted_to_strategy_spec", "rejected"]
     },
+    "negative_memory_match": {
+      "type": "object",
+      "required": ["warning_level", "similarity", "reason"],
+      "description": "Deterministic negative-memory safety match against retired/rejected/failed/postmortem records. A blocking match prevents seed acceptance.",
+      "properties": {
+        "warning_level": {
+          "type": "string",
+          "enum": ["info", "warning", "blocking"]
+        },
+        "similarity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "matched_memory_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "matched_memory_kind": {
+          "type": "string",
+          "enum": [
+            "retired_strategy",
+            "rejected_candidate",
+            "failed_experiment",
+            "postmortem",
+            "negative_memory"
+          ]
+        },
+        "matched_terms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "source_ids": {
       "type": "array",
       "minItems": 1,

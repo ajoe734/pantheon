@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from services.source_ingestion.registry.jsonl_store import JsonlRegistryStore
+from services.source_ingestion.negative_memory import (
+    is_blocking_negative_memory_match,
+    negative_memory_record_from_seed,
+)
 from services.source_ingestion.strategy_seed_builder import (
     StrategySpecSeed,
     StrategySpecSeedStatus,
@@ -55,6 +59,15 @@ def _assert_no_direct_execution_route(seed: StrategySpecSeed) -> None:
             )
 
 
+def _assert_no_blocking_negative_memory(seed: StrategySpecSeed) -> None:
+    if is_blocking_negative_memory_match(seed.negative_memory_match):
+        match = dict(seed.negative_memory_match)
+        memory_id = str(match.get("matched_memory_id") or "negative-memory-record")
+        raise StrategySpecSeedStoreError(
+            f"Seed has blocking negative_memory_match against {memory_id}: {match.get('reason')}"
+        )
+
+
 class StrategySpecSeedStoreError(ValueError):
     """Raised when a store invariant is violated."""
 
@@ -88,6 +101,7 @@ class StrategySpecSeedStore:
     def save(self, seed: StrategySpecSeed) -> None:
         """Persist seed (upsert).  Validates governance invariants before writing."""
         _assert_no_direct_execution_route(seed)
+        _assert_no_blocking_negative_memory(seed)
         record = seed.to_dict()
         # Promote license_scope and allowed_use to top-level queryable fields.
         record.setdefault("license_scope", seed.metadata.get("source_license_scope", ""))
@@ -117,6 +131,15 @@ class StrategySpecSeedStore:
             for r in self._store.read_all()
             if r.get("evidence_bundle_id") == evidence_bundle_id
         ]
+
+    def list_negative_memory_records(self) -> list[dict[str, Any]]:
+        """Return rejected/retired/failed seed records as matcher inputs."""
+        records: list[dict[str, Any]] = []
+        for raw in self._store.read_all():
+            record = negative_memory_record_from_seed(raw)
+            if record is not None:
+                records.append(record)
+        return records
 
     def record_replication_submission(
         self,
