@@ -56,11 +56,12 @@ Verified on 2026-06-11:
 - Backend/BFF repo: `ajoe734/pantheon`
 - Backend/BFF branch: `dev`
 - Backend/BFF merge commit:
-  `2a9bf5891d6c29b26a533fca3b9dd295feeca386`
+  `0d9fe5864a9b39b1775dcc94da91a54357cdeb9d`
 - Backend/BFF deploy evidence:
-  GitHub Actions run `27352642439`, `Pantheon Nonprod Deploy`,
-  completed `dev/root 2a9bf5891d6c29b26a533fca3b9dd295feeca386` and passed
-  public BFF health/CORS smoke.
+  GitHub Actions run `27357842338`, `Pantheon Nonprod Deploy`, deployed
+  `0d9fe5864a9b39b1775dcc94da91a54357cdeb9d`; the `Nonprod deploy` job
+  completed in `10m17s` with `Deploy requested VM stack` and `Public BFF
+  smoke` successful.
 - Frontend repo: `ajoe734/execute-plans`
 - Frontend branch: `dev`
 - Frontend merge commit:

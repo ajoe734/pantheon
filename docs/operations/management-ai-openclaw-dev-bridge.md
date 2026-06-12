@@ -23,11 +23,11 @@ working on Management AI dev capability. The active frontend is
 
 Current verified dev deployment, 2026-06-11:
 
-- `pantheon@2a9bf5891d6c29b26a533fca3b9dd295feeca386` on `dev` for BFF,
+- `pantheon@0d9fe5864a9b39b1775dcc94da91a54357cdeb9d` on `dev` for BFF,
   OpenClaw adapter repair-worktree preparation, assistant dev bridge readback,
-  and the self-hosted dev FE CORS allowlist. GitHub Actions run `27352642439`
-  completed `dev/root 2a9bf5891d6c29b26a533fca3b9dd295feeca386` and passed
-  public BFF health/CORS smoke.
+  and the self-hosted dev FE CORS allowlist. GitHub Actions run `27357842338`
+  completed the `Nonprod deploy` job in `10m17s` with `Deploy requested VM
+  stack` and `Public BFF smoke` successful.
 - `execute-plans@721bc3c4fe22648c242c6e39c353939575a33637` on `dev` for the
   Management AI frontend control dialog, SA/SD skill-gated action, and
   `openclaw.repair` forwarding. The dev FE deployment manifest reports this
@@ -38,7 +38,16 @@ Current verified dev deployment, 2026-06-11:
   `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io` returned
   `providerStatus.used=true`, `providerStatus.status=completed`,
   `runtime=openclaw_gateway_cli_mount`, and `sandbox=read-only` for a
-  read-only Management AI ask (`traceId=mnl-trace-4a11ef3297c2`).
+  read-only Management AI ask (`traceId=mnl-trace-e8f380a488e4`).
+- Authenticated live probe
+  `/tmp/BFF-LUV-AUTHED-LIVE-001-live-smoke-20260611T1536Z.json` passed `35/35`
+  read/provider checks with no write probes enabled.
+- While control mode was inactive, `POST /bff/assistant/repair-worktrees/prepare`
+  and `POST /bff/assistant/dev-docs/generate` returned HTTP `409`
+  `PRECONDITION_FAILED` with `details.field=control_mode` and
+  `details.reason=not_active`. A wrong-passphrase activation probe returned
+  HTTP `403` with `details.reason=invalid_passphrase`, confirming the passphrase
+  gate is configured and enforced.
 
 Current known gate: provider readiness and route availability can be healthy
 while control mode is configured but inactive. A positive VM-write claim still
