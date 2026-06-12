@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-GOV-001",
+  "archived_at": "2026-06-09T15:48:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-GOV-001",
+    "title": "Consolidate canonical promotion pipeline for paper canary live frozen",
+    "summary_zh": "收斂 registry split API、promotion gate、readiness validators、DeploymentPlan planner 的升版語義，形成單一 canonical promotion path。",
+    "phase": "EPIC MPOS / P1 governance risk and artifact integration",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P1-ART-001"
+    ],
+    "artifacts": [
+      "services/registry/split_api.py",
+      "services/registry/promotion/gate.py",
+      "services/control-plane/governance/deployment_plan.py",
+      "services/deployment/service.py",
+      "PAPER_CANARY_LIVE_POLICY.md"
+    ],
+    "acceptance": [
+      "One canonical promotion function or contract defines required evidence for candidate paper canary live and frozen",
+      "Registry approval cannot bypass governance evidence required by deployment planner",
+      "Rollback target requirement is consistent across paper canary live and freeze paths",
+      "Tests cover draft to candidate to approved and paper to canary to live and live to frozen rollback"
+    ],
+    "next": "Closeout complete. Canary stage added to promotion gate enforcing paper→canary→live canonical path per PAPER_CANARY_LIVE_POLICY. All 269 tests pass. PR #1244 merged into dev (task-scoped commit 25b23461 carries required trailers).",
+    "last_update": "2026-06-09T15:48:49Z",
+    "auto_created_by": "codex_mpos_gap_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過",
+      "canary gate 實作符合 PAPER_CANARY_LIVE_POLICY canonical path；paper->live skip 已封鎖；retired->none 修正正確；121 tests pass"
+    ],
+    "review_file": ".orchestrator/reviews/mpos_p1_gov_001_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T15:48:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-gov-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-GOV-001",
+      "git_clean_required": false,
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-GOV-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "19c9504cd1c15682d195044002ef2a601611bbc1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-GOV-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned MPOS-P1-GOV-001 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:49Z",
+      "resolved_at": "2026-06-09T14:40:34Z"
+    },
+    {
+      "task_id": "MPOS-P1-GOV-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Auto-reassigned MPOS-P1-GOV-001 away from unavailable lane Codex (disabled, sidecar-only, or auth-down); owner Codex -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-09T14:40:34Z",
+      "resolved_at": "2026-06-09T15:27:18Z"
+    },
+    {
+      "task_id": "MPOS-P1-GOV-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Canonical promotion pipeline consolidation complete. Changes are in commit ef00ec7a on task/MPOS-P1-GOV-001. Summary of changes: (1) Added CANARY to PromotionState enum in gate.py. (2) validate_transition now enforces paper->canary->live; paper->live skip is forbidden, aligning with deployment_plan.py StagePlanner which already forbids that skip. (3) _LIFECYCLE_TO_DEPLOYMENT_STAGE: added canary->canary, fixed retired->none (was incorrectly mapping artifact lifecycle state 'retired' to deployment stage 'frozen'). (4) _LIFECYCLE_TO_ARTIFACT_STATE: added canary->approved. (5) check_requirements: added canary block requiring eval_summary, sharpe_ratio, approver, lineage, and rollback. (6) build_execution_projection: canary and live both require explicit rollback metadata. (7) Tests updated: paper->live skip test added, canary path through paper->canary->live tested. All 121 tests pass. deployment_plan.py _legacy_promotion_state intentionally NOT changed for canary per existing test_canary_projection_keeps_deployment_stage_without_legacy_alias.",
+      "status": "done",
+      "created_at": "2026-06-09T15:33:01Z",
+      "resolved_at": "2026-06-09T15:36:38Z"
+    },
+    {
+      "task_id": "MPOS-P1-GOV-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved. Gate correctly enforces paper->canary->live canonical path per PAPER_CANARY_LIVE_POLICY. All 121 tests pass. Owner (Claude) may proceed to closeout.",
+      "status": "done",
+      "created_at": "2026-06-09T15:36:38Z",
+      "resolved_at": "2026-06-09T15:48:49Z"
+    }
+  ],
+  "blockers": []
+}

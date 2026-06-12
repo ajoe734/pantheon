@@ -1,6 +1,6 @@
 # Management AI OpenClaw Dev Bridge Runbook
 
-Date: 2026-06-10
+Date: 2026-06-11
 
 This is the canonical runbook for Management AI development that needs
 OpenClaw-backed VM file access, SA/SD generation, and downstream supervisor or
@@ -21,20 +21,33 @@ Do not ask the operator to press Lovable publish or reconnect Lovable before
 working on Management AI dev capability. The active frontend is
 `execute-plans`, and the active host is Pantheon-owned.
 
-Current verified dev deployment, 2026-06-10:
+Current verified dev deployment, 2026-06-11:
 
-- `pantheon@58f70ac83be12a2dcfca9004fc6a30aa00d9cd0f` on `dev` for BFF,
-  OpenClaw adapter repair-worktree preparation, and the self-hosted dev FE CORS
-  allowlist. GitHub Actions run `27280903762` completed the dev nonprod deploy
-  and public BFF smoke.
+- `pantheon@0d9fe5864a9b39b1775dcc94da91a54357cdeb9d` on `dev` for BFF,
+  OpenClaw adapter repair-worktree preparation, assistant dev bridge readback,
+  and the self-hosted dev FE CORS allowlist. GitHub Actions run `27357842338`
+  completed the `Nonprod deploy` job in `10m17s` with `Deploy requested VM
+  stack` and `Public BFF smoke` successful.
 - `execute-plans@721bc3c4fe22648c242c6e39c353939575a33637` on `dev` for the
   Management AI frontend control dialog, SA/SD skill-gated action, and
-  `openclaw.repair` forwarding.
+  `openclaw.repair` forwarding. The dev FE deployment manifest reports this
+  commit, `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, and
+  `VITE_BFF_REAL_WRITES=false`.
 - Dev FE document root: `/var/www/pantheon-dev-fe/`.
-- Browser probe against
-  `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io` passed with the current
-  dev BFF URL, no obsolete BFF URL hits, `/bff/management/fleet` `200`, and no
-  console errors.
+- Runtime smoke against
+  `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io` returned
+  `providerStatus.used=true`, `providerStatus.status=completed`,
+  `runtime=openclaw_gateway_cli_mount`, and `sandbox=read-only` for a
+  read-only Management AI ask (`traceId=mnl-trace-e8f380a488e4`).
+- Authenticated live probe
+  `/tmp/BFF-LUV-AUTHED-LIVE-001-live-smoke-20260611T1536Z.json` passed `35/35`
+  read/provider checks with no write probes enabled.
+- While control mode was inactive, `POST /bff/assistant/repair-worktrees/prepare`
+  and `POST /bff/assistant/dev-docs/generate` returned HTTP `409`
+  `PRECONDITION_FAILED` with `details.field=control_mode` and
+  `details.reason=not_active`. A wrong-passphrase activation probe returned
+  HTTP `403` with `details.reason=invalid_passphrase`, confirming the passphrase
+  gate is configured and enforced.
 
 Current known gate: provider readiness and route availability can be healthy
 while control mode is configured but inactive. A positive VM-write claim still
@@ -61,6 +74,12 @@ The frontend SA/SD action should call `/bff/assistant/dev-docs/generate` with
 archive enabled and task-packet emission enabled when the operator asks for a
 downstream implementation packet.
 
+All operator-command POST requests to these routes must include a stable
+`Idempotency-Key` header. The BFF rejects missing keys with
+`VALIDATION_FAILED` and `precondition_failed=idempotency_key`.
+`X-Idempotency-Key` remains a temporary compatibility alias; do not send
+idempotency keys in the JSON body.
+
 The `/bff/assistant/tools/*` route family is not the OpenClaw VM file-system
 tool surface. It is the governed Pantheon action surface for BFF-owned preview,
 validation, and execution contracts. Do not use it as proof that Management AI
@@ -71,6 +90,8 @@ can read, write, search, or debug VM files.
 Management AI reaches OpenClaw through Pantheon BFF conversation routes,
 primarily `POST /bff/management/nl/ask`. The BFF forwards the request to the
 OpenClaw gateway adapter/Codex provider when the assistant provider is healthy.
+This route is also an operator-command route for final-contract purposes and
+therefore requires `Idempotency-Key` on POST requests.
 
 The two control-mode behaviors are intentionally different:
 
@@ -135,6 +156,9 @@ ready. Check all of these before telling another agent or operator it is done:
   or inactive-control probes should fail closed with `401`, `403`, or `409`.
 - `POST /bff/assistant/dev-docs/generate` is not `404`; unauthenticated probes
   should fail closed with `401` or `403`.
+- Any Management AI or assistant POST smoke includes `Idempotency-Key`; a
+  missing-key `400` proves the final-route guardrail is active, not that
+  OpenClaw is unavailable.
 - For repair/write claims, the prepare route returns a clean task worktree
   under the configured repair root and Management AI sends that valid
   `openclaw.repair` metadata to `/bff/management/nl/ask`.

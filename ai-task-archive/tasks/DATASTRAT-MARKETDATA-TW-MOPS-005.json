@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-MARKETDATA-TW-MOPS-005",
+  "archived_at": "2026-06-11T03:47:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-MARKETDATA-TW-MOPS-005",
+    "title": "MOPS filings revenue material events connector",
+    "summary_zh": "接 MOPS 作為台股財報、月營收、重大訊息主來源，TEJ 作備援；補上事件型與每日更新策略。",
+    "phase": "Market data completion",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/task-briefs/datastrat_marketdata_tw_mops_005.md",
+      "services/source_ingestion",
+      "tests"
+    ],
+    "acceptance": [
+      "MOPS monthly revenue connector available; material events metadata connector available; financial statement fetch plan or connector available; normalized mops_events schema documented; event/daily cadence implemented; PR merged to dev when complete"
+    ],
+    "next": "Closeout complete: implementation PR #1296 merged at bc0f3d3bb4311949cbbbeac9659bf5e29aa3a713; closeout PR #1306 merged at edb4428c0ea489c4f218b1376c8bb639e0e4431a; focused pytest 14 passed, py_compile passed, and MOPS read-only live smoke passed with HTTP 200/read_ok.",
+    "last_update": "2026-06-11T03:47:33Z",
+    "task_class": "implementation",
+    "auto_created_by": "Codex-marketdata-dispatch-2026-06-11",
+    "review_notes_zh": [
+      "審查通過",
+      "MOPS 五個正規化目標齊備；事件輪詢與每日掃描策略正確；TEJ 僅作研究備援；更補正缺口報告正確表示"
+    ],
+    "review_file": ".orchestrator/task-briefs/datastrat_marketdata_tw_mops_005_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-11T03:47:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-marketdata-tw-mops-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-MARKETDATA-TW-MOPS-005",
+      "git_clean_required": false,
+      "commit": "56a7101129bbae349934f1712cd33ff5271039bd",
+      "commit_subject": "DATASTRAT-MARKETDATA-TW-MOPS-005: record closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@openai.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout evidence for the MOPS source-ingest connector.",
+        "Not changing": "connector code, TEJ entitlement policy, storage writers, scheduler runtime execution, or broader market-data ops acceptance.",
+        "Composes with": "DATASTRAT-MARKETDATA-TW-OFFICIAL-002, DATASTRAT-MARKETDATA-TW-FINMIND-004, DATASTRAT-MARKETDATA-TW-TEJ-006, and DATASTRAT-MARKETDATA-OPS-ACCEPT-010.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-MARKETDATA-TW-MOPS-005",
+        "Reviewer": "Claude2",
+        "Verified": "pytest services/source_ingestion/tests/test_taiwan_market_connectors.py services/source_ingestion/tests/test_active_universe.py services/source_ingestion/tests/test_financial_source_catalog.py; python3 -m py_compile services/source_ingestion/connectors/taiwan_market.py services/research/adapters/taiwan_market_client.py services/source_ingestion/active_universe.py services/source_ingestion/financial_source_catalog.py; python3 scripts/run_marketdata_credential_smoke.py --provider mops --allow-network --output-dir /tmp/DATASTRAT-MARKETDATA-TW-MOPS-005-smoke-closeout"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-MARKETDATA-TW-MOPS-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "edb4428c0ea489c4f218b1376c8bb639e0e4431a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-MOPS-005",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "PR #1296 merged into dev at bc0f3d3bb4311949cbbbeac9659bf5e29aa3a713; validation passed: targeted source-ingestion pytest, py_compile, MOPS live smoke read_ok HTTP 200.",
+      "status": "done",
+      "created_at": "2026-06-11T01:31:08Z",
+      "resolved_at": "2026-06-11T03:38:19Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-MOPS-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: all 14 tests pass, MOPS live smoke HTTP 200, five normalized targets correct, TEJ correctly bounded as backup only",
+      "status": "done",
+      "created_at": "2026-06-11T03:38:19Z",
+      "resolved_at": "2026-06-11T03:43:38Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-MOPS-005",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approval restored for owner finalization; PR #1296 is merged and closeout verification is being recorded in a task-scoped artifact commit.",
+      "status": "done",
+      "created_at": "2026-06-11T03:45:02Z",
+      "resolved_at": "2026-06-11T03:47:34Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-MOPS-005",
+      "owner": "Codex",
+      "waiting_for": "Human/Ops",
+      "message": "Closeout blocked: implementation PR #1296 is merged and verification passed, but DATASTRAT-MARKETDATA-TW-MOPS-005 is absent from ai-status.json so done cannot transition through the status tool.",
+      "status": "resolved",
+      "created_at": "2026-06-11T03:43:38Z",
+      "resolved_at": "2026-06-11T03:44:56Z"
+    }
+  ]
+}

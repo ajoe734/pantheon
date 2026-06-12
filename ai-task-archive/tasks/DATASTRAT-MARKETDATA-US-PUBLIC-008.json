@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-MARKETDATA-US-PUBLIC-008",
+  "archived_at": "2026-06-11T04:03:11Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-MARKETDATA-US-PUBLIC-008",
+    "title": "Implement US public data sources: SEC EDGAR, FRED, FINRA, and public daily OHLCV fallback",
+    "summary_zh": "接美股公開資料：SEC EDGAR、FINRA short interest/short volume、FRED、Stooq/公開日線 fallback，補上日線、財報/公告、放空、總經與 source health。",
+    "phase": "Market data completion",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/task-briefs/datastrat_marketdata_us_public_008.md",
+      "services/source_ingestion",
+      "tests"
+    ],
+    "acceptance": [
+      "SEC EDGAR company filings connector implemented; FINRA short data connector implemented; FRED macro connector implemented; Stooq or equivalent free daily OHLCV connector implemented; symbol mapping and cadence documented; PR merged to dev when complete"
+    ],
+    "next": "Owner finalized approved US public market-data sources after PR #1304 implementation and PR #1309 closeout merged to dev; verification rerun: source_ingestion tests 273 passed/1 skipped and data-plane schema tests 56 passed.",
+    "last_update": "2026-06-11T04:03:11Z",
+    "task_class": "implementation",
+    "auto_created_by": "Codex-marketdata-dispatch-2026-06-11",
+    "review_notes_zh": [
+      "所有 273 源攝取測試通過（1 略過）、56 資料平面 schema 測試通過。SEC EDGAR、FRED、FINRA 適配器正確實作，Stooq 待端點驗證前已正確停用。"
+    ],
+    "review_file": ".orchestrator/task-briefs/datastrat_marketdata_us_public_008_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-11T04:03:11Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-marketdata-us-public-008",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-MARKETDATA-US-PUBLIC-008",
+      "git_clean_required": false,
+      "commit": "14b1c56168444c8d891fcd7adc0dfab7529964b8",
+      "commit_subject": "DATASTRAT-MARKETDATA-US-PUBLIC-008: record owner closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@openai.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Task-scoped review approval and owner closeout evidence for US public market-data source delivery.",
+        "Not changing": "SEC/FRED/FINRA/Stooq adapter implementation, data-plane schemas, status files, or global collaboration state.",
+        "Composes with": "PR #1304 implementation merge and downstream DATASTRAT-MARKETDATA-US-PAID-BROKER-009 paid fallback lane.",
+        "Verified": "python3 -m pytest services/source_ingestion/tests -q (273 passed, 1 skipped); python3 -m pytest services/data-plane/tests/test_data_plane_schemas.py -q (56 passed)",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-MARKETDATA-US-PUBLIC-008",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-MARKETDATA-US-PUBLIC-008",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2ae578c4b1fbb5b89c58905fc71c23ed24c2d893",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-US-PUBLIC-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned DATASTRAT-MARKETDATA-US-PUBLIC-008 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-11T01:22:42Z",
+      "resolved_at": "2026-06-11T03:16:36Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-US-PUBLIC-008",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #1304 (merge bf860bcb977a8caf98f2b1d7dac760631206b085; task commit f019a754f433be2c9a01e43f3130c141207a728c; updated branch head f8a2904a57c63ac777ae281caa4796e954b998fd). Validation: python3 -m pytest services/source_ingestion/tests -q => 273 passed 1 skipped; python3 -m pytest services/data-plane/tests/test_data_plane_schemas.py -q => 56 passed. Requesting review_approved so owner can run formal done closeout.",
+      "status": "done",
+      "created_at": "2026-06-11T03:35:09Z",
+      "resolved_at": "2026-06-11T03:56:38Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-US-PUBLIC-008",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: SEC EDGAR, FRED, FINRA adapters correctly implemented with proper rate-limits, schema validation, and license scopes. All 273+56 tests pass. Stooq correctly disabled pending endpoint verification. Returning to Codex for done closeout.",
+      "status": "done",
+      "created_at": "2026-06-11T03:56:38Z",
+      "resolved_at": "2026-06-11T04:03:12Z"
+    }
+  ],
+  "blockers": []
+}

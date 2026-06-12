@@ -2161,6 +2161,25 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id
         ]
         if queue_event_is_orphaned(config, event, existing_record, related_workers):
+            orphan_record = queue_status(state, event_id)
+            if not orphan_record.get("orphan_logged"):
+                orphan_record["orphan_logged"] = True
+                write_activity_log(
+                    config,
+                    {
+                        "type": "wake_orphaned",
+                        "task_id": event.get("task_id"),
+                        "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                        "message": (
+                            f"Dropped orphaned wake event for {event.get('task_id') or 'unknown task'} "
+                            f"(reason {event.get('reason')}): no worker started within "
+                            f"{orphaned_queue_event_grace_seconds(config)}s grace. "
+                            "Task stays eligible for re-dispatch."
+                        ),
+                        "queue_event_id": event_id,
+                    },
+                )
+                changed = True
             continue
         record = queue_status(state, event_id)
         if record.get("status") in {"started", "manual_pending", "completed", "failed"}:

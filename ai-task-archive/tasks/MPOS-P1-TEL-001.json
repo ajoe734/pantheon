@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-TEL-001",
+  "archived_at": "2026-06-09T17:13:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-TEL-001",
+    "title": "Extend telemetry runtime summary and reconciliation to canary and live",
+    "summary_zh": "把 telemetry projection 與 reconciliation 從 paper 偏向補到 canary/live，讓 live 後回饋閉環能比較 stage drift 並觸發 incident/evolution。",
+    "phase": "EPIC MPOS / P1 execution telemetry and canary",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P1-CAN-001"
+    ],
+    "artifacts": [
+      "services/telemetry/runtime_summary.py",
+      "services/telemetry/ingest_svc.py",
+      "services/reconciliation-drift",
+      "services/incident",
+      "services/evolution"
+    ],
+    "acceptance": [
+      "Runtime summary projects paper canary live and frozen without losing binding identity",
+      "Reconciliation can compare baseline paper canary and live metrics for pnl drawdown slippage fills and runtime health",
+      "Stage drift or missing telemetry can route to incident or evolution proposal with proposed only semantics",
+      "Tests cover canary projection live projection drift alert and incident evolution handoff"
+    ],
+    "next": "Closeout finalized: 23 tests pass (11 projection + 6 stage reconciliation + 6 paper regression), stage-aware health keys, canary/live reconcile endpoints, and proposed-only evolution handoff all comply with acceptance criteria. Task brief updated and merged via PR #1249.",
+    "last_update": "2026-06-09T17:13:59Z",
+    "auto_created_by": "codex_mpos_gap_dispatch_2026-06-09",
+    "review_notes_zh": [
+      "審查通過",
+      "23 tests pass（11 projection + 6 stage reconciliation + 6 paper regression）。stage-aware health key、canary/live reconcile endpoints、proposed-only evolution handoff 均符合驗收標準。"
+    ],
+    "review_file": ".orchestrator/reviews/mpos_p1_tel_001_review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-09T17:13:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-tel-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-TEL-001",
+      "git_clean_required": false,
+      "commit": "ffe6bb3f07b0bf6b725bb1de635f6544d32338e0",
+      "commit_subject": "MPOS-P1-TEL-001: update task brief for finalize dispatch",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Verification": "python3 -m pytest services/telemetry/test_runtime_summary_projection.py services/reconciliation-drift/tests/ -v",
+        "LLM-Agent": "Claude",
+        "Task-ID": "MPOS-P1-TEL-001",
+        "Reviewer": "Claude2",
+        "Verified": "23 passed in 4.41s"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-TEL-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "173f7132e40f043c514806298bec6677b71b056f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-TEL-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned MPOS-P1-TEL-001 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-09T10:42:49Z",
+      "resolved_at": "2026-06-09T12:03:56Z"
+    },
+    {
+      "task_id": "MPOS-P1-TEL-001",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned MPOS-P1-TEL-001 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-09T12:03:56Z",
+      "resolved_at": "2026-06-09T14:40:38Z"
+    },
+    {
+      "task_id": "MPOS-P1-TEL-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned MPOS-P1-TEL-001 away from unavailable lane Codex (disabled, sidecar-only, or auth-down); reviewer Codex -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-09T14:40:38Z",
+      "resolved_at": "2026-06-09T16:40:10Z"
+    },
+    {
+      "task_id": "MPOS-P1-TEL-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Implementation complete. Commit 242d4bd6. Extended runtime_summary.py to project canary/live/frozen events (stage-aware health keys). Added canary-runs/reconcile and live-runs/reconcile endpoints in reconciliation-drift with proposed-only incident/evolution handoff semantics. 23 tests pass: 11 projection tests, 6 stage reconciliation tests, plus 6 pre-existing paper reconciliation tests with no regressions. Please review for acceptance criteria compliance.",
+      "status": "done",
+      "created_at": "2026-06-09T16:49:06Z",
+      "resolved_at": "2026-06-09T16:57:05Z"
+    },
+    {
+      "task_id": "MPOS-P1-TEL-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: 23 tests pass, stage-aware health keys, canary/live reconcile endpoints, and proposed-only evolution handoff all comply with acceptance criteria. Returning to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-06-09T16:57:05Z",
+      "resolved_at": "2026-06-09T17:14:00Z"
+    }
+  ],
+  "blockers": []
+}
