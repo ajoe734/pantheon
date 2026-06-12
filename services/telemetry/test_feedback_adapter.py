@@ -1185,6 +1185,72 @@ class TestLineageReadModel(unittest.TestCase):
         self.assertEqual(order_context["validation_status"], "accepted")
         self.assertFalse(order_context["submitted_to_broker"])
 
+    def test_ibkr_validate_order_lineage_preserves_contract_fields(self):
+        """IBKR validate-only orders must keep contract and routing fields."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-ibkr-validate-only",
+            "event_type": "order_accepted",
+            "created_at": "2026-06-12T16:15:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-ibkr-001",
+            "runtime_id": "runtime-ibkr",
+            "capital_pool_id": "pool-ibkr",
+            "artifact_id": "artifact-ibkr",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-ibkr",
+            "persona_capital_binding_id": "pcb-ibkr",
+            "trace_id": "trace-ibkr",
+            "target": {
+                "strategy_id": "strat-ibkr",
+                "registry_id": "reg-ibkr",
+                "promotion_state": "paper",
+            },
+            "metrics": {"requested_quantity": 5.0, "fill_rate": 0.0, "total_trades": 0},
+            "metadata": {
+                "adapter": "ibkr_execution_boundary",
+                "broker": "ibkr",
+                "provider": "IBKR",
+                "client_order_id": "client-ibkr-001",
+                "contract_symbol": "AAPL",
+                "exchange": "SMART",
+                "primary_exchange": "NASDAQ",
+                "sec_type": "STK",
+                "currency": "USD",
+                "order_type": "LMT",
+                "side": "BUY",
+                "price": 212.4,
+                "tif": "DAY",
+                "outside_rth": False,
+                "account": "DU1234567",
+                "readonly_market_data": True,
+                "market_data_type": 3,
+                "validate_only": True,
+                "validation_status": "accepted",
+                "order_status": "accepted",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "paper",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-ibkr", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-ibkr-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["contract_symbol"], "AAPL")
+        self.assertEqual(order_context["exchange"], "SMART")
+        self.assertEqual(order_context["primary_exchange"], "NASDAQ")
+        self.assertEqual(order_context["sec_type"], "STK")
+        self.assertEqual(order_context["currency"], "USD")
+        self.assertEqual(order_context["account"], "DU1234567")
+        self.assertEqual(order_context["tif"], "DAY")
+        self.assertFalse(order_context["outside_rth"])
+        self.assertTrue(order_context["readonly_market_data"])
+
     def test_query_lineage_records_normalizes_semantic_refs(self):
         """Telemetry raw fields must normalize to semantic read-model fields."""
         adapter = FeedbackStoreAdapter()
