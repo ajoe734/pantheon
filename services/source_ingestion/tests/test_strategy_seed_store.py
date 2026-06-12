@@ -242,6 +242,65 @@ def test_review_accept_then_convert_writes_audit_and_promotes(tmp_path: Path) ->
     assert convert_decision.to_status == "promoted_to_strategy_spec"
 
 
+def test_review_decision_replays_from_durable_idempotency_key(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    service = SeedMaterializationService(store=store)
+    seed = service.materialize(_bundle(), source_records=[_source()], evidence_items=[_item()]).seed
+
+    accepted, first_decision = store.record_review_decision(
+        seed.seed_id,
+        decision="accept",
+        reviewer_id="op-seed-review",
+        reason="Evidence is sufficient.",
+        created_at="2026-06-12T01:00:00Z",
+        idempotency_key="seed-review-durable-accept",
+        request_hash="hash-accept-v1",
+    )
+    replayed, replay_decision = store.record_review_decision(
+        seed.seed_id,
+        decision="accept",
+        reviewer_id="op-seed-review",
+        reason="Evidence is sufficient.",
+        created_at="2026-06-12T01:10:00Z",
+        idempotency_key="seed-review-durable-accept",
+        request_hash="hash-accept-v1",
+    )
+
+    assert accepted.status == StrategySpecSeedStatus.ACCEPTED
+    assert replayed.status == StrategySpecSeedStatus.ACCEPTED
+    assert replay_decision.idempotent_replay is True
+    assert replay_decision.decision_id == first_decision.decision_id
+    stored = store.get(seed.seed_id)
+    assert stored is not None
+    assert [item["decision"] for item in stored.lineage["review_decisions"]] == ["accept"]
+
+
+def test_review_decision_refuses_idempotency_key_payload_conflict(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    service = SeedMaterializationService(store=store)
+    seed = service.materialize(_bundle(), source_records=[_source()], evidence_items=[_item()]).seed
+
+    store.record_review_decision(
+        seed.seed_id,
+        decision="accept",
+        reviewer_id="op-seed-review",
+        reason="Evidence is sufficient.",
+        idempotency_key="seed-review-conflict",
+        request_hash="hash-accept-v1",
+    )
+
+    with pytest.raises(StrategySpecSeedReviewError) as exc_info:
+        store.record_review_decision(
+            seed.seed_id,
+            decision="accept",
+            reviewer_id="op-seed-review",
+            reason="Different payload.",
+            idempotency_key="seed-review-conflict",
+            request_hash="hash-accept-v2",
+        )
+    assert exc_info.value.code == "idempotency_conflict"
+
+
 def test_request_evidence_and_reject_terminal_refuses_further_transition(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     service = SeedMaterializationService(store=store)
@@ -301,6 +360,39 @@ def test_merge_seed_records_target_ref_and_terminal_status(tmp_path: Path) -> No
             reviewer_id="op-seed-review",
         )
     assert exc_info.value.code == "terminal_seed_status"
+
+
+def test_merge_seed_replays_from_durable_idempotency_key(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    source = _memory_seed(seed_id="seed-merge-replay-source", status=StrategySpecSeedStatus.DRAFT)
+    target = _memory_seed(seed_id="seed-merge-replay-target", status=StrategySpecSeedStatus.DRAFT)
+    store.save(source)
+    store.save(target)
+
+    merged, first_decision = store.merge_seed(
+        "seed-merge-replay-source",
+        target_seed_id="seed-merge-replay-target",
+        reviewer_id="op-seed-review",
+        reason="Duplicate hypothesis.",
+        idempotency_key="seed-merge-replay",
+        request_hash="hash-merge-v1",
+    )
+    replayed, replay_decision = store.merge_seed(
+        "seed-merge-replay-source",
+        target_seed_id="seed-merge-replay-target",
+        reviewer_id="op-seed-review",
+        reason="Duplicate hypothesis.",
+        idempotency_key="seed-merge-replay",
+        request_hash="hash-merge-v1",
+    )
+
+    assert merged.status == StrategySpecSeedStatus.MERGED
+    assert replayed.status == StrategySpecSeedStatus.MERGED
+    assert replay_decision.idempotent_replay is True
+    assert replay_decision.decision_id == first_decision.decision_id
+    stored = store.get("seed-merge-replay-source")
+    assert stored is not None
+    assert [item["decision"] for item in stored.lineage["review_decisions"]] == ["merge"]
 
 
 # ---------------------------------------------------------------------------
