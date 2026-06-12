@@ -322,6 +322,55 @@ def test_dev_docs_generate_archives_architecture_ui_and_queues_task_packet(tmp_p
     packet = body["data"]
     locations = packet["archiveLocations"]
     meta = body["meta"]
+    capture = packet["requirementCapture"]
+    system_analysis = packet["systemAnalysis"]
+    system_design = packet["systemDesign"]
+    implementation_task = packet["executionTasks"][0]
+    validation_task = packet["executionTasks"][1]
+
+    assert packet["conversationId"] == conversation_id
+    assert capture["conversationId"] == conversation_id
+    assert capture["problem"]
+    assert capture["actors"]
+    assert capture["userIntent"]
+    assert capture["affectedModules"]
+    assert capture["constraints"]
+    assert capture["sourceTurnRefs"]
+    assert all(ref["conversationId"] == conversation_id for ref in capture["sourceTurnRefs"])
+
+    expected_source_ids = {"management_nl", "orchestrator_status", "repo_status"}
+    for section in (capture, system_analysis, system_design, packet):
+        source_ids = {ref["sourceId"] for ref in section["sourceRefs"]}
+        assert expected_source_ids.issubset(source_ids)
+        assert any(
+            ref["sourceId"] == "management_nl" and ref["href"].endswith(conversation_id)
+            for ref in section["sourceRefs"]
+        )
+
+    assert system_analysis["currentState"]
+    assert system_analysis["roles"]
+    assert system_analysis["flows"]
+    assert system_analysis["data"]
+    assert system_analysis["risk"]
+    assert system_analysis["acceptanceScenarios"]
+
+    assert system_design["architecture"]
+    assert system_design["apiContract"]
+    assert system_design["dbMigration"]
+    assert system_design["uiRoutes"]
+    assert system_design["tests"]
+    assert system_design["rollout"]
+    assert system_design["rollback"]
+
+    assert implementation_task["owner"] == "Codex"
+    assert implementation_task["reviewer"] == "Claude"
+    assert implementation_task["artifacts"]
+    assert implementation_task["acceptance"]
+    assert validation_task["owner"] == "Claude"
+    assert validation_task["reviewer"] == "Codex"
+    assert validation_task["dependsOn"] == [implementation_task["taskId"]]
+    assert validation_task["artifacts"]
+    assert validation_task["acceptance"] == system_design["tests"]
 
     assert locations["requirementCapture"].startswith("docs/04/")
     assert locations["systemAnalysis"].startswith("docs/04/")
@@ -330,23 +379,30 @@ def test_dev_docs_generate_archives_architecture_ui_and_queues_task_packet(tmp_p
     assert locations["uiDocs"][0].startswith("docs/05-ui/")
     assert locations["taskBriefs"][0].startswith(".orchestrator/task-briefs/")
 
-    for relative_path in (
+    archived_paths = (
         locations["requirementCapture"],
         locations["systemAnalysis"],
         locations["systemDesign"],
         locations["architectureDocs"][0],
         locations["uiDocs"][0],
-        locations["taskBriefs"][0],
-    ):
+        *locations["taskBriefs"],
+    )
+    for relative_path in archived_paths:
         text = (tmp_path / relative_path).read_text(encoding="utf-8")
         assert "Source Citations" in text
+        assert conversation_id in text
+        assert "management_nl" in text
 
-    artifacts = set(packet["executionTasks"][0]["artifacts"])
+    for relative_path in archived_paths[:5]:
+        text = (tmp_path / relative_path).read_text(encoding="utf-8")
+        assert "orchestrator_status" in text
+        assert "repo_status" in text
+
+    artifacts = set(implementation_task["artifacts"])
     assert any(path.startswith("docs/04/") for path in artifacts)
     assert any(path.startswith("docs/02-architecture/") for path in artifacts)
     assert any(path.startswith("docs/05-ui/") for path in artifacts)
-    assert "Codex" == packet["executionTasks"][0]["owner"]
-    assert "Claude" == packet["executionTasks"][0]["reviewer"]
+    assert any(path.startswith("services/control-plane/bff/tests/test_req_") for path in artifacts)
 
     assert meta["taskPacketQueued"] is True
     task_packet = meta["taskPacket"]
