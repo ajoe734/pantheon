@@ -1218,6 +1218,58 @@ class TestLineageReadModel(unittest.TestCase):
         self.assertEqual(order_context["submitted_legs"][0]["leg_id"], "bracket-msft-040-1")
         self.assertEqual(order_context["submitted_legs"][1]["limit_price"], 318.0)
 
+    def test_bracket_logged_only_lineage_preserves_non_entry_reason(self):
+        """Logged-only bracket feedback must keep the exact non-entry reason."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-bracket-close-logged-only",
+            "event_type": "bracket_order_logged",
+            "created_at": "2026-06-12T15:43:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-bracket-close-001",
+            "runtime_id": "runtime-bracket-close",
+            "capital_pool_id": "pool-bracket-close",
+            "artifact_id": "artifact-bracket-close",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-bracket-close",
+            "persona_capital_binding_id": "pcb-bracket-close",
+            "trace_id": "trace-bracket-close",
+            "target": {
+                "strategy_id": "strat-bracket-close",
+                "registry_id": "reg-bracket-close",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "action": "bracket_logged_only",
+                "submitted_to_broker": False,
+            },
+            "metadata": {
+                "signal_id": "quant-close-risk-043",
+                "alpha_source": "pure_quant_close_with_risk",
+                "stop_loss_pct": 0.02,
+                "take_profit_pct": 0.05,
+                "guard_stage": "paper",
+                "guard_reason": "paper/sim bracket execution guard passed",
+                "reason": "not_entry_signal",
+                "broker_submission_status": "logged_only",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-bracket-close", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-bracket-close-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["broker_submission_status"], "logged_only")
+        self.assertFalse(order_context["submitted_to_broker"])
+        self.assertEqual(order_context["guard_stage"], "paper")
+        self.assertEqual(order_context["guard_reason"], "paper/sim bracket execution guard passed")
+        self.assertEqual(order_context["reason"], "not_entry_signal")
+
     def test_order_cancel_lineage_preserves_cancel_ack(self):
         """Cancel acknowledgements must keep reason, actor, and unfilled quantity."""
         adapter = FeedbackStoreAdapter()
