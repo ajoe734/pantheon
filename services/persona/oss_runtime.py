@@ -279,6 +279,144 @@ def _fixture(path: str) -> dict[str, Any]:
     return json.loads((REPO_ROOT / path).read_text(encoding="utf-8"))
 
 
+def _payload_str(request: PersonaOSSRequest, key: str, default: str) -> str:
+    value = request.payload.get(key, default)
+    if value is None:
+        return default
+    return str(value)
+
+
+def _payload_int(request: PersonaOSSRequest, key: str, default: int) -> int:
+    value = request.payload.get(key, default)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _payload_float(request: PersonaOSSRequest, key: str, default: float) -> float:
+    value = request.payload.get(key, default)
+    if value is None:
+        return default
+    return float(value)
+
+
+def _payload_mapping(request: PersonaOSSRequest, key: str) -> dict[str, Any]:
+    value = request.payload.get(key)
+    return copy.deepcopy(dict(value)) if isinstance(value, Mapping) else {}
+
+
+def _payload_refs(request: PersonaOSSRequest, default: list[str]) -> list[str]:
+    value = request.payload.get("source_dataset_refs")
+    if isinstance(value, list) and value:
+        return [str(ref) for ref in value]
+    if isinstance(value, tuple) and value:
+        return [str(ref) for ref in value]
+    single = request.payload.get("source_dataset_ref")
+    if single:
+        return [str(single)]
+    return list(default)
+
+
+def _version_for(request: PersonaOSSRequest) -> str:
+    return _payload_str(request, "version", PERSONA_OSS_VERSION)
+
+
+def _dataset_with_payload(raw: Mapping[str, Any], request: PersonaOSSRequest) -> dict[str, Any]:
+    dataset = copy.deepcopy(dict(raw))
+    for key in (
+        "dataset_id",
+        "strategy_id",
+        "source_strategy_spec_id",
+        "data_frequency",
+        "decision_focus",
+    ):
+        if key in request.payload:
+            dataset[key] = str(request.payload[key])
+    if "source_dataset_refs" in request.payload or "source_dataset_ref" in request.payload:
+        dataset["source_dataset_refs"] = _payload_refs(
+            request,
+            [str(ref) for ref in dataset.get("source_dataset_refs", [])],
+        )
+    metadata = _payload_mapping(request, "metadata")
+    if metadata:
+        dataset.setdefault("metadata", {})
+        if isinstance(dataset["metadata"], Mapping):
+            dataset["metadata"] = {**dict(dataset["metadata"]), **metadata}
+    return dataset
+
+
+def _retarget_imitation_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
+    strategy_id = str(dataset["strategy_id"])
+    for index, session in enumerate(dataset.get("sessions", []), start=1):
+        if not isinstance(session, dict):
+            continue
+        target = session.setdefault("target", {})
+        if isinstance(target, dict):
+            target["strategy_id"] = strategy_id
+            target.setdefault("artifact_type", "strategy_spec")
+            target["registry_id"] = f"reg-{strategy_id}-{index}"
+    return dataset
+
+
+def _retarget_dspy_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
+    strategy_id = str(dataset["strategy_id"])
+    for split_name in ("training_examples", "evaluation_examples"):
+        for index, example in enumerate(dataset.get(split_name, []), start=1):
+            if not isinstance(example, dict):
+                continue
+            target = example.setdefault("target", {})
+            if isinstance(target, dict):
+                target["strategy_id"] = strategy_id
+                target.setdefault("artifact_type", "prompt_bundle")
+                target["registry_id"] = f"reg-{strategy_id}-prompt-source-{index}"
+    return dataset
+
+
+def _scale_named_series(raw_series: Mapping[str, Any], *, suffix: str, multiplier: float) -> dict[str, list[float]]:
+    scaled: dict[str, list[float]] = {}
+    for name, values in raw_series.items():
+        series_name = f"{name}{suffix}" if suffix else str(name)
+        scaled[series_name] = [round(float(value) * multiplier, 8) for value in values]
+    return scaled
+
+
+def _quantlib_raw_with_payload(raw: Mapping[str, Any], request: PersonaOSSRequest) -> dict[str, Any]:
+    snapshot = _dataset_with_payload(raw, request)
+    if "valuation_date" in request.payload:
+        snapshot["valuation_date"] = str(request.payload["valuation_date"])
+
+    instrument_suffix = _payload_str(request, "instrument_suffix", "")
+    spot_shift = _payload_float(request, "spot_shift", 0.0)
+    strike_shift = _payload_float(request, "strike_shift", 0.0)
+    volatility_shift = _payload_float(request, "volatility_shift", 0.0)
+    quantity_multiplier = _payload_int(request, "quantity_multiplier", 1)
+    market_rate_shift = _payload_float(request, "market_rate_shift", 0.0)
+    coupon_rate_shift = _payload_float(request, "coupon_rate_shift", 0.0)
+
+    options = []
+    for option in snapshot.get("option_specs", []):
+        item = dict(option)
+        if instrument_suffix:
+            item["option_id"] = f"{item['option_id']}{instrument_suffix}"
+        item["spot"] = round(float(item["spot"]) + spot_shift, 8)
+        item["strike"] = round(float(item["strike"]) + strike_shift, 8)
+        item["volatility"] = round(max(0.01, float(item["volatility"]) + volatility_shift), 8)
+        item["quantity"] = int(item.get("quantity", 1)) * quantity_multiplier
+        options.append(item)
+    snapshot["option_specs"] = options
+
+    bonds = []
+    for bond in snapshot.get("bond_specs", []):
+        item = dict(bond)
+        if instrument_suffix:
+            item["instrument_id"] = f"{item['instrument_id']}{instrument_suffix}"
+        item["market_rate"] = round(max(0.0001, float(item["market_rate"]) + market_rate_shift), 8)
+        item["coupon_rate"] = round(max(0.0, float(item["coupon_rate"]) + coupon_rate_shift), 8)
+        bonds.append(item)
+    snapshot["bond_specs"] = bonds
+    return snapshot
+
+
 def _run_openclaw(request: PersonaOSSRequest) -> PersonaOSSResult:
     module_path = REPO_ROOT / "services/openclaw-gateway-adapter/session_lifecycle.py"
     spec = importlib.util.spec_from_file_location("_persona_openclaw_session_lifecycle", module_path)
@@ -292,7 +430,7 @@ def _run_openclaw(request: PersonaOSSRequest) -> PersonaOSSResult:
         def create_session(self, req: Any) -> dict[str, Any]:
             return {
                 "session_id": f"upstream-{request.session_id}",
-                "state": "active",
+                "state": _payload_str(request, "upstream_state", "active"),
                 "request": getattr(req, "__dict__", {}),
             }
 
@@ -304,13 +442,14 @@ def _run_openclaw(request: PersonaOSSRequest) -> PersonaOSSResult:
     )
     record, replayed = store.create_session(
         agent_id=request.persona_id,
-        session_type="research_task",
-        operator_id=request.persona_id,
+        session_type=_payload_str(request, "session_type", "research_task"),
+        operator_id=_payload_str(request, "operator_id", request.persona_id),
         idempotency_key=request.request_id,
         context_bundle={
             "persona_id": request.persona_id,
             "intent": request.intent,
             "requested_component": "openclaw",
+            **_payload_mapping(request, "context_bundle"),
         },
     )
     return _completed(
@@ -322,16 +461,31 @@ def _run_openclaw(request: PersonaOSSRequest) -> PersonaOSSResult:
             "upstream_session_id": record.upstream_session_id,
             "replayed": replayed,
             "audit_events": len(record.audit_log),
+            "session_type": record.session_type,
+            "operator_id": record.operator_id,
+            "context_bundle": record.context_bundle,
         },
         refs={"store_path": str(store_path)},
     )
 
 
 def _run_dspy(request: PersonaOSSRequest) -> PersonaOSSResult:
-    dataset = _fixture("services/learning/dspy/examples/preference_dataset_sample.json")
+    dataset = _retarget_dspy_dataset(
+        _dataset_with_payload(
+            _fixture("services/learning/dspy/examples/preference_dataset_sample.json"),
+            request,
+        )
+    )
+    if "base_bundle_ref" in request.payload:
+        dataset["base_bundle_ref"] = str(request.payload["base_bundle_ref"])
     result = run_dspy_workflow(
         dataset,
-        config=DSPyTrainingConfig(version=PERSONA_OSS_VERSION, requested_by=request.persona_id),
+        config=DSPyTrainingConfig(
+            version=_version_for(request),
+            requested_by=request.persona_id,
+            lifecycle_state=_payload_str(request, "lifecycle_state", "draft"),
+            storage_backend=_payload_str(request, "storage_backend", "object_store"),
+        ),
     )
     return _completed(
         request,
@@ -345,10 +499,22 @@ def _run_dspy(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 
 def _run_imitation(request: PersonaOSSRequest) -> PersonaOSSResult:
-    dataset = _fixture("services/learning/imitation/examples/trajectory_dataset_sample.json")
+    dataset = _retarget_imitation_dataset(
+        _dataset_with_payload(
+            _fixture("services/learning/imitation/examples/trajectory_dataset_sample.json"),
+            request,
+        )
+    )
     result = run_imitation_workflow(
         dataset,
-        config=ImitationTrainingConfig(version=PERSONA_OSS_VERSION, requested_by=request.persona_id),
+        config=ImitationTrainingConfig(
+            version=_version_for(request),
+            requested_by=request.persona_id,
+            epochs=_payload_int(request, "epochs", 1),
+            seed=_payload_int(request, "seed", 7),
+            lifecycle_state=_payload_str(request, "lifecycle_state", "draft"),
+            storage_backend=_payload_str(request, "storage_backend", "object_store"),
+        ),
     )
     return _completed(
         request,
@@ -361,50 +527,63 @@ def _run_imitation(request: PersonaOSSRequest) -> PersonaOSSResult:
     )
 
 
-def _trl_events() -> list[dict[str, Any]]:
+def _trl_events(request: PersonaOSSRequest) -> list[dict[str, Any]]:
+    strategy_id = _payload_str(request, "strategy_id", "persona-preference-alpha")
+    strategy_family = _payload_str(request, "strategy_family", strategy_id)
+    event_prefix = _payload_str(request, "feedback_event_prefix", "fb-persona-trl")
     base = {
-        "strategy_family": "persona-preference-alpha",
-        "operator_id": "operator-persona-e2e",
+        "strategy_family": strategy_family,
+        "operator_id": _payload_str(request, "operator_id", "operator-persona-e2e"),
         "actor_role": "operator",
         "promotion_state": "candidate",
     }
     artifact = {
-        "artifact_id": "artifact-pref-alpha-v1",
-        "registry_id": "reg-pref-alpha-v1",
-        "artifact_version": "1.0.0",
+        "artifact_id": f"artifact-{strategy_id}-v1",
+        "registry_id": f"reg-{strategy_id}-v1",
+        "artifact_version": _version_for(request),
         "artifact_type": "strategy_spec",
-        "strategy_id": "persona-preference-alpha",
+        "strategy_id": strategy_id,
     }
     return [
         {
             **base,
-            "feedback_event_id": "fb-persona-trl-001",
+            "feedback_event_id": f"{event_prefix}-001",
             "action": "approve",
             "artifact": artifact,
         },
         {
             **base,
-            "feedback_event_id": "fb-persona-trl-002",
+            "feedback_event_id": f"{event_prefix}-002",
             "action": "reject",
-            "artifact": {**artifact, "artifact_id": "artifact-pref-alpha-risky"},
+            "artifact": {**artifact, "artifact_id": f"artifact-{strategy_id}-risky"},
         },
         {
             **base,
-            "feedback_event_id": "fb-persona-trl-003",
+            "feedback_event_id": f"{event_prefix}-003",
             "action": "edit",
             "artifact": artifact,
-            "artifact_edited": {**artifact, "artifact_id": "artifact-pref-alpha-v2"},
+            "artifact_edited": {**artifact, "artifact_id": f"artifact-{strategy_id}-v2"},
         },
     ]
 
 
 def _run_trl(request: PersonaOSSRequest) -> PersonaOSSResult:
     result = run_trl_dpo_workflow(
-        _trl_events(),
-        dataset_id="dataset:persona-trl-e2e",
-        strategy_id="persona-preference-alpha",
-        source_dataset_refs=["dataset://persona/feedback/e2e"],
-        config=TRLTrainingConfig(version=PERSONA_OSS_VERSION, requested_by=request.persona_id),
+        _trl_events(request),
+        dataset_id=_payload_str(request, "dataset_id", "dataset:persona-trl-e2e"),
+        strategy_id=_payload_str(request, "strategy_id", "persona-preference-alpha"),
+        source_dataset_refs=_payload_refs(request, ["dataset://persona/feedback/e2e"]),
+        config=TRLTrainingConfig(
+            version=_version_for(request),
+            requested_by=request.persona_id,
+            method=_payload_str(request, "method", "dpo"),
+            beta=_payload_float(request, "beta", 0.1),
+            learning_rate=_payload_float(request, "learning_rate", 5e-6),
+            batch_size=_payload_int(request, "batch_size", 16),
+            num_epochs=_payload_int(request, "num_epochs", 3),
+            seed=_payload_int(request, "seed", 42),
+            storage_backend=_payload_str(request, "storage_backend", "object_store"),
+        ),
     )
     return _completed(
         request,
@@ -422,10 +601,22 @@ def _run_trl(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 
 def _run_qlib(request: PersonaOSSRequest) -> PersonaOSSResult:
-    dataset = _fixture("services/research/qlib/examples/equity_dataset_sample.json")
+    dataset = _dataset_with_payload(
+        _fixture("services/research/qlib/examples/equity_dataset_sample.json"),
+        request,
+    )
     result = run_qlib_workflow(
         dataset,
-        config=QlibTrainingConfig(version=PERSONA_OSS_VERSION, requested_by=request.persona_id),
+        config=QlibTrainingConfig(
+            version=_version_for(request),
+            requested_by=request.persona_id,
+            seed=_payload_int(request, "seed", 42),
+            n_estimators=_payload_int(request, "n_estimators", 10),
+            num_leaves=_payload_int(request, "num_leaves", 7),
+            max_depth=_payload_int(request, "max_depth", 3),
+            learning_rate=_payload_float(request, "learning_rate", 0.05),
+            storage_backend=_payload_str(request, "storage_backend", "object_store"),
+        ),
     )
     return _completed(
         request,
@@ -447,13 +638,22 @@ def _run_qlib(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 
 def _run_vectorbt(request: PersonaOSSRequest) -> PersonaOSSResult:
-    dataset = _fixture("services/research/vectorbt/examples/strategy_dataset_sample.json")
+    dataset = _dataset_with_payload(
+        _fixture("services/research/vectorbt/examples/strategy_dataset_sample.json"),
+        request,
+    )
     result = run_vectorbt_workflow(
         dataset,
         config=BacktestConfig(
-            version=PERSONA_OSS_VERSION,
+            version=_version_for(request),
             requested_by=request.persona_id,
-            strategy_params={"short_window": 5, "long_window": 20},
+            strategy_params={
+                "short_window": _payload_int(request, "short_window", 5),
+                "long_window": _payload_int(request, "long_window", 20),
+            },
+            init_cash=_payload_float(request, "init_cash", 100_000.0),
+            fees=_payload_float(request, "fees", 0.001),
+            storage_backend=_payload_str(request, "storage_backend", "object_store"),
         ),
     )
     return _completed(
@@ -474,19 +674,38 @@ def _run_vectorbt(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 def _run_statsmodels(request: PersonaOSSRequest) -> PersonaOSSResult:
     raw = _fixture("services/research/statsmodels/examples/regime_dataset_sample.json")
+    metadata = {**dict(raw.get("metadata", {})), **_payload_mapping(request, "metadata")}
+    if "dataset_id" in request.payload:
+        metadata["dataset_id"] = str(request.payload["dataset_id"])
+    if "source_dataset_refs" in request.payload or "source_dataset_ref" in request.payload:
+        metadata["source_dataset_refs"] = _payload_refs(
+            request,
+            [str(ref) for ref in metadata.get("source_dataset_refs", [])],
+        )
+    if "data_frequency" in request.payload:
+        metadata["data_frequency"] = str(request.payload["data_frequency"])
+    series_suffix = _payload_str(request, "series_suffix", "")
+    price_multiplier = _payload_float(request, "price_multiplier", 1.0)
+    factor_multiplier = _payload_float(request, "factor_multiplier", 1.0)
     dataset = GovernedDataset(
-        price_series={k: [float(x) for x in v] for k, v in raw["price_series"].items()},
-        factor_series={k: [float(x) for x in v] for k, v in raw["factor_series"].items()},
-        metadata=raw.get("metadata", {}),
+        price_series=_scale_named_series(raw["price_series"], suffix=series_suffix, multiplier=price_multiplier),
+        factor_series=_scale_named_series(raw["factor_series"], suffix=series_suffix, multiplier=factor_multiplier),
+        metadata=metadata,
     )
     artifact = run_statsmodels_workflow(dataset)
+    primary_output = copy.deepcopy(artifact["results_summary"])
+    primary_output["dataset_metadata"] = copy.deepcopy(metadata)
+    primary_output["price_series_names"] = list(dataset.price_series)
+    primary_output["factor_series_names"] = list(dataset.factor_series)
     return _completed(
         request,
         artifact_family=artifact["artifact_family"],
-        primary_output=artifact["results_summary"],
+        primary_output=primary_output,
         metrics={
             "analysis_path": artifact["analysis_path"],
             "result_count": len(artifact["results_summary"]),
+            "price_series_count": len(dataset.price_series),
+            "factor_series_count": len(dataset.factor_series),
         },
         registry_entry=artifact["registry_entry"],
         artifact_bundle=artifact,
@@ -505,15 +724,28 @@ def _quantlib_snapshot(raw: Mapping[str, Any]) -> GovernedMarketSnapshot:
 
 
 def _run_quantlib(request: PersonaOSSRequest) -> PersonaOSSResult:
-    snapshot = _quantlib_snapshot(_fixture("services/research/quantlib/examples/pricing_dataset_sample.json"))
+    snapshot = _quantlib_snapshot(
+        _quantlib_raw_with_payload(
+            _fixture("services/research/quantlib/examples/pricing_dataset_sample.json"),
+            request,
+        )
+    )
     artifact = run_quantlib_workflow(snapshot)
+    primary_output = copy.deepcopy(artifact["results_summary"])
+    primary_output["dataset_id"] = snapshot.dataset_id
+    primary_output["valuation_date"] = snapshot.valuation_date
+    primary_output["option_ids"] = [option.option_id for option in snapshot.option_specs]
+    primary_output["bond_ids"] = [bond.instrument_id for bond in snapshot.bond_specs]
+    primary_output["metadata"] = copy.deepcopy(snapshot.metadata)
     return _completed(
         request,
         artifact_family=artifact["artifact_family"],
-        primary_output=artifact["results_summary"],
+        primary_output=primary_output,
         metrics={
             "analysis_path": artifact["analysis_path"],
             "result_count": len(artifact["results_summary"]),
+            "option_count": len(snapshot.option_specs),
+            "bond_count": len(snapshot.bond_specs),
         },
         registry_entry=artifact["registry_entry"],
         artifact_bundle=artifact,
@@ -521,10 +753,25 @@ def _run_quantlib(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 
 def _run_finrl(request: PersonaOSSRequest) -> PersonaOSSResult:
-    dataset = _fixture("services/research/finrl/examples/policy_dataset_sample.json")
+    dataset = _dataset_with_payload(
+        _fixture("services/research/finrl/examples/policy_dataset_sample.json"),
+        request,
+    )
     result = run_finrl_workflow(
         dataset,
-        config=PolicyTrainingConfig(version=PERSONA_OSS_VERSION, requested_by=request.persona_id),
+        config=PolicyTrainingConfig(
+            version=_version_for(request),
+            requested_by=request.persona_id,
+            algorithm=_payload_str(request, "algorithm", "ppo"),
+            seed=_payload_int(request, "seed", 42),
+            lookback_window=_payload_int(request, "lookback_window", 3),
+            learning_rate=_payload_float(request, "learning_rate", 3e-4),
+            gamma=_payload_float(request, "gamma", 0.99),
+            reward_scale=_payload_float(request, "reward_scale", 1.0),
+            risk_aversion=_payload_float(request, "risk_aversion", 0.25),
+            storage_backend=_payload_str(request, "storage_backend", "object_store"),
+            governance_scope=_payload_str(request, "governance_scope", "offline_deferred_prep_only"),
+        ),
     )
     return _completed(
         request,
@@ -538,15 +785,37 @@ def _run_finrl(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 
 def _run_rllib(request: PersonaOSSRequest) -> PersonaOSSResult:
-    dataset = _fixture("services/research/rllib/examples/train_eval_input_sample.json")
+    dataset = _dataset_with_payload(
+        _fixture("services/research/rllib/examples/train_eval_input_sample.json"),
+        request,
+    )
     result = run_rllib_workflow(
         dataset,
-        config=RLlibTrainingConfig(version=PERSONA_OSS_VERSION, requested_by=request.persona_id),
+        config=RLlibTrainingConfig(
+            version=_version_for(request),
+            requested_by=request.persona_id,
+            algorithm=_payload_str(request, "algorithm", "ppo"),
+            seed=_payload_int(request, "seed", 42),
+            lookback_window=_payload_int(request, "lookback_window", 3),
+            learning_rate=_payload_float(request, "learning_rate", 3e-4),
+            gamma=_payload_float(request, "gamma", 0.99),
+            gae_lambda=_payload_float(request, "gae_lambda", 0.95),
+            entropy_coeff=_payload_float(request, "entropy_coeff", 0.002),
+            clip_param=_payload_float(request, "clip_param", 0.2),
+            num_trials=_payload_int(request, "num_trials", 8),
+            search_strategy=_payload_str(request, "search_strategy", "pbt"),
+            objective_metric=_payload_str(request, "objective_metric", "validation_sharpe_proxy"),
+            storage_backend=_payload_str(request, "storage_backend", "object_store"),
+        ),
     )
     return _completed(
         request,
         artifact_family=result.artifact_bundle["artifact_family"],
-        primary_output=result.artifact_bundle["policy"],
+        primary_output={
+            **result.artifact_bundle["policy"],
+            "lookback_window": result.artifact_bundle["dataset_schema"]["observed_lookback_window"],
+            "rollout_summary": result.artifact_bundle["rollout_summary"],
+        },
         metrics=result.artifact_bundle["evaluation_summary"],
         registry_entry=result.registry_entry,
         artifact_bundle=result.artifact_bundle,
@@ -555,11 +824,36 @@ def _run_rllib(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 
 def _run_ray_tune(request: PersonaOSSRequest) -> PersonaOSSResult:
-    dataset = _fixture("services/research/rllib/examples/train_eval_input_sample.json")
+    dataset = _dataset_with_payload(
+        _fixture("services/research/rllib/examples/train_eval_input_sample.json"),
+        request,
+    )
     result = run_ray_tune_workflow(
         dataset,
-        training_config=RLlibTrainingConfig(version=PERSONA_OSS_VERSION, requested_by=request.persona_id),
-        search_config=RayTuneSearchConfig(num_trials=8, top_k=3),
+        training_config=RLlibTrainingConfig(
+            version=_version_for(request),
+            requested_by=request.persona_id,
+            seed=_payload_int(request, "training_seed", _payload_int(request, "seed", 42)),
+            lookback_window=_payload_int(request, "lookback_window", 3),
+            learning_rate=_payload_float(request, "learning_rate", 3e-4),
+            gamma=_payload_float(request, "gamma", 0.99),
+            search_strategy=_payload_str(request, "search_strategy", "pbt"),
+            objective_metric=_payload_str(request, "objective_metric", "validation_sharpe_proxy"),
+        ),
+        search_config=RayTuneSearchConfig(
+            version=_version_for(request),
+            requested_by=request.persona_id,
+            optimizer_id=_payload_str(request, "optimizer_id", "ray_tune_rllib_search_v1"),
+            search_strategy=_payload_str(request, "search_strategy", "pbt"),
+            objective_metric=_payload_str(request, "objective_metric", "validation_sharpe_proxy"),
+            num_trials=_payload_int(request, "num_trials", 8),
+            top_k=_payload_int(request, "top_k", 3),
+            seed=_payload_int(request, "seed", 42),
+            trigger=_payload_str(request, "trigger", "manual"),
+            cpu_per_trial=_payload_int(request, "cpu_per_trial", 2),
+            max_iterations=_payload_int(request, "max_iterations", 12),
+            storage_backend=_payload_str(request, "storage_backend", "object_store"),
+        ),
     )
     return _completed(
         request,
@@ -575,13 +869,14 @@ def _run_ray_tune(request: PersonaOSSRequest) -> PersonaOSSResult:
     )
 
 
-def _registry_entry_for_tracking(persona_id: str) -> dict[str, Any]:
+def _registry_entry_for_tracking(persona_id: str, source_payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
     vectorbt_result = _run_vectorbt(
         PersonaOSSRequest(
             persona_id=persona_id,
             session_id="session-persona-tracking-source",
             component="vectorbt",
             intent="produce_tracking_source",
+            payload=copy.deepcopy(dict(source_payload or {})),
         )
     )
     entry = copy.deepcopy(vectorbt_result.registry_entry or {})
@@ -590,8 +885,10 @@ def _registry_entry_for_tracking(persona_id: str) -> dict[str, Any]:
 
 
 def _run_mlflow(request: PersonaOSSRequest) -> PersonaOSSResult:
-    entry = copy.deepcopy(request.payload.get("registry_entry") or _registry_entry_for_tracking(request.persona_id))
-    backend = InMemoryMlflowBackend(tracking_uri="memory://persona-oss-e2e/mlflow")
+    source_payload = _payload_mapping(request, "source_vectorbt_payload")
+    entry = copy.deepcopy(request.payload.get("registry_entry") or _registry_entry_for_tracking(request.persona_id, source_payload))
+    entry.update(_payload_mapping(request, "registry_entry_overrides"))
+    backend = InMemoryMlflowBackend(tracking_uri=_payload_str(request, "tracking_uri", "memory://persona-oss-e2e/mlflow"))
     sync = RegistryExperimentAdapter(backend=backend).sync_registry_entry(entry)
     run_payload = backend.runs[sync.experiment_ref.run_id]
     return _completed(
@@ -615,7 +912,9 @@ def _run_mlflow(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 
 def _run_wandb(request: PersonaOSSRequest) -> PersonaOSSResult:
-    entry = copy.deepcopy(request.payload.get("registry_entry") or _registry_entry_for_tracking(request.persona_id))
+    source_payload = _payload_mapping(request, "source_vectorbt_payload")
+    entry = copy.deepcopy(request.payload.get("registry_entry") or _registry_entry_for_tracking(request.persona_id, source_payload))
+    entry.update(_payload_mapping(request, "registry_entry_overrides"))
     store_dir = tempfile.mkdtemp(prefix="pantheon-wandb-persona-")
     backend = OfflineWandbLocalBackend(store_dir=store_dir)
     sync = RegistryExperimentAdapter(backend=backend).sync_registry_entry(entry)
@@ -637,28 +936,33 @@ def _run_wandb(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 
 def _run_lean_handoff(request: PersonaOSSRequest) -> PersonaOSSResult:
+    source_payload = _payload_mapping(request, "source_vectorbt_payload")
     vectorbt_result = _run_vectorbt(
         PersonaOSSRequest(
             persona_id=request.persona_id,
             session_id=request.session_id,
             component="vectorbt",
             intent="produce_lean_handoff_backtest",
+            payload=source_payload,
         )
     )
     approved_entry = copy.deepcopy(vectorbt_result.registry_entry or {})
     approved_entry["artifact_state"] = "approved"
     approved_entry["deployment_stage"] = "paper"
-    approved_entry["promoted_at"] = "2026-06-12T00:00:00Z"
-    approved_entry["approver"] = request.persona_id
+    approved_entry["promoted_at"] = _payload_str(request, "promoted_at", "2026-06-12T00:00:00Z")
+    approved_entry["approver"] = _payload_str(request, "approver", request.persona_id)
     approved_entry["evaluation_summary"] = copy.deepcopy(vectorbt_result.metrics)
 
-    mlflow_backend = InMemoryMlflowBackend(tracking_uri="memory://persona-oss-e2e/lean-handoff")
+    mlflow_backend = InMemoryMlflowBackend(
+        tracking_uri=_payload_str(request, "tracking_uri", "memory://persona-oss-e2e/lean-handoff")
+    )
     mlflow_sync = RegistryExperimentAdapter(backend=mlflow_backend).sync_registry_entry(approved_entry)
 
-    plan_id = f"dp-persona-oss-{request.persona_id}-paper"
-    binding_id = f"rtb-persona-oss-{request.persona_id}-paper"
+    plan_suffix = _payload_str(request, "plan_suffix", "paper")
+    plan_id = f"dp-persona-oss-{request.persona_id}-{plan_suffix}"
+    binding_id = f"rtb-persona-oss-{request.persona_id}-{plan_suffix}"
     capital_pool_id = str(request.payload.get("capital_pool_id") or "pool-persona-oss-paper")
-    risk_policy_ref = "risk-policy-persona-oss-paper"
+    risk_policy_ref = _payload_str(request, "risk_policy_ref", "risk-policy-persona-oss-paper")
     deployment_plan = {
         "plan_id": plan_id,
         "approval_decision_id": f"approval-{request.request_id}",
@@ -669,13 +973,13 @@ def _run_lean_handoff(request: PersonaOSSRequest) -> PersonaOSSResult:
         "strategy_id": approved_entry["strategy_id"],
         "capital_pool_id": capital_pool_id,
         "target_stage": "paper",
-        "runtime_role": "paper",
-        "runtime_config_ref": "/workspace/lean/Launcher/config.json",
+        "runtime_role": _payload_str(request, "runtime_role", "paper"),
+        "runtime_config_ref": _payload_str(request, "runtime_config_ref", "/workspace/lean/Launcher/config.json"),
         "runtime_config_status": "approved",
         "risk_policy_ref": risk_policy_ref,
         "risk_policy_evaluation": {
             "risk_policy_id": risk_policy_ref,
-            "risk_policy_version": "v1",
+            "risk_policy_version": _payload_str(request, "risk_policy_version", "v1"),
             "capital_pool_id": capital_pool_id,
             "target_type": "runtime_launch",
             "target_id": plan_id,
@@ -691,6 +995,7 @@ def _run_lean_handoff(request: PersonaOSSRequest) -> PersonaOSSResult:
             "source_oss_components": ["vectorbt", "mlflow"],
             "mlflow_experiment_ref": mlflow_sync.experiment_ref.to_metadata_ref(),
             "vectorbt_aggregate_metrics": vectorbt_result.metrics,
+            **_payload_mapping(request, "metadata"),
         },
     }
     runtime_binding = {
@@ -705,7 +1010,7 @@ def _run_lean_handoff(request: PersonaOSSRequest) -> PersonaOSSResult:
         "metadata": {
             "engine_bridge_repo": PANTHEON_LEAN_REMOTE,
             "engine_bridge_path": PANTHEON_LEAN_SOURCE_PATH,
-            "engine_bridge_commit": "persona-oss-e2e",
+            "engine_bridge_commit": _payload_str(request, "engine_bridge_commit", "persona-oss-e2e"),
             "strategy_id": approved_entry["strategy_id"],
             "artifact_checksum": approved_entry["checksum"],
         },
