@@ -278,6 +278,251 @@ def test_strategy_seed_review_request_reject_archive_merge_and_terminal_refusal(
         assert stored.lineage["merged_into_seed_id"] == MERGE_TARGET_ID
 
 
+RISK_SEED_ID = "seed-review-bff-risk-constraint"
+NEGATIVE_SEED_ID = "seed-review-bff-negative"
+
+
+def _risk_seed(seed_id: str) -> StrategySpecSeed:
+    return StrategySpecSeed(
+        seed_id=seed_id,
+        source_id=f"src-{seed_id}",
+        evidence_bundle_id=f"bundle-{seed_id}",
+        hypothesis="Risk constraint: max drawdown 10% per symbol per month.",
+        asset_class=["equity"],
+        market_scope=["TWSE"],
+        holding_period="daily",
+        required_data=["ohlcv"],
+        backend_hint="policy_review",
+        feature_hints=["drawdown"],
+        label_hints=["drawdown_control"],
+        risk_notes=["trainer_seed_requires_review"],
+        confidence=0.85,
+        status=StrategySpecSeedStatus.DRAFT,
+        source_ids=[f"src-{seed_id}"],
+        evidence_item_ids=[f"evi-{seed_id}"],
+        citation_refs=[f"{seed_id}#ref"],
+        trace_refs=[f"trace-{seed_id}"],
+        created_at="2026-06-12T00:00:00Z",
+        lineage={
+            "created_from": "trainer_seed_bridge",
+            "registry_write_performed": False,
+            "execution_route": "none",
+        },
+        metadata={
+            "source_kind": "trainer",
+            "source_surface": "trainer",
+            "seed_kind": "risk_constraint",
+            "research_only": True,
+            "registry_write_performed": False,
+            "execution_route": "none",
+        },
+    )
+
+
+def _negative_seed(seed_id: str) -> StrategySpecSeed:
+    return StrategySpecSeed(
+        seed_id=seed_id,
+        source_id=f"src-{seed_id}",
+        evidence_bundle_id=f"bundle-{seed_id}",
+        hypothesis="Negative memory: avoid TWSE momentum strategies during Q4 earnings.",
+        asset_class=["equity"],
+        market_scope=["TWSE"],
+        holding_period="swing",
+        required_data=["ohlcv"],
+        backend_hint=None,
+        feature_hints=["momentum"],
+        label_hints=[],
+        risk_notes=["trainer_seed_requires_review"],
+        confidence=0.80,
+        status=StrategySpecSeedStatus.DRAFT,
+        source_ids=[f"src-{seed_id}"],
+        evidence_item_ids=[f"evi-{seed_id}"],
+        citation_refs=[f"{seed_id}#ref"],
+        trace_refs=[f"trace-{seed_id}"],
+        created_at="2026-06-12T00:00:00Z",
+        lineage={
+            "created_from": "trainer_seed_bridge",
+            "registry_write_performed": False,
+            "execution_route": "none",
+        },
+        metadata={
+            "source_kind": "trainer",
+            "source_surface": "trainer",
+            "seed_kind": "negative",
+            "research_only": True,
+            "registry_write_performed": False,
+            "execution_route": "none",
+        },
+    )
+
+
+@contextmanager
+def _ids006_client():
+    tracked_env = {
+        "STRATEGY_SEED_STORE_PATH": os.environ.get("STRATEGY_SEED_STORE_PATH"),
+    }
+    original_store = bff_main.read_store
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        seed_store_path = root / "strategy_seeds.jsonl"
+        os.environ["STRATEGY_SEED_STORE_PATH"] = str(seed_store_path)
+        store = StrategySpecSeedStore(path=seed_store_path)
+        store.save(_seed(SEED_ID))
+        store.save(_risk_seed(RISK_SEED_ID))
+        store.save(_negative_seed(NEGATIVE_SEED_ID))
+
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
+        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+        client = TestClient(bff_main.app)
+        try:
+            yield client, seed_store_path
+        finally:
+            bff_main.read_store = original_store
+            bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
+            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+            for key, value in tracked_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
+def test_ids006_seed_card_exposes_source_surface_and_negative_memory_warning() -> None:
+    with _ids006_client() as (client, _):
+        response = client.get(
+            f"/bff/management/strategy-seeds/{RISK_SEED_ID}",
+            headers=REVIEWER_HEADERS,
+        )
+        assert response.status_code == 200, response.text
+        card = response.json()["data"]
+        assert card["source"]["source_surface"] == "trainer"
+        assert "negative_memory_warning" in card
+        assert card["negative_memory_warning"]["warning_level"] in {"info", "warning", "blocking"}
+
+        response2 = client.get(
+            f"/bff/management/strategy-seeds/{SEED_ID}",
+            headers=REVIEWER_HEADERS,
+        )
+        assert response2.status_code == 200, response2.text
+        card2 = response2.json()["data"]
+        assert card2["source"]["source_surface"] is None
+        assert "negative_memory_warning" in card2
+
+
+def test_ids006_seed_kind_filter_on_list_endpoint() -> None:
+    with _ids006_client() as (client, _):
+        response = client.get(
+            "/bff/management/strategy-seeds",
+            params={"seed_kind": "risk_constraint"},
+            headers=REVIEWER_HEADERS,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        ids = [card["seed_id"] for card in body["data"]]
+        assert RISK_SEED_ID in ids
+        assert SEED_ID not in ids
+        assert NEGATIVE_SEED_ID not in ids
+        assert body["meta"]["filters"]["seed_kind"] == "risk_constraint"
+
+        response2 = client.get(
+            "/bff/management/strategy-seeds",
+            params={"seed_kind": "negative"},
+            headers=REVIEWER_HEADERS,
+        )
+        assert response2.status_code == 200, response2.text
+        ids2 = [card["seed_id"] for card in response2.json()["data"]]
+        assert NEGATIVE_SEED_ID in ids2
+        assert RISK_SEED_ID not in ids2
+
+
+def test_ids006_convert_to_risk_action_for_risk_constraint_seed() -> None:
+    with _ids006_client() as (client, seed_store_path):
+        list_resp = client.get(
+            "/bff/management/strategy-seeds",
+            params={"seed_kind": "risk_constraint"},
+            headers=REVIEWER_HEADERS,
+        )
+        card = next(c for c in list_resp.json()["data"] if c["seed_id"] == RISK_SEED_ID)
+        assert "convert-to-risk" in card["allowedActions"]
+        assert "convert-to-spec-seed" not in card["allowedActions"]
+
+        convert = client.post(
+            f"/bff/management/strategy-seeds/{RISK_SEED_ID}/review",
+            json={"action": "convert-to-risk", "reason": "Reviewed; this is a risk overlay constraint."},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "ids006-convert-risk"},
+        )
+        assert convert.status_code == 202, convert.text
+        data = convert.json()["data"]
+        assert data["status"] == "converted_to_risk_constraint"
+        assert data["decision"]["decision"] == "convert_to_risk"
+
+        stored = StrategySpecSeedStore(path=seed_store_path).get(RISK_SEED_ID)
+        assert stored is not None
+        assert stored.status == StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT
+
+        refused = client.post(
+            f"/bff/management/strategy-seeds/{RISK_SEED_ID}/review",
+            json={"action": "accept"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "ids006-convert-risk-refused"},
+        )
+        assert refused.status_code == 409, refused.text
+
+
+def test_ids006_convert_to_negative_action_for_negative_seed() -> None:
+    with _ids006_client() as (client, seed_store_path):
+        list_resp = client.get(
+            "/bff/management/strategy-seeds",
+            params={"seed_kind": "negative"},
+            headers=REVIEWER_HEADERS,
+        )
+        card = next(c for c in list_resp.json()["data"] if c["seed_id"] == NEGATIVE_SEED_ID)
+        assert "convert-to-negative" in card["allowedActions"]
+        assert "convert-to-spec-seed" not in card["allowedActions"]
+
+        convert = client.post(
+            f"/bff/management/strategy-seeds/{NEGATIVE_SEED_ID}/review",
+            json={"action": "convert-to-negative", "reason": "Confirmed negative memory; do not re-propose."},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "ids006-convert-negative"},
+        )
+        assert convert.status_code == 202, convert.text
+        data = convert.json()["data"]
+        assert data["status"] == "converted_to_negative"
+        assert data["decision"]["decision"] == "convert_to_negative"
+
+        stored = StrategySpecSeedStore(path=seed_store_path).get(NEGATIVE_SEED_ID)
+        assert stored is not None
+        assert stored.status == StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE
+
+
+def test_ids006_recommended_action_for_kind_seeds() -> None:
+    with _ids006_client() as (client, _):
+        risk_card_resp = client.get(
+            f"/bff/management/strategy-seeds/{RISK_SEED_ID}",
+            headers=REVIEWER_HEADERS,
+        )
+        risk_card = risk_card_resp.json()["data"]
+        assert risk_card["recommended_action"]["next"] == "convert-to-risk"
+
+        neg_card_resp = client.get(
+            f"/bff/management/strategy-seeds/{NEGATIVE_SEED_ID}",
+            headers=REVIEWER_HEADERS,
+        )
+        neg_card = neg_card_resp.json()["data"]
+        assert neg_card["recommended_action"]["next"] == "convert-to-negative"
+
+        strategy_card_resp = client.get(
+            f"/bff/management/strategy-seeds/{SEED_ID}",
+            headers=REVIEWER_HEADERS,
+        )
+        strategy_card = strategy_card_resp.json()["data"]
+        assert strategy_card["recommended_action"]["type"] == "accept"
+        assert "next" not in strategy_card["recommended_action"]
+
+
 def test_strategy_seed_review_commands_reject_read_role() -> None:
     with _review_client() as (client, _seed_store_path):
         detail = client.get(

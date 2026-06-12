@@ -89,6 +89,8 @@ class SeedReviewDecisionAction(str, Enum):
     REJECT = "reject"
     REQUEST_EVIDENCE = "request_evidence"
     CONVERT_TO_SPEC_SEED = "convert_to_spec_seed"
+    CONVERT_TO_RISK = "convert_to_risk"
+    CONVERT_TO_NEGATIVE = "convert_to_negative"
     ARCHIVE = "archive"
     MERGE = "merge"
 
@@ -160,6 +162,8 @@ _TERMINAL_REVIEW_STATUSES = frozenset(
         StrategySpecSeedStatus.REJECTED.value,
         StrategySpecSeedStatus.ARCHIVED_AS_INSIGHT.value,
         StrategySpecSeedStatus.MERGED.value,
+        StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT.value,
+        StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE.value,
     }
 )
 
@@ -170,6 +174,8 @@ _REVIEW_TRANSITIONS: dict[str, dict[SeedReviewDecisionAction, str]] = {
         SeedReviewDecisionAction.REQUEST_EVIDENCE: StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE.value,
         SeedReviewDecisionAction.ARCHIVE: StrategySpecSeedStatus.ARCHIVED_AS_INSIGHT.value,
         SeedReviewDecisionAction.MERGE: StrategySpecSeedStatus.MERGED.value,
+        SeedReviewDecisionAction.CONVERT_TO_RISK: StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT.value,
+        SeedReviewDecisionAction.CONVERT_TO_NEGATIVE: StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE.value,
     },
     StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE.value: {
         SeedReviewDecisionAction.ACCEPT: StrategySpecSeedStatus.ACCEPTED.value,
@@ -177,9 +183,13 @@ _REVIEW_TRANSITIONS: dict[str, dict[SeedReviewDecisionAction, str]] = {
         SeedReviewDecisionAction.REQUEST_EVIDENCE: StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE.value,
         SeedReviewDecisionAction.ARCHIVE: StrategySpecSeedStatus.ARCHIVED_AS_INSIGHT.value,
         SeedReviewDecisionAction.MERGE: StrategySpecSeedStatus.MERGED.value,
+        SeedReviewDecisionAction.CONVERT_TO_RISK: StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT.value,
+        SeedReviewDecisionAction.CONVERT_TO_NEGATIVE: StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE.value,
     },
     StrategySpecSeedStatus.ACCEPTED.value: {
         SeedReviewDecisionAction.CONVERT_TO_SPEC_SEED: StrategySpecSeedStatus.PROMOTED_TO_STRATEGY_SPEC.value,
+        SeedReviewDecisionAction.CONVERT_TO_RISK: StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT.value,
+        SeedReviewDecisionAction.CONVERT_TO_NEGATIVE: StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE.value,
         SeedReviewDecisionAction.REJECT: StrategySpecSeedStatus.REJECTED.value,
         SeedReviewDecisionAction.REQUEST_EVIDENCE: StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE.value,
         SeedReviewDecisionAction.ARCHIVE: StrategySpecSeedStatus.ARCHIVED_AS_INSIGHT.value,

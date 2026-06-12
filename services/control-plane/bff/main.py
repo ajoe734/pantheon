@@ -22855,7 +22855,11 @@ def _strategy_seed_strategy_family(seed: Any) -> str:
     return str(hints[0]) if hints else ""
 
 
-def _strategy_seed_allowed_actions(status: str) -> List[str]:
+_SEED_KINDS_RISK = frozenset({"risk_constraint", "execution_constraint"})
+_SEED_KINDS_NEGATIVE = frozenset({"negative", "negative_memory"})
+
+
+def _strategy_seed_allowed_actions(status: str, seed_kind: str = "") -> List[str]:
     actions_by_status = {
         "draft": ["accept", "reject", "request-evidence", "archive", "merge"],
         "needs_more_evidence": ["accept", "reject", "request-evidence", "archive", "merge"],
@@ -22864,8 +22868,16 @@ def _strategy_seed_allowed_actions(status: str) -> List[str]:
         "rejected": [],
         "archived_as_insight": [],
         "merged": [],
+        "converted_to_risk_constraint": [],
+        "converted_to_negative": [],
     }
-    return list(actions_by_status.get(status, []))
+    actions = list(actions_by_status.get(status, []))
+    if status in {"draft", "needs_more_evidence", "accepted"}:
+        if seed_kind in _SEED_KINDS_RISK and "convert-to-risk" not in actions:
+            actions.append("convert-to-risk")
+        if seed_kind in _SEED_KINDS_NEGATIVE and "convert-to-negative" not in actions:
+            actions.append("convert-to-negative")
+    return actions
 
 
 def _strategy_seed_metadata_suggestions(seed: Any) -> List[Dict[str, Any]]:
@@ -23023,18 +23035,42 @@ def _strategy_seed_similar_existing_strategies(seed: Any) -> List[Dict[str, Any]
 def _strategy_seed_recommended_action(
     *,
     status: str,
+    seed_kind: str = "",
     suggestions: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     for item in suggestions:
         if str(item.get("type") or "") == "promote_seed_candidate":
             return dict(item)
     if status == "accepted":
+        if seed_kind in _SEED_KINDS_RISK:
+            return {"type": "convert-to-risk", "mode": "operator_decision"}
+        if seed_kind in _SEED_KINDS_NEGATIVE:
+            return {"type": "convert-to-negative", "mode": "operator_decision"}
         return {"type": "convert-to-spec-seed", "mode": "operator_decision"}
     if status in {"draft", "needs_more_evidence"}:
+        if seed_kind in _SEED_KINDS_RISK:
+            return {"type": "accept", "mode": "operator_decision", "next": "convert-to-risk"}
+        if seed_kind in _SEED_KINDS_NEGATIVE:
+            return {"type": "accept", "mode": "operator_decision", "next": "convert-to-negative"}
         return {"type": "accept", "mode": "operator_decision"}
     if status == "promoted_to_strategy_spec":
         return {"type": "submit-replication", "mode": "operator_decision"}
     return {"type": "none", "mode": "terminal"}
+
+
+def _strategy_seed_negative_memory_warning(seed: Any) -> Dict[str, Any]:
+    raw = getattr(seed, "negative_memory_match", None)
+    if not raw:
+        return {"warning_level": "info", "similarity": 0.0, "reason": ""}
+    match = dict(raw) if isinstance(raw, dict) else (raw.to_dict() if hasattr(raw, "to_dict") else {})
+    return {
+        "warning_level": str(match.get("warning_level") or "info"),
+        "similarity": float(match.get("similarity") or 0.0),
+        "reason": str(match.get("reason") or ""),
+        "matched_memory_id": match.get("matched_memory_id"),
+        "matched_memory_kind": match.get("matched_memory_kind"),
+        "matched_terms": list(match.get("matched_terms") or []),
+    }
 
 
 def _strategy_seed_card(seed: Any, *, snapshot_at: str, include_audit: bool = False) -> Dict[str, Any]:
@@ -23044,6 +23080,8 @@ def _strategy_seed_card(seed: Any, *, snapshot_at: str, include_audit: bool = Fa
     metadata = dict(getattr(seed, "metadata", {}) or {})
     evidence_refs = list(getattr(seed, "evidence_item_ids", []) or [])
     citation_refs = list(getattr(seed, "citation_refs", []) or [])
+    seed_kind = str(metadata.get("seed_kind") or "strategy_spec_seed")
+    source_surface = str(metadata.get("source_surface") or "")
     card = {
         "id": seed.seed_id,
         "seed_id": seed.seed_id,
@@ -23051,9 +23089,10 @@ def _strategy_seed_card(seed: Any, *, snapshot_at: str, include_audit: bool = Fa
             "source_id": seed.source_id,
             "source_ids": list(getattr(seed, "source_ids", []) or []),
             "source_kind": _strategy_seed_source_kind(seed),
+            "source_surface": source_surface or None,
             "evidence_bundle_id": seed.evidence_bundle_id,
         },
-        "seed_kind": str(metadata.get("seed_kind") or "strategy_spec_seed"),
+        "seed_kind": seed_kind,
         "strategy_family": _strategy_seed_strategy_family(seed),
         "hypothesis": seed.hypothesis,
         "market": {
@@ -23065,15 +23104,17 @@ def _strategy_seed_card(seed: Any, *, snapshot_at: str, include_audit: bool = Fa
         "required_data": list(getattr(seed, "required_data", []) or []),
         "evidence_count": len(set([*evidence_refs, *citation_refs])),
         "confidence": getattr(seed, "confidence", None),
+        "negative_memory_warning": _strategy_seed_negative_memory_warning(seed),
         "similar_existing_strategies": _strategy_seed_similar_existing_strategies(seed),
         "recommended_action": _strategy_seed_recommended_action(
             status=status,
+            seed_kind=seed_kind,
             suggestions=suggestions,
         ),
         "suggested_actions": suggestions,
         "review_status": status,
         "status": status,
-        "allowedActions": _strategy_seed_allowed_actions(status),
+        "allowedActions": _strategy_seed_allowed_actions(status, seed_kind),
         "lineage_refs": {
             "evidence_bundle_id": seed.evidence_bundle_id,
             "source_ids": list(getattr(seed, "source_ids", []) or []),
@@ -23097,6 +23138,7 @@ def _strategy_seed_matches_filters(
     status: Optional[str],
     source_kind: Optional[str],
     strategy_family: Optional[str],
+    seed_kind: Optional[str],
     min_confidence: Optional[float],
 ) -> bool:
     if status and _strategy_seed_status_value(seed) != status:
@@ -23105,6 +23147,11 @@ def _strategy_seed_matches_filters(
         return False
     if strategy_family and _strategy_seed_strategy_family(seed) != strategy_family:
         return False
+    if seed_kind:
+        metadata = dict(getattr(seed, "metadata", {}) or {})
+        actual_seed_kind = str(metadata.get("seed_kind") or "strategy_spec_seed")
+        if actual_seed_kind != seed_kind:
+            return False
     if min_confidence is not None and float(getattr(seed, "confidence", 0.0) or 0.0) < min_confidence:
         return False
     return True
@@ -23115,6 +23162,7 @@ def _strategy_seed_list_response(
     status: Optional[str],
     source_kind: Optional[str],
     strategy_family: Optional[str],
+    seed_kind: Optional[str],
     min_confidence: Optional[float],
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
@@ -23127,6 +23175,7 @@ def _strategy_seed_list_response(
             status=status,
             source_kind=source_kind,
             strategy_family=strategy_family,
+            seed_kind=seed_kind,
             min_confidence=min_confidence,
         )
     ]
@@ -23143,6 +23192,7 @@ def _strategy_seed_list_response(
                 "status": status,
                 "source_kind": source_kind,
                 "strategy_family": strategy_family,
+                "seed_kind": seed_kind,
                 "min_confidence": min_confidence,
             },
             "research_only": True,
@@ -23188,6 +23238,9 @@ def _strategy_seed_review_action(payload: Dict[str, Any]) -> str:
         "convert_to_strategy_spec": "convert_to_spec_seed",
         "archive_as_insight": "archive",
         "archived_as_insight": "archive",
+        "convert_risk": "convert_to_risk",
+        "convert_negative": "convert_to_negative",
+        "convert_to_risk_constraint": "convert_to_risk",
     }
     action = aliases.get(action, action)
     if not action:
@@ -23195,7 +23248,7 @@ def _strategy_seed_review_action(payload: Dict[str, Any]) -> str:
             422,
             ErrorCode.VALIDATION_FAILED,
             "StrategySpecSeed review action is required",
-            "Set action to accept, reject, request-evidence, convert-to-spec-seed, or archive.",
+            "Set action to accept, reject, request-evidence, convert-to-spec-seed, convert-to-risk, convert-to-negative, or archive.",
             precondition_failed="action",
         )
     if action == "merge":
@@ -35987,6 +36040,7 @@ async def bff_list_strategy_seed_inbox(
     status: Optional[str] = None,
     source_kind: Optional[str] = None,
     strategy_family: Optional[str] = None,
+    seed_kind: Optional[str] = None,
     min_confidence: Optional[float] = Query(default=None, ge=0.0, le=1.0),
     authorization: Optional[str] = Header(default=None),
 ):
@@ -35997,6 +36051,7 @@ async def bff_list_strategy_seed_inbox(
         status=status,
         source_kind=source_kind,
         strategy_family=strategy_family,
+        seed_kind=seed_kind,
         min_confidence=min_confidence,
     )
 
