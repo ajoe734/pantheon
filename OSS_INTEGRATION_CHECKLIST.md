@@ -27,6 +27,7 @@ Do not treat a component as integrated just because we wrote contracts around it
 - `adapter-started`
 - `criteria-defined` (deferred framework with explicit entry criteria documented)
 - `smoke-tested`
+- `activation-gated` (adapter or backend path exists, but activation requires explicit runtime, network, credential, or operator gate)
 - `governed`
 
 ## Component Inventory
