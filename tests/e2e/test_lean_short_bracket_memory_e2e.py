@@ -310,8 +310,15 @@ class _CanonicalTelemetryRecorder:
     def emit_heartbeat(self, metadata: dict[str, Any] | None = None) -> bool:
         return self.emit("heartbeat", {"heartbeat": 1}, metadata)
 
-    def emit_pnl_snapshot(self, pnl: float, metadata: dict[str, Any] | None = None) -> bool:
-        return self.emit("pnl_snapshot", {"pnl": float(pnl)}, metadata)
+    def emit_pnl_snapshot(
+        self,
+        pnl: float,
+        metadata: dict[str, Any] | None = None,
+        extra_metrics: dict[str, Any] | None = None,
+    ) -> bool:
+        metrics = {"pnl": float(pnl)}
+        metrics.update(extra_metrics or {})
+        return self.emit("pnl_snapshot", metrics, metadata)
 
     def snapshot(self) -> dict[str, Any]:
         return {
