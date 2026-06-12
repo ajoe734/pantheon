@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+  "archived_at": "2026-06-11T04:52:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+    "title": "FinMind Taiwan data provider integration",
+    "summary_zh": "評估並接入 FinMind 作為比 TEJ 更便宜且比官方 API 更整合的台股替代來源，明確標記可覆蓋資料集、授權、頻率、歷史回補限制與備援順位。",
+    "phase": "Market data completion",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/task-briefs/datastrat_marketdata_tw_finmind_004.md",
+      "services/source_ingestion",
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09",
+      "tests"
+    ],
+    "acceptance": [
+      "FinMind provider registered with dataset coverage matrix; token/config handling implemented; at least representative daily price institutional margin revenue or available datasets smoke against fixture; gaps versus TEJ official Yahoo documented; PR merged to dev when complete"
+    ],
+    "next": "Merged closeout PR #1315 (16110dfc8fa3c47918d9f1a7d03e627fa02c7e06); FinMind fixture-backed integration approved and finalized.",
+    "last_update": "2026-06-11T04:52:29Z",
+    "task_class": "implementation",
+    "auto_created_by": "Codex-marketdata-dispatch-2026-06-11",
+    "review_notes_zh": [
+      "審查通過",
+      "FinMind 低成本台股研究層正確接入；憑證安全、授權完整、備援順位清楚、26 項測試通過"
+    ],
+    "review_file": "docs/04/pantheon_data_strategy_source_design_2026-06-09/REVIEW_DATASTRAT_TW_FINMIND_004.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-11T04:52:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-marketdata-tw-finmind-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "git_clean_required": false,
+      "commit": "b18f8f38d3455d8638be7e45834ac591ffc14709",
+      "commit_subject": "DATASTRAT-MARKETDATA-TW-FINMIND-004: closeout evidence",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@openai.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+        "Reviewer": "Claude2",
+        "Verified": "pytest services/source_ingestion/tests/test_finmind_taiwan_connectors.py (26 passed); pytest services/source_ingestion/test_service.py::test_registry_exposes_connector_status_policy_and_provider_examples (1 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "16110dfc8fa3c47918d9f1a7d03e627fa02c7e06",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned DATASTRAT-MARKETDATA-TW-FINMIND-004 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-11T01:22:36Z",
+      "resolved_at": "2026-06-11T01:23:04Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "FinMind live fetcher implemented. PR #1297 open waiting for CI + auto-merge. Review: FinMindLiveFetcher (env token, credential_status, fetch_dataset/broker_report/storage_objects), _extract_quota_meta (rate-limit headers), build_finmind_fetch_plan (archive gets price-only, chip+news+broker skipped). 253 tests pass. Token never stored in records/logs.",
+      "status": "done",
+      "created_at": "2026-06-11T01:43:07Z",
+      "resolved_at": "2026-06-11T01:44:31Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "PR #1297 merged to dev. Review scope: FinMindLiveFetcher (real HTTP fetch, env:// secret-ref, credential_status health, token redaction), _extract_quota_meta (rate-limit/quota header capture from live responses), build_finmind_fetch_plan (active-universe fanout - archive gets TaiwanStockPrice only, chip/news/broker top20 skipped). 21 new tests, 253 total pass. Token never stored in evidence/logs.",
+      "status": "done",
+      "created_at": "2026-06-11T01:45:52Z",
+      "resolved_at": "2026-06-11T03:19:42Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review blocked: FinMindLiveFetcher authenticates by putting FINMIND_API_TOKEN in query URLs and does not send Authorization: Bearer; current FinMind OpenAPI/llms-full document Bearer auth for /data and dedicated endpoints, and tests currently assert token-in-URL behavior. Also fetch_storage_objects expects JSON via _get(), but current FinMind storage_objects docs/examples return whole-day parquet bytes; this will fail live SponsorPro backfill and may truncate ~22MB responses. Fix auth/header + binary/parquet handling and update tests.",
+      "status": "done",
+      "created_at": "2026-06-11T03:19:42Z",
+      "resolved_at": "2026-06-11T03:19:42Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-11T03:46:24Z",
+      "resolved_at": "2026-06-11T03:46:24Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "PR #1310 ready for review: FinMind live fetcher now uses Authorization header token handling, provider-owned adapter execution is covered, handoff artifact added, validation 293 passed/1 skipped on latest dev.",
+      "status": "done",
+      "created_at": "2026-06-11T04:14:47Z",
+      "resolved_at": "2026-06-11T04:39:57Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-FINMIND-004",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved and returned to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-06-11T04:39:57Z",
+      "resolved_at": "2026-06-11T04:52:29Z"
+    }
+  ],
+  "blockers": []
+}

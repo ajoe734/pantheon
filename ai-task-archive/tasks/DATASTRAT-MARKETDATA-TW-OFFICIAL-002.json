@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-MARKETDATA-TW-OFFICIAL-002",
+  "archived_at": "2026-06-11T03:40:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-MARKETDATA-TW-OFFICIAL-002",
+    "title": "Taiwan official market data connectors",
+    "summary_zh": "接 TWSE TPEx TDCC TAIFEX 官方公開資料源，覆蓋台股日行情、三大法人、融資券、借券、當沖、集保週資料、期貨籌碼，並具備每日/每週 cadence 與 gap handling。",
+    "phase": "Market data completion",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/task-briefs/datastrat_marketdata_tw_official_002.md",
+      "services/source_ingestion",
+      "tests"
+    ],
+    "acceptance": [
+      "TWSE TPEx daily price connectors implemented; institutional margin short lending daytrade datasets implemented where public endpoints exist; TDCC weekly and TAIFEX daily connectors implemented; normalized tables or models documented; smoke tests avoid live flakiness; PR merged to dev when complete"
+    ],
+    "next": "Closeout complete: implementation PR #1299 merged at a792347d; closeout PR #1305 merged at 20d8dda; verified python3 -m pytest services/source_ingestion/tests/test_taiwan_official_connectors.py -q (4 passed, 1 skipped); TDCC/TAIFEX remain follow-up DATASTRAT-MARKETDATA-TW-REMAINING-007.",
+    "last_update": "2026-06-11T03:40:01Z",
+    "task_class": "implementation",
+    "auto_created_by": "Codex-marketdata-dispatch-2026-06-11",
+    "review_notes_zh": [
+      "審查通過：TWSE/TPEx 五類官方資料集均已實作，266 tests passed，watermark/gap handling 驗證正常，archive_universe tier 篩選正確，TDCC/TAIFEX 已正確標記為 excluded_followup 待後續任務接手。"
+    ],
+    "review_file": ".orchestrator/task-reviews/datastrat_marketdata_tw_official_002_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-11T03:40:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-marketdata-tw-official-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-MARKETDATA-TW-OFFICIAL-002",
+      "git_clean_required": false,
+      "commit": "470c8326c00d66c1616a39b64cbb7c4416f28ac1",
+      "commit_subject": "DATASTRAT-MARKETDATA-TW-OFFICIAL-002: record review closeout",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@openai.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout records for Taiwan official market data connectors.",
+        "Not changing": "adapter implementation, scheduler logic, data schemas, or TDCC/TAIFEX follow-up scope.",
+        "Composes with": "merged implementation PR #1299 and follow-up DATASTRAT-MARKETDATA-TW-REMAINING-007.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-MARKETDATA-TW-OFFICIAL-002",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/source_ingestion/tests/test_taiwan_official_connectors.py -q (4 passed, 1 skipped)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-MARKETDATA-TW-OFFICIAL-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "20d8dda0927791a1b160b32da6e517d4b0a5842a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-OFFICIAL-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned DATASTRAT-MARKETDATA-TW-OFFICIAL-002 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-11T01:22:33Z",
+      "resolved_at": "2026-06-11T01:23:00Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-OFFICIAL-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #1299 (merge a792347d3ab149bc180c61652cc7a654f2b205cd; task commit 26a970c5b675979259a8ebf4533025cc72472191). Validated python3 -m pytest services/source_ingestion/tests -q and opt-in TW official live smoke. Please review for review_approved; owner will run done after approval.",
+      "status": "done",
+      "created_at": "2026-06-11T01:39:10Z",
+      "resolved_at": "2026-06-11T03:30:35Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-OFFICIAL-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: all implemented datasets pass, watermark and tier policy verified, TDCC/TAIFEX deferred to follow-up task. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-11T03:30:35Z",
+      "resolved_at": "2026-06-11T03:40:02Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+  "archived_at": "2026-06-11T05:00:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+    "title": "US paid and broker data fallback planning",
+    "summary_zh": "設計 Polygon Alpha Vantage IBKR 等美股付費/券商資料備援接法，先不硬依賴付費 key，但要能在有 key 時接入日線與 broker fallback。",
+    "phase": "Market data completion",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/task-briefs/datastrat_marketdata_us_paid_broker_009.md",
+      "services/source_ingestion",
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09",
+      "tests"
+    ],
+    "acceptance": [
+      "Provider interfaces support Polygon Alpha Vantage IBKR config; missing key path reports backend-not-ready style health not crash; overlap and selection rules documented; fixture tests pass; PR merged to dev when complete"
+    ],
+    "next": "Closeout complete: US paid/broker adapters (Polygon, Alpha Vantage, IBKR, Shioaji) with fallback-key design merged to dev via PR #1313; source_ingestion 359 passed 1 skipped; merge conflicts in catalog tests resolved and re-verified",
+    "last_update": "2026-06-11T05:00:13Z",
+    "task_class": "implementation",
+    "auto_created_by": "Codex-marketdata-dispatch-2026-06-11",
+    "review_notes_zh": [
+      "Review fix committed in c4f8ae31: provider-owned dispatch allowlist now covers Polygon Alpha Vantage IBKR Shioaji; broker readback records and health carry readback_file_hash/readback_timestamp; validation: python3 -m pytest services/source_ingestion => 356 passed 1 skipped."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-11T05:00:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-marketdata-us-paid-broker-009",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+      "git_clean_required": false,
+      "commit": "d479fe0b55e15a81e61a1a19617fe71407f84a61",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@openai.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cf472202875254046f73890476cede2806f86291",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned DATASTRAT-MARKETDATA-US-PAID-BROKER-009 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-11T01:22:44Z",
+      "resolved_at": "2026-06-11T01:23:18Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Helper-claimed by Claude while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-11T03:56:47Z",
+      "resolved_at": "2026-06-11T03:56:57Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex completes higher-priority work.",
+      "status": "done",
+      "created_at": "2026-06-11T04:02:09Z",
+      "resolved_at": "2026-06-11T04:02:15Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Anchored: PolygonUsEquityDailyAdapter (POLYGON_API_KEY/MASSIVE_API_KEY/US_MARKET_DATA_API_KEY fallback), AlphaVantageUsEquityDailyAdapter (disabled default, quota-safe), IbkrBrokerReadbackAdapter and ShioajiBrokerReadbackAdapter (BROKER_REF auth, research_primary_forbidden). BROKER_READBACK DataSourceClass registered. 4 catalog entries, 5 config templates, 47 new tests. 349 passed 1 skipped total. Branch: task/DATASTRAT-MARKETDATA-US-PAID-BROKER-009.",
+      "status": "done",
+      "created_at": "2026-06-11T04:29:46Z",
+      "resolved_at": "2026-06-11T04:46:06Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-US-PAID-BROKER-009",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Codex review fix committed and PR #1313 opened with auto-merge; source_ingestion validation passed 356 passed 1 skipped.",
+      "status": "done",
+      "created_at": "2026-06-11T04:46:06Z",
+      "resolved_at": "2026-06-11T05:00:14Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "MPOS-P1-RISK-002",
+  "archived_at": "2026-06-10T02:04:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MPOS-P1-RISK-002",
+    "title": "Add homogeneity and correlation review to allocation gate",
+    "summary_zh": "在 pre-LEAN allocation gate 補 homogeneity/correlation review，避免多個 persona 同時堆疊高度相關或重複 exposure。",
+    "phase": "Sprint MPOS-P1 / Homogeneity correlation gate",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MPOS-P1-RISK-001",
+      "MPOS-P1-PER-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+      "services/optimizer-svc/portfolio_synthesis/conflict_classifier.py",
+      "services/capital/risk_policy.py",
+      "services/optimizer-svc/test_allocation_conflict_classifier.py",
+      "services/optimizer-svc/test_portfolio_synthesis.py",
+      "services/capital/test_risk_policy.py"
+    ],
+    "acceptance": [
+      "Add first-class homogeneity or correlation review to allocation conflict taxonomy or adjacent gate;detect duplicated strategy family high target overlap high correlation bucket and concentration by capital pool;escalate or reject according to RiskPolicy evaluator precedence;risk veto still outranks committee escalation;tests include low correlation pass high correlation committee escalation and hard veto"
+    ],
+    "next": "Closeout complete: implementation PR #1261 and closeout PR #1266 merged to dev; focused allocation/risk verification passed (21 tests).",
+    "last_update": "2026-06-10T02:04:50Z",
+    "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
+    "gap_ids": [
+      "G4"
+    ],
+    "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
+    "task_class": "mpos_full_loop_gap_closure",
+    "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：homogeneity/correlation gate 正確加入衝突分類法，RiskPolicy 強制執行優先順序，risk veto 優於 committee escalation，21 項測試全通過"
+    ],
+    "review_file": ".orchestrator/task-briefs/mpos_p1_risk_002_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-10T02:04:50Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mpos-p1-risk-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MPOS-P1-RISK-002",
+      "git_clean_required": false,
+      "commit": "caba9773f7514c0df1d4da95d537fd784e2daabf",
+      "commit_subject": "MPOS-P1-RISK-002: finalize closeout record",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@pantheon.local"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout brief and Claude review approval record for the homogeneity/correlation allocation gate.",
+        "Not changing": "optimizer classifier behavior, RiskPolicy evaluator behavior, canonical architecture policy, consultation gates, or LEAN runtime binding.",
+        "Composes with": "implementation PR #1261 merged into dev at ec3c4682bb49f23bcbdecfee2fb5b7f8900a8b9e and the MPOS-P1-RISK-001 risk precedence lane.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MPOS-P1-RISK-002",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest services/optimizer-svc/test_allocation_conflict_classifier.py services/optimizer-svc/test_portfolio_synthesis.py services/capital/test_risk_policy.py -v (21 passed); git diff --check -- .orchestrator/task-briefs/mpos_p1_risk_002.md .orchestrator/task-briefs/mpos_p1_risk_002_review.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MPOS-P1-RISK-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "30e4f13baf871ce02a88ebd34779b27447e7a745",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MPOS-P1-RISK-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation merged in PR #1261 (merge ec3c4682bb49f23bcbdecfee2fb5b7f8900a8b9e; head 900259235d536a3353c253447a99cf4091515375). Local and GitHub checks passed; please review homogeneity/correlation allocation gate and RiskPolicy precedence before approval.",
+      "status": "done",
+      "created_at": "2026-06-10T01:45:06Z",
+      "resolved_at": "2026-06-10T01:56:54Z"
+    },
+    {
+      "task_id": "MPOS-P1-RISK-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: homogeneity/correlation gate meets all acceptance criteria; risk veto outranks committee; 21 tests pass. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-10T01:56:54Z",
+      "resolved_at": "2026-06-10T02:04:51Z"
+    }
+  ],
+  "blockers": []
+}

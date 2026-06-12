@@ -1,6 +1,6 @@
 # Management AI Dev Kernel Control Mode
 
-Status date: 2026-06-07
+Status date: 2026-06-11
 
 ## Purpose
 
@@ -77,6 +77,13 @@ runtime root than the deploy checkout. The staging-live env file remains
 explicitly kernel-disabled.
 
 ## Verify
+
+All final-contract Management AI operator POST smokes require a stable
+`Idempotency-Key` header. Missing keys return `400 VALIDATION_FAILED` with
+`precondition_failed=idempotency_key`; this is an idempotency guardrail, not an
+OpenClaw provider failure. Reusing the same key with the same payload should
+replay the stored response, while reusing it with a changed payload should fail
+with `409 IDEMPOTENCY_CONFLICT`.
 
 Kernel flag and control-mode posture:
 
@@ -198,6 +205,8 @@ TASK_OWNER=assistant-supervisor
 
 The smoke verifies:
 
+- all Management AI/assistant POST requests include stable `Idempotency-Key`
+  headers;
 - control mode activates as `kernel_repair`;
 - `/bff/assistant/repair-worktrees/prepare` returns a clean task worktree;
 - `/bff/management/nl/ask` forwards `openclaw.repair` metadata to the provider;

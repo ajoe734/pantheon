@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+  "archived_at": "2026-06-11T04:18:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+    "title": "Taiwan public web data: Yahoo broker top15 and RSS news",
+    "summary_zh": "建立 Yahoo 主力進出 top15/top20 候選股 connector，以及 Yahoo RSS、鉅亨 RSS 新聞 metadata connector，作為低成本分點與新聞資料來源。",
+    "phase": "Market data completion",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/task-briefs/datastrat_marketdata_tw_publicweb_003.md",
+      "services/source_ingestion",
+      "tests"
+    ],
+    "acceptance": [
+      "Yahoo broker top15/top20 connector stores date symbol side rank broker buy sell net; RSS news metadata connector stores source title url published_at symbols when extractable; robots/rate limiting policy documented; active universe gating respected; PR merged to dev when complete"
+    ],
+    "next": "Taiwan public-web Yahoo/Anue connector review and closeout merged via PR #1311; task archived.",
+    "last_update": "2026-06-11T04:18:12Z",
+    "task_class": "implementation",
+    "auto_created_by": "Codex-marketdata-dispatch-2026-06-11",
+    "review_notes_zh": [
+      "審查通過：Yahoo top15 broker connector、Yahoo RSS connector、鉅亨 RSS connector 三個 adapter 實作完整，PIT/entitlement/fallback 機制正確，274 tests 全過，無 regression。"
+    ],
+    "review_file": ".orchestrator/task-briefs/review_datastrat_marketdata_tw_publicweb_003.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-11T04:18:12Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-marketdata-tw-publicweb-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+      "git_clean_required": false,
+      "commit": "16e163095b72bc69f29653c5f3cefdc93197010d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+      "commit_author": {
+        "name": "Codex",
+        "email": "codex@openai.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "70e7408e5bdaaa4c47002dc8b966393c1fe420d5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-11T03:46:26Z",
+      "resolved_at": "2026-06-11T03:46:34Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #1308 (merge bdd70d2b12f213fb701271c78a848908ed931b56). Verified: python3 -m pytest services/source_ingestion/tests -q (274 passed, 1 skipped). Please review source_ingestion Yahoo/Anue public-web connector delivery.",
+      "status": "done",
+      "created_at": "2026-06-11T04:00:32Z",
+      "resolved_at": "2026-06-11T04:05:33Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: all three public-web connectors are correct and complete; returned to Codex2 for closeout finalization",
+      "status": "done",
+      "created_at": "2026-06-11T04:05:33Z",
+      "resolved_at": "2026-06-11T04:07:31Z"
+    },
+    {
+      "task_id": "DATASTRAT-MARKETDATA-TW-PUBLICWEB-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: ERROR: Your access token could not be refreshed. Please log out and sign in again.",
+      "status": "done",
+      "created_at": "2026-06-11T04:07:31Z",
+      "resolved_at": "2026-06-11T04:18:12Z"
+    }
+  ],
+  "blockers": []
+}

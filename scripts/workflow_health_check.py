@@ -270,8 +270,8 @@ def check_task_pr_stale(
                 key=str(number),
                 severity="warning",
                 recommended_action=(
-                    "Re-dispatch the task owner to rebase/fix CI or close the stale task PR; "
-                    "do not merge manually from chair review."
+                    "Run scripts/git/auto_integrator.py for a serialized rebase/smoke/merge pass; "
+                    "if it cannot merge cleanly, use the generated integration unblock task."
                 ),
                 evidence_refs=[
                     f"gh-api:/repos/{repo}/pulls?state=open&base={base_branch}",
