@@ -126,7 +126,7 @@ class SignalConsumer:
                 singles.append(signal)
 
         # Execute individual signals (conflict-resolved per symbol)
-        resolved = self._resolve_conflicts(singles)
+        resolved = self._resolve_conflicts(singles, algo=algo)
         for signal in resolved:
             self._execute_one(signal, algo)
 
@@ -293,7 +293,7 @@ class SignalConsumer:
     # Conflict resolution (same symbol, different signals)
     # ------------------------------------------------------------------
 
-    def _resolve_conflicts(self, signals: list[dict]) -> list[dict]:
+    def _resolve_conflicts(self, signals: list[dict], algo: Any | None = None) -> list[dict]:
         """
         Last-write-wins by timestamp.  Tie-break by confidence_score (higher wins).
         Returns one signal per symbol.
@@ -310,8 +310,28 @@ class SignalConsumer:
                         "[%s] Conflict on %s: replaced by newer/higher-confidence signal [%s]",
                         existing["signal_id"], sym, sig["signal_id"],
                     )
+                    self._record_conflict_loser_noop(existing, winner=sig, algo=algo)
                     by_symbol[sym] = sig
+                else:
+                    log.info(
+                        "[%s] Conflict on %s: retained newer/higher-confidence signal [%s]",
+                        sig["signal_id"], sym, existing["signal_id"],
+                    )
+                    self._record_conflict_loser_noop(sig, winner=existing, algo=algo)
         return list(by_symbol.values())
+
+    def _record_conflict_loser_noop(self, loser: dict, *, winner: dict, algo: Any | None) -> None:
+        self._record_filtered_signal_noop(
+            loser,
+            algo,
+            "signal_conflict_loser",
+            extra_metadata={
+                "conflict_winner_signal_id": winner.get("signal_id"),
+                "conflict_loser_signal_id": loser.get("signal_id"),
+                "conflict_symbol": loser.get("symbol"),
+                "conflict_resolution_rule": "last_write_wins_timestamp_then_confidence",
+            },
+        )
 
     # ------------------------------------------------------------------
     # FinRL rebalance batching
@@ -332,7 +352,7 @@ class SignalConsumer:
                     "executing partial batch",
                     run_id, self._rebalance_timeout, n,
                 )
-                for sig in self._resolve_conflicts(batch["signals"]):
+                for sig in self._resolve_conflicts(batch["signals"], algo=algo):
                     self._execute_one(sig, algo)
                 completed.append(run_id)
 
@@ -346,7 +366,7 @@ class SignalConsumer:
         """
         batch = self._rebalance_buffer.pop(run_id, None)
         if batch:
-            for sig in self._resolve_conflicts(batch["signals"]):
+            for sig in self._resolve_conflicts(batch["signals"], algo=algo):
                 self._execute_one(sig, algo)
 
     # ------------------------------------------------------------------
