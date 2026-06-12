@@ -74,7 +74,8 @@ def crawler_policy_for_connector(
             "adapter_type": _adapter_type(fetch_mode),
             "bounded": True,
             "fetch_mode": fetch_mode,
-            "allowlist_enforced": fetch_mode == "external_feed",
+            "allowlist_enforced": fetch_mode in {"external_feed", "provider_owned_adapter"},
+            "provider_adapter": fetch_payload.get("adapter"),
             "allowed_url_prefix_count": len(allowed_prefixes),
             "allowed_url_hosts": hosts,
             "max_records": fetch_payload.get("max_records") or len(fetch_payload.get("records") or []),
@@ -153,6 +154,8 @@ def _adapter_type(fetch_mode: str) -> str:
         return "bounded_external_feed_crawler"
     if fetch_mode == "static_records":
         return "bounded_static_records_adapter"
+    if fetch_mode == "provider_owned_adapter":
+        return "allowlisted_provider_owned_adapter"
     return "unconfigured"
 
 

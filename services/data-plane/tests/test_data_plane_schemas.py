@@ -67,6 +67,11 @@ build_us_calendar_session = us_reference_mod.build_us_calendar_session
 build_polygon_raw_dataset = us_reference_mod.build_polygon_raw_dataset
 build_us_normalized_dataset = us_reference_mod.build_us_normalized_dataset
 build_us_dataset_lineage_source = us_reference_mod.build_us_dataset_lineage_source
+build_us_price_daily_row = us_reference_mod.build_us_price_daily_row
+build_sec_filing_event_row = us_reference_mod.build_sec_filing_event_row
+build_sec_company_fact_row = us_reference_mod.build_sec_company_fact_row
+build_macro_fred_observation_row = us_reference_mod.build_macro_fred_observation_row
+build_us_short_volume_daily_row = us_reference_mod.build_us_short_volume_daily_row
 build_crypto_security_master = crypto_reference_mod.build_crypto_security_master
 build_kraken_raw_dataset = crypto_reference_mod.build_kraken_raw_dataset
 build_crypto_normalized_dataset = crypto_reference_mod.build_crypto_normalized_dataset
@@ -430,10 +435,17 @@ class TestTaiwanReferenceHelpers(unittest.TestCase):
             storage_ref="gs://pantheon-data/raw/tw/tej/trail-20260424.parquet",
             checksum="sha256:ddd444",
             dataset_codes=["TRAIL/TAPRCD", "TRAIL/TATINST1", "TRAIL/TAIM1A"],
+            table_codes=["TAPRCD", "TATINST1", "TAIM1A"],
+            entitlement_scope="tej-trial-catalog",
+            purchased_table_allowlist=["TRAIL/TAPRCD", "TRAIL/TATINST1", "TRAIL/TAIM1A"],
         )
         valid, errors = RawDataset.validate(tej_raw)
         self.assertTrue(valid, errors)
         self.assertEqual(tej_raw.source_class, "research_grade")
+        self.assertEqual(tej_raw.metadata_json["table_codes"], ["TAPRCD", "TATINST1", "TAIM1A"])
+        self.assertEqual(tej_raw.metadata_json["license_scope"], "vendor_research")
+        self.assertTrue(tej_raw.metadata_json["point_in_time_available"])
+        self.assertEqual(tej_raw.metadata_json["available_time_policy"], "provider_available_time_or_ingest_time")
         self.assertTrue(tej_raw.metadata_json["does_not_replace_official_disclosure_truth"])
 
         norm = build_tw_normalized_dataset(
@@ -631,6 +643,62 @@ class TestUSReferenceHelpers(unittest.TestCase):
         )
         self.assertEqual(lineage["market"], "US")
         self.assertEqual(lineage["source_class"], "research_grade")
+
+    def test_us_public_normalized_row_schemas(self):
+        price = build_us_price_daily_row(
+            symbol="AAPL",
+            trade_date="2026-06-10",
+            open="202.10",
+            high="205.00",
+            low="201.20",
+            close="204.80",
+            volume="61000000",
+            provider="Stooq",
+        )
+        filing = build_sec_filing_event_row(
+            cik="320193",
+            symbol="AAPL",
+            accession_number="0000320193-26-000001",
+            form_type="10-Q",
+            filing_date="2026-01-30",
+            accepted_at="2026-01-30T18:01:02Z",
+        )
+        fact = build_sec_company_fact_row(
+            cik="320193",
+            symbol="AAPL",
+            taxonomy="us-gaap",
+            concept="Revenues",
+            unit="USD",
+            value=124300000000,
+            fiscal_year=2025,
+            fiscal_period="Q1",
+            form_type="10-Q",
+            filed_date="2026-01-30",
+            end_date="2025-12-31",
+        )
+        fred = build_macro_fred_observation_row(
+            series_id="GDP",
+            observation_date="2025-10-01",
+            value="30999.2",
+            frequency="quarterly",
+            release_lag_days=45,
+            realtime_start="2026-01-30",
+        )
+        short_volume = build_us_short_volume_daily_row(
+            symbol="AAPL",
+            trade_date="2026-06-10",
+            short_volume="123456",
+            short_exempt_volume="120",
+            total_volume="987654",
+            market="Q",
+        )
+
+        self.assertEqual(_validate_schema("us_price_daily", price), [])
+        self.assertEqual(_validate_schema("sec_filing_event", filing), [])
+        self.assertEqual(_validate_schema("sec_company_fact", fact), [])
+        self.assertEqual(_validate_schema("macro_fred_observation", fred), [])
+        self.assertEqual(_validate_schema("us_short_volume_daily", short_volume), [])
+        self.assertAlmostEqual(short_volume["short_volume_ratio"], 123456 / 987654)
 
 
 class TestCryptoReferenceHelpers(unittest.TestCase):

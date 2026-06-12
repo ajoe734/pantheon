@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
@@ -225,10 +228,15 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "FinMindTaiwanDatasetAdapter.records_from_data_payload",
+            "adapter": "FinMindTaiwanDatasetAdapter.records_from_data_payload",
+            "adapter_config": {
+                "secret_ref_id": self.secret_ref_id,
+                "max_records": self.max_records,
+                "entitlement_tier": self.entitlement_tier,
+            },
+            "request": {},
             "base_url": FINMIND_BASE_URL,
             "endpoint": FINMIND_DATA_ENDPOINT,
             "secret_ref_id": self.secret_ref_id,
@@ -350,10 +358,15 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
+            "adapter": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
+            "adapter_config": {
+                "secret_ref_id": self.secret_ref_id,
+                "max_rank": self.max_rank,
+                "entitlement_tier": self.entitlement_tier,
+            },
+            "request": {},
             "base_url": FINMIND_BASE_URL,
             "endpoint": FINMIND_BROKER_DAILY_REPORT_ENDPOINT,
             "secret_ref_id": self.secret_ref_id,
@@ -556,10 +569,13 @@ class FinMindTaiwanBrokerBulkBackfillAdapter(SourceConnectorProvider):
 
     def fetch_config(self) -> Mapping[str, Any]:
         return {
-            "mode": "static_records",
-            "records": [],
+            "mode": "provider_owned_adapter",
             "next_watermark": None,
-            "provider_owned_fetcher": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
+            "adapter": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
+            "adapter_config": {
+                "secret_ref_id": self.secret_ref_id,
+            },
+            "request": {},
             "base_url": FINMIND_BASE_URL,
             "endpoint": FINMIND_STORAGE_OBJECTS_ENDPOINT,
             "secret_ref_id": self.secret_ref_id,
@@ -622,3 +638,333 @@ class FinMindTaiwanBrokerBulkBackfillAdapter(SourceConnectorProvider):
                 )
             )
         return tuple(records)
+
+
+# ---------------------------------------------------------------------------
+# Live fetch errors
+# ---------------------------------------------------------------------------
+
+
+class FinMindFetchError(RuntimeError):
+    """Raised when a FinMind live fetch fails for a non-credential reason."""
+
+
+class FinMindCredentialError(FinMindFetchError):
+    """Raised when no FINMIND_API_TOKEN is available or the token is rejected."""
+
+
+class FinMindQuotaError(FinMindFetchError):
+    """Raised when the FinMind API quota is exhausted."""
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit / quota header extraction
+# ---------------------------------------------------------------------------
+
+_RATELIMIT_HEADER_MAP: tuple[tuple[str, str], ...] = (
+    ("x-ratelimit-limit", "ratelimit_limit"),
+    ("x-ratelimit-remaining", "ratelimit_remaining"),
+    ("x-ratelimit-reset", "ratelimit_reset"),
+    ("x-rate-limit-limit", "ratelimit_limit"),
+    ("x-rate-limit-remaining", "ratelimit_remaining"),
+    ("x-rate-limit-reset", "ratelimit_reset"),
+    ("retry-after", "retry_after_seconds"),
+    ("x-quota-limit", "quota_limit"),
+    ("x-quota-remaining", "quota_remaining"),
+    ("x-quota-reset", "quota_reset"),
+)
+
+
+def _extract_quota_meta(headers: Any) -> dict[str, Any]:
+    """Extract rate-limit and quota metadata from HTTP response headers."""
+    meta: dict[str, Any] = {}
+    if headers is None:
+        return meta
+    try:
+        items = list(headers.items())
+    except AttributeError:
+        return meta
+    for header_key, meta_key in _RATELIMIT_HEADER_MAP:
+        for raw_key, raw_value in items:
+            if str(raw_key).lower().strip() == header_key and raw_value not in (None, ""):
+                if meta_key in meta:
+                    break
+                try:
+                    meta[meta_key] = int(str(raw_value).strip())
+                except (ValueError, TypeError):
+                    meta[meta_key] = str(raw_value).strip()
+                break
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# FinMind live HTTP fetcher
+# ---------------------------------------------------------------------------
+
+_FINMIND_FETCH_TIMEOUT_SECONDS: float = 30.0
+_FINMIND_MAX_RESPONSE_BYTES: int = 20_000_000
+
+
+@dataclass
+class FinMindLiveFetcher:
+    """Live HTTP fetcher for the FinMind Taiwan market-data API.
+
+    Resolves the API token at fetch time from ``secret_ref_id``
+    (default: ``env://FINMIND_API_TOKEN``).  The token is never stored in
+    evidence records or logged; only a redacted URL is included in quota_meta.
+
+    When no token is available, ``credential_status()`` describes the gap so a
+    ``SourceHealth`` record can surface ``credential_unavailable`` without
+    making a live request.
+    """
+
+    secret_ref_id: str = "env://FINMIND_API_TOKEN"
+    timeout_seconds: float = _FINMIND_FETCH_TIMEOUT_SECONDS
+
+    def resolve_token(self) -> str | None:
+        """Return the raw token string, or None when unavailable.
+
+        Token is resolved at call time and must never be stored by callers.
+        """
+        if self.secret_ref_id.startswith("env://"):
+            env_var = self.secret_ref_id[len("env://"):]
+            return os.environ.get(env_var) or None
+        return None
+
+    def credential_status(self) -> dict[str, Any]:
+        """Return a credential availability summary safe for logging and health records.
+
+        Returns ``{"available": True, ...}`` when a token is present, or
+        ``{"available": False, "status": "credential_unavailable", ...}`` when not.
+        Never includes the token value.
+        """
+        token = self.resolve_token()
+        if not token:
+            return {
+                "available": False,
+                "status": "credential_unavailable",
+                "secret_ref_id": self.secret_ref_id,
+                "note": (
+                    f"No API token found at {self.secret_ref_id}. "
+                    "Set the environment variable to enable live FinMind fetching."
+                ),
+            }
+        return {
+            "available": True,
+            "status": "credential_ok",
+            "secret_ref_id": self.secret_ref_id,
+        }
+
+    def fetch_dataset(
+        self,
+        dataset: str,
+        *,
+        symbol: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Fetch one FinMind ``/data`` dataset.
+
+        Returns ``(payload, quota_meta)`` where ``quota_meta`` contains
+        rate-limit headers and a redacted request URL (no token).
+
+        Raises:
+            FinMindCredentialError: no token, or token rejected by provider.
+            FinMindQuotaError: provider returned quota-exceeded response.
+            FinMindFetchError: any other provider or network error.
+        """
+        token = self._require_token()
+        params: dict[str, str] = {"dataset": dataset}
+        if symbol:
+            params["data_id"] = symbol
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        url = _finmind_url(FINMIND_DATA_ENDPOINT, params)
+        return self._get(url, token=token)
+
+    def fetch_broker_report(
+        self,
+        symbol: str,
+        date: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Fetch FinMind ``TaiwanStockTradingDailyReport`` for one symbol/date.
+
+        Returns ``(payload, quota_meta)``.
+        """
+        token = self._require_token()
+        params: dict[str, str] = {"data_id": symbol, "date": date}
+        url = _finmind_url(FINMIND_BROKER_DAILY_REPORT_ENDPOINT, params)
+        return self._get(url, token=token)
+
+    def fetch_storage_objects(
+        self,
+        dataset: str,
+        date: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Fetch FinMind SponsorPro storage-object manifest for bulk backfill.
+
+        Returns ``(payload, quota_meta)``.
+        """
+        token = self._require_token()
+        params: dict[str, str] = {"dataset": dataset, "date": date}
+        url = _finmind_url(FINMIND_STORAGE_OBJECTS_ENDPOINT, params)
+        return self._get(url, token=token)
+
+    # ------------------------------------------------------------------
+    # internal helpers
+    # ------------------------------------------------------------------
+
+    def _require_token(self) -> str:
+        token = self.resolve_token()
+        if not token:
+            raise FinMindCredentialError(
+                f"FINMIND_API_TOKEN not set; secret_ref_id={self.secret_ref_id!r}. "
+                "Configure the environment variable to enable live FinMind fetching."
+            )
+        return token
+
+    def _get(
+        self,
+        url: str,
+        *,
+        token: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """HTTP GET against FinMind API. Token is sent only as Authorization header."""
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "pantheon-source-ingest/0.1",
+            },
+        )
+        quota_meta: dict[str, Any] = {"request_url": url}
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                quota_meta.update(_extract_quota_meta(response.headers))
+                quota_meta["http_status"] = response.status
+                raw = response.read(_FINMIND_MAX_RESPONSE_BYTES)
+        except urllib.error.HTTPError as exc:
+            quota_meta.update(_extract_quota_meta(exc.headers))
+            quota_meta["http_status"] = exc.code
+            if exc.code in (401, 403):
+                raise FinMindCredentialError(
+                    f"FinMind API rejected credentials (HTTP {exc.code}); "
+                    f"secret_ref_id={self.secret_ref_id!r}"
+                ) from exc
+            if exc.code == 402:
+                raise FinMindQuotaError(
+                    f"FinMind API quota exceeded (HTTP 402); "
+                    f"secret_ref_id={self.secret_ref_id!r}"
+                ) from exc
+            raise FinMindFetchError(f"FinMind API error HTTP {exc.code}: {exc.reason}") from exc
+        except urllib.error.URLError as exc:
+            raise FinMindFetchError(f"FinMind connection error: {exc.reason}") from exc
+
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FinMindFetchError("FinMind response is not valid UTF-8 JSON") from exc
+
+        if not isinstance(payload, Mapping):
+            raise FinMindFetchError("FinMind response must be a JSON object")
+
+        # FinMind wraps application errors inside a 200 HTTP response body
+        app_status = payload.get("status")
+        if app_status is not None:
+            try:
+                app_code = int(app_status)
+            except (ValueError, TypeError):
+                app_code = 0
+            if app_code not in (200, 201):
+                msg = str(payload.get("msg") or f"FinMind API returned status {app_code}")
+                if app_code in (401, 403):
+                    raise FinMindCredentialError(f"FinMind auth error: {msg}")
+                if app_code == 402:
+                    raise FinMindQuotaError(f"FinMind quota error: {msg}")
+                raise FinMindFetchError(f"FinMind API status {app_code}: {msg}")
+            quota_meta["api_status"] = app_code
+
+        return dict(payload), quota_meta
+
+
+# ---------------------------------------------------------------------------
+# Active-universe fanout plan for FinMind
+# ---------------------------------------------------------------------------
+
+FINMIND_ARCHIVE_DATASETS: frozenset[str] = frozenset({"TaiwanStockPrice"})
+FINMIND_CHIP_DATASETS: tuple[str, ...] = (
+    "TaiwanStockDayTrading",
+    "TaiwanStockInstitutionalInvestorsBuySell",
+    "TaiwanStockMarginPurchaseShortSale",
+    "TaiwanStockSecuritiesLending",
+    "TaiwanStockShareholding",
+)
+FINMIND_NEWS_DATASET = "TaiwanStockNews"
+
+
+def build_finmind_fetch_plan(
+    symbols_by_tier: Mapping[str, Sequence[str]],
+    date: str,
+    *,
+    include_broker_detail: bool = True,
+) -> list[dict[str, Any]]:
+    """Build an active-universe-aware fetch plan for FinMind Taiwan datasets.
+
+    ``symbols_by_tier`` maps tier name (``"core_universe"``,
+    ``"candidate_universe"``, ``"archive_universe"``) to a list of stock symbols.
+
+    Archive symbols receive only price baseline; chip detail, news metadata, and
+    broker top20 are skipped to avoid unnecessary quota consumption.
+
+    Returns a list of fetch-spec dicts with:
+    - ``dataset``: FinMind dataset name
+    - ``symbol``: stock symbol (uppercase)
+    - ``date``: target date string
+    - ``universe_tier``: tier string for scheduling context
+    - ``fetcher``: ``"dataset"`` (for /data endpoint) or ``"broker_report"``
+    """
+    _CORE = "core_universe"
+    _CANDIDATE = "candidate_universe"
+    _ARCHIVE = "archive_universe"
+
+    core: list[str] = [str(s).strip().upper() for s in symbols_by_tier.get(_CORE, [])]
+    candidate: list[str] = [str(s).strip().upper() for s in symbols_by_tier.get(_CANDIDATE, [])]
+    archive: list[str] = [str(s).strip().upper() for s in symbols_by_tier.get(_ARCHIVE, [])]
+    core_set = set(core)
+    candidate_set = set(candidate)
+
+    def _tier(sym: str) -> str:
+        if sym in core_set:
+            return _CORE
+        if sym in candidate_set:
+            return _CANDIDATE
+        return _ARCHIVE
+
+    plan: list[dict[str, Any]] = []
+
+    # Price baseline: all tiers
+    for sym in core + candidate + archive:
+        plan.append({"dataset": "TaiwanStockPrice", "symbol": sym, "date": date,
+                     "universe_tier": _tier(sym), "fetcher": "dataset"})
+
+    # Chip detail: core + candidate only (skip archive)
+    for dataset in FINMIND_CHIP_DATASETS:
+        for sym in core + candidate:
+            plan.append({"dataset": dataset, "symbol": sym, "date": date,
+                         "universe_tier": _tier(sym), "fetcher": "dataset"})
+
+    # News metadata: core + candidate only (skip archive)
+    for sym in core + candidate:
+        plan.append({"dataset": FINMIND_NEWS_DATASET, "symbol": sym, "date": date,
+                     "universe_tier": _tier(sym), "fetcher": "dataset"})
+
+    # Broker top20: core + candidate only (entitlement: sponsor; skip archive)
+    if include_broker_detail:
+        for sym in core + candidate:
+            plan.append({"dataset": FINMIND_BROKER_REPORT_DATASET, "symbol": sym, "date": date,
+                         "universe_tier": _tier(sym), "fetcher": "broker_report"})
+
+    return plan

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 try:
     from .models.dataset_lineage import NormalizedDataset, RawDataset
@@ -25,6 +25,32 @@ _PRIMARY_EXCHANGE_SUFFIX = {
     "ARCA": "US",
     "BATS": "US",
 }
+
+
+def _symbol(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value in (None, "", ".", "-", "--", "N/A"):
+        return None
+    try:
+        return float(str(value).replace(",", "").strip())
+    except ValueError:
+        return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    number = _float_or_none(value)
+    if number is None:
+        return None
+    return int(number)
+
+
+def _ratio(numerator: int | None, denominator: int | None) -> float | None:
+    if numerator is None or denominator in (None, 0):
+        return None
+    return numerator / denominator
 
 
 def build_us_security_master(listing: dict[str, Any]) -> SecurityMaster:
@@ -152,4 +178,168 @@ def build_us_dataset_lineage_source(
         "source_class": source_class,
         "frequency": frequency,
         "symbol_universe": list(symbol_universe),
+    }
+
+
+def build_us_price_daily_row(
+    *,
+    symbol: str,
+    trade_date: str,
+    open: float | int | str | None,
+    high: float | int | str | None,
+    low: float | int | str | None,
+    close: float | int | str | None,
+    volume: int | str | None,
+    provider: str,
+    available_time: str | None = None,
+    currency: str = "USD",
+    adjustment_policy: str = "provider_close_unadjusted_until_corporate_action_policy_verified",
+    raw_row: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    symbol_value = _symbol(symbol)
+    return {
+        "schema_version": "us_price_daily.v1",
+        "target_table": "us_price_daily",
+        "provider": provider,
+        "symbol": symbol_value,
+        "symbol_canonical": f"{symbol_value}.US",
+        "trade_date": trade_date,
+        "open": _float_or_none(open),
+        "high": _float_or_none(high),
+        "low": _float_or_none(low),
+        "close": _float_or_none(close),
+        "volume": _int_or_none(volume),
+        "currency": currency,
+        "adjustment_policy": adjustment_policy,
+        "available_time": available_time or trade_date,
+        "raw_row": dict(raw_row or {}),
+    }
+
+
+def build_sec_filing_event_row(
+    *,
+    cik: str,
+    accession_number: str,
+    form_type: str,
+    filing_date: str,
+    symbol: str | None = None,
+    report_date: str | None = None,
+    accepted_at: str | None = None,
+    primary_document_url: str | None = None,
+    company_name: str | None = None,
+    raw_row: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    symbol_value = _symbol(symbol) if symbol else ""
+    return {
+        "schema_version": "sec_filing_event.v1",
+        "target_table": "sec_filing_event",
+        "provider": "SEC EDGAR",
+        "cik": str(cik).zfill(10),
+        "symbol": symbol_value or None,
+        "symbol_canonical": f"{symbol_value}.US" if symbol_value else None,
+        "company_name": company_name,
+        "accession_number": accession_number,
+        "form_type": form_type,
+        "filing_date": filing_date,
+        "report_date": report_date,
+        "accepted_at": accepted_at,
+        "available_time": accepted_at or filing_date,
+        "primary_document_url": primary_document_url,
+        "raw_row": dict(raw_row or {}),
+    }
+
+
+def build_sec_company_fact_row(
+    *,
+    cik: str,
+    taxonomy: str,
+    concept: str,
+    unit: str,
+    value: Any,
+    filed_date: str,
+    symbol: str | None = None,
+    end_date: str | None = None,
+    fiscal_year: int | str | None = None,
+    fiscal_period: str | None = None,
+    form_type: str | None = None,
+    company_name: str | None = None,
+    raw_row: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    symbol_value = _symbol(symbol) if symbol else ""
+    return {
+        "schema_version": "sec_company_fact.v1",
+        "target_table": "sec_company_fact",
+        "provider": "SEC EDGAR",
+        "cik": str(cik).zfill(10),
+        "symbol": symbol_value or None,
+        "symbol_canonical": f"{symbol_value}.US" if symbol_value else None,
+        "company_name": company_name,
+        "taxonomy": taxonomy,
+        "concept": concept,
+        "unit": unit,
+        "value": value,
+        "fiscal_year": fiscal_year,
+        "fiscal_period": fiscal_period,
+        "form_type": form_type,
+        "filed_date": filed_date,
+        "end_date": end_date,
+        "available_time": filed_date,
+        "raw_row": dict(raw_row or {}),
+    }
+
+
+def build_macro_fred_observation_row(
+    *,
+    series_id: str,
+    observation_date: str,
+    value: float | int | str,
+    frequency: str,
+    release_lag_days: int | None = None,
+    realtime_start: str | None = None,
+    realtime_end: str | None = None,
+    raw_row: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "macro_fred_observation.v1",
+        "target_table": "macro_fred_observation",
+        "provider": "FRED",
+        "series_id": str(series_id).strip().upper(),
+        "observation_date": observation_date,
+        "value": _float_or_none(value),
+        "realtime_start": realtime_start,
+        "realtime_end": realtime_end,
+        "frequency": frequency,
+        "release_lag_days": release_lag_days,
+        "available_time": realtime_start or observation_date,
+        "raw_row": dict(raw_row or {}),
+    }
+
+
+def build_us_short_volume_daily_row(
+    *,
+    symbol: str,
+    trade_date: str,
+    short_volume: int | str | None,
+    short_exempt_volume: int | str | None,
+    total_volume: int | str | None,
+    market: str | None = None,
+    raw_row: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    symbol_value = _symbol(symbol)
+    short = _int_or_none(short_volume)
+    total = _int_or_none(total_volume)
+    return {
+        "schema_version": "us_short_volume_daily.v1",
+        "target_table": "us_short_volume_daily",
+        "provider": "FINRA",
+        "symbol": symbol_value,
+        "symbol_canonical": f"{symbol_value}.US",
+        "trade_date": trade_date,
+        "market": market,
+        "short_volume": short,
+        "short_exempt_volume": _int_or_none(short_exempt_volume),
+        "total_volume": total,
+        "short_volume_ratio": _ratio(short, total),
+        "available_time": trade_date,
+        "raw_row": dict(raw_row or {}),
     }

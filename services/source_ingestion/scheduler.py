@@ -68,12 +68,19 @@ class SourceWatermark:
 class IngestBatch:
     records: tuple[SourceRecord, ...] | list[SourceRecord] = field(default_factory=tuple)
     next_watermark: str | None = None
+    empty_ok: bool = False
+    empty_reason: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "records", tuple(self.records))
         for record in self.records:
             if not isinstance(record, SourceRecord):
                 raise SourceEvidenceError("ingest batch records must be SourceRecord instances")
+        object.__setattr__(self, "empty_ok", bool(self.empty_ok))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+        if self.empty_ok and not str(self.empty_reason or "").strip():
+            raise SourceEvidenceError("ingest batch empty_reason is required when empty_ok is true")
 
 
 @dataclass(frozen=True)
@@ -88,6 +95,7 @@ class CrawlFrontierItem:
     available_at: str | None = None
     last_error: str | None = None
     ingest_run_id: str | None = None
+    job_parameters: Mapping[str, Any] = field(default_factory=dict)
     created_at: str = ""
     updated_at: str = ""
     schema_version: str = "crawl_frontier_item.v1"
@@ -108,6 +116,7 @@ class CrawlFrontierItem:
         now = _utc_now()
         object.__setattr__(self, "created_at", self.created_at or now)
         object.__setattr__(self, "updated_at", self.updated_at or now)
+        object.__setattr__(self, "job_parameters", dict(self.job_parameters))
 
     @classmethod
     def new(
@@ -118,6 +127,7 @@ class CrawlFrontierItem:
         trace_id: str | None = None,
         max_attempts: int = 2,
         available_at: str | None = None,
+        job_parameters: Mapping[str, Any] | None = None,
     ) -> "CrawlFrontierItem":
         return cls(
             frontier_id=f"frontier-{uuid4().hex[:12]}",
@@ -126,6 +136,7 @@ class CrawlFrontierItem:
             trace_id=trace_id,
             max_attempts=max_attempts,
             available_at=available_at or _utc_now(),
+            job_parameters=dict(job_parameters or {}),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -141,6 +152,7 @@ class CrawlFrontierItem:
             "available_at": self.available_at,
             "last_error": self.last_error,
             "ingest_run_id": self.ingest_run_id,
+            "job_parameters": dict(self.job_parameters),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -158,6 +170,7 @@ class CrawlFrontierItem:
             available_at=data.get("available_at"),
             last_error=data.get("last_error"),
             ingest_run_id=data.get("ingest_run_id"),
+            job_parameters=dict(data.get("job_parameters") or {}),
             created_at=str(data.get("created_at") or ""),
             updated_at=str(data.get("updated_at") or ""),
             schema_version=str(data.get("schema_version", "crawl_frontier_item.v1")),
@@ -240,9 +253,14 @@ class JsonlIngestScheduleStore:
         trace_id: str | None = None,
         max_attempts: int = 2,
         available_at: str | None = None,
+        job_parameters: Mapping[str, Any] | None = None,
     ) -> CrawlFrontierItem:
         for item in self._frontier.values():
-            if item.connector_id == connector_id and item.status in {"queued", "running", "retry"}:
+            if (
+                item.connector_id == connector_id
+                and item.status in {"queued", "running", "retry"}
+                and dict(item.job_parameters) == dict(job_parameters or {})
+            ):
                 return item
         item = CrawlFrontierItem.new(
             connector_id=connector_id,
@@ -250,6 +268,7 @@ class JsonlIngestScheduleStore:
             trace_id=trace_id,
             max_attempts=max_attempts,
             available_at=available_at,
+            job_parameters=job_parameters,
         )
         self._frontier[item.frontier_id] = item
         self._append("crawl_frontier_item", item.frontier_id, item.to_dict())
@@ -456,6 +475,10 @@ class IngestionScheduler:
                 run.raw_count = len(batch.records)
                 run.normalized_count = sum(1 for record in batch.records if not record.is_rejected)
                 run.rejected_count = sum(1 for record in batch.records if record.is_rejected)
+                if run.raw_count == 0 and not batch.empty_ok:
+                    raise SourceEvidenceError(
+                        "scheduled ingest returned zero rows without explicit no-new-data marker"
+                    )
                 rejected_dlq_entries: list[DeadLetterEntry] = []
                 rejected_audit_actions: list[AuditAction] = []
                 for index, record in enumerate((record for record in batch.records if record.is_rejected), start=1):
