@@ -63,6 +63,11 @@ from services.source_ingestion.strategy_seed_store import (  # noqa: E402
     StrategySpecSeedStore,
     StrategySpecSeedStoreError,
 )
+from services.source_ingestion.trainer_seed_bridge import (  # noqa: E402
+    TrainerSeedBridge,
+    TrainerSeedBridgeError,
+    trainer_seed_kind_from_text,
+)
 from persona_strategy_discovery import (  # noqa: E402
     PersonaStrategyDiscoveryService,
     extract_persona_strategy_profile,
@@ -12748,6 +12753,139 @@ async def get_trainer_replay_detail(
     return replay
 
 
+def _tw04_trainer_seed_summary(
+    *,
+    replay: Dict[str, Any],
+    commit_result: Dict[str, Any],
+) -> str:
+    parts: List[str] = []
+    objective = str(replay.get("objective") or "").strip()
+    if objective:
+        parts.append(objective)
+    for event in replay.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("event_type") or "").strip().lower() == "message":
+            continue
+        summary = str(event.get("summary") or "").strip()
+        if summary and summary not in parts:
+            parts.append(summary)
+    commit_event = commit_result.get("event") or {}
+    if isinstance(commit_event, dict):
+        summary = str(commit_event.get("summary") or "").strip()
+        if summary and summary not in parts:
+            parts.append(summary)
+    return " ".join(parts)
+
+
+def _tw04_trainer_seed_kind(
+    *,
+    payload: Dict[str, Any],
+    summary: str,
+) -> str:
+    raw = str(payload.get("seed_kind") or payload.get("seedKind") or "").strip()
+    if raw:
+        return raw
+    return trainer_seed_kind_from_text(summary).value
+
+
+def _tw04_trainer_seed_artifact_refs(commit_result: Dict[str, Any]) -> Dict[str, Any]:
+    refs = dict(commit_result.get("artifacts") or {})
+    event = commit_result.get("event") or {}
+    if isinstance(event, dict) and isinstance(event.get("artifact_refs"), dict):
+        refs.update({k: v for k, v in event["artifact_refs"].items() if v})
+    return refs
+
+
+def _tw04_trainer_seed_event(
+    *,
+    replay: Dict[str, Any],
+    commit_result: Dict[str, Any],
+    request_payload: Dict[str, Any],
+    identity: OperatorIdentity,
+) -> Dict[str, Any]:
+    commit_event = commit_result.get("event") or {}
+    event_id = str(commit_event.get("event_id") or f"{commit_result.get('session_id')}-commit").strip()
+    session_id = str(commit_result.get("session_id") or replay.get("session_id") or "").strip()
+    summary = _tw04_trainer_seed_summary(replay=replay, commit_result=commit_result)
+    seed_kind = _tw04_trainer_seed_kind(payload=request_payload, summary=summary)
+    artifact_refs = _tw04_trainer_seed_artifact_refs(commit_result)
+    return {
+        "event_type": "trainer_commit",
+        "event_id": event_id,
+        "session_id": session_id,
+        "persona_id": replay.get("persona_id"),
+        "summary": summary,
+        "seed_kind": seed_kind,
+        "committed_by": commit_result.get("committed_by") or identity.operator_id,
+        "committed_at": commit_result.get("committed_at") or utc_now(),
+        "raw_ref": f"evidence://trainer/{session_id}/{event_id}",
+        "artifact_refs": artifact_refs,
+        "strategy_seed": {
+            "hypothesis": summary,
+            "asset_class": ["unspecified"],
+            "market_scope": ["unspecified"],
+            "required_data": ["governed trainer commit evidence"],
+            "risk_notes": ["trainer_seed_requires_review"],
+        },
+    }
+
+
+def _tw04_trainer_seed_extraction_response(
+    *,
+    replay: Dict[str, Any],
+    commit_result: Dict[str, Any],
+    request_payload: Dict[str, Any],
+    identity: OperatorIdentity,
+) -> Dict[str, Any]:
+    bridge_event = _tw04_trainer_seed_event(
+        replay=replay,
+        commit_result=commit_result,
+        request_payload=request_payload,
+        identity=identity,
+    )
+    try:
+        result = TrainerSeedBridge(created_by=identity.operator_id).ingest_event(
+            bridge_event,
+            requested_by=identity.operator_id,
+        )
+    except TrainerSeedBridgeError as exc:
+        log.info("Trainer seed bridge refused committed event: %s", exc)
+        return {
+            "status": "refused",
+            "code": exc.code,
+            "message": str(exc),
+            "research_only": True,
+            "execution_route": "none",
+        }
+    except Exception as exc:  # pragma: no cover - defensive BFF degradation path.
+        log.exception("Trainer seed bridge unavailable for committed event: %s", exc)
+        return {
+            "status": "unavailable",
+            "code": "trainer_seed_bridge_unavailable",
+            "message": "Trainer seed extraction is temporarily unavailable.",
+            "research_only": True,
+            "execution_route": "none",
+        }
+
+    return {
+        "status": "created" if result.was_created else "existing",
+        "seed_id": result.seed.seed_id,
+        "seed_kind": result.seed.metadata.get("seed_kind"),
+        "interaction_id": result.interaction_record.interaction_id,
+        "intent": result.classification.primary_intent.value,
+        "requires_human_review": result.classification.requires_human_review,
+        "trainer_seed_extraction_ref": result.extraction_ref.to_dict(),
+        "redaction_findings": list(result.redaction_findings),
+        "review_inbox": {
+            "status": result.seed.status.value,
+            "route": "/bff/management/strategy-seeds",
+        },
+        "research_only": True,
+        "execution_route": "none",
+    }
+
+
 @app.post("/api/v1/trainer/sessions/{session_id}/commit")
 async def commit_trainer_replay(
     session_id: str,
@@ -12811,6 +12949,12 @@ async def commit_trainer_replay(
             "Trainer replay store unavailable",
             "Trainer replay commit store is unavailable.",
         )
+    result["seed_extraction"] = _tw04_trainer_seed_extraction_response(
+        replay=replay,
+        commit_result=result,
+        request_payload=payload,
+        identity=identity,
+    )
     return result
 
 
