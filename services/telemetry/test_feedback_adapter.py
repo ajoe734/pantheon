@@ -1069,6 +1069,59 @@ class TestLineageReadModel(unittest.TestCase):
         self.assertEqual(order_context["partial_fill_ratio"], 0.4)
         self.assertEqual(order_context["fill_rate"], 0.4)
 
+    def test_pnl_snapshot_lineage_preserves_runtime_performance_metrics(self):
+        """Runtime PnL snapshots must keep processed/fill/open-position counters."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-pnl-runtime-performance",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-06-12T15:40:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-pnl-001",
+            "runtime_id": "runtime-pnl",
+            "capital_pool_id": "pool-pnl",
+            "artifact_id": "artifact-pnl",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-pnl",
+            "persona_capital_binding_id": "pcb-pnl",
+            "trace_id": "trace-pnl",
+            "target": {
+                "strategy_id": "strat-pnl",
+                "registry_id": "reg-pnl",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "pnl": 0.0,
+                "processed_signal_count": 1,
+                "execution_event_count": 1,
+                "fill_event_count": 1,
+                "fill_rate": 1.0,
+                "open_position_count": 1,
+                "open_bracket_order_count": 0,
+                "avg_slippage_bps": 0.0,
+            },
+            "metadata": {
+                "runtime_package": "paper_execution_runtime",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-pnl", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-pnl-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["processed_signal_count"], 1)
+        self.assertEqual(order_context["execution_event_count"], 1)
+        self.assertEqual(order_context["fill_event_count"], 1)
+        self.assertEqual(order_context["fill_rate"], 1.0)
+        self.assertEqual(order_context["open_position_count"], 1)
+        self.assertEqual(order_context["open_bracket_order_count"], 0)
+        self.assertEqual(order_context["pnl"], 0.0)
+
     def test_order_cancel_lineage_preserves_cancel_ack(self):
         """Cancel acknowledgements must keep reason, actor, and unfilled quantity."""
         adapter = FeedbackStoreAdapter()
