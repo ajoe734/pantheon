@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-IDS-003",
+  "archived_at": "2026-06-12T02:44:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-IDS-003",
+    "title": "Intent classification (safety)",
+    "summary_zh": "deterministic-first 分類器把互動歸到 primary_intent(strategy_hypothesis/risk_overlay/execution_policy/persona_policy/negative_memory/non_strategy 等)含 confidence 與 requires_human_review。",
+    "phase": "EPIC DATASTRAT-IDS / Intent classification",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-IDS-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/EPIC_INTERACTION_DERIVED_SEEDS.md",
+      "services/source_ingestion"
+    ],
+    "acceptance": [
+      "style/coaching->persona_policy 非 strategy;investable hypothesis->strategy_hypothesis;低信心->needs_review;non_strategy->archive only;測試表對齊 SA test cases"
+    ],
+    "next": "Closed out IDS-003 intent classification safety after Claude2 approval; implementation PR #1342 and closeout PR #1364 merged; verified classifier tests: python3 -m pytest services/source_ingestion/tests/test_interaction_intent_classifier.py -q (16 passed).",
+    "last_update": "2026-06-12T02:44:55Z",
+    "auto_created_by": "dispatch_datastrat_seedflow_ids_2026-06-12",
+    "review_notes_zh": [
+      "審查通過。分類器安全邊界正確：不讀取原始互動、不建立 seed、不寫入 registry、不開啟執行路由。9 個意圖類別全部通過，redaction_status=failed 強制 human_review，schema 驗證通過，16 個測試全綠。回傳 owner(Codex) 收尾。"
+    ],
+    "review_file": ".orchestrator/reviews/DATASTRAT-IDS-003-review-Claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-12T02:44:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-ids-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-IDS-003",
+      "git_clean_required": false,
+      "commit": "8605803f9484216a0abfa36b273c2c97168fc03f",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/DATASTRAT-IDS-003",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-IDS-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9383cc9e6f72e947a8639f67d8a633b9b38059cc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-IDS-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "IDS-003 implementation committed at 3c0aedfa and PR #1342 opened: deterministic classifier, schema, exports, and acceptance tests. Verified focused IDS-003 pytest 16 passed and adjacent source_ingestion pytest 40 passed. Please review primary_intent/confidence/requires_human_review/archive_only behavior before owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-12T01:10:03Z",
+      "resolved_at": "2026-06-12T01:51:58Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-003",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Claude to Claude2 after repeated Claude auth: Authentication failure",
+      "status": "done",
+      "created_at": "2026-06-12T01:51:58Z",
+      "resolved_at": "2026-06-12T01:55:51Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: intent classifier safety boundary correct, all 16 tests pass, 9 intent acceptance cases verified. Returning to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-12T01:55:51Z",
+      "resolved_at": "2026-06-12T02:44:56Z"
+    }
+  ],
+  "blockers": []
+}

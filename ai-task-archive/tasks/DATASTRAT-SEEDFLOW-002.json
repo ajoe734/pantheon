@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-SEEDFLOW-002",
+  "archived_at": "2026-06-12T03:52:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-SEEDFLOW-002",
+    "title": "Strategy Seed Review Inbox (read model + actions)",
+    "summary_zh": "為 StrategySpecSeed 加治理審查面:accept/reject/merge/request-evidence/convert-to-spec-seed/submit-replication;BFF read model(seed inbox)+command endpoints;把 persona promote_seed_candidate 顯示為建議而非自動晉升。",
+    "phase": "EPIC DATASTRAT-SEEDFLOW / Seed review inbox",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-SEEDFLOW-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/DISPATCH_SEED_PIPELINE_CLOSEOUT.md",
+      "services/source_ingestion/strategy_seed_store.py",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "inbox 可依 status/source_kind/strategy_family 篩選並回傳 seed card;每個 review action 依狀態機轉移並寫 SeedReviewDecision audit;accept->convert 後可被 SEEDFLOW-001 提交;reject/archive 為終態;read-role 可讀不可執行;persona 建議僅為 suggestion 不自動晉升"
+    ],
+    "next": "Strategy Seed Review Inbox delivered and closed: store review actions (accept/reject/request-evidence/convert-to-spec-seed/archive/merge) with SeedReviewDecision audit records and idempotency; BFF seed inbox read model with status/source_kind/strategy_family/min_confidence filters and seed card; command endpoints with operator-role enforcement; persona promote_seed_candidate surfaced as suggestion only; review state machine v1 enforces transitions and terminal statuses. Implementation merged via PRs #1369 and #1372, closeout PR #1376 merged. 33 tests pass. CI fix for push-event range error applied.",
+    "last_update": "2026-06-12T03:52:13Z",
+    "auto_created_by": "dispatch_datastrat_seedflow_ids_2026-06-12",
+    "review_notes_zh": [
+      "Codex review found and fixed a durable idempotency gap in StrategySpecSeed review commands after BFF cache eviction; fix merged in PR #1372 at merge commit 7d70b87fced52a9f0dd9cf8188e7d29ec7d59e13.",
+      "Verified seed inbox/read/action acceptance plus durable replay/conflict regression with focused pytest: services/source_ingestion/tests/test_strategy_seed_store.py services/control-plane/bff/test_datastrat_seed_review_bff.py services/control-plane/bff/test_datastrat_seed_replication_bff.py services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py (33 passed)."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-12T03:52:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-seedflow-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-SEEDFLOW-002",
+      "git_clean_required": false,
+      "commit": "bee028ce96a6bca014f8b9761f87190943fe881f",
+      "commit_subject": "DATASTRAT-SEEDFLOW-002: fix CI push-event range error",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Fix": "reconciled the diverged local and remote histories via merge, then",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "DATASTRAT-SEEDFLOW-002",
+        "Reviewer": "Codex",
+        "Verified": "no new code changes; structural git fix only"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-SEEDFLOW-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5a06d37e1072f4dcb28322e5111a871852a1caf5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-SEEDFLOW-002",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-06-12T01:29:46Z",
+      "resolved_at": "2026-06-12T02:36:28Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEEDFLOW-002",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Owner implementation merged in PR #1369 (merge 1f90eea05a17a54a569ac1ec0a3bd8626fa24f47). Local validation: pytest services/source_ingestion/tests/test_strategy_seed_store.py services/control-plane/bff/test_datastrat_seed_review_bff.py services/control-plane/bff/test_datastrat_seed_replication_bff.py services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py. GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator. Please review/approve so owner can run done.",
+      "status": "done",
+      "created_at": "2026-06-12T02:54:38Z",
+      "resolved_at": "2026-06-12T02:57:55Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEEDFLOW-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Claude to Codex after repeated Claude auth: Authentication failure",
+      "status": "done",
+      "created_at": "2026-06-12T02:57:55Z",
+      "resolved_at": "2026-06-12T03:11:09Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEEDFLOW-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after PR #1372 merged durable idempotency fix; owner Codex2 should finalize closeout to done.",
+      "status": "done",
+      "created_at": "2026-06-12T03:11:09Z",
+      "resolved_at": "2026-06-12T03:23:45Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEEDFLOW-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: ERROR: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.",
+      "status": "done",
+      "created_at": "2026-06-12T03:23:45Z",
+      "resolved_at": "2026-06-12T03:41:50Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEEDFLOW-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Restoring review_approved: accidental in_progress regression from progress call during CI investigation; task has existing Codex review_notes_zh and PR #1376 is now merged",
+      "status": "done",
+      "created_at": "2026-06-12T03:51:57Z",
+      "resolved_at": "2026-06-12T03:52:20Z"
+    }
+  ],
+  "blockers": []
+}
