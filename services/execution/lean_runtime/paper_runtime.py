@@ -253,8 +253,35 @@ class PaperExecutionAlgorithm:
     def SetHoldings(self, symbol: str, target_percent: float) -> None:  # noqa: N802
         security = self._security(symbol)
         target_quantity = (self._initial_cash * float(target_percent)) / max(float(security.Price), 0.01)
-        delta = target_quantity - self._holding(symbol).Quantity
-        self._holding(symbol).Quantity = target_quantity
+        holding = self._holding(symbol)
+        current_quantity = holding.Quantity
+        delta = target_quantity - current_quantity
+        if abs(delta) <= 1e-12:
+            metadata: dict[str, Any] = {
+                "noop_reason": "set_holdings_no_delta",
+                "decision_status": "no_order",
+                "order_status": "not_submitted",
+                "computed_quantity": 0.0,
+                "position_quantity": float(current_quantity),
+                "target_quantity": float(target_quantity),
+                "target_percent": float(target_percent),
+                "price": float(security.Price),
+            }
+            for field in ("signal_id", "requested_quantity", "quantity_type", "order_type"):
+                value = self._current_signal_metadata.get(field)
+                if value not in (None, "", [], {}):
+                    metadata[field] = value
+            self._publish(
+                "paper_order_simulated",
+                symbol,
+                0.0,
+                "set_holdings_no_delta_noop",
+                broker_submission_status="not_submitted_signal_noop",
+                submitted_to_broker=False,
+                metadata=metadata,
+            )
+            return
+        holding.Quantity = target_quantity
         self._cash -= delta * float(security.Price)
         self._publish("paper_fill_simulated", symbol, delta, "set_holdings")
 
