@@ -175,7 +175,7 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
 def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
     metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
     context: dict[str, Any] = {}
-    for key in ("signal_id", "strategy_id", "source_worker", "run_id"):
+    for key in ("signal_id", "strategy_id", "source_worker", "run_id", "binding_id"):
         value = signal.get(key)
         if value not in (None, ""):
             context[key] = value
