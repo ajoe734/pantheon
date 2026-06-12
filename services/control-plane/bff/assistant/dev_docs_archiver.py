@@ -37,6 +37,28 @@ def _slug(text: str, max_len: int = 40) -> str:
     return safe[:max_len].strip("_")
 
 
+def _match_parent_permissions(path: Path, *, mode: int) -> None:
+    try:
+        parent_stat = path.parent.stat()
+        os.chown(path, parent_stat.st_uid, parent_stat.st_gid)
+    except OSError:
+        pass
+    try:
+        path.chmod(mode)
+    except OSError:
+        pass
+
+
+def _ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    _match_parent_permissions(path, mode=0o775)
+
+
+def _write_text(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    _match_parent_permissions(path, mode=0o664)
+
+
 def _source_citation_block(source_refs: list) -> str:
     if not source_refs:
         return ""
@@ -194,6 +216,67 @@ def system_design_to_md(sd: SystemDesign) -> str:
     return "\n".join(lines)
 
 
+def architecture_doc_to_md(packet: DevDocPacket) -> str:
+    sd = packet.system_design
+    lines = [
+        f"# Architecture Note: {sd.title.removeprefix('SD: ')}",
+        "",
+        f"- **Packet ID**: `{packet.packet_id}`",
+        f"- **Conversation ID**: `{packet.conversation_id}`",
+        f"- **Generated at**: {packet.generated_at}",
+        "",
+        "## Boundary",
+        "",
+        sd.architecture,
+        "",
+        "## API Surface",
+        "",
+        *[f"- {item}" for item in (sd.api_contract or ["(none)"])],
+        "",
+        "## Tool And Action Surface",
+        "",
+        *[f"- {item}" for item in (sd.tool_action_contract or ["(none)"])],
+        "",
+        "## Rollout And Rollback",
+        "",
+        f"- Rollout: {sd.rollout}",
+        f"- Rollback: {sd.rollback}",
+        "",
+        _source_citation_block(packet.source_refs or sd.source_refs or []),
+    ]
+    return "\n".join(lines)
+
+
+def ui_doc_to_md(packet: DevDocPacket) -> str:
+    capture = packet.requirement_capture
+    sd = packet.system_design
+    lines = [
+        f"# UI Flow Note: {capture.problem[:80]}",
+        "",
+        f"- **Packet ID**: `{packet.packet_id}`",
+        f"- **Conversation ID**: `{packet.conversation_id}`",
+        f"- **Generated at**: {packet.generated_at}",
+        "",
+        "## Operator Intent",
+        "",
+        capture.user_intent,
+        "",
+        "## UI Routes / Components",
+        "",
+        *[f"- {item}" for item in (sd.ui_routes or ["(none)"])],
+        "",
+        "## Required Interaction Contract",
+        "",
+        "- Preview any write-style action before execution.",
+        "- Validate RBAC, control mode, and idempotency before execution.",
+        "- Require confirmation or a confirm token when the action risk policy requires it.",
+        "- Show packet, queue, provider, and receipt identifiers after execution.",
+        "",
+        _source_citation_block(packet.source_refs or capture.source_refs or []),
+    ]
+    return "\n".join(lines)
+
+
 def task_brief_to_md(task: ExecutionTask, packet_id: str) -> str:
     lines = [
         f"# Task Brief: {task.task_id}",
@@ -244,36 +327,50 @@ def archive_packet(
     """Write packet artifacts to the canonical doc locations and return paths."""
     root = Path(repo_root)
     slug = _slug(packet.requirement_capture.problem)
-    bundle_dir = root / "docs" / "04" / f"sa_sd_{packet.packet_id}_{slug}"
-    bundle_dir.mkdir(parents=True, exist_ok=True)
+    docs_dir = root / "docs"
+    docs04_dir = docs_dir / "04"
+    _ensure_dir(docs_dir)
+    _ensure_dir(docs04_dir)
+    bundle_dir = docs04_dir / f"sa_sd_{packet.packet_id}_{slug}"
+    _ensure_dir(bundle_dir)
 
     # Requirement capture
     req_path = bundle_dir / "requirement_capture.md"
-    req_path.write_text(requirement_capture_to_md(packet.requirement_capture), encoding="utf-8")
+    _write_text(req_path, requirement_capture_to_md(packet.requirement_capture))
 
     # System analysis
     sa_path = bundle_dir / "system_analysis.md"
-    sa_path.write_text(system_analysis_to_md(packet.system_analysis), encoding="utf-8")
+    _write_text(sa_path, system_analysis_to_md(packet.system_analysis))
 
     # System design
     sd_path = bundle_dir / "system_design.md"
-    sd_path.write_text(system_design_to_md(packet.system_design), encoding="utf-8")
+    _write_text(sd_path, system_design_to_md(packet.system_design))
 
     # Machine-readable packet
     packet_json_path = bundle_dir / "dev_doc_packet.json"
-    packet_json_path.write_text(
-        packet.model_dump_json(indent=2, by_alias=False),
-        encoding="utf-8",
-    )
+    _write_text(packet_json_path, packet.model_dump_json(indent=2, by_alias=False))
+
+    doc_slug = f"sa_sd_{packet.packet_id}_{slug}"
+    architecture_dir = root / "docs" / "02-architecture"
+    architecture_dir.mkdir(parents=True, exist_ok=True)
+    architecture_path = architecture_dir / f"{doc_slug}_architecture.md"
+    architecture_path.write_text(architecture_doc_to_md(packet), encoding="utf-8")
+
+    ui_dir = root / "docs" / "05-ui"
+    ui_dir.mkdir(parents=True, exist_ok=True)
+    ui_path = ui_dir / f"{doc_slug}_ui.md"
+    ui_path.write_text(ui_doc_to_md(packet), encoding="utf-8")
 
     # Task briefs
-    briefs_dir = root / ".orchestrator" / "task-briefs"
-    briefs_dir.mkdir(parents=True, exist_ok=True)
+    orchestrator_dir = root / ".orchestrator"
+    briefs_dir = orchestrator_dir / "task-briefs"
+    _ensure_dir(orchestrator_dir)
+    _ensure_dir(briefs_dir)
     brief_paths: list[str] = []
     for task in packet.execution_tasks:
         safe_id = task.task_id.lower().replace("_", "-")
         brief_file = briefs_dir / f"{safe_id}.md"
-        brief_file.write_text(task_brief_to_md(task, packet.packet_id), encoding="utf-8")
+        _write_text(brief_file, task_brief_to_md(task, packet.packet_id))
         brief_paths.append(str(brief_file.relative_to(root)))
 
     # Relative paths returned for callers
@@ -281,6 +378,8 @@ def archive_packet(
         requirementCapture=str(req_path.relative_to(root)),
         systemAnalysis=str(sa_path.relative_to(root)),
         systemDesign=str(sd_path.relative_to(root)),
+        architectureDocs=[str(architecture_path.relative_to(root))],
+        uiDocs=[str(ui_path.relative_to(root))],
         taskBriefs=brief_paths,
     )
 

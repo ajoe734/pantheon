@@ -481,10 +481,13 @@ def _artifact_paths(capture: RequirementCapture, sd: SystemDesign, packet_id: st
     """
     slug = _slug(capture.problem)
     bundle_prefix = f"docs/04/sa_sd_{packet_id}_{slug}" if packet_id else f"docs/04/sa_sd_{slug}"
+    doc_slug = f"sa_sd_{packet_id}_{slug}" if packet_id else f"sa_sd_{slug}"
     paths = [
         f"{bundle_prefix}/requirement_capture.md",
         f"{bundle_prefix}/system_analysis.md",
         f"{bundle_prefix}/system_design.md",
+        f"docs/02-architecture/{doc_slug}_architecture.md",
+        f"docs/05-ui/{doc_slug}_ui.md",
     ]
     for mod in (capture.affected_modules or []):
         safe = mod.lower().replace("/", "_").replace(" ", "_")

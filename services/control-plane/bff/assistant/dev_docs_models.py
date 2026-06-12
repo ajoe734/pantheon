@@ -101,6 +101,8 @@ class ArchiveLocations(DevDocsBaseModel):
     requirement_capture: Optional[str] = Field(default=None, alias="requirementCapture")
     system_analysis: Optional[str] = Field(default=None, alias="systemAnalysis")
     system_design: Optional[str] = Field(default=None, alias="systemDesign")
+    architecture_docs: List[str] = Field(default_factory=list, alias="architectureDocs")
+    ui_docs: List[str] = Field(default_factory=list, alias="uiDocs")
     task_briefs: List[str] = Field(default_factory=list, alias="taskBriefs")
 
 

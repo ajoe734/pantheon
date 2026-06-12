@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -487,6 +488,19 @@ class TestDevDocsArchiver:
             assert json_file.exists()
             data = json_file.read_text(encoding="utf-8")
             assert packet.packet_id in data
+
+    def test_archive_outputs_are_host_writable(self):
+        packet = self._make_packet()
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "ai-status.json").write_text("{}", encoding="utf-8")
+            locations = archive_packet(packet, repo_root=tmp)
+
+            bundle_dir = Path(tmp, locations.requirement_capture).parent
+            assert stat.S_IMODE(bundle_dir.stat().st_mode) == 0o775
+            assert stat.S_IMODE(Path(tmp, locations.requirement_capture).stat().st_mode) == 0o664
+            assert stat.S_IMODE(Path(tmp, locations.system_analysis).stat().st_mode) == 0o664
+            assert stat.S_IMODE(Path(tmp, locations.system_design).stat().st_mode) == 0o664
+            assert stat.S_IMODE(Path(tmp, locations.task_briefs[0]).stat().st_mode) == 0o664
 
     def test_artifact_paths_align_with_archive_locations(self):
         """Task artifact paths must reference the same files archive_packet() writes."""
