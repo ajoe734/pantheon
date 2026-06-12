@@ -58,6 +58,10 @@ FAILURE_VALUES = {
 }
 ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNKNOWN"}
 ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNKNOWN"}
+PR_DETAIL_FIELDS = (
+    "number,title,url,headRefName,baseRefName,isDraft,mergeStateStatus,"
+    "reviewDecision,statusCheckRollup,state,mergeCommit,mergedAt"
+)
 
 
 @dataclass(frozen=True)
@@ -315,6 +319,7 @@ def fetch_pr_for_task(
     runner: CommandRunner,
     *,
     root: Path = ROOT,
+    state: str = "open",
 ) -> Mapping[str, Any] | None:
     listing = gh_json(
         runner,
@@ -326,9 +331,11 @@ def fetch_pr_for_task(
             "--base",
             settings.dev_branch,
             "--state",
-            "open",
+            state,
             "--json",
             "number",
+            "--limit",
+            "10",
         ],
         cwd=root,
     )
@@ -344,7 +351,7 @@ def fetch_pr_for_task(
             "view",
             str(number),
             "--json",
-            "number,title,url,headRefName,baseRefName,isDraft,mergeStateStatus,reviewDecision,statusCheckRollup",
+            PR_DETAIL_FIELDS,
         ],
         cwd=root,
     )
@@ -359,6 +366,29 @@ def validate_pr(candidate: TaskCandidate, pr: Mapping[str, Any], settings: Setti
     if str(pr.get("baseRefName") or "") != settings.dev_branch:
         return "base_branch_mismatch"
     return None
+
+
+def pr_merge_commit_oid(pr: Mapping[str, Any]) -> str:
+    merge_commit = pr.get("mergeCommit")
+    if not isinstance(merge_commit, Mapping):
+        return ""
+    return str(merge_commit.get("oid") or "").strip()
+
+
+def target_contains_commit(
+    oid: str,
+    settings: Settings,
+    runner: CommandRunner,
+    *,
+    root: Path = ROOT,
+) -> bool:
+    runner.run(["git", "fetch", "origin", settings.dev_branch, "--quiet"], cwd=root)
+    result = runner.run(
+        ["git", "merge-base", "--is-ancestor", oid, f"origin/{settings.dev_branch}"],
+        cwd=root,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 @contextmanager
@@ -540,7 +570,31 @@ def integrate_candidate(
 ) -> IntegrationResult:
     pr = fetch_pr_for_task(candidate, settings, runner, root=root)
     if pr is None:
-        detail = f"No open PR found for {candidate.branch} -> {settings.dev_branch}."
+        merged_pr = fetch_pr_for_task(candidate, settings, runner, root=root, state="merged")
+        if merged_pr is not None:
+            number = pr_number(merged_pr)
+            url = str(merged_pr.get("url") or "")
+            problem = validate_pr(candidate, merged_pr, settings)
+            if problem:
+                detail = f"Merged PR #{number} is not eligible for reconciliation: {problem}."
+                unblock = open_unblock_task(candidate, problem, detail, settings, runner, root=root, execute=execute) if open_unblock else None
+                return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+            oid = pr_merge_commit_oid(merged_pr)
+            if not oid:
+                detail = f"Merged PR #{number} has no merge commit oid; cannot reconcile {candidate.task_id}."
+                unblock = open_unblock_task(candidate, "merged-pr-no-merge-commit", detail, settings, runner, root=root, execute=execute) if open_unblock else None
+                return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+            if not target_contains_commit(oid, settings, runner, root=root):
+                detail = f"Merged PR #{number} merge commit {oid} is not in origin/{settings.dev_branch}; not reconciling."
+                return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=not execute, commands=runner.commands[:])
+            if not execute:
+                detail = f"Dry-run: PR #{number} is already merged into {settings.dev_branch}; would reconcile {candidate.task_id} to done."
+                return IntegrationResult(candidate.task_id, "would_reconcile_done", detail, number, url, dry_run=True, commands=runner.commands[:])
+            reconcile_done(candidate, merged_pr, runner, root=root, execute=True)
+            detail = f"Reconciled {candidate.task_id} to done after PR #{number} was already merged into {settings.dev_branch}."
+            return IntegrationResult(candidate.task_id, "reconciled_done", detail, number, url, dry_run=False, commands=runner.commands[:])
+
+        detail = f"No open or merged PR found for {candidate.branch} -> {settings.dev_branch}."
         unblock = open_unblock_task(candidate, "missing-pr", detail, settings, runner, root=root, execute=execute) if open_unblock else None
         return IntegrationResult(candidate.task_id, "blocked", detail, unblock_task_id=unblock, dry_run=not execute, commands=runner.commands[:])
     number = pr_number(pr)
