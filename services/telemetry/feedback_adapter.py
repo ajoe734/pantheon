@@ -101,6 +101,30 @@ ALPHA_LINEAGE_METADATA_FIELDS = (
     "market_price",
 )
 
+ORDER_ADAPTER_METADATA_FIELDS = (
+    "adapter",
+    "broker",
+    "provider",
+    "order_id",
+    "broker_order_id",
+    "adapter_order_id",
+    "shioaji_trade_id",
+    "account_kind",
+    "order_status",
+    "readback_status",
+    "cancel_status",
+    "broker_submission_status",
+    "submitted_to_broker",
+    "shioaji_order_status_id",
+    "shioaji_order_status",
+    "shioaji_order_status_code",
+    "shioaji_order_status_message",
+    "is_real_order",
+    "is_real_capital",
+    "deployment_stage",
+    "proof_boundary",
+)
+
 
 class FeedbackStoreAdapter:
     """
@@ -280,6 +304,18 @@ class FeedbackStoreAdapter:
         return context
 
     @staticmethod
+    def _order_adapter_context(event: dict[str, Any]) -> dict[str, Any]:
+        metadata = event.get("metadata")
+        if not isinstance(metadata, dict):
+            return {}
+        context: dict[str, Any] = {}
+        for field in ORDER_ADAPTER_METADATA_FIELDS:
+            value = metadata.get(field)
+            if value not in (None, "", [], {}):
+                context[field] = value
+        return context
+
+    @staticmethod
     def _request_id(event: dict[str, Any]) -> Optional[str]:
         if event.get("request_id"):
             return event.get("request_id")
@@ -351,6 +387,7 @@ class FeedbackStoreAdapter:
         """
         target = telemetry_event.get("target", {})
         alpha_context = self._alpha_lineage_context(telemetry_event)
+        order_context = self._order_adapter_context(telemetry_event)
         record = {
             "record_type": "telemetry_event",
             "record_id": telemetry_event.get("event_id"),
@@ -379,6 +416,8 @@ class FeedbackStoreAdapter:
             for field in ("signal_id", "source_worker", "alpha_source", "model_id"):
                 if field in alpha_context:
                     record[field] = alpha_context[field]
+        if order_context:
+            record["order_context"] = order_context
         return record
 
     def build_learn_feedback_writeback_payload(
