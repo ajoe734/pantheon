@@ -124,6 +124,7 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "order_type",
     "side",
     "price",
+    "limit_price",
     "tif",
     "outside_rth",
     "account",

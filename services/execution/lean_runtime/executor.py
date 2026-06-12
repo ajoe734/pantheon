@@ -217,7 +217,7 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
         value = signal.get(key)
         if value not in (None, ""):
             context[key] = value
-    for key in ("quantity_type", "order_type"):
+    for key in ("quantity_type", "order_type", "limit_price"):
         value = signal.get(key)
         if value not in (None, ""):
             context[key] = value
@@ -742,11 +742,16 @@ def _place_order(
             raise ExecutionError(
                 f"[{signal_id}] CASH_VALUE order failed: cannot get price for {lean_symbol}"
             )
-        shares = sign * int(round(quantity / price))
+        execution_price = float(limit_price) if order_type == "LIMIT" and limit_price is not None else price
+        if execution_price <= 0:
+            raise ExecutionError(
+                f"[{signal_id}] CASH_VALUE order failed: cannot get execution price for {lean_symbol}"
+            )
+        shares = sign * int(round(quantity / execution_price))
         if shares == 0:
             log.warning(
                 "[%s] CASH_VALUE %.2f / price %.4f = 0 shares — order not placed",
-                signal_id, quantity, price,
+                signal_id, quantity, execution_price,
             )
             _record_order_rejection(
                 algo,
@@ -757,14 +762,18 @@ def _place_order(
                 computed_quantity=shares,
                 quantity_type=quantity_type,
                 order_type=order_type,
-                price=price,
+                price=execution_price,
             )
             return
         log.info(
             "[%s] CASH_VALUE %.2f → %d shares @ ~%.4f (audit)",
-            signal_id, quantity, shares, price,
+            signal_id, quantity, shares, execution_price,
         )
-        algo.MarketOrder(lean_symbol, shares)
+        if order_type == "LIMIT":
+            log.info("[%s] LimitOrder %s %d @ %.4f", signal_id, lean_symbol, shares, limit_price)
+            algo.LimitOrder(lean_symbol, shares, limit_price)
+        else:
+            algo.MarketOrder(lean_symbol, shares)
 
     else:
         raise ExecutionError(f"[{signal_id}] Unknown quantity_type: {quantity_type}")
