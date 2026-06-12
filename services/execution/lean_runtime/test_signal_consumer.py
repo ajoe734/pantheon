@@ -133,6 +133,42 @@ class TestStalenessCheck(unittest.TestCase):
         is_stale = self.consumer._is_stale(signal, mock_algo)
         self.assertTrue(is_stale, "Signal >24h old should be stale")
 
+    def test_drain_records_stale_signal_noop_feedback(self):
+        """Draining a stale signal should emit no-order feedback and mark it processed."""
+        now = datetime.now(timezone.utc)
+        stale_signal = {
+            "signal_id": "test-stale-feedback",
+            "version": "1.0",
+            "strategy_id": "test",
+            "timestamp": (now - timedelta(hours=30)).isoformat(),
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 0.5,
+            "quantity_type": "PERCENT_PORTFOLIO",
+            "metadata": {
+                "alpha_source": "unit_stale_filter",
+                "market_data": {"close": 150.0},
+            },
+        }
+        self.store.get_pending.return_value = [stale_signal]
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+
+        self.consumer.drain(algo=algo)
+
+        self.assertIn("test-stale-feedback", self.consumer._processed_signal_ids)
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "stale_signal")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 150.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "stale_signal")
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_stale_filter")
+
     def test_stale_check_with_future_signal_anomaly(self):
         """Stale check should reject signals >1h in future (anomaly)"""
         now = datetime(2026, 4, 6, 12, 0, 0)
@@ -190,6 +226,43 @@ class TestImportPaths(unittest.TestCase):
         self.assertIsNotNone(SignalConsumer)
         self.assertIsNotNone(execute)
         self.assertIsNotNone(SymbolParseError)
+
+
+class _NoopRecordingAlgo:
+    def __init__(self, now: datetime) -> None:
+        self.Time = now
+        self.signal_noops: list[dict] = []
+
+    def RecordSignalNoop(  # noqa: N802
+        self,
+        symbol,
+        *,
+        signal_id,
+        noop_reason,
+        requested_quantity,
+        computed_quantity,
+        quantity_type,
+        order_type,
+        broker_submission_status,
+        submitted_to_broker,
+        price=None,
+        metadata=None,
+    ):
+        payload = {
+            "symbol": symbol,
+            "signal_id": signal_id,
+            "noop_reason": noop_reason,
+            "requested_quantity": requested_quantity,
+            "computed_quantity": computed_quantity,
+            "quantity_type": quantity_type,
+            "order_type": order_type,
+            "broker_submission_status": broker_submission_status,
+            "submitted_to_broker": submitted_to_broker,
+            "metadata": dict(metadata or {}),
+        }
+        if price is not None:
+            payload["price"] = price
+        self.signal_noops.append(payload)
 
 
 def _make_signal(signal_id: str, binding_id: str | None = None) -> dict:

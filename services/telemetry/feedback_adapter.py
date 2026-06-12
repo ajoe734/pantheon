@@ -139,6 +139,7 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "quantity_type",
     "noop_reason",
     "decision_status",
+    "filter_reason",
     "position_quantity",
     "target_quantity",
     "target_percent",
