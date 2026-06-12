@@ -1069,6 +1069,63 @@ class TestLineageReadModel(unittest.TestCase):
         self.assertEqual(order_context["partial_fill_ratio"], 0.4)
         self.assertEqual(order_context["fill_rate"], 0.4)
 
+    def test_order_cancel_lineage_preserves_cancel_ack(self):
+        """Cancel acknowledgements must keep reason, actor, and unfilled quantity."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-order-cancel-paper",
+            "event_type": "order_canceled",
+            "created_at": "2026-06-12T15:45:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-cancel-001",
+            "runtime_id": "runtime-cancel",
+            "capital_pool_id": "pool-cancel",
+            "artifact_id": "artifact-cancel",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-cancel",
+            "persona_capital_binding_id": "pcb-cancel",
+            "trace_id": "trace-cancel",
+            "target": {
+                "strategy_id": "strat-cancel",
+                "registry_id": "reg-cancel",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "requested_quantity": 12.0,
+                "unfilled_quantity": 12.0,
+                "cancelled_quantity": 12.0,
+                "cancel_latency_ms": 42.0,
+                "fill_rate": 0.0,
+            },
+            "metadata": {
+                "adapter": "openclaw_paper_broker",
+                "broker": "paper_broker",
+                "order_id": "paper-order-cancel-001",
+                "order_status": "canceled",
+                "cancel_status": "acknowledged",
+                "cancel_reason": "price_guard_invalidated",
+                "cancel_requested_by": "operator-risk",
+                "cancel_request_id": "cancel-request-001",
+                "submitted_to_broker": True,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "paper",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-cancel", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-cancel-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["cancel_status"], "acknowledged")
+        self.assertEqual(order_context["cancel_reason"], "price_guard_invalidated")
+        self.assertEqual(order_context["cancel_requested_by"], "operator-risk")
+        self.assertEqual(order_context["unfilled_quantity"], 12.0)
+        self.assertEqual(order_context["cancelled_quantity"], 12.0)
+        self.assertEqual(order_context["cancel_latency_ms"], 42.0)
+
     def test_query_lineage_records_normalizes_semantic_refs(self):
         """Telemetry raw fields must normalize to semantic read-model fields."""
         adapter = FeedbackStoreAdapter()
