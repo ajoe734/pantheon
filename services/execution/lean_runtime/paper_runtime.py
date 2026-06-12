@@ -198,12 +198,27 @@ class PaperExecutionAlgorithm:
         self.Portfolio: dict[str, _Holding] = {}
         self.Securities: dict[str, _Security] = {}
         self._open_bracket_orders: list[dict[str, Any]] = []
+        self._current_signal_metadata: dict[str, Any] = {}
 
     def _holding(self, symbol: str) -> _Holding:
         return self.Portfolio.setdefault(symbol, _Holding())
 
     def _security(self, symbol: str) -> _Security:
         return self.Securities.setdefault(symbol, _Security(price=self._default_price))
+
+    def EnsureSecurity(self, symbol: str) -> _Security:  # noqa: N802
+        """Expose deterministic paper pricing for executor price lookups."""
+        return self._security(str(symbol))
+
+    def SetSecurityPrice(self, symbol: str, price: float) -> None:  # noqa: N802
+        security = self._security(str(symbol))
+        security.Price = float(price)
+
+    def SetCurrentSignalContext(self, metadata: dict[str, Any] | None) -> None:  # noqa: N802
+        self._current_signal_metadata = dict(metadata or {})
+
+    def ClearCurrentSignalContext(self) -> None:  # noqa: N802
+        self._current_signal_metadata = {}
 
     def _publish(
         self,
@@ -219,6 +234,9 @@ class PaperExecutionAlgorithm:
         if self._event_sink is None:
             return
         security = self._security(symbol)
+        event_metadata = dict(self._current_signal_metadata)
+        if metadata:
+            event_metadata.update(metadata)
         self._event_sink(
             OrderEvent(
                 event_type=event_type,
@@ -228,7 +246,7 @@ class PaperExecutionAlgorithm:
                 action=action,
                 submitted_to_broker=submitted_to_broker,
                 broker_submission_status=broker_submission_status,
-                metadata=metadata or {},
+                metadata=event_metadata,
             )
         )
 

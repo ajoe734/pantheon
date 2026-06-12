@@ -203,6 +203,52 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(telemetry.events[1]["event_type"], "heartbeat")
         self.assertEqual(telemetry.events[2]["event_type"], "pnl_snapshot")
 
+    def test_cash_value_llm_alpha_for_new_symbol_executes_with_fill_provenance(self):
+        signal = self._signal()
+        signal.update(
+            {
+                "signal_id": "llm-alpha-nvda-cash-001",
+                "strategy_id": "strategy-llm-alpha",
+                "symbol": "NVDA.US",
+                "quantity": 500,
+                "quantity_type": "CASH_VALUE",
+                "source_worker": "mock-llm-alpha-normalizer",
+                "metadata": {
+                    "alpha_source": "llm_research_agent",
+                    "confidence_score": 0.82,
+                    "model_id": "gpt-research-paper",
+                },
+            }
+        )
+        store = InMemoryPendingSignalStore([signal])
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=store,
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        snapshot = service.drain_once()
+
+        self.assertEqual(snapshot["status"], "ok")
+        self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
+        self.assertEqual(snapshot["paper_state"]["execution_event_count"], 1)
+        self.assertEqual(snapshot["paper_state"]["positions"][0]["symbol"], "NVDA")
+        self.assertEqual(snapshot["paper_state"]["positions"][0]["quantity"], 5.0)
+        fill_event = snapshot["paper_state"]["recent_order_events"][0]
+        self.assertEqual(fill_event["fill_price"], 100.0)
+        self.assertEqual(fill_event["metadata"]["signal_id"], "llm-alpha-nvda-cash-001")
+        self.assertEqual(fill_event["metadata"]["strategy_id"], "strategy-llm-alpha")
+        self.assertEqual(fill_event["metadata"]["source_worker"], "mock-llm-alpha-normalizer")
+        self.assertEqual(fill_event["metadata"]["alpha_source"], "llm_research_agent")
+        self.assertEqual(fill_event["metadata"]["confidence_score"], 0.82)
+        self.assertEqual(telemetry.events[0]["event_type"], "paper_fill_simulated")
+        self.assertFalse(telemetry.events[0]["metadata"]["is_real_order"])
+        self.assertEqual(telemetry.events[0]["metadata"]["alpha_source"], "llm_research_agent")
+
     def test_snapshot_without_drain_reports_truthful_ready_state(self):
         service = PaperRuntimeService(
             store=InMemoryPendingSignalStore(),
