@@ -460,4 +460,6 @@ def _execution_error_reason(exc: Exception) -> str:
         return "symbol_parse_error"
     if "limit_price is required" in str(exc):
         return "limit_price_required"
+    if "PERCENT_PORTFOLIO quantity_type is not supported" in str(exc):
+        return "limit_percent_portfolio_unsupported"
     return "execution_error"
