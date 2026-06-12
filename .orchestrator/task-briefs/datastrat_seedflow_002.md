@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Strategy Seed Review Inbox (read model + actions)
-- Status: review
-- Owner: Codex2
+- Status: review_approved
+- Owner: Claude2
 - Reviewer: Codex
-- Next: Auto-reassigned review from Claude to Codex after repeated Claude auth: Authentication failure
+- Next: Owner finalization: CI fix applied (push-event range error resolved); PR #1376 pushed and pending auto-merge into dev. Run done once merged.
 
 ## Summary
 為 StrategySpecSeed 加治理審查面:accept/reject/merge/request-evidence/convert-to-spec-seed/submit-replication;BFF read model(seed inbox)+command endpoints;把 persona promote_seed_candidate 顯示為建議而非自動晉升。
