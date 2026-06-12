@@ -31,7 +31,13 @@ class StrategySpecSeedError(ValueError):
 
 class StrategySpecSeedStatus(str, Enum):
     DRAFT = "draft"
+    NEEDS_MORE_EVIDENCE = "needs_more_evidence"
+    ACCEPTED = "accepted"
     PROMOTED_TO_STRATEGY_SPEC = "promoted_to_strategy_spec"
+    CONVERTED_TO_RISK_CONSTRAINT = "converted_to_risk_constraint"
+    CONVERTED_TO_NEGATIVE = "converted_to_negative"
+    MERGED = "merged"
+    ARCHIVED_AS_INSIGHT = "archived_as_insight"
     REJECTED = "rejected"
 
 

@@ -7,9 +7,13 @@ write seeds. All other services read through the owner API.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from enum import Enum
+import hashlib
 import os
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from services.source_ingestion.registry.jsonl_store import JsonlRegistryStore
 from services.source_ingestion.negative_memory import (
@@ -70,6 +74,128 @@ def _assert_no_blocking_negative_memory(seed: StrategySpecSeed) -> None:
 
 class StrategySpecSeedStoreError(ValueError):
     """Raised when a store invariant is violated."""
+
+
+class StrategySpecSeedReviewError(StrategySpecSeedStoreError):
+    """Raised when a seed review action cannot be applied."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class SeedReviewDecisionAction(str, Enum):
+    ACCEPT = "accept"
+    REJECT = "reject"
+    REQUEST_EVIDENCE = "request_evidence"
+    CONVERT_TO_SPEC_SEED = "convert_to_spec_seed"
+    CONVERT_TO_RISK = "convert_to_risk"
+    CONVERT_TO_NEGATIVE = "convert_to_negative"
+    ARCHIVE = "archive"
+    MERGE = "merge"
+
+
+@dataclass(frozen=True)
+class SeedReviewDecision:
+    """Audit record for a governed StrategySpecSeed review transition."""
+
+    decision_id: str
+    seed_id: str
+    reviewer_id: str
+    decision: str
+    reason: str
+    target_refs: Sequence[Mapping[str, Any]]
+    created_at: str
+    from_status: str
+    to_status: str
+    idempotency_key: str | None = None
+    request_hash: str | None = None
+    idempotent_replay: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        record = {
+            "decision_id": self.decision_id,
+            "seed_id": self.seed_id,
+            "reviewer_id": self.reviewer_id,
+            "decision": self.decision,
+            "reason": self.reason,
+            "target_refs": [dict(item) for item in self.target_refs],
+            "created_at": self.created_at,
+            "from_status": self.from_status,
+            "to_status": self.to_status,
+        }
+        if self.idempotency_key:
+            record["idempotency_key"] = self.idempotency_key
+        if self.request_hash:
+            record["request_hash"] = self.request_hash
+        return record
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Mapping[str, Any],
+        *,
+        idempotent_replay: bool = False,
+    ) -> "SeedReviewDecision":
+        return cls(
+            decision_id=str(data.get("decision_id") or ""),
+            seed_id=str(data.get("seed_id") or ""),
+            reviewer_id=str(data.get("reviewer_id") or ""),
+            decision=str(data.get("decision") or ""),
+            reason=str(data.get("reason") or ""),
+            target_refs=[
+                dict(item)
+                for item in data.get("target_refs") or []
+                if isinstance(item, Mapping)
+            ],
+            created_at=str(data.get("created_at") or ""),
+            from_status=str(data.get("from_status") or ""),
+            to_status=str(data.get("to_status") or ""),
+            idempotency_key=str(data.get("idempotency_key") or "").strip() or None,
+            request_hash=str(data.get("request_hash") or "").strip() or None,
+            idempotent_replay=idempotent_replay,
+        )
+
+
+_TERMINAL_REVIEW_STATUSES = frozenset(
+    {
+        StrategySpecSeedStatus.REJECTED.value,
+        StrategySpecSeedStatus.ARCHIVED_AS_INSIGHT.value,
+        StrategySpecSeedStatus.MERGED.value,
+        StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT.value,
+        StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE.value,
+    }
+)
+
+_REVIEW_TRANSITIONS: dict[str, dict[SeedReviewDecisionAction, str]] = {
+    StrategySpecSeedStatus.DRAFT.value: {
+        SeedReviewDecisionAction.ACCEPT: StrategySpecSeedStatus.ACCEPTED.value,
+        SeedReviewDecisionAction.REJECT: StrategySpecSeedStatus.REJECTED.value,
+        SeedReviewDecisionAction.REQUEST_EVIDENCE: StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE.value,
+        SeedReviewDecisionAction.ARCHIVE: StrategySpecSeedStatus.ARCHIVED_AS_INSIGHT.value,
+        SeedReviewDecisionAction.MERGE: StrategySpecSeedStatus.MERGED.value,
+        SeedReviewDecisionAction.CONVERT_TO_RISK: StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT.value,
+        SeedReviewDecisionAction.CONVERT_TO_NEGATIVE: StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE.value,
+    },
+    StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE.value: {
+        SeedReviewDecisionAction.ACCEPT: StrategySpecSeedStatus.ACCEPTED.value,
+        SeedReviewDecisionAction.REJECT: StrategySpecSeedStatus.REJECTED.value,
+        SeedReviewDecisionAction.REQUEST_EVIDENCE: StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE.value,
+        SeedReviewDecisionAction.ARCHIVE: StrategySpecSeedStatus.ARCHIVED_AS_INSIGHT.value,
+        SeedReviewDecisionAction.MERGE: StrategySpecSeedStatus.MERGED.value,
+        SeedReviewDecisionAction.CONVERT_TO_RISK: StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT.value,
+        SeedReviewDecisionAction.CONVERT_TO_NEGATIVE: StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE.value,
+    },
+    StrategySpecSeedStatus.ACCEPTED.value: {
+        SeedReviewDecisionAction.CONVERT_TO_SPEC_SEED: StrategySpecSeedStatus.PROMOTED_TO_STRATEGY_SPEC.value,
+        SeedReviewDecisionAction.CONVERT_TO_RISK: StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT.value,
+        SeedReviewDecisionAction.CONVERT_TO_NEGATIVE: StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE.value,
+        SeedReviewDecisionAction.REJECT: StrategySpecSeedStatus.REJECTED.value,
+        SeedReviewDecisionAction.REQUEST_EVIDENCE: StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE.value,
+        SeedReviewDecisionAction.ARCHIVE: StrategySpecSeedStatus.ARCHIVED_AS_INSIGHT.value,
+        SeedReviewDecisionAction.MERGE: StrategySpecSeedStatus.MERGED.value,
+    },
+}
 
 
 class StrategySpecSeedStore:
@@ -141,6 +267,116 @@ class StrategySpecSeedStore:
                 records.append(record)
         return records
 
+    def record_review_decision(
+        self,
+        seed_id: str,
+        *,
+        decision: str | SeedReviewDecisionAction,
+        reviewer_id: str,
+        reason: str = "",
+        target_refs: Sequence[Mapping[str, Any]] = (),
+        created_at: datetime | str | None = None,
+        idempotency_key: str | None = None,
+        request_hash: str | None = None,
+    ) -> tuple[StrategySpecSeed, SeedReviewDecision]:
+        """Apply a governed review decision and append an audit record."""
+        action = _normalize_review_decision(decision)
+        if action == SeedReviewDecisionAction.MERGE:
+            raise StrategySpecSeedReviewError(
+                "invalid_review_action",
+                "Use merge_seed for merge review decisions.",
+            )
+        seed = self._load_seed_for_review(seed_id)
+        existing_decision = _find_review_decision_by_idempotency_key(seed, idempotency_key)
+        if existing_decision is not None:
+            _assert_review_idempotency_match(
+                existing_decision,
+                action=action,
+                reviewer_id=reviewer_id,
+                reason=reason,
+                target_refs=target_refs,
+                request_hash=request_hash,
+            )
+            return seed, replace(existing_decision, idempotent_replay=True)
+
+        from_status = _status_value(seed.status)
+        to_status = _review_transition(from_status, action)
+        decision_record = _seed_review_decision(
+            seed=seed,
+            action=action,
+            reviewer_id=reviewer_id,
+            reason=reason,
+            target_refs=target_refs,
+            created_at=created_at,
+            from_status=from_status,
+            to_status=to_status,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+        updated = self._save_review_transition(seed, to_status, decision_record)
+        return updated, decision_record
+
+    def merge_seed(
+        self,
+        seed_id: str,
+        *,
+        target_seed_id: str,
+        reviewer_id: str,
+        reason: str = "",
+        created_at: datetime | str | None = None,
+        idempotency_key: str | None = None,
+        request_hash: str | None = None,
+        target_refs: Sequence[Mapping[str, Any]] = (),
+    ) -> tuple[StrategySpecSeed, SeedReviewDecision]:
+        """Mark a seed as merged into another seed candidate and audit the action."""
+        source = self._load_seed_for_review(seed_id)
+        target = _require_text(target_seed_id, "target_seed_id")
+        refs = list(target_refs) or [{"type": "strategy_spec_seed", "id": target}]
+        existing_decision = _find_review_decision_by_idempotency_key(source, idempotency_key)
+        if existing_decision is not None:
+            _assert_review_idempotency_match(
+                existing_decision,
+                action=SeedReviewDecisionAction.MERGE,
+                reviewer_id=reviewer_id,
+                reason=reason,
+                target_refs=refs,
+                request_hash=request_hash,
+            )
+            return source, replace(existing_decision, idempotent_replay=True)
+
+        if target == source.seed_id:
+            raise StrategySpecSeedReviewError(
+                "invalid_merge_target",
+                "target_seed_id must be different from seed_id",
+            )
+        if self.get(target) is None:
+            raise StrategySpecSeedReviewError(
+                "merge_target_not_found",
+                f"StrategySpecSeed merge target not found: {target}",
+            )
+
+        from_status = _status_value(source.status)
+        to_status = _review_transition(from_status, SeedReviewDecisionAction.MERGE)
+        decision_record = _seed_review_decision(
+            seed=source,
+            action=SeedReviewDecisionAction.MERGE,
+            reviewer_id=reviewer_id,
+            reason=reason,
+            target_refs=refs,
+            created_at=created_at,
+            from_status=from_status,
+            to_status=to_status,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+        updated = self._save_review_transition(
+            source,
+            to_status,
+            decision_record,
+            lineage_updates={"merged_into_seed_id": target},
+        )
+        return updated, decision_record
+
     def record_replication_submission(
         self,
         seed_id: str,
@@ -198,6 +434,50 @@ class StrategySpecSeedStore:
         self.save(updated)
         return updated
 
+    def _load_seed_for_review(self, seed_id: str) -> StrategySpecSeed:
+        normalized = _require_text(seed_id, "seed_id")
+        seed = self.get(normalized)
+        if seed is None:
+            raise StrategySpecSeedReviewError(
+                "seed_not_found",
+                f"StrategySpecSeed not found: {normalized}",
+            )
+        return seed
+
+    def _save_review_transition(
+        self,
+        seed: StrategySpecSeed,
+        to_status: str,
+        decision: SeedReviewDecision,
+        *,
+        lineage_updates: Mapping[str, Any] | None = None,
+    ) -> StrategySpecSeed:
+        payload = seed.to_dict()
+        payload["status"] = to_status
+        lineage = dict(payload.get("lineage") or {})
+        decisions = [
+            dict(item)
+            for item in lineage.get("review_decisions") or []
+            if isinstance(item, Mapping)
+        ]
+        decision_payload = decision.to_dict()
+        decisions.append(decision_payload)
+        lineage["review_decisions"] = decisions
+        lineage["last_review_decision"] = decision_payload
+        lineage["review_status"] = to_status
+        lineage["review_state_machine"] = "strategy_seed_review_v1"
+        lineage["registry_write_performed"] = False
+        lineage["execution_route"] = "none"
+        if to_status == StrategySpecSeedStatus.PROMOTED_TO_STRATEGY_SPEC.value:
+            lineage["strategy_spec_conversion_eligible"] = True
+            lineage["promotion_review_decision_id"] = decision.decision_id
+        if lineage_updates:
+            lineage.update(dict(lineage_updates))
+        payload["lineage"] = lineage
+        updated = StrategySpecSeed.from_dict(payload)
+        self.save(updated)
+        return updated
+
     def get_by_bundle_idempotent(
         self,
         evidence_bundle_id: str,
@@ -226,3 +506,172 @@ def _require_text(value: Any, field_name: str) -> str:
     if not text:
         raise StrategySpecSeedStoreError(f"{field_name} is required")
     return text
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def _iso(value: datetime | str | None) -> str:
+    if value is None:
+        value = _utc_now()
+    if isinstance(value, str):
+        return value
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _status_value(status: StrategySpecSeedStatus | str) -> str:
+    return status.value if isinstance(status, StrategySpecSeedStatus) else str(status)
+
+
+def _normalize_review_decision(value: str | SeedReviewDecisionAction) -> SeedReviewDecisionAction:
+    if isinstance(value, SeedReviewDecisionAction):
+        return value
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    aliases = {
+        "request_more_evidence": SeedReviewDecisionAction.REQUEST_EVIDENCE.value,
+        "needs_more_evidence": SeedReviewDecisionAction.REQUEST_EVIDENCE.value,
+        "convert": SeedReviewDecisionAction.CONVERT_TO_SPEC_SEED.value,
+        "convert_to_strategy_spec": SeedReviewDecisionAction.CONVERT_TO_SPEC_SEED.value,
+        "convert_to_spec_seed": SeedReviewDecisionAction.CONVERT_TO_SPEC_SEED.value,
+        "archived_as_insight": SeedReviewDecisionAction.ARCHIVE.value,
+    }
+    normalized = aliases.get(normalized, normalized)
+    try:
+        return SeedReviewDecisionAction(normalized)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in SeedReviewDecisionAction)
+        raise StrategySpecSeedReviewError(
+            "invalid_review_action",
+            f"review decision must be one of: {allowed}",
+        ) from exc
+
+
+def _normalized_idempotency_key(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def _normalized_request_hash(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def _normalized_target_refs(refs: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        dict(ref)
+        for ref in refs
+        if isinstance(ref, Mapping)
+    ]
+
+
+def _find_review_decision_by_idempotency_key(
+    seed: StrategySpecSeed,
+    idempotency_key: str | None,
+) -> SeedReviewDecision | None:
+    normalized_key = _normalized_idempotency_key(idempotency_key)
+    if not normalized_key:
+        return None
+    lineage = dict(seed.lineage or {})
+    for raw in lineage.get("review_decisions") or []:
+        if not isinstance(raw, Mapping):
+            continue
+        if _normalized_idempotency_key(str(raw.get("idempotency_key") or "")) == normalized_key:
+            return SeedReviewDecision.from_dict(raw, idempotent_replay=True)
+    return None
+
+
+def _assert_review_idempotency_match(
+    existing: SeedReviewDecision,
+    *,
+    action: SeedReviewDecisionAction,
+    reviewer_id: str,
+    reason: str,
+    target_refs: Sequence[Mapping[str, Any]],
+    request_hash: str | None,
+) -> None:
+    existing_hash = _normalized_request_hash(existing.request_hash)
+    incoming_hash = _normalized_request_hash(request_hash)
+    if existing_hash and incoming_hash and existing_hash != incoming_hash:
+        raise StrategySpecSeedReviewError(
+            "idempotency_conflict",
+            "Idempotency key was already used with a different review request.",
+        )
+
+    if existing_hash and not incoming_hash:
+        return
+
+    reviewer = _require_text(reviewer_id, "reviewer_id")
+    if (
+        existing.decision != action.value
+        or existing.reviewer_id != reviewer
+        or existing.reason != str(reason or "").strip()
+        or _normalized_target_refs(existing.target_refs) != _normalized_target_refs(target_refs)
+    ):
+        raise StrategySpecSeedReviewError(
+            "idempotency_conflict",
+            "Idempotency key was already used with a different review request.",
+        )
+
+
+def _review_transition(from_status: str, action: SeedReviewDecisionAction) -> str:
+    if from_status in _TERMINAL_REVIEW_STATUSES:
+        raise StrategySpecSeedReviewError(
+            "terminal_seed_status",
+            f"StrategySpecSeed status {from_status!r} is terminal and cannot be reviewed further.",
+        )
+    allowed = _REVIEW_TRANSITIONS.get(from_status, {})
+    if action not in allowed:
+        allowed_actions = ", ".join(item.value for item in allowed) or "none"
+        raise StrategySpecSeedReviewError(
+            "invalid_status_transition",
+            (
+                f"Review decision {action.value!r} is not allowed from status "
+                f"{from_status!r}; allowed actions: {allowed_actions}"
+            ),
+        )
+    return allowed[action]
+
+
+def _seed_review_decision(
+    *,
+    seed: StrategySpecSeed,
+    action: SeedReviewDecisionAction,
+    reviewer_id: str,
+    reason: str,
+    target_refs: Sequence[Mapping[str, Any]],
+    created_at: datetime | str | None,
+    from_status: str,
+    to_status: str,
+    idempotency_key: str | None,
+    request_hash: str | None,
+) -> SeedReviewDecision:
+    timestamp = _iso(created_at)
+    normalized_refs = [
+        dict(ref)
+        for ref in target_refs
+        if isinstance(ref, Mapping)
+    ]
+    reviewer = _require_text(reviewer_id, "reviewer_id")
+    decision_id = "seed-review-" + hashlib.sha1(
+        "\n".join(
+            [
+                seed.seed_id,
+                action.value,
+                reviewer,
+                timestamp,
+                str(idempotency_key or ""),
+            ]
+        ).encode("utf-8")
+    ).hexdigest()[:12]
+    return SeedReviewDecision(
+        decision_id=decision_id,
+        seed_id=seed.seed_id,
+        reviewer_id=reviewer,
+        decision=action.value,
+        reason=str(reason or "").strip(),
+        target_refs=normalized_refs,
+        created_at=timestamp,
+        from_status=from_status,
+        to_status=to_status,
+        idempotency_key=str(idempotency_key or "").strip() or None,
+        request_hash=str(request_hash or "").strip() or None,
+    )
