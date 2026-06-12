@@ -22,7 +22,7 @@ SELL     LONG       SHARES             algo.Liquidate(sym)          # close long
 SELL     LONG       CASH_VALUE         algo.Liquidate(sym)          # close long
 EXIT     LONG       *                  algo.Liquidate(sym) if long, else no-op
 EXIT     SHORT      *                  algo.MarketOrder(round abs holdings) if short, else no-op
-HOLD     *          *                  no-op (logged only)
+HOLD     *          *                  paper_order_simulated no-op telemetry
 """
 from __future__ import annotations
 
@@ -75,11 +75,6 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
         (signal.get("metadata") or {}).get("confidence_score", 1.0)
     )
 
-    # --- HOLD: informational only, no execution ---
-    if action == "HOLD":
-        log.info("[%s] HOLD signal — no order placed (symbol=%s)", signal_id, signal["symbol"])
-        return
-
     # --- Parse symbol ---
     try:
         parsed: ParsedSymbol = parse_symbol(signal["symbol"])
@@ -90,6 +85,25 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
     lean_symbol = _resolve_symbol(algo, parsed)
     _seed_signal_market_price(algo, lean_symbol, signal)
     holdings_before = _get_holdings_quantity(algo, lean_symbol)
+
+    # --- HOLD: informational decision, no broker submission ---
+    if action == "HOLD":
+        _set_signal_context(algo, signal_context)
+        try:
+            _record_signal_noop(
+                algo,
+                lean_symbol,
+                signal_id,
+                noop_reason="hold_signal",
+                requested_quantity=quantity,
+                quantity_type=quantity_type,
+                order_type=order_type,
+                price=_get_price(algo, lean_symbol),
+            )
+        finally:
+            _clear_signal_context(algo)
+        log.info("[%s] HOLD signal — no order placed (symbol=%s)", signal_id, signal["symbol"])
+        return
 
     # --- Confidence floor: avoid near-zero orders ---
     effective_confidence = max(confidence, _CONFIDENCE_FLOOR)
@@ -599,6 +613,34 @@ def _record_order_rejection(
         "submitted_to_broker": False,
     }
     if price is not None:
+        kwargs["price"] = float(price)
+    recorder(lean_symbol, **kwargs)
+
+
+def _record_signal_noop(
+    algo: Any,
+    lean_symbol: Any,
+    signal_id: str,
+    *,
+    noop_reason: str,
+    requested_quantity: float,
+    quantity_type: str,
+    order_type: str,
+    price: float | None = None,
+) -> None:
+    recorder = getattr(algo, "RecordSignalNoop", None)
+    if not callable(recorder):
+        return
+    kwargs = {
+        "signal_id": signal_id,
+        "noop_reason": noop_reason,
+        "requested_quantity": float(requested_quantity),
+        "quantity_type": quantity_type,
+        "order_type": order_type,
+        "broker_submission_status": "not_submitted_signal_noop",
+        "submitted_to_broker": False,
+    }
+    if price is not None and price > 0:
         kwargs["price"] = float(price)
     recorder(lean_symbol, **kwargs)
 

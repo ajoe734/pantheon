@@ -251,6 +251,65 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertFalse(telemetry.events[0]["metadata"]["is_real_order"])
         self.assertEqual(telemetry.events[0]["metadata"]["alpha_source"], "llm_research_agent")
 
+    def test_hold_llm_signal_records_paper_order_noop_without_fill(self):
+        signal = self._signal()
+        signal.update(
+            {
+                "signal_id": "llm-hold-msft-riskoff-001",
+                "strategy_id": "strategy-llm-riskoff",
+                "symbol": "MSFT.US",
+                "action": "HOLD",
+                "direction": "LONG",
+                "quantity": 0,
+                "quantity_type": "SHARES",
+                "source_worker": "mock-llm-risk-normalizer",
+                "metadata": {
+                    "alpha_source": "llm_riskoff_agent",
+                    "confidence_score": 0.91,
+                    "model_id": "gpt-risk-paper",
+                    "market_data": {"close": 420.0},
+                },
+            }
+        )
+        store = InMemoryPendingSignalStore([signal])
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=store,
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        snapshot = service.drain_once()
+
+        self.assertEqual(snapshot["status"], "ok")
+        self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
+        self.assertEqual(snapshot["paper_state"]["execution_event_count"], 1)
+        self.assertEqual(snapshot["paper_state"]["positions"], [])
+        event = snapshot["paper_state"]["recent_order_events"][0]
+        self.assertEqual(event["event_type"], "paper_order_simulated")
+        self.assertEqual(event["action"], "hold_signal_noop")
+        self.assertEqual(event["quantity"], 0.0)
+        self.assertEqual(event["metadata"]["signal_id"], "llm-hold-msft-riskoff-001")
+        self.assertEqual(event["metadata"]["noop_reason"], "hold_signal")
+        self.assertEqual(event["metadata"]["decision_status"], "no_order")
+        self.assertEqual(event["metadata"]["order_status"], "not_submitted")
+        self.assertEqual(event["metadata"]["price"], 420.0)
+        self.assertFalse(event["submitted_to_broker"])
+
+        noop_events = [event for event in telemetry.events if event["event_type"] == "paper_order_simulated"]
+        fill_events = [event for event in telemetry.events if event["event_type"] == "paper_fill_simulated"]
+        pnl_events = [event for event in telemetry.events if event["event_type"] == "pnl_snapshot"]
+        self.assertEqual(len(noop_events), 1)
+        self.assertEqual(fill_events, [])
+        self.assertEqual(noop_events[0]["metrics"]["noop_count"], 1)
+        self.assertEqual(noop_events[0]["metrics"]["fill_rate"], 0.0)
+        self.assertEqual(noop_events[0]["metadata"]["alpha_source"], "llm_riskoff_agent")
+        self.assertEqual(pnl_events[-1]["metrics"]["fill_event_count"], 0)
+        self.assertEqual(pnl_events[-1]["metrics"]["fill_rate"], 0.0)
+
     def test_snapshot_without_drain_reports_truthful_ready_state(self):
         service = PaperRuntimeService(
             store=InMemoryPendingSignalStore(),

@@ -25,6 +25,7 @@ class _SpyAlgo:
         self.stop_market_orders = []
         self.bracket_logs = []
         self.order_rejections = []
+        self.signal_noops = []
 
     def MarketOrder(self, symbol, quantity):  # noqa: N802
         self.market_orders.append((symbol, quantity))
@@ -86,6 +87,33 @@ class _SpyAlgo:
         if price is not None:
             payload["price"] = price
         self.order_rejections.append(payload)
+
+    def RecordSignalNoop(  # noqa: N802
+        self,
+        symbol,
+        *,
+        signal_id,
+        noop_reason,
+        requested_quantity,
+        quantity_type,
+        order_type,
+        broker_submission_status,
+        submitted_to_broker,
+        price=None,
+    ):
+        payload = {
+            "symbol": symbol,
+            "signal_id": signal_id,
+            "noop_reason": noop_reason,
+            "requested_quantity": requested_quantity,
+            "quantity_type": quantity_type,
+            "order_type": order_type,
+            "broker_submission_status": broker_submission_status,
+            "submitted_to_broker": submitted_to_broker,
+        }
+        if price is not None:
+            payload["price"] = price
+        self.signal_noops.append(payload)
 
     def SetHoldings(self, symbol, target_percent):  # noqa: N802
         raise AssertionError("SetHoldings should not be used by this signal")
@@ -150,6 +178,32 @@ class _SimAlgo(_GuardedPaperAlgo):
 
 
 class ExecutorBracketOrderTests(unittest.TestCase):
+    def test_hold_signal_records_noop_feedback_without_order(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-hold-001",
+                "symbol": "AAPL.US",
+                "action": "HOLD",
+                "direction": "LONG",
+                "quantity": 0,
+                "quantity_type": "SHARES",
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["noop_reason"], "hold_signal")
+        self.assertEqual(noop["requested_quantity"], 0.0)
+        self.assertEqual(noop["quantity_type"], "SHARES")
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_noop")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["price"], 100.0)
+
     def test_zero_share_quantity_records_order_rejection(self):
         algo = _SpyAlgo()
 

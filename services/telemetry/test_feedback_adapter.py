@@ -1306,6 +1306,80 @@ class TestLineageReadModel(unittest.TestCase):
         self.assertEqual(order_context["fill_rate"], 0.0)
         self.assertFalse(order_context["submitted_to_broker"])
 
+    def test_paper_order_simulated_recovery_preserves_noop_context(self):
+        """HOLD no-op decisions must recover from the feedback store with order context."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_file = Path(tmpdir) / "feedback_store.jsonl"
+            writer = FeedbackStoreAdapter(feedback_store_path=str(store_file))
+            event = {
+                "event_id": "evt-hold-noop-001",
+                "event_type": "paper_order_simulated",
+                "created_at": "2026-06-12T17:45:00Z",
+                "execution_mode": "paper",
+                "binding_id": "rb-hold-001",
+                "runtime_id": "runtime-hold",
+                "capital_pool_id": "pool-hold",
+                "artifact_id": "artifact-hold",
+                "artifact_version": "1.0.0",
+                "deployment_stage": "paper",
+                "plan_id": "plan-hold",
+                "persona_capital_binding_id": "pcb-hold",
+                "trace_id": "trace-hold",
+                "target": {
+                    "strategy_id": "strat-hold",
+                    "registry_id": "reg-hold",
+                    "promotion_state": "paper",
+                },
+                "metrics": {
+                    "noop_count": 1,
+                    "requested_quantity": 0.0,
+                    "fill_quantity": 0.0,
+                    "fill_rate": 0.0,
+                },
+                "metadata": {
+                    "signal_id": "llm-hold-msft-riskoff-020",
+                    "alpha_source": "llm_riskoff_agent",
+                    "model_id": "gpt-risk-paper",
+                    "noop_reason": "hold_signal",
+                    "decision_status": "no_order",
+                    "order_status": "not_submitted",
+                    "quantity_type": "SHARES",
+                    "price": 420.0,
+                    "broker_submission_status": "not_submitted_signal_noop",
+                    "submitted_to_broker": False,
+                    "is_real_order": False,
+                    "is_real_capital": False,
+                },
+            }
+            stored = writer.ingest_telemetry_event(event, "strat-hold", "paper")
+            recovered = FeedbackStoreAdapter(feedback_store_path=str(store_file))
+
+            events = recovered.query_telemetry(
+                strategy_id="strat-hold",
+                event_type="paper_order_simulated",
+                promotion_state="paper",
+                limit=3,
+            )
+            self.assertEqual([item["event_id"] for item in events], [stored["event_id"]])
+
+            payload = recovered.build_learn_feedback_writeback_payload(
+                events[0],
+                sponsor_persona_id="persona-hold-sponsor",
+                contributing_persona_ids=["persona-hold-ops"],
+                summary="LLM HOLD signal was processed as a no-order paper decision.",
+            )
+            evidence = payload["runtime_telemetry_evidence"][0]
+            lineage = evidence["lineage"]
+            self.assertEqual(lineage["alpha_context"]["signal_id"], "llm-hold-msft-riskoff-020")
+            self.assertEqual(lineage["alpha_context"]["alpha_source"], "llm_riskoff_agent")
+            order_context = lineage["order_context"]
+            self.assertEqual(order_context["noop_reason"], "hold_signal")
+            self.assertEqual(order_context["decision_status"], "no_order")
+            self.assertEqual(order_context["order_status"], "not_submitted")
+            self.assertEqual(order_context["fill_rate"], 0.0)
+            self.assertEqual(order_context["noop_count"], 1)
+            self.assertFalse(order_context["submitted_to_broker"])
+
     def test_query_lineage_records_normalizes_semantic_refs(self):
         """Telemetry raw fields must normalize to semantic read-model fields."""
         adapter = FeedbackStoreAdapter()

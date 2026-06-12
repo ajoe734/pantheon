@@ -376,6 +376,40 @@ class PaperExecutionAlgorithm:
             metadata=event_metadata,
         )
 
+    def RecordSignalNoop(  # noqa: N802
+        self,
+        symbol: str,
+        *,
+        signal_id: str,
+        noop_reason: str,
+        requested_quantity: float,
+        quantity_type: str,
+        order_type: str,
+        broker_submission_status: str,
+        submitted_to_broker: bool,
+        price: float | None = None,
+    ) -> None:
+        event_metadata = {
+            "signal_id": signal_id,
+            "noop_reason": noop_reason,
+            "decision_status": "no_order",
+            "order_status": "not_submitted",
+            "requested_quantity": float(requested_quantity),
+            "quantity_type": quantity_type,
+            "order_type": order_type,
+        }
+        if price is not None:
+            event_metadata["price"] = float(price)
+        self._publish(
+            "paper_order_simulated",
+            str(symbol),
+            0.0,
+            "hold_signal_noop",
+            broker_submission_status=broker_submission_status,
+            submitted_to_broker=submitted_to_broker,
+            metadata=event_metadata,
+        )
+
     def positions(self) -> list[dict[str, Any]]:
         positions: list[dict[str, Any]] = []
         for symbol, holding in sorted(self.Portfolio.items()):
@@ -908,6 +942,16 @@ class PaperRuntimeService:
             for field in ("requested_quantity", "computed_quantity"):
                 if field in event.metadata:
                     metrics[field] = event.metadata[field]
+        elif event.event_type == "paper_order_simulated":
+            metrics = {
+                "noop_count": 1,
+                "fill_quantity": 0.0,
+                "fill_rate": 0.0,
+                "action": event.action,
+                "submitted_to_broker": event.submitted_to_broker,
+            }
+            if "requested_quantity" in event.metadata:
+                metrics["requested_quantity"] = event.metadata["requested_quantity"]
         else:
             metrics = {
                 "fill_quantity": event.quantity,
