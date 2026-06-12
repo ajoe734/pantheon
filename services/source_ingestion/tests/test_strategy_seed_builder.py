@@ -40,6 +40,8 @@ def test_builds_strategy_spec_seed_from_evidence_bundle_with_lineage() -> None:
     assert seed.label_hints == ("5_day_forward_return",)
     assert "survivorship bias check" in seed.risk_notes
     assert seed.confidence == 0.82
+    assert seed.negative_memory_match["warning_level"] == "info"
+    assert seed.negative_memory_match["similarity"] == 0.0
     assert seed.source_ids == ("src-paper-alpha-001",)
     assert seed.evidence_item_ids == ("evi-alpha-001",)
     assert seed.citation_refs == ("alpha-paper#abstract",)
