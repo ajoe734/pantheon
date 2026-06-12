@@ -51,6 +51,7 @@ class DataSourceClass(str, Enum):
     MACRO = "macro"
     SHORT_INTEREST = "short_interest"
     VENDOR_BACKFILL = "vendor_backfill"
+    BROKER_READBACK = "broker_readback"
 
 
 _SOURCE_KIND = "data_source"
@@ -64,6 +65,8 @@ _ALLOWED_USE_VALUES = frozenset({
     "paper_runtime",
     "canary_runtime",
     "live_runtime",
+    "execution_sync",
+    "audit_evidence",
 })
 
 

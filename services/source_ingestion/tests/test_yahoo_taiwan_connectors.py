@@ -95,6 +95,9 @@ def test_yahoo_broker_adapter_emits_market_source_records() -> None:
     assert connector.metadata["source_priority"] == "fallback"
     assert connector.metadata["fallback_for_connector_id"] == "tw-finmind-broker-daily-report"
     assert connector.metadata["active_universe_tiers"] == ["core_universe", "candidate_universe"]
+    assert connector.metadata["archive_behavior"] == "skip"
+    assert connector.metadata["max_rank_policy"]["default_max_rank"] == 2
+    assert connector.metadata["max_rank_policy"]["full_branch_storage_allowed_by_default"] is False
     assert len(records) == 4
     assert records[0].connector_id == "tw-yahoo-broker-top15"
     assert records[0].metadata["dataset"] == "tw_broker_top"
@@ -108,6 +111,9 @@ def test_yahoo_rss_adapter_emits_pit_valid_news_records() -> None:
 
     assert connector.source_type.value == "news"
     assert connector.metadata["entitlement_tags"] == ["yahoo-tw-rss-public-metadata"]
+    assert connector.metadata["archive_behavior"] == "skip"
+    assert connector.metadata["raw_storage_policy"]["compression"] == "gzip"
+    assert connector.metadata["raw_storage_policy"]["retention_days"] == 730
     assert len(records) == 1
     record = validate_external_source_record(records[0], connector=connector)
     assert record.metadata["event_time"] == "2026-06-08T06:30:00Z"
@@ -131,6 +137,10 @@ def test_anue_rss_adapter_emits_summary_only_news_metadata_records() -> None:
     assert connector.source_type.value == "news"
     assert connector.metadata["entitlement_tags"] == ["anue-tw-rss-public-metadata"]
     assert connector.metadata["summary_only_default"] is True
+    assert connector.metadata["archive_behavior"] == "skip"
+    assert connector.metadata["raw_storage_policy"]["retention_policy_ref"] == (
+        "market-data://raw-retention/tw-news-metadata-2y"
+    )
     assert len(records) == 1
     record = validate_external_source_record(records[0], connector=connector)
     assert record.connector_id == "tw-anue-news-rss"

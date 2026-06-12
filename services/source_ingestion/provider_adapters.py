@@ -7,7 +7,9 @@ connector config cannot import arbitrary code.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from services.research.adapters.taiwan_market_client import MopsRouteSpec, TejTableSpec
@@ -24,6 +26,12 @@ from .connectors.us_public import (
     FredMacroSeriesAdapter,
     SecEdgarFilingAdapter,
     StooqDailyOhlcvAdapter,
+)
+from .connectors.us_paid_broker import (
+    AlphaVantageUsEquityDailyAdapter,
+    IbkrBrokerReadbackAdapter,
+    PolygonUsEquityDailyAdapter,
+    ShioajiBrokerReadbackAdapter,
 )
 from .connectors.yahoo_taiwan import AnueTaiwanRssAdapter, YahooTaiwanBrokerTopAdapter, YahooTaiwanRssAdapter
 
@@ -114,6 +122,31 @@ def _single_symbol(request: Mapping[str, Any]) -> str | None:
     if len(symbols) == 1:
         return symbols[0].upper()
     return None
+
+
+def _bool(value: Any, *, default: bool = False) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _request_value(request: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in request and request[key] not in (None, ""):
+            return request[key]
+    return None
+
+
+def _read_json_payload_file(file_path: str, *, field_name: str) -> Any:
+    path = Path(file_path)
+    if not path.exists() or not path.is_file():
+        raise SourceEvidenceError(f"{field_name} requires payload or an existing JSON readback file")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SourceEvidenceError(f"{field_name} could not read JSON readback file") from exc
 
 
 def _attach_run_metadata(record: SourceRecord, *, token: str, request: Mapping[str, Any]) -> SourceRecord:
@@ -314,6 +347,95 @@ def _stooq_daily(adapter: StooqDailyOhlcvAdapter, request: Mapping[str, Any], tr
     )
 
 
+def _polygon_daily(
+    adapter: PolygonUsEquityDailyAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    symbol = str(_require(_single_symbol(request), "symbol"))
+    adjusted = _bool(request.get("adjusted"), default=True)
+    payload = _request_value(request, "payload", "aggs_payload")
+    if payload is None:
+        date = request.get("date") or request.get("run_date")
+        payload = adapter.fetch_daily_aggs(
+            symbol,
+            start_date=str(_require(request.get("start_date") or date, "start_date")),
+            end_date=str(_require(request.get("end_date") or date, "end_date")),
+            adjusted=adjusted,
+        )
+    return adapter.records_from_aggs_payload(
+        symbol,
+        payload,
+        source_url=request.get("source_url"),
+        adjusted=adjusted,
+        trace_id=trace_id,
+    )
+
+
+def _alpha_vantage_daily(
+    adapter: AlphaVantageUsEquityDailyAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    symbol = str(_require(_single_symbol(request), "symbol"))
+    payload = _request_value(request, "payload", "time_series_payload")
+    if payload is None:
+        payload = adapter.fetch_daily_time_series(
+            symbol,
+            outputsize=str(request.get("outputsize") or "compact"),
+        )
+    return adapter.records_from_time_series_payload(
+        symbol,
+        payload,
+        source_url=request.get("source_url"),
+        trace_id=trace_id,
+    )
+
+
+def _readback_file_path(
+    adapter: IbkrBrokerReadbackAdapter | ShioajiBrokerReadbackAdapter,
+    request: Mapping[str, Any],
+) -> str:
+    return str(
+        request.get("file_path")
+        or request.get("readback_file_path")
+        or adapter.resolve_readback_path()
+        or ""
+    ).strip()
+
+
+def _ibkr_readback(
+    adapter: IbkrBrokerReadbackAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    file_path = _readback_file_path(adapter, request)
+    if not file_path:
+        raise SourceEvidenceError(
+            "IBKR readback requires file_path, readback_file_path, or IBKR_READBACK_FILE_PATH"
+        )
+    payload = _request_value(request, "payload", "rows", "readback")
+    if payload is None:
+        payload = _read_json_payload_file(file_path, field_name="IBKR readback")
+    return adapter.records_from_readback_file(file_path, payload, trace_id=trace_id)
+
+
+def _shioaji_readback(
+    adapter: ShioajiBrokerReadbackAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    file_path = _readback_file_path(adapter, request)
+    if not file_path:
+        raise SourceEvidenceError(
+            "Shioaji readback requires file_path, readback_file_path, or SHIOAJI_READBACK_FILE_PATH"
+        )
+    payload = _request_value(request, "payload", "rows", "readback")
+    if payload is None:
+        payload = _read_json_payload_file(file_path, field_name="Shioaji readback")
+    return adapter.records_from_readback_file(file_path, payload, trace_id=trace_id)
+
+
 ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
     "FinMindTaiwanDatasetAdapter.records_from_data_payload": ProviderAdapterSpec(
         token="FinMindTaiwanDatasetAdapter.records_from_data_payload",
@@ -386,5 +508,29 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=StooqDailyOhlcvAdapter,
         handler=_stooq_daily,
         config_keys=("max_records", "connector_status", "disabled_reason"),
+    ),
+    "PolygonUsEquityDailyAdapter.records_from_aggs_payload": ProviderAdapterSpec(
+        token="PolygonUsEquityDailyAdapter.records_from_aggs_payload",
+        adapter_cls=PolygonUsEquityDailyAdapter,
+        handler=_polygon_daily,
+        config_keys=("secret_ref_id", "max_records"),
+    ),
+    "AlphaVantageUsEquityDailyAdapter.records_from_time_series_payload": ProviderAdapterSpec(
+        token="AlphaVantageUsEquityDailyAdapter.records_from_time_series_payload",
+        adapter_cls=AlphaVantageUsEquityDailyAdapter,
+        handler=_alpha_vantage_daily,
+        config_keys=("secret_ref_id", "max_records", "connector_status", "disabled_reason"),
+    ),
+    "IbkrBrokerReadbackAdapter.records_from_readback_file": ProviderAdapterSpec(
+        token="IbkrBrokerReadbackAdapter.records_from_readback_file",
+        adapter_cls=IbkrBrokerReadbackAdapter,
+        handler=_ibkr_readback,
+        config_keys=("readback_file_env",),
+    ),
+    "ShioajiBrokerReadbackAdapter.records_from_readback_file": ProviderAdapterSpec(
+        token="ShioajiBrokerReadbackAdapter.records_from_readback_file",
+        adapter_cls=ShioajiBrokerReadbackAdapter,
+        handler=_shioaji_readback,
+        config_keys=("readback_file_env",),
     ),
 }

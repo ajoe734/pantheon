@@ -33,6 +33,16 @@ from .taiwan_official import (
     TW_OFFICIAL_CONNECTOR_ID,
     TaiwanOfficialMarketDatasetAdapter,
 )
+from .us_paid_broker import (
+    ALPHA_VANTAGE_US_DAILY_CONNECTOR_ID,
+    IBKR_READBACK_CONNECTOR_ID,
+    POLYGON_US_DAILY_CONNECTOR_ID,
+    SHIOAJI_READBACK_CONNECTOR_ID,
+    AlphaVantageUsEquityDailyAdapter,
+    IbkrBrokerReadbackAdapter,
+    PolygonUsEquityDailyAdapter,
+    ShioajiBrokerReadbackAdapter,
+)
 from .us_public import (
     FINRA_SHORT_SALE_CONNECTOR_ID,
     FRED_CONNECTOR_ID,
@@ -51,6 +61,8 @@ from .yahoo_taiwan import (
 )
 
 __all__ = [
+    "ALPHA_VANTAGE_US_DAILY_CONNECTOR_ID",
+    "AlphaVantageUsEquityDailyAdapter",
     "AuthPolicy",
     "AuthType",
     "AnueTaiwanRssAdapter",
@@ -77,12 +89,18 @@ __all__ = [
     "FinraShortSaleAdapter",
     "FRED_CONNECTOR_ID",
     "FredMacroSeriesAdapter",
+    "IBKR_READBACK_CONNECTOR_ID",
+    "IbkrBrokerReadbackAdapter",
     "OpenAlexPaperIngestAdapter",
+    "POLYGON_US_DAILY_CONNECTOR_ID",
+    "PolygonUsEquityDailyAdapter",
     "RepoAllowlistEntry",
     "RepoAllowlistProvider",
     "SEC_EDGAR_CONNECTOR_ID",
+    "SHIOAJI_READBACK_CONNECTOR_ID",
     "STOOQ_DAILY_OHLCV_CONNECTOR_ID",
     "SecEdgarFilingAdapter",
+    "ShioajiBrokerReadbackAdapter",
     "StaticRecordsProviderExample",
     "StooqDailyOhlcvAdapter",
     "TAIWAN_OFFICIAL_ENDPOINTS",
