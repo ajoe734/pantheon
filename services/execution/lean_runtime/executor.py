@@ -64,6 +64,7 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
         For unrecoverable signal errors that should be logged and skipped.
     """
     signal_id = signal.get("signal_id", "<unknown>")
+    signal_context = _signal_context_metadata(signal)
     action = signal["action"]           # BUY | SELL | HOLD | EXIT
     direction = signal["direction"]     # LONG | SHORT
     quantity = float(signal["quantity"])
@@ -87,6 +88,7 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
 
     # Build LEAN Symbol object by calling algo helper
     lean_symbol = _resolve_symbol(algo, parsed)
+    _seed_signal_market_price(algo, lean_symbol, signal)
     holdings_before = _get_holdings_quantity(algo, lean_symbol)
 
     # --- Confidence floor: avoid near-zero orders ---
@@ -100,70 +102,140 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
                 signal_id, confidence, _CONFIDENCE_FLOOR, quantity,
             )
 
-    # --- Dispatch ---
-    if action == "BUY" and direction == "LONG":
-        _place_order(algo, lean_symbol, quantity, quantity_type,
-                     order_type, limit_price, sign=+1, signal_id=signal_id)
+    _set_signal_context(algo, signal_context)
+    try:
+        # --- Dispatch ---
+        if action == "BUY" and direction == "LONG":
+            _place_order(algo, lean_symbol, quantity, quantity_type,
+                         order_type, limit_price, sign=+1, signal_id=signal_id)
 
-    elif action == "SELL" and direction == "SHORT":
-        _place_order(algo, lean_symbol, quantity, quantity_type,
-                     order_type, limit_price, sign=-1, signal_id=signal_id)
+        elif action == "SELL" and direction == "SHORT":
+            _place_order(algo, lean_symbol, quantity, quantity_type,
+                         order_type, limit_price, sign=-1, signal_id=signal_id)
 
-    elif action == "SELL" and direction == "LONG":
-        # Close existing long position
-        if quantity_type == "PERCENT_PORTFOLIO":
-            # SetHoldings to 0 for portfolio-relative closes
-            log.info("[%s] SELL+LONG → SetHoldings %s → 0", signal_id, parsed.raw)
-            algo.SetHoldings(lean_symbol, 0)
+        elif action == "SELL" and direction == "LONG":
+            # Close existing long position
+            if quantity_type == "PERCENT_PORTFOLIO":
+                # SetHoldings to 0 for portfolio-relative closes
+                log.info("[%s] SELL+LONG → SetHoldings %s → 0", signal_id, parsed.raw)
+                algo.SetHoldings(lean_symbol, 0)
+            else:
+                # Liquidate for absolute quantity closes (more robust)
+                log.info("[%s] SELL+LONG → Liquidate long on %s", signal_id, parsed.raw)
+                algo.Liquidate(lean_symbol)
+
+        elif action == "EXIT" and direction == "LONG":
+            # Close long leg only: check actual position direction
+            holdings = _get_holdings_quantity(algo, lean_symbol)
+            if holdings > 0:
+                # Only close if actually long
+                log.info("[%s] EXIT+LONG → Liquidate long on %s", signal_id, parsed.raw)
+                algo.Liquidate(lean_symbol)
+            else:
+                log.warning(
+                    "[%s] EXIT+LONG but no long position on %s (holdings=%.1f) — no-op",
+                    signal_id, parsed.raw, holdings,
+                )
+
+        elif action == "EXIT" and direction == "SHORT":
+            # Close short leg: set holdings to 0 if short, else no-op
+            log.info("[%s] EXIT+SHORT → close short on %s", signal_id, parsed.raw)
+            holdings = _get_holdings_quantity(algo, lean_symbol)
+            if holdings < 0:
+                # Use ceil to ensure we fully cover fractional short positions (e.g., crypto)
+                shares_to_buy = math.ceil(abs(holdings))
+                algo.MarketOrder(lean_symbol, shares_to_buy)
+            else:
+                log.warning(
+                    "[%s] EXIT+SHORT but no short position found on %s (holdings=%.1f) — no-op",
+                    signal_id, parsed.raw, holdings,
+                )
         else:
-            # Liquidate for absolute quantity closes (more robust)
-            log.info("[%s] SELL+LONG → Liquidate long on %s", signal_id, parsed.raw)
-            algo.Liquidate(lean_symbol)
-
-    elif action == "EXIT" and direction == "LONG":
-        # Close long leg only: check actual position direction
-        holdings = _get_holdings_quantity(algo, lean_symbol)
-        if holdings > 0:
-            # Only close if actually long
-            log.info("[%s] EXIT+LONG → Liquidate long on %s", signal_id, parsed.raw)
-            algo.Liquidate(lean_symbol)
-        else:
-            log.warning(
-                "[%s] EXIT+LONG but no long position on %s (holdings=%.1f) — no-op",
-                signal_id, parsed.raw, holdings,
+            raise ExecutionError(
+                f"[{signal_id}] Unhandled action/direction combination: "
+                f"action={action} direction={direction}"
             )
 
-    elif action == "EXIT" and direction == "SHORT":
-        # Close short leg: set holdings to 0 if short, else no-op
-        log.info("[%s] EXIT+SHORT → close short on %s", signal_id, parsed.raw)
-        holdings = _get_holdings_quantity(algo, lean_symbol)
-        if holdings < 0:
-            # Use ceil to ensure we fully cover fractional short positions (e.g., crypto)
-            shares_to_buy = math.ceil(abs(holdings))
-            algo.MarketOrder(lean_symbol, shares_to_buy)
-        else:
-            log.warning(
-                "[%s] EXIT+SHORT but no short position found on %s (holdings=%.1f) — no-op",
-                signal_id, parsed.raw, holdings,
+        # --- Risk: stop-loss / take-profit bracket ---
+        risk = (signal.get("metadata") or {}).get("risk_parameters") or {}
+        if risk.get("stop_loss_pct") or risk.get("take_profit_pct"):
+            _handle_bracket_order(
+                algo=algo,
+                lean_symbol=lean_symbol,
+                signal_id=signal_id,
+                risk=risk,
+                action=action,
+                direction=direction,
+                holdings_before=holdings_before,
             )
-    else:
-        raise ExecutionError(
-            f"[{signal_id}] Unhandled action/direction combination: "
-            f"action={action} direction={direction}"
-        )
+    finally:
+        _clear_signal_context(algo)
 
-    # --- Risk: stop-loss / take-profit bracket ---
-    risk = (signal.get("metadata") or {}).get("risk_parameters") or {}
-    if risk.get("stop_loss_pct") or risk.get("take_profit_pct"):
-        _handle_bracket_order(
-            algo=algo,
-            lean_symbol=lean_symbol,
-            signal_id=signal_id,
-            risk=risk,
-            action=action,
-            direction=direction,
-            holdings_before=holdings_before,
-        )
+
+def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
+    metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
+    context: dict[str, Any] = {}
+    for key in ("signal_id", "strategy_id", "source_worker", "run_id"):
+        value = signal.get(key)
+        if value not in (None, ""):
+            context[key] = value
+    for key in (
+        "alpha_source",
+        "confidence_score",
+        "model_id",
+        "prompt_bundle_id",
+        "research_note_ref",
+        "llm_note_ref",
+        "market_data_ref",
+        "normalized_data_ref",
+        "source_dataset_ref",
+        "ingest_run_id",
+    ):
+        value = metadata.get(key)
+        if value not in (None, ""):
+            context[key] = value
+    market_price = _signal_market_price(signal)
+    if market_price is not None:
+        context["market_price"] = market_price
+    return context
+
+
+def _set_signal_context(algo: Any, metadata: dict[str, Any]) -> None:
+    setter = getattr(algo, "SetCurrentSignalContext", None)
+    if callable(setter):
+        setter(metadata)
+
+
+def _clear_signal_context(algo: Any) -> None:
+    clearer = getattr(algo, "ClearCurrentSignalContext", None)
+    if callable(clearer):
+        clearer()
+
+
+def _seed_signal_market_price(algo: Any, lean_symbol: Any, signal: dict[str, Any]) -> None:
+    price = _signal_market_price(signal)
+    if price is None:
+        return
+    setter = getattr(algo, "SetSecurityPrice", None)
+    if callable(setter):
+        setter(lean_symbol, price)
+
+
+def _signal_market_price(signal: dict[str, Any]) -> float | None:
+    metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
+    market_data = metadata.get("market_data") if isinstance(metadata.get("market_data"), dict) else {}
+    for source in (metadata, market_data):
+        for key in ("last_price", "market_price", "close", "price"):
+            value = source.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                price = float(value)
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                return price
+    return None
 
 
 def _handle_bracket_order(
@@ -616,4 +688,12 @@ def _get_price(algo: Any, lean_symbol: Any) -> float:
     try:
         return float(algo.Securities[lean_symbol].Price)
     except Exception:
-        return 0.0
+        pass
+
+    ensure_security = getattr(algo, "EnsureSecurity", None)
+    if callable(ensure_security):
+        try:
+            return float(ensure_security(lean_symbol).Price)
+        except Exception:
+            return 0.0
+    return 0.0

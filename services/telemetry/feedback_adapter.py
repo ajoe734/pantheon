@@ -31,6 +31,7 @@ TELEMETRY_EVENT_TYPES = {
     "drawdown_snapshot",
     "slippage_observation",
     "fill_observation",
+    "paper_fill_simulated",
     "fill_received",
     "order_submitted",
     "order_accepted",
