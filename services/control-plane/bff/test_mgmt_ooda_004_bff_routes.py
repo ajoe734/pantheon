@@ -175,7 +175,7 @@ def test_ooda_packet_unknown_id_is_404_when_source_exists(monkeypatch) -> None:
         response = client.get("/bff/ooda/packets/not-a-packet", headers=HEADERS)
 
     assert response.status_code == 404, response.text
-    assert response.json()["detail"]["error"]["code"] == "OBJECT_NOT_FOUND"
+    assert response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
 def test_ooda_packet_missing_source_returns_unavailable_surface(monkeypatch) -> None:
@@ -198,4 +198,4 @@ def test_ooda_packet_feature_flag_fails_closed(monkeypatch) -> None:
         response = client.get("/bff/ooda/packets", headers=HEADERS)
 
     assert response.status_code == 503, response.text
-    assert response.json()["detail"]["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
+    assert response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"

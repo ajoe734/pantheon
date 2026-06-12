@@ -638,9 +638,16 @@ def _run_qlib(request: PersonaOSSRequest) -> PersonaOSSResult:
 
 
 def _run_vectorbt(request: PersonaOSSRequest) -> PersonaOSSResult:
-    dataset = _dataset_with_payload(
-        _fixture("services/research/vectorbt/examples/strategy_dataset_sample.json"),
+    fixture_path = _payload_str(
         request,
+        "dataset_fixture_path",
+        "services/research/vectorbt/examples/strategy_dataset_sample.json",
+    )
+    dataset = _dataset_with_payload(_fixture(fixture_path), request)
+    dataset = _limit_dataset_instruments(
+        dataset,
+        instrument_count=_payload_int(request, "instrument_count", 0),
+        instrument_offset=_payload_int(request, "instrument_offset", 0),
     )
     result = run_vectorbt_workflow(
         dataset,
@@ -670,6 +677,48 @@ def _run_vectorbt(request: PersonaOSSRequest) -> PersonaOSSResult:
         artifact_bundle=result.artifact_bundle,
         refs={"source_dataset_refs": result.prepared_dataset.source_dataset_refs},
     )
+
+
+def _limit_dataset_instruments(
+    dataset: dict[str, Any],
+    *,
+    instrument_count: int,
+    instrument_offset: int,
+) -> dict[str, Any]:
+    if instrument_count <= 0:
+        return dataset
+    records = dataset.get("records")
+    if not isinstance(records, list):
+        return dataset
+    instruments = sorted({
+        str(record.get("instrument"))
+        for record in records
+        if isinstance(record, Mapping) and str(record.get("instrument") or "").strip()
+    })
+    if not instruments:
+        return dataset
+    start = instrument_offset % len(instruments)
+    selected: list[str] = []
+    index = start
+    while len(selected) < min(instrument_count, len(instruments)):
+        instrument = instruments[index % len(instruments)]
+        if instrument not in selected:
+            selected.append(instrument)
+        index += 1
+    selected_set = set(selected)
+    dataset["records"] = [
+        record
+        for record in records
+        if isinstance(record, Mapping) and str(record.get("instrument")) in selected_set
+    ]
+    dataset.setdefault("metadata", {})
+    if isinstance(dataset["metadata"], Mapping):
+        dataset["metadata"] = {
+            **dict(dataset["metadata"]),
+            "instrument_subset": selected,
+            "instrument_subset_source": "persona_oss_request",
+        }
+    return dataset
 
 
 def _run_statsmodels(request: PersonaOSSRequest) -> PersonaOSSResult:
