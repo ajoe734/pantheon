@@ -99,13 +99,16 @@ class _SpyAlgo:
         order_type,
         broker_submission_status,
         submitted_to_broker,
+        computed_quantity=None,
         price=None,
+        metadata=None,
     ):
         payload = {
             "symbol": symbol,
             "signal_id": signal_id,
             "noop_reason": noop_reason,
             "requested_quantity": requested_quantity,
+            "computed_quantity": computed_quantity,
             "quantity_type": quantity_type,
             "order_type": order_type,
             "broker_submission_status": broker_submission_status,
@@ -113,6 +116,8 @@ class _SpyAlgo:
         }
         if price is not None:
             payload["price"] = price
+        if metadata is not None:
+            payload["metadata"] = metadata
         self.signal_noops.append(payload)
 
     def SetHoldings(self, symbol, target_percent):  # noqa: N802
@@ -203,6 +208,33 @@ class ExecutorBracketOrderTests(unittest.TestCase):
         self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_noop")
         self.assertFalse(noop["submitted_to_broker"])
         self.assertEqual(noop["price"], 100.0)
+
+    def test_exit_long_without_position_records_noop_feedback(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-exit-empty-long-001",
+                "symbol": "AAPL.US",
+                "action": "EXIT",
+                "direction": "LONG",
+                "quantity": 0,
+                "quantity_type": "SHARES",
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["noop_reason"], "exit_long_without_position")
+        self.assertEqual(noop["requested_quantity"], 0.0)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["metadata"]["position_quantity"], 0.0)
+        self.assertEqual(noop["metadata"]["exit_direction"], "LONG")
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_noop")
+        self.assertFalse(noop["submitted_to_broker"])
 
     def test_zero_share_quantity_records_order_rejection(self):
         algo = _SpyAlgo()
