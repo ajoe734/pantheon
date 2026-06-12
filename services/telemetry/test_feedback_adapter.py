@@ -953,6 +953,66 @@ class TestLineageReadModel(unittest.TestCase):
             )
             self.assertNotIn("approve", {record["event_type"] for record in records})
 
+    def test_order_rejection_lineage_preserves_adapter_response(self):
+        """Broker adapter rejection details must remain queryable in lineage."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-order-rejection-shioaji-live-disabled",
+            "event_type": "order_rejection",
+            "created_at": "2026-06-12T15:00:00Z",
+            "execution_mode": "sandbox",
+            "binding_id": "rb-reject-001",
+            "runtime_id": "runtime-reject",
+            "capital_pool_id": "pool-reject",
+            "artifact_id": "artifact-reject",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "sandbox",
+            "plan_id": "plan-reject",
+            "persona_capital_binding_id": "pcb-reject",
+            "trace_id": "trace-reject",
+            "target": {
+                "strategy_id": "strat-reject",
+                "registry_id": "reg-reject",
+                "promotion_state": "sandbox",
+            },
+            "metrics": {"rejected_order_count": 1, "submitted_to_broker": 0},
+            "metadata": {
+                "adapter": "shioaji_sandbox",
+                "broker": "shioaji",
+                "provider": "Shioaji",
+                "order_id": "client-order-reject-001",
+                "order_status": "rejected",
+                "broker_submission_status": "rejected_before_broker",
+                "submitted_to_broker": False,
+                "adapter_response_status": "rejected",
+                "adapter_error_code": "SHIOAJI_LIVE_DISABLED",
+                "adapter_error_message": "Live broker execution is permanently disabled.",
+                "adapter_status_code": 403,
+                "reject_reason": "live route blocked by adapter",
+                "requested_execution_mode": "live",
+                "blocked_execution_mode": "live",
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "sandbox",
+                "production_live_enabled": False,
+                "capital_binding_enabled": False,
+                "human_gate_required": True,
+                "proof_boundary": "management_sandbox_facade; not canary/live/capital proof",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-reject", "sandbox")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-reject-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["adapter_error_code"], "SHIOAJI_LIVE_DISABLED")
+        self.assertEqual(order_context["adapter_status_code"], 403)
+        self.assertEqual(order_context["broker_submission_status"], "rejected_before_broker")
+        self.assertFalse(order_context["submitted_to_broker"])
+        self.assertFalse(order_context["production_live_enabled"])
+        self.assertTrue(order_context["human_gate_required"])
+
     def test_query_lineage_records_normalizes_semantic_refs(self):
         """Telemetry raw fields must normalize to semantic read-model fields."""
         adapter = FeedbackStoreAdapter()
