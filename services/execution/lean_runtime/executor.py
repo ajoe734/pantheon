@@ -150,6 +150,18 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
                     "[%s] EXIT+LONG but no long position on %s (holdings=%.1f) — no-op",
                     signal_id, parsed.raw, holdings,
                 )
+                _record_signal_noop(
+                    algo,
+                    lean_symbol,
+                    signal_id,
+                    noop_reason="exit_long_without_position",
+                    requested_quantity=quantity,
+                    computed_quantity=0.0,
+                    quantity_type=quantity_type,
+                    order_type=order_type,
+                    price=_get_price(algo, lean_symbol),
+                    metadata={"position_quantity": holdings, "exit_direction": "LONG"},
+                )
 
         elif action == "EXIT" and direction == "SHORT":
             # Close short leg: set holdings to 0 if short, else no-op
@@ -163,6 +175,18 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
                 log.warning(
                     "[%s] EXIT+SHORT but no short position found on %s (holdings=%.1f) — no-op",
                     signal_id, parsed.raw, holdings,
+                )
+                _record_signal_noop(
+                    algo,
+                    lean_symbol,
+                    signal_id,
+                    noop_reason="exit_short_without_position",
+                    requested_quantity=quantity,
+                    computed_quantity=0.0,
+                    quantity_type=quantity_type,
+                    order_type=order_type,
+                    price=_get_price(algo, lean_symbol),
+                    metadata={"position_quantity": holdings, "exit_direction": "SHORT"},
                 )
         else:
             raise ExecutionError(
@@ -626,7 +650,9 @@ def _record_signal_noop(
     requested_quantity: float,
     quantity_type: str,
     order_type: str,
+    computed_quantity: float | None = None,
     price: float | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     recorder = getattr(algo, "RecordSignalNoop", None)
     if not callable(recorder):
@@ -640,8 +666,12 @@ def _record_signal_noop(
         "broker_submission_status": "not_submitted_signal_noop",
         "submitted_to_broker": False,
     }
+    if computed_quantity is not None:
+        kwargs["computed_quantity"] = float(computed_quantity)
     if price is not None and price > 0:
         kwargs["price"] = float(price)
+    if metadata:
+        kwargs["metadata"] = dict(metadata)
     recorder(lean_symbol, **kwargs)
 
 

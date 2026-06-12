@@ -139,6 +139,8 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "quantity_type",
     "noop_reason",
     "decision_status",
+    "position_quantity",
+    "exit_direction",
     "order_status",
     "readback_status",
     "cancel_status",

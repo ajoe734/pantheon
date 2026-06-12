@@ -1380,6 +1380,63 @@ class TestLineageReadModel(unittest.TestCase):
             self.assertEqual(order_context["noop_count"], 1)
             self.assertFalse(order_context["submitted_to_broker"])
 
+    def test_paper_order_simulated_exit_no_position_preserves_position_context(self):
+        """EXIT no-position no-ops must keep position context for Learn feedback."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-exit-empty-noop-001",
+            "event_type": "paper_order_simulated",
+            "created_at": "2026-06-12T18:15:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-exit-empty-001",
+            "runtime_id": "runtime-exit-empty",
+            "capital_pool_id": "pool-exit-empty",
+            "artifact_id": "artifact-exit-empty",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-exit-empty",
+            "persona_capital_binding_id": "pcb-exit-empty",
+            "target": {
+                "strategy_id": "strat-exit-empty",
+                "registry_id": "reg-exit-empty",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "noop_count": 1,
+                "requested_quantity": 0.0,
+                "computed_quantity": 0.0,
+                "fill_quantity": 0.0,
+                "fill_rate": 0.0,
+            },
+            "metadata": {
+                "signal_id": "quant-exit-adbe-empty-021",
+                "alpha_source": "quant_drawdown_exit",
+                "noop_reason": "exit_long_without_position",
+                "decision_status": "no_order",
+                "order_status": "not_submitted",
+                "quantity_type": "SHARES",
+                "position_quantity": 0.0,
+                "exit_direction": "LONG",
+                "price": 600.0,
+                "broker_submission_status": "not_submitted_signal_noop",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-exit-empty", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-exit-empty-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["noop_reason"], "exit_long_without_position")
+        self.assertEqual(order_context["computed_quantity"], 0.0)
+        self.assertEqual(order_context["position_quantity"], 0.0)
+        self.assertEqual(order_context["exit_direction"], "LONG")
+        self.assertEqual(order_context["broker_submission_status"], "not_submitted_signal_noop")
+        self.assertFalse(order_context["submitted_to_broker"])
+
     def test_query_lineage_records_normalizes_semantic_refs(self):
         """Telemetry raw fields must normalize to semantic read-model fields."""
         adapter = FeedbackStoreAdapter()

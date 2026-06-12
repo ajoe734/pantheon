@@ -387,7 +387,9 @@ class PaperExecutionAlgorithm:
         order_type: str,
         broker_submission_status: str,
         submitted_to_broker: bool,
+        computed_quantity: float | None = None,
         price: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         event_metadata = {
             "signal_id": signal_id,
@@ -398,13 +400,17 @@ class PaperExecutionAlgorithm:
             "quantity_type": quantity_type,
             "order_type": order_type,
         }
+        if computed_quantity is not None:
+            event_metadata["computed_quantity"] = float(computed_quantity)
         if price is not None:
             event_metadata["price"] = float(price)
+        if metadata:
+            event_metadata.update(metadata)
         self._publish(
             "paper_order_simulated",
             str(symbol),
             0.0,
-            "hold_signal_noop",
+            f"{noop_reason}_noop",
             broker_submission_status=broker_submission_status,
             submitted_to_broker=submitted_to_broker,
             metadata=event_metadata,
@@ -950,8 +956,9 @@ class PaperRuntimeService:
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
-            if "requested_quantity" in event.metadata:
-                metrics["requested_quantity"] = event.metadata["requested_quantity"]
+            for field in ("requested_quantity", "computed_quantity"):
+                if field in event.metadata:
+                    metrics[field] = event.metadata[field]
         else:
             metrics = {
                 "fill_quantity": event.quantity,
