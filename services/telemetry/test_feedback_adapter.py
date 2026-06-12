@@ -1013,6 +1013,62 @@ class TestLineageReadModel(unittest.TestCase):
         self.assertFalse(order_context["production_live_enabled"])
         self.assertTrue(order_context["human_gate_required"])
 
+    def test_order_partial_fill_lineage_preserves_fill_metrics(self):
+        """Partial-fill quantities in metrics must be promoted into order lineage."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-order-partial-paper",
+            "event_type": "order_partially_filled",
+            "created_at": "2026-06-12T15:30:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-partial-001",
+            "runtime_id": "runtime-partial",
+            "capital_pool_id": "pool-partial",
+            "artifact_id": "artifact-partial",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-partial",
+            "persona_capital_binding_id": "pcb-partial",
+            "trace_id": "trace-partial",
+            "target": {
+                "strategy_id": "strat-partial",
+                "registry_id": "reg-partial",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "requested_quantity": 50.0,
+                "fill_quantity": 20.0,
+                "fill_price": 31.25,
+                "remaining_quantity": 30.0,
+                "partial_fill_ratio": 0.4,
+                "fill_rate": 0.4,
+                "avg_slippage_bps": 0.0,
+            },
+            "metadata": {
+                "adapter": "openclaw_paper_broker",
+                "broker": "paper_broker",
+                "order_id": "paper-order-partial-001",
+                "order_status": "partially_filled",
+                "fill_status": "partially_filled",
+                "submitted_to_broker": True,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "paper",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-partial", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-partial-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["order_status"], "partially_filled")
+        self.assertEqual(order_context["fill_status"], "partially_filled")
+        self.assertEqual(order_context["fill_quantity"], 20.0)
+        self.assertEqual(order_context["remaining_quantity"], 30.0)
+        self.assertEqual(order_context["partial_fill_ratio"], 0.4)
+        self.assertEqual(order_context["fill_rate"], 0.4)
+
     def test_query_lineage_records_normalizes_semantic_refs(self):
         """Telemetry raw fields must normalize to semantic read-model fields."""
         adapter = FeedbackStoreAdapter()

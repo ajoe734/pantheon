@@ -111,9 +111,24 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "adapter_order_id",
     "shioaji_trade_id",
     "account_kind",
+    "order_quantity",
+    "requested_quantity",
     "order_status",
     "readback_status",
     "cancel_status",
+    "fill_status",
+    "fill_quantity",
+    "fill_price",
+    "filled_quantity",
+    "filled_qty",
+    "remaining_quantity",
+    "remaining_qty",
+    "cumulative_fill_quantity",
+    "cumulative_fill_qty",
+    "partial_fill_ratio",
+    "last_fill_quantity",
+    "last_fill_price",
+    "avg_fill_price",
     "broker_submission_status",
     "submitted_to_broker",
     "adapter_response_status",
@@ -135,6 +150,27 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "capital_binding_enabled",
     "human_gate_required",
     "proof_boundary",
+)
+
+ORDER_ADAPTER_METRIC_FIELDS = (
+    "order_quantity",
+    "requested_quantity",
+    "fill_quantity",
+    "fill_price",
+    "filled_quantity",
+    "filled_qty",
+    "remaining_quantity",
+    "remaining_qty",
+    "cumulative_fill_quantity",
+    "cumulative_fill_qty",
+    "partial_fill_ratio",
+    "last_fill_quantity",
+    "last_fill_price",
+    "avg_fill_price",
+    "fill_rate",
+    "avg_slippage_bps",
+    "pnl",
+    "total_trades",
 )
 
 
@@ -318,13 +354,18 @@ class FeedbackStoreAdapter:
     @staticmethod
     def _order_adapter_context(event: dict[str, Any]) -> dict[str, Any]:
         metadata = event.get("metadata")
-        if not isinstance(metadata, dict):
-            return {}
         context: dict[str, Any] = {}
-        for field in ORDER_ADAPTER_METADATA_FIELDS:
-            value = metadata.get(field)
-            if value not in (None, "", [], {}):
-                context[field] = value
+        if isinstance(metadata, dict):
+            for field in ORDER_ADAPTER_METADATA_FIELDS:
+                value = metadata.get(field)
+                if value not in (None, "", [], {}):
+                    context[field] = value
+        metrics = event.get("metrics")
+        if isinstance(metrics, dict):
+            for field in ORDER_ADAPTER_METRIC_FIELDS:
+                value = metrics.get(field)
+                if field not in context and value not in (None, "", [], {}):
+                    context[field] = value
         return context
 
     @staticmethod
