@@ -698,6 +698,9 @@ def _place_order(
     Place a directional order.  sign=+1 for long, -1 for short.
     Logs lossy float→int conversion for SHARES and CASH_VALUE.
     """
+    if order_type == "LIMIT" and limit_price is None:
+        raise ExecutionError(f"[{signal_id}] LIMIT order failed: limit_price is required")
+
     if quantity_type == "PERCENT_PORTFOLIO":
         pct = sign * quantity
         log.info("[%s] SetHoldings %s → %.4f", signal_id, lean_symbol, pct)

@@ -3,6 +3,7 @@ import unittest
 from services.execution.lean_runtime.executor import (
     BRACKET_ORDER_STATUS_LOGGED_ONLY,
     BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER,
+    ExecutionError,
     _build_bracket_legs,
     execute,
 )
@@ -283,6 +284,26 @@ class ExecutorBracketOrderTests(unittest.TestCase):
         self.assertEqual(rejection["requested_quantity"], 10.0)
         self.assertEqual(rejection["computed_quantity"], 0.0)
         self.assertEqual(rejection["price"], 100.0)
+
+    def test_limit_order_without_limit_price_raises_before_market_order(self):
+        algo = _SpyAlgo()
+
+        with self.assertRaisesRegex(ExecutionError, "limit_price is required"):
+            execute(
+                {
+                    "signal_id": "sig-limit-missing-price",
+                    "symbol": "AAPL.US",
+                    "action": "BUY",
+                    "direction": "LONG",
+                    "quantity": 10,
+                    "quantity_type": "SHARES",
+                    "order_type": "LIMIT",
+                },
+                algo,
+            )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
 
     def test_bracket_order_is_logged_only_not_broker_submitted(self):
         algo = _SpyAlgo()

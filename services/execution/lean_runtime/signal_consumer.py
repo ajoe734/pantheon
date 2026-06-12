@@ -392,7 +392,7 @@ class SignalConsumer:
                           signal.get("signal_id"), exc)
 
     def _record_execution_error_noop(self, signal: dict, algo: Any | None, exc: Exception) -> None:
-        reason = "symbol_parse_error" if _is_symbol_parse_error(exc) else "execution_error"
+        reason = _execution_error_reason(exc)
         self._record_filtered_signal_noop(
             signal,
             algo,
@@ -453,3 +453,11 @@ def _is_symbol_parse_error(exc: Exception) -> bool:
     if isinstance(exc, SymbolParseError):
         return True
     return isinstance(getattr(exc, "__cause__", None), SymbolParseError)
+
+
+def _execution_error_reason(exc: Exception) -> str:
+    if _is_symbol_parse_error(exc):
+        return "symbol_parse_error"
+    if "limit_price is required" in str(exc):
+        return "limit_price_required"
+    return "execution_error"
