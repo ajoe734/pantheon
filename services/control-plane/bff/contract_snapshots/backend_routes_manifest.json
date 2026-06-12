@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-06-10",
+    "snapshot_date": "2026-06-12",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 492,
+    "total_routes": 493,
     "status_values": [
       "implemented",
       "alias",
@@ -2926,6 +2926,12 @@
     {
       "method": "POST",
       "path": "/bff/management/nl/ask",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/strategy-seeds/{param}/submit-replication",
       "family": "unknown",
       "status": "implemented"
     },
