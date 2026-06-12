@@ -64,18 +64,29 @@ def test_binding_isolation_filters_misrouted_signal_feedback_memory_e2e(tmp_path
     snapshot = runtime.drain_once()
 
     assert snapshot["status"] == "ok"
-    assert snapshot["paper_state"]["processed_signal_count"] == 1
+    assert snapshot["paper_state"]["processed_signal_count"] == 2
+    assert snapshot["paper_state"]["execution_event_count"] == 2
     positions = {position["symbol"]: position for position in snapshot["paper_state"]["positions"]}
     assert set(positions) == {"AAPL"}
     assert positions["AAPL"]["quantity"] == 5.0
     assert positions["AAPL"]["price"] == 210.0
     fill_events = [event for event in telemetry.events if event["event_type"] == "paper_fill_simulated"]
+    noop_events = [event for event in telemetry.events if event["event_type"] == "paper_order_simulated"]
     assert len(fill_events) == 1
+    assert len(noop_events) == 1
     fill_event = fill_events[0]
+    noop_event = noop_events[0]
     assert fill_event["metadata"]["signal_id"] == "binding-aapl-valid-012"
     assert fill_event["metadata"]["binding_id"] == "binding-e2e-loop-012"
     assert fill_event["metadata"]["alpha_source"] == "binding_isolated_quant"
     assert "binding-nvda-misrouted-012" not in {event["metadata"].get("signal_id") for event in fill_events}
+    assert noop_event["metadata"]["signal_id"] == "binding-nvda-misrouted-012"
+    assert noop_event["metadata"]["noop_reason"] == "binding_mismatch"
+    assert noop_event["metadata"]["filter_reason"] == "binding_mismatch"
+    assert noop_event["metadata"]["expected_binding_id"] == "binding-e2e-loop-012"
+    assert noop_event["metadata"]["signal_binding_id"] == "binding-other-runtime"
+    assert noop_event["metadata"]["broker_submission_status"] == "not_submitted_signal_filtered"
+    assert noop_event["metadata"]["submitted_to_broker"] is False
 
     feedback_adapter = FeedbackStoreAdapter(feedback_store_path=str(tmp_path / "feedback-store.jsonl"))
     stored_fill = feedback_adapter.ingest_telemetry_event(
