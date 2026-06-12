@@ -344,6 +344,48 @@ class ExecutorBracketOrderTests(unittest.TestCase):
         self.assertEqual(algo.market_orders, [])
         self.assertEqual(algo.limit_orders, [("AAPL", 10, 99.0)])
 
+    def test_sell_long_limit_close_uses_limit_order_instead_of_liquidate(self):
+        algo = _SpyAlgo()
+        algo.Portfolio["AAPL"].Quantity = 10
+
+        execute(
+            {
+                "signal_id": "sig-sell-long-limit-close",
+                "symbol": "AAPL.US",
+                "action": "SELL",
+                "direction": "LONG",
+                "quantity": 6,
+                "quantity_type": "SHARES",
+                "order_type": "LIMIT",
+                "limit_price": 105.0,
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [("AAPL", -6.0, 105.0)])
+
+    def test_sell_long_limit_close_without_limit_price_raises_before_liquidate(self):
+        algo = _SpyAlgo()
+        algo.Portfolio["AAPL"].Quantity = 10
+
+        with self.assertRaisesRegex(ExecutionError, "LIMIT close failed: limit_price is required"):
+            execute(
+                {
+                    "signal_id": "sig-sell-long-limit-missing-price",
+                    "symbol": "AAPL.US",
+                    "action": "SELL",
+                    "direction": "LONG",
+                    "quantity": 6,
+                    "quantity_type": "SHARES",
+                    "order_type": "LIMIT",
+                },
+                algo,
+            )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+
     def test_percent_portfolio_limit_order_raises_before_setholdings(self):
         algo = _SpyAlgo()
 

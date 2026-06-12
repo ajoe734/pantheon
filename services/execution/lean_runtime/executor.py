@@ -128,7 +128,16 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
 
         elif action == "SELL" and direction == "LONG":
             # Close existing long position
-            if quantity_type == "PERCENT_PORTFOLIO":
+            if order_type == "LIMIT":
+                _place_limit_close_long(
+                    algo,
+                    lean_symbol,
+                    quantity,
+                    quantity_type,
+                    limit_price,
+                    signal_id=signal_id,
+                )
+            elif quantity_type == "PERCENT_PORTFOLIO":
                 # SetHoldings to 0 for portfolio-relative closes
                 log.info("[%s] SELL+LONG → SetHoldings %s → 0", signal_id, parsed.raw)
                 algo.SetHoldings(lean_symbol, 0)
@@ -680,6 +689,68 @@ def _record_signal_noop(
     if metadata:
         kwargs["metadata"] = dict(metadata)
     recorder(lean_symbol, **kwargs)
+
+
+def _place_limit_close_long(
+    algo: Any,
+    lean_symbol: Any,
+    quantity: float,
+    quantity_type: str,
+    limit_price: float | None,
+    *,
+    signal_id: str,
+) -> None:
+    if limit_price is None:
+        raise ExecutionError(f"[{signal_id}] LIMIT close failed: limit_price is required")
+    if quantity_type == "PERCENT_PORTFOLIO":
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT close failed: PERCENT_PORTFOLIO quantity_type "
+            "is not supported for limit orders"
+        )
+
+    holdings = _get_holdings_quantity(algo, lean_symbol)
+    if holdings <= 0:
+        _record_signal_noop(
+            algo,
+            lean_symbol,
+            signal_id,
+            noop_reason="sell_long_limit_without_position",
+            requested_quantity=quantity,
+            computed_quantity=0.0,
+            quantity_type=quantity_type,
+            order_type="LIMIT",
+            price=float(limit_price),
+            metadata={"position_quantity": holdings, "exit_direction": "LONG"},
+        )
+        return
+
+    if quantity_type == "SHARES":
+        requested_shares = int(round(quantity))
+    elif quantity_type == "CASH_VALUE":
+        requested_shares = int(round(quantity / float(limit_price)))
+    else:
+        raise ExecutionError(f"[{signal_id}] Unsupported quantity_type: {quantity_type}")
+
+    close_quantity = min(abs(float(holdings)), abs(float(requested_shares)))
+    if close_quantity <= 0:
+        _record_order_rejection(
+            algo,
+            lean_symbol,
+            signal_id,
+            reject_reason="limit_close_resolved_to_zero_shares",
+            requested_quantity=quantity,
+            computed_quantity=0.0,
+            quantity_type=quantity_type,
+            order_type="LIMIT",
+            price=float(limit_price),
+        )
+        return
+
+    limit_order = getattr(algo, "LimitOrder", None)
+    if not callable(limit_order):
+        raise ExecutionError(f"[{signal_id}] LIMIT close failed: missing LimitOrder")
+    log.info("[%s] SELL+LONG LimitOrder %s -%.4f @ %.4f", signal_id, lean_symbol, close_quantity, limit_price)
+    limit_order(lean_symbol, -close_quantity, float(limit_price))
 
 
 def _place_order(
