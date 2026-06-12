@@ -80,6 +80,16 @@ python3 -m pytest services/source_ingestion/tests/test_agora_seed_bridge.py serv
 
 Result: 81 passed in 8.56s.
 
+After merging current `origin/dev`, including the latest seed review inbox
+changes:
+
+```bash
+python3 -m pytest services/source_ingestion/tests/test_agora_seed_bridge.py services/source_ingestion/tests/test_ids_002_redaction_guard.py services/source_ingestion/tests/test_interaction_intent_classifier.py services/source_ingestion/tests/test_negative_memory_matcher.py services/source_ingestion/tests/test_strategy_seed_builder.py services/source_ingestion/tests/test_strategy_seed_store.py services/control-plane/bff/test_datastrat_seed_review_bff.py -q
+```
+
+Result: 88 passed in 15.03s, with 4 existing `datetime.utcnow()` deprecation
+warnings from `services/control-plane/bff/read_store.py`.
+
 ```bash
 git diff --check
 ```
