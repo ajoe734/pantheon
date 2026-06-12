@@ -73,6 +73,7 @@ def signal_from_market_row(
     ingest_run_id: str,
     confidence_score: float = 0.9,
     order_type: str | None = None,
+    limit_price: float | None = None,
     extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metadata = row["metadata"]
@@ -105,6 +106,8 @@ def signal_from_market_row(
     }
     if order_type:
         payload["order_type"] = order_type
+    if limit_price is not None:
+        payload["limit_price"] = float(limit_price)
     if extra_metadata:
         payload["metadata"].update(extra_metadata)
     return payload
