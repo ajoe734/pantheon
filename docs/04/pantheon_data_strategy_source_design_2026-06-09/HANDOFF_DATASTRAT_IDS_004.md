@@ -47,3 +47,12 @@ Reviewer: Claude2
   - 5 passed, 4 deprecation warnings from existing `datetime.utcnow()` usage.
 - `pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py services/control-plane/bff/test_datastrat_seed_review_bff.py -q`
   - 38 passed, 12 deprecation warnings from existing `datetime.utcnow()` usage.
+- Post-merge revalidation after integrating latest `origin/dev` with IDS-005:
+  `pytest services/source_ingestion/tests/test_trainer_seed_bridge.py services/source_ingestion/tests/test_agora_seed_bridge.py services/source_ingestion/tests/test_ids_002_redaction_guard.py services/source_ingestion/tests/test_interaction_intent_classifier.py services/source_ingestion/tests/test_negative_memory_matcher.py services/source_ingestion/tests/test_strategy_seed_store.py -q`
+  - 91 passed.
+- Post-merge revalidation:
+  `python3 -m py_compile services/source_ingestion/trainer_seed_bridge.py services/source_ingestion/agora_seed_bridge.py services/control-plane/bff/main.py services/control-plane/bff/test_tw04_teaching_replay_contract.py`
+  - passed.
+- Post-merge revalidation:
+  `pytest services/control-plane/bff/test_tw04_teaching_replay_contract.py services/control-plane/bff/test_datastrat_seed_review_bff.py -q`
+  - 38 passed, 12 deprecation warnings from existing `datetime.utcnow()` usage.
