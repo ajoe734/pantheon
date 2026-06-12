@@ -192,6 +192,24 @@ class TestStalenessCheck(unittest.TestCase):
         is_stale = self.consumer._is_stale(signal, mock_algo)
         self.assertTrue(is_stale, "Signal >1h in future should be rejected as anomaly")
 
+    def test_stale_check_with_unparseable_timestamp_is_not_filtered(self):
+        """Unparseable timestamps should not be misclassified as stale."""
+        signal = {
+            "signal_id": "test-bad-ts",
+            "version": "1.0",
+            "strategy_id": "test",
+            "timestamp": "not-a-timestamp",
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 0.5,
+            "quantity_type": "PERCENT_PORTFOLIO",
+        }
+
+        is_stale = self.consumer._is_stale(signal, algo=None)
+
+        self.assertFalse(is_stale, "Unparseable timestamp should not be stale-filtered")
+
     def test_stale_check_without_algo(self):
         """Stale check should work with current UTC time if algo not provided"""
         now = datetime.now(timezone.utc)

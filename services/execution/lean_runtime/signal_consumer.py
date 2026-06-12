@@ -188,7 +188,7 @@ class SignalConsumer:
 
         ts = _parse_dt(signal["timestamp"])
         if not ts:
-            return False
+            return None
             
         # Normalize both to naive datetimes for comparison (strip timezone info)
         # This handles the case where algo.Time is naive but represents exchange time
