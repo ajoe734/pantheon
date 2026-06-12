@@ -77,6 +77,30 @@ LINEAGE_TARGET_FIELDS = {
     "artifact": "artifact_ref",
 }
 
+ALPHA_LINEAGE_METADATA_FIELDS = (
+    "signal_id",
+    "strategy_id",
+    "source_worker",
+    "run_id",
+    "alpha_source",
+    "confidence_score",
+    "model_id",
+    "prompt_bundle_id",
+    "llm_prompt_id",
+    "llm_response_id",
+    "llm_decision_id",
+    "research_note_ref",
+    "llm_note_ref",
+    "market_data_ref",
+    "research_data_ref",
+    "news_data_ref",
+    "normalized_data_ref",
+    "source_dataset_ref",
+    "source_evidence_refs",
+    "ingest_run_id",
+    "market_price",
+)
+
 
 class FeedbackStoreAdapter:
     """
@@ -244,6 +268,18 @@ class FeedbackStoreAdapter:
         return artifact_id
 
     @staticmethod
+    def _alpha_lineage_context(event: dict[str, Any]) -> dict[str, Any]:
+        metadata = event.get("metadata")
+        if not isinstance(metadata, dict):
+            return {}
+        context: dict[str, Any] = {}
+        for field in ALPHA_LINEAGE_METADATA_FIELDS:
+            value = metadata.get(field)
+            if value not in (None, "", [], {}):
+                context[field] = value
+        return context
+
+    @staticmethod
     def _request_id(event: dict[str, Any]) -> Optional[str]:
         if event.get("request_id"):
             return event.get("request_id")
@@ -314,7 +350,8 @@ class FeedbackStoreAdapter:
         meaning from ambiguous raw names.
         """
         target = telemetry_event.get("target", {})
-        return {
+        alpha_context = self._alpha_lineage_context(telemetry_event)
+        record = {
             "record_type": "telemetry_event",
             "record_id": telemetry_event.get("event_id"),
             "derived_only": True,
@@ -337,6 +374,12 @@ class FeedbackStoreAdapter:
             "lineage_ref": target.get("lineage_ref"),
             "conflict_markers": self._lineage_conflict_markers(telemetry_event),
         }
+        if alpha_context:
+            record["alpha_context"] = alpha_context
+            for field in ("signal_id", "source_worker", "alpha_source", "model_id"):
+                if field in alpha_context:
+                    record[field] = alpha_context[field]
+        return record
 
     def build_learn_feedback_writeback_payload(
         self,

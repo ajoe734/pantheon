@@ -184,11 +184,17 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
         "confidence_score",
         "model_id",
         "prompt_bundle_id",
+        "llm_prompt_id",
+        "llm_response_id",
+        "llm_decision_id",
         "research_note_ref",
         "llm_note_ref",
         "market_data_ref",
+        "research_data_ref",
+        "news_data_ref",
         "normalized_data_ref",
         "source_dataset_ref",
+        "source_evidence_refs",
         "ingest_run_id",
     ):
         value = metadata.get(key)
