@@ -153,6 +153,8 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "execution_error_message",
     "execution_error_stage",
     "execution_error_symbol",
+    "signal_action",
+    "signal_direction",
     "position_quantity",
     "target_quantity",
     "target_percent",

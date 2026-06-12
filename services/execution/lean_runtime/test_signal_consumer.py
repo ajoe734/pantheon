@@ -374,6 +374,42 @@ class TestBindingIsolation(unittest.TestCase):
         self.assertIn("Unknown market code 'TW'", noop["metadata"]["execution_error_message"])
         self.assertEqual(noop["metadata"]["alpha_source"], "unit_symbol_parse_error")
 
+    def test_drain_records_unsupported_action_direction_noop_feedback(self):
+        """Unsupported action/direction combinations should be classified for recovery."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        bad_combo_signal = _make_signal("s-unsupported-combo")
+        bad_combo_signal["action"] = "BUY"
+        bad_combo_signal["direction"] = "SHORT"
+        bad_combo_signal["metadata"] = {
+            "alpha_source": "unit_invalid_combo",
+            "market_data": {"close": 101.0},
+        }
+        store = MagicMock()
+        store.get_pending.return_value = [bad_combo_signal]
+        c = SignalConsumer(store_client=store)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+
+        c.drain(algo=algo)
+
+        self.assertEqual(c._processed_signal_ids, {"s-unsupported-combo"})
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "unsupported_action_direction")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 101.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "unsupported_action_direction")
+        self.assertEqual(noop["metadata"]["execution_error_type"], "ExecutionError")
+        self.assertEqual(noop["metadata"]["execution_error_stage"], "execute_signal")
+        self.assertEqual(noop["metadata"]["execution_error_symbol"], "AAPL.US")
+        self.assertIn("action=BUY direction=SHORT", noop["metadata"]["execution_error_message"])
+        self.assertEqual(noop["metadata"]["signal_action"], "BUY")
+        self.assertEqual(noop["metadata"]["signal_direction"], "SHORT")
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_invalid_combo")
+
     def test_drain_records_conflict_loser_noop_feedback(self):
         """Same-symbol conflict losers are terminal no-order outcomes."""
         now = datetime.now(timezone.utc).replace(microsecond=0)

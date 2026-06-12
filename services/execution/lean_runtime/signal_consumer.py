@@ -402,6 +402,8 @@ class SignalConsumer:
                 "execution_error_message": str(exc),
                 "execution_error_stage": "execute_signal",
                 "execution_error_symbol": signal.get("symbol"),
+                "signal_action": signal.get("action"),
+                "signal_direction": signal.get("direction"),
             },
         )
 
@@ -458,6 +460,8 @@ def _is_symbol_parse_error(exc: Exception) -> bool:
 def _execution_error_reason(exc: Exception) -> str:
     if _is_symbol_parse_error(exc):
         return "symbol_parse_error"
+    if "Unhandled action/direction combination" in str(exc):
+        return "unsupported_action_direction"
     if "limit_price is required" in str(exc):
         return "limit_price_required"
     if "PERCENT_PORTFOLIO quantity_type is not supported" in str(exc):
