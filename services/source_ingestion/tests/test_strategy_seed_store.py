@@ -28,6 +28,7 @@ from services.source_ingestion.strategy_seed_builder import (
     StrategySpecSeedStatus,
 )
 from services.source_ingestion.strategy_seed_store import (
+    StrategySpecSeedReviewError,
     StrategySpecSeedStore,
     StrategySpecSeedStoreError,
 )
@@ -199,6 +200,107 @@ def test_store_list_by_bundle(tmp_path: Path) -> None:
     seeds_c = store.list_by_bundle("evbundle-c")
     assert len(seeds_c) == 1
     assert seeds_c[0].evidence_bundle_id == "evbundle-c"
+
+
+# ---------------------------------------------------------------------------
+# Review state machine
+# ---------------------------------------------------------------------------
+
+
+def test_review_accept_then_convert_writes_audit_and_promotes(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    service = SeedMaterializationService(store=store)
+    seed = service.materialize(_bundle(), source_records=[_source()], evidence_items=[_item()]).seed
+
+    accepted, accept_decision = store.record_review_decision(
+        seed.seed_id,
+        decision="accept",
+        reviewer_id="op-seed-review",
+        reason="Evidence is sufficient for spec conversion review.",
+        created_at="2026-06-12T01:00:00Z",
+        idempotency_key="seed-review-accept",
+    )
+    promoted, convert_decision = store.record_review_decision(
+        seed.seed_id,
+        decision="convert-to-spec-seed",
+        reviewer_id="op-seed-review",
+        reason="Convert accepted seed into StrategySpec candidate.",
+        target_refs=[{"type": "strategy_spec", "id": "strategy-alpha"}],
+        created_at="2026-06-12T01:05:00Z",
+        idempotency_key="seed-review-convert",
+    )
+
+    assert accepted.status == StrategySpecSeedStatus.ACCEPTED
+    assert accept_decision.decision == "accept"
+    assert promoted.status == StrategySpecSeedStatus.PROMOTED_TO_STRATEGY_SPEC
+    assert promoted.lineage["strategy_spec_conversion_eligible"] is True
+    assert promoted.lineage["registry_write_performed"] is False
+    assert promoted.lineage["execution_route"] == "none"
+    decisions = promoted.lineage["review_decisions"]
+    assert [item["decision"] for item in decisions] == ["accept", "convert_to_spec_seed"]
+    assert decisions[-1]["target_refs"] == [{"type": "strategy_spec", "id": "strategy-alpha"}]
+    assert convert_decision.to_status == "promoted_to_strategy_spec"
+
+
+def test_request_evidence_and_reject_terminal_refuses_further_transition(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    service = SeedMaterializationService(store=store)
+    seed = service.materialize(_bundle(), source_records=[_source()], evidence_items=[_item()]).seed
+
+    needs_evidence, request_decision = store.record_review_decision(
+        seed.seed_id,
+        decision="request-evidence",
+        reviewer_id="op-seed-review",
+        reason="Needs OOS validation detail.",
+        created_at="2026-06-12T02:00:00Z",
+    )
+    rejected, reject_decision = store.record_review_decision(
+        seed.seed_id,
+        decision="reject",
+        reviewer_id="op-seed-review",
+        reason="Evidence remains insufficient.",
+        created_at="2026-06-12T02:30:00Z",
+    )
+
+    assert needs_evidence.status == StrategySpecSeedStatus.NEEDS_MORE_EVIDENCE
+    assert request_decision.to_status == "needs_more_evidence"
+    assert rejected.status == StrategySpecSeedStatus.REJECTED
+    assert reject_decision.to_status == "rejected"
+    with pytest.raises(StrategySpecSeedReviewError) as exc_info:
+        store.record_review_decision(
+            seed.seed_id,
+            decision="accept",
+            reviewer_id="op-seed-review",
+        )
+    assert exc_info.value.code == "terminal_seed_status"
+
+
+def test_merge_seed_records_target_ref_and_terminal_status(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    source = _memory_seed(seed_id="seed-merge-source", status=StrategySpecSeedStatus.DRAFT)
+    target = _memory_seed(seed_id="seed-merge-target", status=StrategySpecSeedStatus.DRAFT)
+    store.save(source)
+    store.save(target)
+
+    merged, decision = store.merge_seed(
+        "seed-merge-source",
+        target_seed_id="seed-merge-target",
+        reviewer_id="op-seed-review",
+        reason="Duplicate hypothesis.",
+        created_at="2026-06-12T03:00:00Z",
+    )
+
+    assert merged.status == StrategySpecSeedStatus.MERGED
+    assert merged.lineage["merged_into_seed_id"] == "seed-merge-target"
+    assert decision.decision == "merge"
+    assert decision.target_refs == [{"type": "strategy_spec_seed", "id": "seed-merge-target"}]
+    with pytest.raises(StrategySpecSeedReviewError) as exc_info:
+        store.merge_seed(
+            "seed-merge-source",
+            target_seed_id="seed-merge-target",
+            reviewer_id="op-seed-review",
+        )
+    assert exc_info.value.code == "terminal_seed_status"
 
 
 # ---------------------------------------------------------------------------
