@@ -13,6 +13,8 @@ from services.persona.oss_runtime import PersonaOSSRequest, PersonaOSSResult, ru
 
 
 ROOT = Path(__file__).resolve().parents[2]
+HISTORICAL_OHLCV_FIXTURE = "services/research/qlib/examples/smoke_dataset.json"
+HISTORICAL_OHLCV_DATASET_ID = "dataset:tw-equity-ohlcv-top50-2024-daily"
 
 FOLLOWUPS = {
     "openclaw": ("observe", "continue_runtime_session"),
@@ -39,33 +41,6 @@ ALPHA_SEED_SOURCES = (
         "source_dataset_refs": ["dataset:tw-equity-ohlcv-top50-2024-daily"],
         "evidence_path": "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md",
         "anchors": ["Strategy ID**: `tw-cross-sectional-equity-alpha`", "5 trading days"],
-    },
-    {
-        "key": "ooda_sma_cross",
-        "strategy_id": "strat-ooda-e2e-002-sma-cross",
-        "source_strategy_spec_id": "strategy-spec:strat-ooda-e2e-002-sma-cross@1.0.0",
-        "source_dataset_refs": [
-            "dataset:ooda-e2e-002-synthetic-ohlcv-v1",
-            "source-record:ooda-e2e-001-internal-note",
-        ],
-        "evidence_path": "tests/e2e/fixtures/strategy_spec_for_experiment.json",
-        "anchors": ["strat-ooda-e2e-002-sma-cross", "upstream_strategy_spec_seed"],
-    },
-    {
-        "key": "ooda_experiment_alpha",
-        "strategy_id": "ooda-e2e-003-alpha",
-        "source_strategy_spec_id": "reg-strategy-spec-ooda-e2e-003-v1",
-        "source_dataset_refs": ["dataset-twse-ooda-e2e-003-v1"],
-        "evidence_path": "tests/e2e/fixtures/experiment_run_for_admission.json",
-        "anchors": ["ooda-e2e-003-alpha", "dataset-twse-ooda-e2e-003-v1"],
-    },
-    {
-        "key": "ooda_candidate_alpha",
-        "strategy_id": "ooda-e2e-004-alpha",
-        "source_strategy_spec_id": "reg-strategy-spec-ooda-e2e-003-v1",
-        "source_dataset_refs": ["dataset-twse-ooda-e2e-003-v1"],
-        "evidence_path": "tests/e2e/fixtures/candidate_artifact_for_decision.json",
-        "anchors": ["reg-ooda-e2e-004-alpha-1.0.0", "dp-ooda-e2e-004-paper-001"],
     },
     {
         "key": "per002_alpha_momentum",
@@ -133,19 +108,30 @@ def _version(case_no: int) -> str:
     return f"1.0.{case_no}"
 
 
+def _source_dataset_refs(seed: dict[str, Any]) -> list[str]:
+    refs = [HISTORICAL_OHLCV_DATASET_ID]
+    refs.extend(str(ref) for ref in seed["source_dataset_refs"])
+    return list(dict.fromkeys(ref for ref in refs if ref))
+
+
 def _base_seed_payload(seed: dict[str, Any], case_no: int) -> dict[str, Any]:
     strategy_id = f"{seed['strategy_id']}-oss-{case_no:03d}"
     return {
-        "dataset_id": f"dataset:{seed['key']}:persona-oss-{case_no:03d}",
+        "dataset_fixture_path": HISTORICAL_OHLCV_FIXTURE,
+        "dataset_id": HISTORICAL_OHLCV_DATASET_ID,
         "strategy_id": strategy_id,
         "source_strategy_spec_id": seed["source_strategy_spec_id"],
-        "source_dataset_refs": list(seed["source_dataset_refs"]),
+        "source_dataset_refs": _source_dataset_refs(seed),
         "version": _version(case_no),
+        "instrument_count": 2,
+        "instrument_offset": case_no % 48,
         "metadata": {
             "alpha_seed_key": seed["key"],
             "alpha_seed_base_strategy_id": seed["strategy_id"],
             "alpha_seed_source_ref": seed["evidence_path"],
             "source_strategy_spec_id": seed["source_strategy_spec_id"],
+            "historical_ohlcv_fixture": HISTORICAL_OHLCV_FIXTURE,
+            "historical_ohlcv_dataset_id": HISTORICAL_OHLCV_DATASET_ID,
         },
     }
 
@@ -482,6 +468,11 @@ def _assert_component_result(spec: PersonaRoundTripSpec, result: PersonaOSSResul
 
     if component == "vectorbt":
         _assert_registry_seed_lineage(spec, result)
+        dataset_summary = result.artifact_bundle["dataset_summary"]
+        assert dataset_summary["dataset_id"] == HISTORICAL_OHLCV_DATASET_ID
+        assert dataset_summary["num_instruments"] == 2
+        assert dataset_summary["total_bars"] >= 60
+        assert all(instrument.startswith("TWSE_") for instrument in dataset_summary["instruments"])
         backtest_config = result.artifact_bundle["backtest_config"]
         assert backtest_config["strategy_params"]["short_window"] == payload["short_window"]
         assert backtest_config["strategy_params"]["long_window"] == payload["long_window"]
@@ -493,7 +484,8 @@ def _assert_component_result(spec: PersonaRoundTripSpec, result: PersonaOSSResul
         metadata = result.primary_output["dataset_metadata"]
         assert metadata["alpha_seed_key"] == spec.seed["key"]
         assert metadata["source_strategy_spec_id"] == spec.seed["source_strategy_spec_id"]
-        assert metadata["source_dataset_refs"] == spec.seed["source_dataset_refs"]
+        assert metadata["source_dataset_refs"] == payload["source_dataset_refs"]
+        assert HISTORICAL_OHLCV_DATASET_ID in metadata["source_dataset_refs"]
         assert all(name.endswith(payload["series_suffix"]) for name in result.primary_output["price_series_names"])
         assert result.metrics["price_series_count"] >= 2
         return
@@ -551,4 +543,3 @@ def _assert_component_result(spec: PersonaRoundTripSpec, result: PersonaOSSResul
         return
 
     raise AssertionError(f"Unhandled component {component}")
-

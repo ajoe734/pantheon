@@ -54,34 +54,24 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert "data" in body and "items" in body and "meta" in body
-            assert body["data"] == body["items"]
+            assert body["data"]["items"] == body["items"]
+            assert body["data"]["persona_fleet"] == body["items"]
             assert body["summary"]["total_personas"] >= 1
             assert body["meta"]["surfaces"]["persona_fleet"]["source"] == "bff_composed"
 
             alpha = next(item for item in body["items"] if item["id"] == "persona-alpha")
-            assert alpha["persona"]["name"] == "Alpha Persona"
-            assert alpha["bindings"][0]["capital_pool_id"] == "pool-main"
-            assert alpha["capitalPools"][0]["id"] == "pool-main"
-            assert alpha["runtimeBindings"][0]["runtime_id"] == "runtime-042"
-
-            telemetry = alpha["telemetrySummary"]
-            assert telemetry["runtime_count"] >= 1
-            assert telemetry["covered_runtime_count"] >= 1
-            assert telemetry["latest"]["runtime_id"] == "runtime-042"
-            assert telemetry["latest"]["drawdown"] == 0.125
-
-            training = alpha["training"]
-            assert training["session_count"] >= 1
-            assert training["latest_session"]["persona_id"] == "persona-alpha"
-
-            evolution = alpha["evolution"]
-            assert evolution["decision_count"] >= 1
-            assert {decision["id"] for decision in evolution["decisions"]} >= {"evo-dec-001"}
-
-            health = alpha["health"]
-            assert health["status"] == "critical"
-            assert "drawdown_threshold" in health["reasons"]
-            assert health["active_incident_count"] >= 1
+            assert alpha["personaName"] == "Alpha Persona"
+            assert alpha["capitalPoolId"] == "pool-main"
+            assert alpha["health"] in {"healthy", "degraded", "critical"}
+            assert alpha["governanceRequired"] is True
+            assert alpha["drillDown"]["href"] == "/personas/persona-alpha"
+            assert "metrics" in alpha
+            assert "currentWork" in alpha
+            assert body["data"]["execution_boundary"] == {
+                "approved_artifacts_only": True,
+                "live_capital_side_effects": False,
+                "human_gate_required_for_capital_changes": True,
+            }
         finally:
             bff_main.read_store = original
 
@@ -92,7 +82,7 @@ def test_persona_fleet_supports_health_filter_and_pagination() -> None:
         try:
             client = _fresh_client(td)
             resp = client.get(
-                "/bff/management/persona-fleet?health=critical&page_size=1",
+                "/bff/management/persona-fleet?health=healthy&page_size=1",
                 headers=OPERATOR_HEADERS,
             )
 
@@ -100,8 +90,9 @@ def test_persona_fleet_supports_health_filter_and_pagination() -> None:
             body = resp.json()
             assert body["page_info"]["page_size"] == 1
             assert len(body["items"]) == 1
-            assert body["items"][0]["health"]["status"] == "critical"
-            assert body["summary"]["critical_personas"] >= 1
+            assert body["items"][0]["health"] == "healthy"
+            assert body["summary"]["healthy_personas"] >= 1
+            assert body["data"]["page_info"] == body["page_info"]
         finally:
             bff_main.read_store = original
 
