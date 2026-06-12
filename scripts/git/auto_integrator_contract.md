@@ -18,8 +18,11 @@ or unblock task
   a time.
 - Only active `ai-status.json` tasks with `status=review_approved` are eligible.
 - The PR head must be `task/<TASK-ID>` and the base must be `dev`.
-- Draft PRs, missing PRs, failing checks, missing checks, dirty merge states, and
-  rebase conflicts are not merged.
+- Draft PRs, truly missing PRs, failing checks, missing checks, dirty merge
+  states, and rebase conflicts are not merged.
+- If the open PR is already gone because GitHub merged it before the status
+  row moved to `done`, the integrator may verify the merged PR's merge commit
+  is already in `origin/dev` and run the normal owner `done` reconciliation.
 - The integrator never resolves conflicts and never bypasses branch protection.
 - Blockers create an `INTEGRATION-UNBLOCK-*` task instead of leaving the parent
   stranded.
@@ -30,15 +33,19 @@ For each eligible task, capped by `max_tasks_per_run`:
 
 1. Read the task row from `ai-status.json`.
 2. Find the open PR for `task/<TASK-ID>` into `dev`.
-3. Require green GitHub status rollup.
-4. Fetch `origin/dev` and the task branch.
-5. Create a temporary detached worktree for the task branch.
-6. Rebase that worktree onto `origin/dev`.
-7. Run configured smoke commands.
-8. If the rebase changed the task branch and `--execute` is active, push with
+3. If no open PR exists, check for a merged PR from the same head/base whose
+   merge commit is already in `origin/dev`; if found, reconcile the task to
+   `done` and stop.
+4. If no open or already-merged PR exists, create a missing-PR unblock task.
+5. Require green GitHub status rollup.
+6. Fetch `origin/dev` and the task branch.
+7. Create a temporary detached worktree for the task branch.
+8. Rebase that worktree onto `origin/dev`.
+9. Run configured smoke commands.
+10. If the rebase changed the task branch and `--execute` is active, push with
    `--force-with-lease` and enable auto-merge so CI can re-run.
-9. If no push was needed and the PR is still mergeable, run `gh pr merge`.
-10. After merge, run `scripts/ai_status.py done` as the task owner so the normal
+11. If no push was needed and the PR is still mergeable, run `gh pr merge`.
+12. After merge, run `scripts/ai_status.py done` as the task owner so the normal
     delivery gate archives the task.
 
 ## Configuration
