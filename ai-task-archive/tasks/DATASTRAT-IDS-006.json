@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-IDS-006",
+  "archived_at": "2026-06-12T04:40:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-IDS-006",
+    "title": "Seed-kind taxonomy + inbox integration",
+    "summary_zh": "把 Seed Review Inbox 的 seed card 擴充 seed_kind/source surface/negative-memory 警示與convert-to-risk/convert-to-negative actions;讓非新策略互動以自身 kind 被審查。",
+    "phase": "EPIC DATASTRAT-IDS / Seed-kind taxonomy",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-IDS-004",
+      "DATASTRAT-SEEDFLOW-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/EPIC_INTERACTION_DERIVED_SEEDS.md",
+      "services/control-plane/bff/main.py"
+    ],
+    "acceptance": [
+      "risk constraint 等非新策略互動可以自身 seed_kind 被審查而非被塞成 new strategy;negative-memory 警示顯示於 seed card"
+    ],
+    "next": "Auto-integrator merged PR #1377 into dev; task branch is integrated.",
+    "last_update": "2026-06-12T04:40:04Z",
+    "auto_created_by": "dispatch_datastrat_seedflow_ids_2026-06-12",
+    "review_notes_zh": [
+      "審查通過",
+      "非新策略 seed_kind 可以自身 kind 被審查；negative_memory_warning 顯示於 card；convert-to-risk/convert-to-negative 動作正確；測試覆蓋所有驗收情境"
+    ],
+    "review_file": ".orchestrator/reviews/DATASTRAT-IDS-006-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-12T04:40:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "ffce5e816969f6f76ca7a26a560fffb376be5ee0",
+      "commit_subject": "Merge pull request #1377 from ajoe734/task/DATASTRAT-IDS-006",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "DATASTRAT-IDS-006": "seed-kind taxonomy + inbox integration"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 6,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ffce5e816969f6f76ca7a26a560fffb376be5ee0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-IDS-006",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "IDS-006 implementation complete. Extended seed card with source_surface, negative_memory_warning; added CONVERTED_TO_RISK_CONSTRAINT/CONVERTED_TO_NEGATIVE statuses; convert-to-risk/convert-to-negative actions wired for kind-specific seeds; seed_kind filter on list endpoint. 9 tests pass (5 new), 486 source_ingestion tests pass. PR #1377 open with auto-merge. Please review.",
+      "status": "done",
+      "created_at": "2026-06-12T04:05:13Z",
+      "resolved_at": "2026-06-12T04:17:05Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Codex2 to Codex after repeated Codex2 terminal: ERROR: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.",
+      "status": "done",
+      "created_at": "2026-06-12T04:17:05Z",
+      "resolved_at": "2026-06-12T04:22:13Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-12T04:22:13Z",
+      "resolved_at": "2026-06-12T04:36:08Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-006",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: ERROR: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.",
+      "status": "done",
+      "created_at": "2026-06-12T04:36:08Z",
+      "resolved_at": "2026-06-12T04:38:02Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: seed-kind taxonomy + inbox integration satisfies all acceptance criteria; returned to owner for finalization",
+      "status": "done",
+      "created_at": "2026-06-12T04:38:02Z",
+      "resolved_at": "2026-06-12T04:40:05Z"
+    }
+  ],
+  "blockers": []
+}
