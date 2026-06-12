@@ -50,13 +50,14 @@ Result: passed.
 python3 -m pytest services/source_ingestion/tests/test_negative_memory_matcher.py services/source_ingestion/tests/test_strategy_seed_builder.py services/source_ingestion/tests/test_strategy_seed_store.py services/control-plane/persona/test_persona_strategy_discovery.py -q
 ```
 
-Result: 32 passed in 3.86s.
+Result: 32 passed in 5.79s after refreshing against `origin/dev`
+`e850bcf742dd813f8043e4fc153f751f48822ade`.
 
 ```bash
 python3 -m pytest services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py services/source_ingestion/tests/test_replication_bridge.py services/control-plane/bff/test_datastrat_seed_replication_bff.py -q
 ```
 
-Result: 11 passed in 6.40s, with 3 existing `datetime.utcnow()` deprecation
+Result: 11 passed in 9.25s, with 3 existing `datetime.utcnow()` deprecation
 warnings from `services/control-plane/bff/read_store.py`.
 
 ```bash
