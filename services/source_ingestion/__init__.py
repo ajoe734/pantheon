@@ -1,6 +1,13 @@
 """Governed source ingestion primitives for the SD-03 source/evidence plane."""
 
 from .ingest_manager import IngestManager
+from .interaction_intent_classifier import (
+    IntentClassification,
+    InteractionIntentClassificationError,
+    InteractionIntentClassifier,
+    InteractionPrimaryIntent,
+    classify_interaction_intent,
+)
 from .interaction_source_store import (
     InteractionActorType,
     InteractionRedactionStatus,
@@ -23,7 +30,11 @@ __all__ = [
     "CrawlFrontierItem",
     "IngestBatch",
     "IngestManager",
+    "IntentClassification",
     "InteractionActorType",
+    "InteractionIntentClassificationError",
+    "InteractionIntentClassifier",
+    "InteractionPrimaryIntent",
     "InteractionRedactionStatus",
     "InteractionSourceRecord",
     "InteractionSourceRecordError",
@@ -34,4 +45,5 @@ __all__ = [
     "JsonlIngestScheduleStore",
     "ScheduledIngestResult",
     "SourceWatermark",
+    "classify_interaction_intent",
 ]

@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/interaction-intent-classification/v1",
+  "title": "Pantheon Interaction IntentClassification",
+  "description": "Deterministic-first safety classification for governed InteractionSourceRecord summaries. This result is evidence for downstream seed review only; it does not create a seed or execution route.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "record_kind",
+    "interaction_id",
+    "primary_intent",
+    "confidence",
+    "requires_human_review",
+    "archive_only",
+    "reason",
+    "matched_signals",
+    "secondary_intents",
+    "source_surface",
+    "redaction_status",
+    "created_at",
+    "classifier_version",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["interaction_intent_classification.v1"]
+    },
+    "record_kind": {
+      "type": "string",
+      "const": "intent_classification"
+    },
+    "interaction_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "primary_intent": {
+      "type": "string",
+      "enum": [
+        "strategy_hypothesis",
+        "risk_overlay",
+        "execution_policy",
+        "portfolio_allocation",
+        "persona_policy",
+        "preference_example",
+        "negative_memory",
+        "operational_note",
+        "non_strategy"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "requires_human_review": {
+      "type": "boolean"
+    },
+    "archive_only": {
+      "type": "boolean",
+      "description": "True for non_strategy classifications so downstream bridges archive rather than create seed candidates."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "matched_signals": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "secondary_intents": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "strategy_hypothesis",
+          "risk_overlay",
+          "execution_policy",
+          "portfolio_allocation",
+          "persona_policy",
+          "preference_example",
+          "negative_memory",
+          "operational_note",
+          "non_strategy"
+        ]
+      }
+    },
+    "source_surface": {
+      "type": ["string", "null"]
+    },
+    "redaction_status": {
+      "type": ["string", "null"],
+      "enum": ["pending", "passed", "failed", null]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "classifier_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "classifier": {
+          "type": "string"
+        },
+        "deterministic_first": {
+          "type": "boolean"
+        },
+        "embedding_used": {
+          "type": "boolean"
+        },
+        "seed_created": {
+          "type": "boolean"
+        },
+        "registry_write_performed": {
+          "type": "boolean"
+        },
+        "execution_route": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
