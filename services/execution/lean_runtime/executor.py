@@ -217,6 +217,10 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
         value = signal.get(key)
         if value not in (None, ""):
             context[key] = value
+    for key in ("quantity_type", "order_type"):
+        value = signal.get(key)
+        if value not in (None, ""):
+            context[key] = value
     for key in (
         "alpha_source",
         "confidence_score",
@@ -241,6 +245,11 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
     market_price = _signal_market_price(signal)
     if market_price is not None:
         context["market_price"] = market_price
+    if "quantity" in signal:
+        try:
+            context["requested_quantity"] = float(signal["quantity"])
+        except (TypeError, ValueError):
+            pass
     return context
 
 

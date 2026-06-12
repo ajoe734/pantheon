@@ -274,6 +274,29 @@ class PaperExecutionAlgorithm:
     def Liquidate(self, symbol: str) -> None:  # noqa: N802
         security = self._security(symbol)
         quantity = self._holding(symbol).Quantity
+        if quantity == 0:
+            metadata: dict[str, Any] = {
+                "noop_reason": "liquidate_without_position",
+                "decision_status": "no_order",
+                "order_status": "not_submitted",
+                "computed_quantity": 0.0,
+                "position_quantity": 0.0,
+                "price": float(security.Price),
+            }
+            for field in ("signal_id", "requested_quantity", "quantity_type", "order_type"):
+                value = self._current_signal_metadata.get(field)
+                if value not in (None, "", [], {}):
+                    metadata[field] = value
+            self._publish(
+                "paper_order_simulated",
+                symbol,
+                0.0,
+                "liquidate_without_position_noop",
+                broker_submission_status="not_submitted_signal_noop",
+                submitted_to_broker=False,
+                metadata=metadata,
+            )
+            return
         self._holding(symbol).Quantity = 0.0
         self._cash += quantity * float(security.Price)
         self._publish("paper_fill_simulated", symbol, -quantity, "liquidate")
