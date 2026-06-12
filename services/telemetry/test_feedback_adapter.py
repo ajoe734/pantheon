@@ -1487,6 +1487,7 @@ class TestLineageReadModel(unittest.TestCase):
                 "reject_reason": "cash_value_resolved_to_zero_shares",
                 "quantity_type": "CASH_VALUE",
                 "price": 800.0,
+                "market_price": 800.0,
                 "broker_submission_status": "rejected_before_broker",
                 "submitted_to_broker": False,
                 "is_real_order": False,
@@ -1504,6 +1505,7 @@ class TestLineageReadModel(unittest.TestCase):
         self.assertEqual(order_context["quantity_type"], "CASH_VALUE")
         self.assertEqual(order_context["requested_quantity"], 10.0)
         self.assertEqual(order_context["computed_quantity"], 0.0)
+        self.assertEqual(order_context["market_price"], 800.0)
         self.assertEqual(order_context["fill_rate"], 0.0)
         self.assertFalse(order_context["submitted_to_broker"])
 

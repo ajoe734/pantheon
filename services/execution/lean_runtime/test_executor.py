@@ -27,9 +27,12 @@ class _SpyAlgo:
         self.bracket_logs = []
         self.order_rejections = []
         self.signal_noops = []
+        self.current_signal_context = {}
+        self.signal_contexts = []
 
     def MarketOrder(self, symbol, quantity):  # noqa: N802
         self.market_orders.append((symbol, quantity))
+        self.signal_contexts.append(dict(self.current_signal_context))
 
     def LimitOrder(self, symbol, quantity, limit_price):  # noqa: N802
         self.limit_orders.append((symbol, quantity, limit_price))
@@ -126,6 +129,12 @@ class _SpyAlgo:
 
     def Liquidate(self, symbol):  # noqa: N802
         raise AssertionError("Liquidate should not be used by this signal")
+
+    def SetCurrentSignalContext(self, metadata):  # noqa: N802
+        self.current_signal_context = dict(metadata)
+
+    def ClearCurrentSignalContext(self):  # noqa: N802
+        self.current_signal_context = {}
 
 
 class _GuardedPaperAlgo(_SpyAlgo):
@@ -280,6 +289,27 @@ class ExecutorBracketOrderTests(unittest.TestCase):
         self.assertEqual(rejection["computed_quantity"], 0.0)
         self.assertEqual(rejection["broker_submission_status"], "rejected_before_broker")
         self.assertFalse(rejection["submitted_to_broker"])
+
+    def test_default_market_order_type_is_present_in_signal_context(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-default-market-context",
+                "symbol": "AAPL.US",
+                "action": "SELL",
+                "direction": "SHORT",
+                "quantity": 2,
+                "quantity_type": "SHARES",
+                "metadata": {"alpha_source": "pure_quant_default_market"},
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [("AAPL", -2)])
+        self.assertEqual(algo.signal_contexts[0]["order_type"], "MARKET")
+        self.assertEqual(algo.signal_contexts[0]["requested_quantity"], 2.0)
+        self.assertEqual(algo.signal_contexts[0]["alpha_source"], "pure_quant_default_market")
 
     def test_zero_cash_value_quantity_records_order_rejection(self):
         algo = _SpyAlgo()

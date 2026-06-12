@@ -224,10 +224,11 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
         value = signal.get(key)
         if value not in (None, ""):
             context[key] = value
-    for key in ("quantity_type", "order_type", "limit_price"):
+    for key in ("quantity_type", "limit_price"):
         value = signal.get(key)
         if value not in (None, ""):
             context[key] = value
+    context["order_type"] = signal.get("order_type") or "MARKET"
     for key in (
         "alpha_source",
         "confidence_score",
