@@ -325,6 +325,27 @@ class ExecutorBracketOrderTests(unittest.TestCase):
         self.assertEqual(algo.market_orders, [])
         self.assertEqual(algo.limit_orders, [("AAPL", 10, 99.0)])
 
+    def test_percent_portfolio_limit_order_raises_before_setholdings(self):
+        algo = _SpyAlgo()
+
+        with self.assertRaisesRegex(ExecutionError, "PERCENT_PORTFOLIO quantity_type"):
+            execute(
+                {
+                    "signal_id": "sig-percent-limit",
+                    "symbol": "AAPL.US",
+                    "action": "BUY",
+                    "direction": "LONG",
+                    "quantity": 0.25,
+                    "quantity_type": "PERCENT_PORTFOLIO",
+                    "order_type": "LIMIT",
+                    "limit_price": 99.0,
+                },
+                algo,
+            )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+
     def test_bracket_order_is_logged_only_not_broker_submitted(self):
         algo = _SpyAlgo()
 

@@ -700,6 +700,11 @@ def _place_order(
     """
     if order_type == "LIMIT" and limit_price is None:
         raise ExecutionError(f"[{signal_id}] LIMIT order failed: limit_price is required")
+    if order_type == "LIMIT" and quantity_type == "PERCENT_PORTFOLIO":
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT order failed: PERCENT_PORTFOLIO quantity_type "
+            "is not supported for limit orders"
+        )
 
     if quantity_type == "PERCENT_PORTFOLIO":
         pct = sign * quantity
