@@ -62,19 +62,31 @@ def test_signal_conflict_winner_feedback_memory_readback_e2e(tmp_path, monkeypat
     snapshot = runtime.drain_once()
 
     assert snapshot["status"] == "ok"
-    assert snapshot["paper_state"]["processed_signal_count"] == 1
+    assert snapshot["paper_state"]["processed_signal_count"] == 2
+    assert snapshot["paper_state"]["execution_event_count"] == 2
     position = snapshot["paper_state"]["positions"][0]
     assert position["symbol"] == "MSFT"
     assert position["quantity"] == 4.0
     assert position["price"] == 250.0
     fill_events = [event for event in telemetry.events if event["event_type"] == "paper_fill_simulated"]
+    noop_events = [event for event in telemetry.events if event["event_type"] == "paper_order_simulated"]
     assert len(fill_events) == 1
+    assert len(noop_events) == 1
     fill_event = fill_events[0]
+    noop_event = noop_events[0]
     assert fill_event["metadata"]["signal_id"] == "llm-conflict-msft-winner-010"
     assert fill_event["metadata"]["alpha_source"] == "llm_conflict_resolution_winner"
     assert fill_event["metadata"]["model_id"] == "gpt-signal-arb"
     assert fill_event["metrics"]["fill_quantity"] == 4.0
     assert "quant-conflict-msft-loser-010" not in {event["metadata"].get("signal_id") for event in fill_events}
+    assert noop_event["metadata"]["signal_id"] == "quant-conflict-msft-loser-010"
+    assert noop_event["metadata"]["noop_reason"] == "signal_conflict_loser"
+    assert noop_event["metadata"]["filter_reason"] == "signal_conflict_loser"
+    assert noop_event["metadata"]["conflict_winner_signal_id"] == "llm-conflict-msft-winner-010"
+    assert noop_event["metadata"]["conflict_loser_signal_id"] == "quant-conflict-msft-loser-010"
+    assert noop_event["metadata"]["conflict_symbol"] == "MSFT.US"
+    assert noop_event["metadata"]["broker_submission_status"] == "not_submitted_signal_filtered"
+    assert noop_event["metadata"]["submitted_to_broker"] is False
 
     feedback_adapter = FeedbackStoreAdapter(feedback_store_path=str(tmp_path / "feedback-store.jsonl"))
     stored_fill = feedback_adapter.ingest_telemetry_event(

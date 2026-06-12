@@ -341,6 +341,41 @@ class TestBindingIsolation(unittest.TestCase):
 
     # --- drain integration: binding filter applied end-to-end ---
 
+    def test_drain_records_conflict_loser_noop_feedback(self):
+        """Same-symbol conflict losers are terminal no-order outcomes."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        loser = _make_signal("s-conflict-loser")
+        loser["timestamp"] = (now - timedelta(minutes=2)).isoformat()
+        loser["metadata"] = {"alpha_source": "unit_conflict_loser", "market_data": {"close": 153.0}}
+        winner = _make_signal("s-conflict-winner")
+        winner["timestamp"] = now.isoformat()
+        winner["metadata"] = {"alpha_source": "unit_conflict_winner", "market_data": {"close": 153.0}}
+        store = MagicMock()
+        store.get_pending.return_value = [loser, winner]
+        c = SignalConsumer(store_client=store)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            c.drain(algo=algo)
+        mock_exec.assert_called_once_with(winner, algo)
+        self.assertEqual(c._processed_signal_ids, {"s-conflict-loser", "s-conflict-winner"})
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "signal_conflict_loser")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 153.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "signal_conflict_loser")
+        self.assertEqual(noop["metadata"]["conflict_loser_signal_id"], "s-conflict-loser")
+        self.assertEqual(noop["metadata"]["conflict_winner_signal_id"], "s-conflict-winner")
+        self.assertEqual(noop["metadata"]["conflict_symbol"], "AAPL.US")
+        self.assertEqual(
+            noop["metadata"]["conflict_resolution_rule"],
+            "last_write_wins_timestamp_then_confidence",
+        )
+
     def test_drain_records_duplicate_signal_noop_feedback(self):
         """Duplicate signal IDs are idempotent and still emit terminal no-order feedback."""
         duplicate_signal = _make_signal("s-duplicate")
