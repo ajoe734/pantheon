@@ -1580,6 +1580,22 @@ def _bridge_documents(packet: DevDocPacket) -> List[BridgeDocument]:
                     sourceRefs=_source_ref_ids(packet.source_refs),
                 )
             )
+        for path in locations.architecture_docs or []:
+            docs.append(
+                BridgeDocument(
+                    path=path,
+                    kind="ARCHITECTURE_NOTE",
+                    sourceRefs=_source_ref_ids(packet.system_design.source_refs or packet.source_refs),
+                )
+            )
+        for path in locations.ui_docs or []:
+            docs.append(
+                BridgeDocument(
+                    path=path,
+                    kind="UI_FLOW_NOTE",
+                    sourceRefs=_source_ref_ids(packet.system_design.source_refs or packet.source_refs),
+                )
+            )
         return docs
 
     seen_paths = set()

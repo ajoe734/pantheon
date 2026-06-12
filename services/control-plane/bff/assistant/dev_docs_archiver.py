@@ -216,6 +216,67 @@ def system_design_to_md(sd: SystemDesign) -> str:
     return "\n".join(lines)
 
 
+def architecture_doc_to_md(packet: DevDocPacket) -> str:
+    sd = packet.system_design
+    lines = [
+        f"# Architecture Note: {sd.title.removeprefix('SD: ')}",
+        "",
+        f"- **Packet ID**: `{packet.packet_id}`",
+        f"- **Conversation ID**: `{packet.conversation_id}`",
+        f"- **Generated at**: {packet.generated_at}",
+        "",
+        "## Boundary",
+        "",
+        sd.architecture,
+        "",
+        "## API Surface",
+        "",
+        *[f"- {item}" for item in (sd.api_contract or ["(none)"])],
+        "",
+        "## Tool And Action Surface",
+        "",
+        *[f"- {item}" for item in (sd.tool_action_contract or ["(none)"])],
+        "",
+        "## Rollout And Rollback",
+        "",
+        f"- Rollout: {sd.rollout}",
+        f"- Rollback: {sd.rollback}",
+        "",
+        _source_citation_block(packet.source_refs or sd.source_refs or []),
+    ]
+    return "\n".join(lines)
+
+
+def ui_doc_to_md(packet: DevDocPacket) -> str:
+    capture = packet.requirement_capture
+    sd = packet.system_design
+    lines = [
+        f"# UI Flow Note: {capture.problem[:80]}",
+        "",
+        f"- **Packet ID**: `{packet.packet_id}`",
+        f"- **Conversation ID**: `{packet.conversation_id}`",
+        f"- **Generated at**: {packet.generated_at}",
+        "",
+        "## Operator Intent",
+        "",
+        capture.user_intent,
+        "",
+        "## UI Routes / Components",
+        "",
+        *[f"- {item}" for item in (sd.ui_routes or ["(none)"])],
+        "",
+        "## Required Interaction Contract",
+        "",
+        "- Preview any write-style action before execution.",
+        "- Validate RBAC, control mode, and idempotency before execution.",
+        "- Require confirmation or a confirm token when the action risk policy requires it.",
+        "- Show packet, queue, provider, and receipt identifiers after execution.",
+        "",
+        _source_citation_block(packet.source_refs or capture.source_refs or []),
+    ]
+    return "\n".join(lines)
+
+
 def task_brief_to_md(task: ExecutionTask, packet_id: str) -> str:
     lines = [
         f"# Task Brief: {task.task_id}",
@@ -289,6 +350,17 @@ def archive_packet(
     packet_json_path = bundle_dir / "dev_doc_packet.json"
     _write_text(packet_json_path, packet.model_dump_json(indent=2, by_alias=False))
 
+    doc_slug = f"sa_sd_{packet.packet_id}_{slug}"
+    architecture_dir = root / "docs" / "02-architecture"
+    architecture_dir.mkdir(parents=True, exist_ok=True)
+    architecture_path = architecture_dir / f"{doc_slug}_architecture.md"
+    architecture_path.write_text(architecture_doc_to_md(packet), encoding="utf-8")
+
+    ui_dir = root / "docs" / "05-ui"
+    ui_dir.mkdir(parents=True, exist_ok=True)
+    ui_path = ui_dir / f"{doc_slug}_ui.md"
+    ui_path.write_text(ui_doc_to_md(packet), encoding="utf-8")
+
     # Task briefs
     orchestrator_dir = root / ".orchestrator"
     briefs_dir = orchestrator_dir / "task-briefs"
@@ -306,6 +378,8 @@ def archive_packet(
         requirementCapture=str(req_path.relative_to(root)),
         systemAnalysis=str(sa_path.relative_to(root)),
         systemDesign=str(sd_path.relative_to(root)),
+        architectureDocs=[str(architecture_path.relative_to(root))],
+        uiDocs=[str(ui_path.relative_to(root))],
         taskBriefs=brief_paths,
     )
 
