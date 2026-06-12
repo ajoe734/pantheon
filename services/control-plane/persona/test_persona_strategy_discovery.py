@@ -122,6 +122,56 @@ def test_deterministic_seed_match_is_explainable_and_schema_valid() -> None:
     Draft7Validator(_schema()).validate(payload)
 
 
+def test_negative_memory_warning_surfaces_on_seed_card_metadata() -> None:
+    profile = extract_persona_strategy_profile(_persona())
+    warned_seed = _seed(
+        negative_memory_match={
+            "warning_level": "warning",
+            "similarity": 0.46,
+            "reason": "Partial postmortem overlap.",
+            "matched_memory_id": "pm-warning",
+            "matched_memory_kind": "postmortem",
+            "matched_terms": ["twse", "momentum"],
+        }
+    )
+
+    payload = PersonaStrategyDiscoveryService().match_candidates(
+        profile,
+        strategy_seeds=[warned_seed],
+        created_at="2026-06-10T00:00:00Z",
+    )[0].to_dict()
+
+    assert payload["metadata"]["negative_memory_match"]["warning_level"] == "warning"
+    assert payload["metadata"]["negative_memory_match"]["matched_memory_id"] == "pm-warning"
+    assert payload["metadata"]["blockers"] == []
+    assert payload["recommended_action"]["type"] == "promote_seed_candidate"
+    Draft7Validator(_schema()).validate(payload)
+
+
+def test_negative_memory_blocking_match_blocks_seed_promotion() -> None:
+    profile = extract_persona_strategy_profile(_persona())
+    blocked_seed = _seed(
+        negative_memory_match={
+            "warning_level": "blocking",
+            "similarity": 0.91,
+            "reason": "Seed duplicates a failed postmortem.",
+            "matched_memory_id": "pm-blocking",
+            "matched_memory_kind": "postmortem",
+            "matched_terms": ["twse", "momentum", "lightgbm"],
+        }
+    )
+
+    payload = PersonaStrategyDiscoveryService().match_candidates(
+        profile,
+        strategy_seeds=[blocked_seed],
+        created_at="2026-06-10T00:00:00Z",
+    )[0].to_dict()
+
+    assert payload["status"] == "ignored"
+    assert "negative_memory_blocking_match" in payload["metadata"]["blockers"]
+    assert payload["recommended_action"]["type"] == "ignore"
+
+
 def test_hard_blockers_are_reported_without_deployment_authority() -> None:
     profile = extract_persona_strategy_profile(
         _persona(
