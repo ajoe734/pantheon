@@ -237,6 +237,25 @@ class ExecutorBracketOrderTests(unittest.TestCase):
         self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_noop")
         self.assertFalse(noop["submitted_to_broker"])
 
+    def test_exit_short_covers_exact_fractional_holding_without_flipping_long(self):
+        algo = _GuardedPaperAlgo()
+        algo.Portfolio["AAPL"].Quantity = -2.5
+
+        execute(
+            {
+                "signal_id": "sig-exit-fractional-short-001",
+                "symbol": "AAPL.US",
+                "action": "EXIT",
+                "direction": "SHORT",
+                "quantity": 0,
+                "quantity_type": "SHARES",
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [("AAPL", 2.5)])
+        self.assertEqual(algo.Portfolio["AAPL"].Quantity, 0.0)
+
     def test_zero_share_quantity_records_order_rejection(self):
         algo = _SpyAlgo()
 

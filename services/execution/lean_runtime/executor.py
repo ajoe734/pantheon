@@ -21,13 +21,12 @@ SELL     LONG       PERCENT_PORTFOLIO  algo.SetHoldings(sym,  0)   # close long
 SELL     LONG       SHARES             algo.Liquidate(sym)          # close long
 SELL     LONG       CASH_VALUE         algo.Liquidate(sym)          # close long
 EXIT     LONG       *                  algo.Liquidate(sym) if long, else no-op
-EXIT     SHORT      *                  algo.MarketOrder(round abs holdings) if short, else no-op
+EXIT     SHORT      *                  algo.MarketOrder(abs holdings) if short, else no-op
 HOLD     *          *                  paper_order_simulated no-op telemetry
 """
 from __future__ import annotations
 
 import logging
-import math
 from typing import Any
 
 from .symbol_parser import ParsedSymbol, SymbolParseError, parse as parse_symbol
@@ -168,8 +167,7 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
             log.info("[%s] EXIT+SHORT → close short on %s", signal_id, parsed.raw)
             holdings = _get_holdings_quantity(algo, lean_symbol)
             if holdings < 0:
-                # Use ceil to ensure we fully cover fractional short positions (e.g., crypto)
-                shares_to_buy = math.ceil(abs(holdings))
+                shares_to_buy = abs(holdings)
                 algo.MarketOrder(lean_symbol, shares_to_buy)
             else:
                 log.warning(
