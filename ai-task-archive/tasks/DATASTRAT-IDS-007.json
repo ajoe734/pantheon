@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-IDS-007",
+  "archived_at": "2026-06-12T01:36:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-IDS-007",
+    "title": "Negative-memory matcher (safety)",
+    "summary_zh": "把 SeedCandidate 對 retired/rejected/failed/postmortem 做相似度比對,輸出 negative_memory_match(warning_level info|warning|blocking);blocking 擋 seed acceptance。v1 deterministic/keyword 即可。",
+    "phase": "EPIC DATASTRAT-IDS / Negative-memory matcher",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DATASTRAT-IDS-001"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/EPIC_INTERACTION_DERIVED_SEEDS.md",
+      "services/source_ingestion"
+    ],
+    "acceptance": [
+      "blocking match 阻止 seed acceptance;warning 顯示在 seed card;v1 deterministic/keyword 比對可接受(embedding 後續)"
+    ],
+    "next": "Negative-memory matcher finalization PR #1354 merged to dev; closeout artifact recorded; local focused validation and GitHub checks passed.",
+    "last_update": "2026-06-12T01:36:49Z",
+    "auto_created_by": "dispatch_datastrat_seedflow_ids_2026-06-12",
+    "review_notes_zh": [
+      "審查通過",
+      "雙層 blocking 防護（store write + persona discovery）；32 項核心測試全過；v1 keyword matcher 符合 EPIC 規格；IDS-007 SAFETY 前置條件達成"
+    ],
+    "review_file": ".orchestrator/reviews/DATASTRAT-IDS-007-review-Claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-12T01:36:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-ids-007",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-IDS-007",
+      "git_clean_required": false,
+      "commit": "3b3322362c672c7b886deeb92af673c8d27eaf84",
+      "commit_subject": "Merge remote-tracking branch 'origin/task/DATASTRAT-IDS-007' into task/DATASTRAT-IDS-007",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-IDS-007",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fb03cd3e86f3408c3f4b43fd93e3aa88fc6fd70b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-IDS-007",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Handoff for review: PR #1346 https://github.com/ajoe734/pantheon/pull/1346 implements deterministic negative-memory matching. Blocking negative_memory_match now rejects StrategySpecSeed save/materialization and blocks seed-card promotion; warnings surface in persona seed-card metadata. Local validation passed: py_compile target modules; 32 source/persona focused tests; 11 BFF/replication adjacent tests; git diff --check. GitHub checks pass: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator.",
+      "status": "done",
+      "created_at": "2026-06-12T01:18:53Z",
+      "resolved_at": "2026-06-12T01:21:06Z"
+    },
+    {
+      "task_id": "DATASTRAT-IDS-007",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: blocking guard correct at both store and persona discovery layers; all 32 tests pass; v1 deterministic matcher matches EPIC contract; returning to owner for finalization",
+      "status": "done",
+      "created_at": "2026-06-12T01:21:06Z",
+      "resolved_at": "2026-06-12T01:36:49Z"
+    }
+  ],
+  "blockers": []
+}
