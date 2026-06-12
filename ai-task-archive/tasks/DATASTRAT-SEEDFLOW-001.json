@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "DATASTRAT-SEEDFLOW-001",
+  "archived_at": "2026-06-12T01:28:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DATASTRAT-SEEDFLOW-001",
+    "title": "Seed-to-Replication bridge",
+    "summary_zh": "把 promoted StrategySpecSeed 接到 research replication / ExperimentTask 提交，回寫 replication_ref 到 seed lineage；不得建立 execution route 或 approved artifact。",
+    "phase": "EPIC DATASTRAT-SEEDFLOW / Replication bridge",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/DISPATCH_SEED_PIPELINE_CLOSEOUT.md",
+      "services/source_ingestion/strategy_seed_store.py",
+      "services/research/strategy_spec/conversion.py"
+    ],
+    "acceptance": [
+      "promoted seed 可提交並取得真實 replication/ExperimentTask ref;draft/rejected seed 被 typed error 擋下;bridge 產物 registry_write_performed=false 且 execution_route=none(有測試);重複提交同一 seed 為 idempotent"
+    ],
+    "next": "Owner closeout finalized: implementation PR #1335 merged at 788018f1 and closeout PR #1350 merged at e850bcf742dd813f8043e4fc153f751f48822ade. Verified seed replication bridge, BFF submit route, lineage writeback, idempotency, wrong-status refusal, and no registry/execution/approved-artifact authority. Local checks: pytest services/source_ingestion/tests/test_replication_bridge.py -q (5 passed); pytest services/control-plane/bff/test_datastrat_seed_replication_bff.py -q (3 passed); python3 -m py_compile targeted seedflow/BFF files; git diff --check.",
+    "last_update": "2026-06-12T01:28:51Z",
+    "auto_created_by": "dispatch_datastrat_seedflow_ids_2026-06-12",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-12T01:28:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/datastrat-seedflow-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DATASTRAT-SEEDFLOW-001",
+      "git_clean_required": false,
+      "commit": "436e9c6885fb5aa846ea0e4fa12f7bc8d4435c0d",
+      "commit_subject": "DATASTRAT-SEEDFLOW-001: record closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout artifact and task brief review-approved metadata.",
+        "Not changing": "implementation code, BFF route, research registry/runtime authority, or execution routes.",
+        "Composes with": "PR #1335 merged into dev at 788018f1 and current dev head f34a54f6.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "DATASTRAT-SEEDFLOW-001",
+        "Reviewer": "Codex2",
+        "Verified": "pytest services/source_ingestion/tests/test_replication_bridge.py -q; pytest services/control-plane/bff/test_datastrat_seed_replication_bff.py -q; python3 -m py_compile targeted seedflow/BFF files; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DATASTRAT-SEEDFLOW-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e850bcf742dd813f8043e4fc153f751f48822ade",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DATASTRAT-SEEDFLOW-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #1335 merged into dev at 788018f120f4c4d687318d2475377735437aff37; checks passed; please review/approve closeout.",
+      "status": "done",
+      "created_at": "2026-06-12T00:51:03Z",
+      "resolved_at": "2026-06-12T01:03:18Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEEDFLOW-001",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude auth: Authentication failure",
+      "status": "done",
+      "created_at": "2026-06-12T01:03:18Z",
+      "resolved_at": "2026-06-12T01:21:46Z"
+    },
+    {
+      "task_id": "DATASTRAT-SEEDFLOW-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Dry-run expectation check",
+      "status": "done",
+      "created_at": "2026-06-12T01:21:46Z",
+      "resolved_at": "2026-06-12T01:28:52Z"
+    }
+  ],
+  "blockers": []
+}
