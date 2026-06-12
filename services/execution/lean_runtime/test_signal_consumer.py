@@ -341,6 +341,39 @@ class TestBindingIsolation(unittest.TestCase):
 
     # --- drain integration: binding filter applied end-to-end ---
 
+    def test_drain_records_symbol_parse_error_noop_feedback(self):
+        """Execution errors should not leave signals invisible or unprocessed."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        bad_symbol_signal = _make_signal("s-symbol-parse-error")
+        bad_symbol_signal["symbol"] = "2330.TW"
+        bad_symbol_signal["metadata"] = {
+            "alpha_source": "unit_symbol_parse_error",
+            "market_data": {"close": 930.0},
+        }
+        store = MagicMock()
+        store.get_pending.return_value = [bad_symbol_signal]
+        c = SignalConsumer(store_client=store)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+
+        c.drain(algo=algo)
+
+        self.assertEqual(c._processed_signal_ids, {"s-symbol-parse-error"})
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "2330.TW")
+        self.assertEqual(noop["noop_reason"], "symbol_parse_error")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 930.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "symbol_parse_error")
+        self.assertEqual(noop["metadata"]["execution_error_type"], "ExecutionError")
+        self.assertEqual(noop["metadata"]["execution_error_stage"], "execute_signal")
+        self.assertEqual(noop["metadata"]["execution_error_symbol"], "2330.TW")
+        self.assertIn("Unknown market code 'TW'", noop["metadata"]["execution_error_message"])
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_symbol_parse_error")
+
     def test_drain_records_conflict_loser_noop_feedback(self):
         """Same-symbol conflict losers are terminal no-order outcomes."""
         now = datetime.now(timezone.utc).replace(microsecond=0)

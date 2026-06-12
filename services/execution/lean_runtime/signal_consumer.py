@@ -386,9 +386,24 @@ class SignalConsumer:
             self._processed_signal_ids.add(signal["signal_id"])
         except (ExecutionError, SymbolParseError) as exc:
             log.error("[%s] Execution failed: %s", signal["signal_id"], exc)
+            self._record_execution_error_noop(signal, algo, exc)
         except Exception as exc:
             log.exception("Unexpected execution error for signal %s: %s",
                           signal.get("signal_id"), exc)
+
+    def _record_execution_error_noop(self, signal: dict, algo: Any | None, exc: Exception) -> None:
+        reason = "symbol_parse_error" if _is_symbol_parse_error(exc) else "execution_error"
+        self._record_filtered_signal_noop(
+            signal,
+            algo,
+            reason,
+            extra_metadata={
+                "execution_error_type": type(exc).__name__,
+                "execution_error_message": str(exc),
+                "execution_error_stage": "execute_signal",
+                "execution_error_symbol": signal.get("symbol"),
+            },
+        )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -432,3 +447,9 @@ def _signal_wins(candidate: dict, incumbent: dict) -> bool:
             i_conf = (incumbent.get("metadata") or {}).get("confidence_score", 0)
             return c_conf > i_conf
     return False
+
+
+def _is_symbol_parse_error(exc: Exception) -> bool:
+    if isinstance(exc, SymbolParseError):
+        return True
+    return isinstance(getattr(exc, "__cause__", None), SymbolParseError)
