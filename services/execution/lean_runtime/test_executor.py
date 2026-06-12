@@ -305,6 +305,26 @@ class ExecutorBracketOrderTests(unittest.TestCase):
         self.assertEqual(algo.market_orders, [])
         self.assertEqual(algo.limit_orders, [])
 
+    def test_cash_value_limit_order_uses_limit_order_and_limit_price_for_sizing(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-cash-limit",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 990.0,
+                "quantity_type": "CASH_VALUE",
+                "order_type": "LIMIT",
+                "limit_price": 99.0,
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [("AAPL", 10, 99.0)])
+
     def test_bracket_order_is_logged_only_not_broker_submitted(self):
         algo = _SpyAlgo()
 
