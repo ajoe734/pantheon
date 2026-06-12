@@ -1,179 +1,242 @@
-# Persona OSS Interaction Audit
+# Persona OSS Runtime Interaction Audit
 
 Date: 2026-06-12
 Owner: Codex
-Scope: Persona-facing OSS only
+Scope: persona-facing OSS request/result/OODA runtime paths
 
 ## Scope Definition
 
-This report covers OSS components that a Pantheon persona can directly use during
-registry resolution, session execution, research/learning work, consultation,
-evidence production, experiment tracking, or proposal synthesis.
+OSS in this document means open-source software components that Pantheon exposes
+to personas through governed adapters. This audit is about whether a persona can
+actually use those components, not just whether the adapter modules import.
 
-Direct persona interaction means one of these is true:
+In scope:
 
-1. The component hosts or mediates the persona runtime/session.
-2. The component is selected by a persona route/capability policy as a research,
-   learning, or evaluation backend.
-3. The component returns evidence, metrics, artifacts, or experiment references
-   that a persona can cite in an OODA/proposal packet.
-4. The component records or optimizes persona behavior, policy, preference, or
-   research evidence.
+1. Persona request construction and dispatch.
+2. The real governed OSS adapter entrypoint called by that request.
+3. The real fixture or payload used by the adapter.
+4. The result returned to the persona: artifacts, metrics, registry entry,
+   experiment reference, or runtime handoff packet.
+5. The response-driven OODA follow-up that the persona should take after the
+   OSS result arrives.
+6. Persona-side LEAN handoff materialization from OSS evidence, limited to the
+   bootstrap/context packet that can be handed to execution review.
 
-Explicitly out of scope for this report:
+Out of scope:
 
-- LEAN Launcher, LEAN strategy execution, and LEAN deployment.
-- broker adapter internals, broker SDK sessions, order routes, and order
+- LEAN algorithm execution, LEAN Launcher process management, and LEAN internal
+  order/event loops after a handoff packet exists.
+- Broker adapter internals, broker SDK sessions, order routes, and order
   placement.
-- RuntimeBinding mutation, RuntimeBootstrapRequest creation, capital binding,
-  paper/canary/live promotion, and approval authority.
-- Execution-plane internals that happen after a persona-authored proposal leaves
-  the persona/research/governance handoff.
+- The phrase "broker adapter internals" here means adapter SDK/session/order
+  implementation after the persona has produced evidence or a handoff packet.
+- Runtime ownership after execution review accepts a handoff.
+- Capital approval, paper/canary/live promotion decisions, and downstream
+  deployment authority beyond the persona result packet.
 
-## Full Persona OSS Flow
+## Runtime Contract
 
-1. Registry Persona is loaded from Persona Registry with mandate, route policy,
-   consult policy, workspace, and lifecycle state.
-2. Session Persona is created for a concrete task. Its effective capability
-   snapshot is frozen for audit/replay.
-3. Runtime Persona enters OpenClaw-compatible runtime through an agent/session,
-   consult session, committee, or workflow-triggered background session.
-4. Route policy resolves persona-visible OSS tools/workflows/backends. Denied
-   or downstream execution tools stay hidden or fail closed.
-5. Persona invokes research/learning OSS only through governed adapters. Outputs
-   are evidence artifacts, metrics, model candidates, or experiment refs.
-6. Evidence stays non-executable by default: `artifact_state=draft`,
-   `deployment_summary.current_stage=none`, `no_order_route=true`, and no
-   broker/capital/live authority.
-7. Persona cites evidence in OODA notes, allocation proposals, consult packets,
-   or governance memos.
-8. Any later movement to candidate, approval, RuntimeBinding, LEAN, broker,
-   paper/canary/live, or capital authority exits the Persona OSS scope and must
-   pass downstream registry/governance/execution controls.
+The executable contract is implemented in `services/persona/oss_runtime.py` and
+covered by `tests/e2e/test_persona_oss_runtime_matrix.py`.
+
+Every persona-facing OSS interaction follows the same shape:
+
+1. `PersonaOSSRequest` carries `persona_id`, `session_id`, `component`,
+   `intent`, optional `payload`, and a generated `request_id`.
+2. `run_persona_oss_request()` dispatches to the real repo adapter workflow for
+   that component.
+3. The adapter runs against a governed repo fixture or a concrete payload built
+   by the persona harness.
+4. `PersonaOSSResult` returns `status=completed`, `artifact_family`,
+   `primary_output`, `metrics`, optional `registry_entry`, optional
+   `artifact_bundle`, and evidence `refs`.
+5. The OSS response is mapped into `persona_followup`, including OODA phase,
+   next action, reason, and evidence refs.
+
+The response matters as much as the request. A successful run is not complete
+unless the persona can continue the OODA loop from the OSS output.
 
 ## Persona OSS Inventory
 
-| Component | Persona-facing interaction | Status | Boundary | Verification |
-|---|---|---|---|---|
-| `OpenClaw` | Runtime/session substrate for Runtime Persona, tools, workflows, skills, consult, committee, and audit trail | `governed` | May prepare research/review/support packets; must not create RuntimeBootstrapRequest, mutate RuntimeBinding, invoke LEAN, invoke broker SDK routes, or approve capital | `services/openclaw-gateway-adapter/test_session_lifecycle.py`; `services/openclaw-gateway-adapter/test_tool_workflow_bridge.py`; `OPENCLAW_RUNTIME_CONTRACT.md` |
-| `DSPy` | Persona policy/prompt optimization and decision-module tuning evidence | `governed` | Produces governed learning artifacts, not orders or deployment authority | `services/learning/dspy/test_adapter.py`; `integrations/dspy/{integration,governance,smoke_test}.md` |
-| `imitation` | Behavior cloning from trader/persona trajectory data | `governed` | BC artifacts can inform persona learning, not direct execution | `services/learning/imitation/test_adapter.py`; `integrations/imitation/{integration,governance,smoke_test}.md` |
-| `TRL` | Persona preference learning / DPO from governed feedback pairs | `smoke-tested` | Produces draft/candidate learning artifacts; runtime-data and consumer gates remain closed | `services/learning/trl/test_adapter.py`; `services/learning/trl/test_activation_smoke.py`; `integrations/trl/{integration,governance,smoke_test,activation_packet}.md` |
-| `Qlib` | Supervised alpha research and rolling OOS evidence cited by persona proposals | `smoke-tested` | Review-only research evidence; no direct registry truth write, broker route, or capital binding | `services/research/qlib/test_adapter.py`; `services/research/qlib/test_rolling_pipeline.py`; `tests/governance/test_qlib_proof_artifacts.py`; `integrations/qlib/{integration,governance,smoke_test,activation_packet}.md` |
-| `vectorbt` | Fast strategy prototype backtest/scoring evidence for Observe phase | `governed` | Scoring-only draft evidence; may not write SignalStore, LEAN, broker, or live state | `services/research/vectorbt/test_adapter.py`; `integrations/vectorbt/{integration,governance,smoke_test}.md` |
-| `statsmodels` | Econometric, cointegration, factor, and regime evidence for Observe/Orient | `governed` | Research-only non-executable artifacts | `services/research/statsmodels/test_adapter.py`; `tests/governance/test_statsmodels_proof_artifacts.py`; `integrations/statsmodels/{integration,governance,smoke_test}.md` |
-| `QuantLib` | Pricing, Greeks, option-chain, and fixed-income risk evidence | `governed` | Separate governed research path; not default dispatcher fanout and not execution authority | `services/research/quantlib/test_adapter.py`; `tests/governance/test_quantlib_proof_artifacts.py`; `integrations/quantlib/{integration,governance,smoke_test}.md` |
-| `FinRL` | Research-only single-agent RL policy evidence for future RL lane | `smoke-tested` | Explicit-gate offline evidence only; no broker, order route, paper/canary/live, or capital binding | `services/research/finrl/test_adapter.py`; `services/research/finrl/test_production_drl_run.py`; `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/` |
-| `RLlib` | Research-only scalable/multi-agent train/eval evidence | `smoke-tested` | Explicit-gate offline evidence only; train/eval is not production activation | `services/research/rllib/test_adapter.py`; `services/research/rllib/test_production_ppo_run.py`; `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/` |
-| `Ray Tune` | Research-only hyperparameter search evidence for RL/learning candidates | `smoke-tested` | Optimizer result output only; no registry-writing production lane by default | `services/research/rllib/test_ray_tune_adapter.py`; `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/` |
-| `MLflow` | Primary experiment registry backend for persona-cited runs, metrics, and artifact refs | `governed` | Stores experiment evidence; does not authorize deployment or orders | `services/registry/experiments/test_adapter.py`; `integrations/mlflow/{integration,governance,smoke_test}.md` |
-| `W&B` | Optional experiment tracking/visualization backend for persona-cited metrics/artifacts | `activation-gated` | Offline/online sync is explicit-gated and non-ordering; credentialed online activation remains closed | `tests/integrations/test_wandb_sync.py`; `integrations/wandb/credentialed_sync_proof.md`; `services/registry/experiments/WANDB_ACTIVATION.md` |
+| Component | Status | Persona request | Real adapter/workflow called | Real payload or fixture | Persona receives | Response-driven OODA follow-up |
+|---|---|---|---|---|---|---|
+| `OpenClaw` | `governed` | Start or resume a persona runtime session | `SessionLifecycleStore.create_session()` from `services/openclaw-gateway-adapter/session_lifecycle.py` | Persona/session context with idempotency key | Active session record, upstream session id, audit event count | `observe` -> `continue_runtime_session` |
+| `DSPy` | `governed` | Optimize persona prompt/policy behavior | `run_dspy_workflow()` | `services/learning/dspy/examples/preference_dataset_sample.json` | `prompt_bundle`, evaluation report, registry entry | `learn` -> `open_learning_candidate_review` |
+| `imitation` | `governed` | Clone behavior from governed persona/trader trajectories | `run_imitation_workflow()` | `services/learning/imitation/examples/trajectory_dataset_sample.json` | Behavior policy, evaluation summary, registry entry | `learn` -> `open_learning_candidate_review` |
+| `TRL` | `smoke-tested` | Train preference model from governed feedback events | `run_trl_dpo_workflow()` | Persona-built FB-002-like approve/reject/edit events | `model_artifact` projection, evaluator packet, candidate packet | `learn` -> `open_learning_candidate_review` |
+| `Qlib` | `smoke-tested` | Produce supervised alpha evidence | `run_qlib_workflow()` | `services/research/qlib/examples/equity_dataset_sample.json` | Model payload, model artifact ref, evaluation report ref, registry entry | `decide` -> `draft_strategy_proposal` |
+| `vectorbt` | `governed` | Backtest a strategy template on historical bars | `run_vectorbt_workflow()` | `services/research/vectorbt/examples/strategy_dataset_sample.json` with 35 bars each for `ALPHA` and `BETA` | Backtest result, aggregate/per-instrument metrics, registry entry | `decide` -> `draft_strategy_proposal` |
+| `statsmodels` | `governed` | Analyze regime/factor evidence | `run_statsmodels_workflow()` | `services/research/statsmodels/examples/regime_dataset_sample.json` | Results summary, analysis path, registry entry | `orient` -> `attach_risk_or_regime_interpretation` |
+| `QuantLib` | `governed` | Price option/bond risk evidence | `run_quantlib_workflow()` | `services/research/quantlib/examples/pricing_dataset_sample.json` | Pricing/risk summary, analysis path, registry entry | `orient` -> `attach_risk_or_regime_interpretation` |
+| `FinRL` | `smoke-tested` | Train offline RL policy evidence | `run_finrl_workflow()` | `services/research/finrl/examples/policy_dataset_sample.json` | RL policy, evaluation summary, registry entry | `learn` -> `open_learning_candidate_review` |
+| `RLlib` | `smoke-tested` | Train/evaluate offline RL policy evidence | `run_rllib_workflow()` | `services/research/rllib/examples/train_eval_input_sample.json` | RL policy, rollout/evaluation summary, registry entry | `learn` -> `open_learning_candidate_review` |
+| `Ray Tune` | `smoke-tested` | Search RL hyperparameters | `run_ray_tune_workflow()` | `services/research/rllib/examples/train_eval_input_sample.json` | Optimizer result, top trials, registry entry | `learn` -> `open_learning_candidate_review` |
+| `MLflow` | `governed` | Track persona-cited experiment evidence | `RegistryExperimentAdapter.sync_registry_entry()` with `InMemoryMlflowBackend` | Registry entry produced from a real vectorbt run | MLflow experiment ref, metrics, artifact refs | `observe` -> `cite_experiment_ref` |
+| `W&B` | `activation-gated` | Track persona-cited experiment evidence in offline W&B form | `RegistryExperimentAdapter.sync_registry_entry()` with `OfflineWandbLocalBackend` | Registry entry produced from a real vectorbt run | Offline W&B run ref, local artifact refs, metrics | `observe` -> `cite_experiment_ref` |
+| `lean_handoff` | persona-side handoff | Materialize runtime handoff from OSS evidence | vectorbt run -> MLflow sync -> `materialize_runtime_bootstrap_request()` -> `PantheonRuntimeContext.from_mapping()` | Approved paper-stage projection of the vectorbt registry entry | Runtime bootstrap request, runtime env, runtime context, MLflow ref | `act` -> `submit_runtime_handoff_for_execution_review` |
 
-## End-to-End Scenarios
+`lean_handoff` is not an OSS backend. It is included because it proves the
+usable end-to-end persona path from OSS research evidence into an execution
+handoff packet without describing LEAN or broker internals.
 
-### Scenario 1: Persona Runtime Session Through OpenClaw
+## Response To OODA Mapping
 
-Registry Persona `persona-alpha` is resolved with its mandate, route policy,
-consult policy, workspace, and lifecycle state. A Session Persona is created for
-a research task, freezing the effective capability snapshot. The OpenClaw
-adapter creates or resumes the runtime session, maps persona context into
-OpenClaw session context, exposes only allowlisted tools/workflows, and writes
-operator/session audit events. Broker, live, paper, canary, and capital
-workflow prefixes remain permanently denied by adapter policy.
+| OSS response family | Components | Persona OODA phase | Persona next action |
+|---|---|---|---|
+| Runtime session active | `OpenClaw` | `observe` | Continue the runtime session with the active session id and audit refs |
+| Backtest/alpha evidence returned | `vectorbt`, `Qlib` | `decide` | Draft a strategy proposal using the returned evidence refs |
+| Risk/regime analysis returned | `statsmodels`, `QuantLib` | `orient` | Attach interpretation to the persona's market/risk context |
+| Learning or policy artifact returned | `DSPy`, `imitation`, `TRL`, `FinRL`, `RLlib`, `Ray Tune` | `learn` | Open candidate review for persona or policy improvement |
+| Experiment ref returned | `MLflow`, `W&B` | `observe` | Cite experiment reference in evidence packet or proposal |
+| Runtime handoff packet returned | `lean_handoff` | `act` | Submit bootstrap/context packet for execution review |
 
-### Scenario 2: Observe Evidence With vectorbt, statsmodels, and MLflow
+## Complete Runtime Scenarios
 
-A research-only persona evaluates a candidate strategy. Route policy allows
-`vectorbt` for rapid backtest scoring and `statsmodels` for regime or
-cointegration evidence. Both adapters emit draft research artifacts with no
-direct live influence. MLflow records run metadata and artifact references.
-The persona cites those refs in an OODA packet or allocation proposal. No LEAN,
-broker adapter, RuntimeBinding, or capital path is touched.
+### 1. OpenClaw Runtime Session
 
-### Scenario 3: Supervised Alpha / Rolling OOS With Qlib
+Persona `persona-alpha` sends `component=openclaw` with an intent to create a
+runtime research session. The harness loads the OpenClaw session lifecycle store,
+creates the session with persona context and idempotency key, and returns an
+active session record. The response moves persona to `observe` with
+`continue_runtime_session`.
 
-A persona needs supervised alpha evidence. The session invokes Qlib through the
-governed research adapter or rolling OOS path. Qlib validates data/proof inputs,
-produces draft artifacts and review-only candidate handoff evidence, and keeps
-`deployment_stage=none`, `no_order_route=true`, and `order_route=none`. The
-persona may cite the evidence, but production alpha activation remains gated.
+### 2. DSPy Persona Optimization
 
-### Scenario 4: Derivatives Risk Evidence With QuantLib
+Persona sends `component=dspy` to optimize prompt/policy behavior. DSPy runs the
+preference dataset fixture and returns a real `prompt_bundle`, evaluation
+metrics, and registry entry. The response moves persona to `learn` with
+`open_learning_candidate_review`.
 
-A persona analyzing option or fixed-income exposure invokes QuantLib through its
-separate governed request path. QuantLib emits pricing reports, Greeks, or risk
-snapshots as non-executable evidence. The persona can use those artifacts in a
-proposal or risk consult, but they do not grant execution authority.
+### 3. Imitation Behavior Cloning
 
-### Scenario 5: Persona Policy Optimization With DSPy
+Persona sends `component=imitation` to learn from governed trajectories. The
+imitation adapter runs the trajectory fixture and returns a behavior policy,
+evaluation summary, and registry entry. The response moves persona to `learn`.
 
-A persona improvement task sends governed examples, feedback, or decision traces
-to DSPy. DSPy returns optimization artifacts for persona policy/prompt modules.
-The artifacts are recorded as learning evidence and can later be reviewed or
-registered. They do not mutate live persona capabilities by themselves.
+### 4. TRL Preference Learning
 
-### Scenario 6: Behavior Cloning And Preference Learning With imitation And TRL
+Persona sends `component=trl` with governed feedback-like events. TRL builds
+preference pairs, runs DPO workflow, emits a `model_artifact` registry
+projection, and returns evaluator/candidate packets. The response moves persona
+to `learn` and gives evidence refs for candidate review.
 
-Trader/persona trajectories feed the imitation adapter for behavior-cloning
-evidence. Governed feedback pairs can feed TRL for DPO/preference learning.
-Both return model or learning artifacts in draft/candidate posture. Persona
-policy changes still require downstream governance/review before activation.
+### 5. Qlib Supervised Alpha
 
-### Scenario 7: Research-Only RL With FinRL, RLlib, And Ray Tune
+Persona sends `component=qlib` to train supervised alpha evidence. Qlib runs the
+equity dataset fixture, emits model payload, evaluation summary, model artifact
+ref, evaluation report ref, candidate packet, and registry entry. The response
+moves persona to `decide` so a strategy proposal can cite those refs.
 
-An exploratory persona requests RL evidence. FinRL, RLlib, and Ray Tune are
-available only as explicit-gate, offline, smoke-tested research baselines. The
-outputs are policy/search evidence and evaluator packets, with the RL production
-gate closed. They cannot place orders, open broker sessions, or promote to
-paper/canary/live.
+### 6. vectorbt Historical Backtest
 
-### Scenario 8: Optional W&B Tracking
+Persona sends `component=vectorbt` with a moving-average strategy template. The
+adapter runs the historical fixture with `ALPHA` and `BETA`, 35 bars per
+instrument, and strategy params `short_window=5`, `long_window=20`. The persona
+receives aggregate metrics including non-zero trades and per-instrument metrics.
+The response moves persona to `decide`.
 
-When experiment backend policy selects W&B, persona-cited metrics/artifacts can
-flow to the offline store or explicit-gated online sync path. Online W&B requires
-credentials, project configuration, and an activation gate. The path records
-experiment evidence only; it is not a dispatch, broker, or capital path.
+### 7. statsmodels Regime Interpretation
 
-### Scenario 9: Multi-Persona OODA Proposal Synthesis
+Persona sends `component=statsmodels` for factor/regime evidence. The adapter
+runs the regime dataset fixture as a `GovernedDataset` and returns analysis
+summary, result count, analysis path, and registry entry. The response moves
+persona to `orient`.
 
-Two or more active personas cite OSS evidence refs in StrategySpec-backed
-allocation proposals. The multi-persona OODA packet enforces registry health,
-proposal schema, sponsor resolution, and governance memo construction. OSS
-evidence remains input context for persona reasoning and proposal synthesis.
-Deployment, RuntimeBinding, LEAN, broker adapter, and capital authority are
-separate downstream gates after this handoff.
+### 8. QuantLib Pricing/Risk Interpretation
 
-## Fixes From This Audit
+Persona sends `component=quantlib` for derivative/fixed-income pricing evidence.
+The adapter runs the governed pricing snapshot fixture and returns pricing/risk
+summary, result count, analysis path, and registry entry. The response moves
+persona to `orient`.
 
-1. Added `activation-gated` to OSS status-code definitions because W&B already
-   uses that status in the canonical checklist.
-2. Updated `RESEARCH_BACKEND_MATURITY_MATRIX.md` so FinRL, RLlib, and Ray Tune
-   match the canonical `smoke-tested` status from `OSS_INTEGRATION_CHECKLIST.md`.
-3. Updated W&B from `criteria-defined` to `activation-gated` in the research
-   maturity matrix.
-4. Added this Persona OSS audit as the scoped interaction inventory and scenario
-   reference.
-5. Added regression tests that check Persona OSS scope, status alignment, proof
-   references, and downstream execution exclusions.
+### 9. FinRL Offline Policy Evidence
+
+Persona sends `component=finrl` for offline RL evidence. FinRL runs the policy
+dataset fixture, returns policy payload, evaluation summary, candidate packet,
+and registry entry. The response moves persona to `learn`.
+
+### 10. RLlib Offline Train/Eval Evidence
+
+Persona sends `component=rllib` for offline train/eval evidence. RLlib runs the
+train/eval fixture and returns policy payload, rollout summary, evaluation
+summary, candidate packet, and registry entry. The response moves persona to
+`learn`.
+
+### 11. Ray Tune Optimizer Evidence
+
+Persona sends `component=ray_tune` for hyperparameter search. Ray Tune runs
+search over the RLlib fixture, returns optimizer summary, top trial payloads,
+candidate artifacts, and registry entry. The response moves persona to `learn`.
+
+### 12. MLflow Experiment Tracking
+
+Persona sends `component=mlflow` after vectorbt has produced registry-ready
+evidence. The harness runs vectorbt first, then syncs the registry entry to the
+in-memory MLflow backend. The persona receives an MLflow experiment ref, run id,
+metrics, and artifact refs. The response moves persona to `observe` so it can
+cite the run.
+
+### 13. W&B Offline Experiment Tracking
+
+Persona sends `component=wandb` after vectorbt has produced registry-ready
+evidence. The harness runs vectorbt first, then syncs the registry entry to the
+offline W&B local backend. The persona receives an offline run ref, local store
+path, metrics, and artifact refs. The response moves persona to `observe`.
+
+### 14. vectorbt -> MLflow -> LEAN Handoff Packet
+
+Persona sends `component=lean_handoff`. The harness runs vectorbt on the
+historical fixture, marks the resulting registry entry as `approved` for `paper`
+stage, syncs it to MLflow, materializes a runtime bootstrap request, and validates
+that request through `PantheonRuntimeContext.from_mapping()`. The persona
+receives a runtime bootstrap request, runtime env, runtime context, MLflow ref,
+and source vectorbt metrics. The response moves persona to `act`.
+
+This scenario stops at the handoff packet. It does not launch LEAN, inspect LEAN
+algorithm internals, place orders, or touch broker adapters.
+
+## Existing Adapter Proof References
+
+These tests remain the component-level proof set beneath the persona runtime
+matrix:
+
+- `services/openclaw-gateway-adapter/test_session_lifecycle.py`
+- `services/openclaw-gateway-adapter/test_tool_workflow_bridge.py`
+- `services/learning/dspy/test_adapter.py`
+- `services/learning/imitation/test_adapter.py`
+- `services/learning/trl/test_adapter.py`
+- `services/learning/trl/test_activation_smoke.py`
+- `services/research/qlib/test_adapter.py`
+- `services/research/qlib/test_rolling_pipeline.py`
+- `tests/governance/test_qlib_proof_artifacts.py`
+- `services/research/vectorbt/test_adapter.py`
+- `services/research/statsmodels/test_adapter.py`
+- `tests/governance/test_statsmodels_proof_artifacts.py`
+- `services/research/quantlib/test_adapter.py`
+- `tests/governance/test_quantlib_proof_artifacts.py`
+- `services/research/finrl/test_adapter.py`
+- `services/research/finrl/test_production_drl_run.py`
+- `services/research/rllib/test_adapter.py`
+- `services/research/rllib/test_production_ppo_run.py`
+- `services/research/rllib/test_ray_tune_adapter.py`
+- `services/registry/experiments/test_adapter.py`
+- `tests/integrations/test_wandb_sync.py`
 
 ## Validation
 
-Baseline validation before fixes:
+Current branch validation:
 
-- `python3 -m pytest tests/docs/test_mpos_backend_maturity_matrix.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py -q`
-- Result: 79 passed in 22.93s
+- `python3 -m pytest tests/e2e/test_persona_oss_runtime_matrix.py -q`
+- Result: `7 passed in 0.72s`
+- `python3 -m pytest tests/docs/test_persona_oss_interaction_audit.py -q`
+- Result: `7 passed in 0.53s`
+- `python3 -m pytest tests/e2e/test_persona_oss_runtime_matrix.py tests/docs/test_persona_oss_interaction_audit.py services/openclaw-gateway-adapter/test_session_lifecycle.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py services/learning/dspy/test_adapter.py services/learning/imitation/test_adapter.py services/learning/trl/test_adapter.py services/research/qlib/test_adapter.py services/research/vectorbt/test_adapter.py services/research/statsmodels/test_adapter.py services/research/quantlib/test_adapter.py services/research/finrl/test_adapter.py services/research/rllib/test_adapter.py services/research/rllib/test_ray_tune_adapter.py services/registry/experiments/test_adapter.py tests/integrations/test_wandb_sync.py -q`
+- Result: `315 passed, 1 skipped, 5 subtests passed in 45.64s`
 
-Post-fix validation is recorded in the task final report and must include the
-new Persona OSS audit tests plus the targeted persona/research/learning adapter
-test set.
-
-Post-fix validation:
-
-- `python3 -m pytest tests/docs/test_persona_oss_interaction_audit.py tests/docs/test_mpos_backend_maturity_matrix.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py -q`
-- Result: 85 passed in 12.40s
-- `python3 -m pytest tests/docs/test_persona_oss_interaction_audit.py tests/docs/test_mpos_backend_maturity_matrix.py services/control-plane/bff/test_research_oss_preactivation_contract.py services/control-plane/bff/test_per002_bff_persona_skills_tools_capabilities_contract.py services/openclaw-gateway-adapter/test_session_lifecycle.py services/openclaw-gateway-adapter/test_tool_workflow_bridge.py services/research/vectorbt/test_adapter.py services/research/statsmodels/test_adapter.py services/research/quantlib/test_adapter.py services/research/qlib/test_adapter.py services/research/qlib/test_rolling_pipeline.py services/learning/dspy/test_adapter.py services/learning/imitation/test_adapter.py services/learning/trl/test_adapter.py services/learning/trl/test_activation_smoke.py services/research/finrl/test_adapter.py services/research/finrl/test_production_drl_run.py services/research/rllib/test_adapter.py services/research/rllib/test_ray_tune_adapter.py services/research/rllib/test_production_ppo_run.py services/registry/experiments/test_adapter.py tests/integrations/test_wandb_sync.py services/optimizer-svc/test_persona_allocation_proposal_schema.py services/optimizer-svc/test_persona_allocation_proposal_store.py tests/e2e/test_multi_persona_ooda_packet.py -q`
-- Result: 377 passed, 2 skipped, 5 subtests passed in 90.96s
-- `python3 scripts/smoke_oss_activation_ready_matrix.py`
-- Result: 16/16 passed; forbidden writes were `registry_write=false`, `governance_write=false`, `broker_write=false`, and `live_write=false`
-- `python3 -m pytest tests/e2e/test_persona_abc_ooda_evidence_chain.py tests/governance/test_trl_proof_artifacts.py -q`
-- Result: 6 passed in 1.03s
+The E2E tests assert that every component in `PERSONA_OSS_COMPONENTS` produces a
+completed `PersonaOSSResult`, non-empty primary output, expected OODA follow-up,
+and component-specific usable evidence. The vectorbt test verifies a real
+historical fixture backtest with 35 bars each for `ALPHA` and `BETA`. The MLflow
+and W&B tests verify experiment tracking from a vectorbt-produced registry entry.
+The LEAN handoff test verifies a runtime bootstrap/context packet built from
+vectorbt plus MLflow evidence.
