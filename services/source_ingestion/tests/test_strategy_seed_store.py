@@ -99,6 +99,48 @@ def _item() -> EvidenceItem:
     )
 
 
+def _memory_seed(**overrides) -> StrategySpecSeed:
+    data = {
+        "seed_id": "seed-rejected-memory",
+        "source_id": "src-paper-test-001",
+        "evidence_bundle_id": "evbundle-rejected-memory",
+        "hypothesis": "LightGBM ranks TWSE equities by 5-day forward return.",
+        "asset_class": ["equity"],
+        "market_scope": ["Taiwan", "TWSE"],
+        "holding_period": "5 trading days",
+        "required_data": ["point-in-time OHLCV"],
+        "backend_hint": "qlib",
+        "feature_hints": ["LightGBM", "momentum", "volatility"],
+        "label_hints": ["5_day_forward_return"],
+        "risk_notes": ["lookahead bias postmortem"],
+        "confidence": 0.4,
+        "status": StrategySpecSeedStatus.REJECTED,
+        "source_ids": ["src-paper-test-001"],
+        "evidence_item_ids": ["evi-test-001"],
+        "citation_refs": ["test-paper#abstract"],
+        "trace_refs": ["trace-rejected-memory"],
+        "created_at": "2026-06-11T00:00:00Z",
+        "lineage": {
+            "created_from": "evidence_bundle",
+            "evidence_bundle_id": "evbundle-rejected-memory",
+            "source_ids": ["src-paper-test-001"],
+            "evidence_item_ids": ["evi-test-001"],
+            "citation_refs": ["test-paper#abstract"],
+            "promotion_requires": ["evidence_bundle_id"],
+            "registry_write_performed": False,
+            "execution_route": "none",
+        },
+        "metadata": {
+            "research_only": True,
+            "registry_write_performed": False,
+            "execution_route": "none",
+            "rejection_reason": "Matched failed LightGBM TWSE momentum postmortem.",
+        },
+    }
+    data.update(overrides)
+    return StrategySpecSeed(**data)
+
+
 # ---------------------------------------------------------------------------
 # Store: basic save / get / list
 # ---------------------------------------------------------------------------
@@ -279,6 +321,50 @@ def test_rejected_source_blocks_materialization(tmp_path: Path) -> None:
     assert store.count() == 0
 
 
+def test_blocking_negative_memory_match_blocks_materialization(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save(_memory_seed(status=StrategySpecSeedStatus.REJECTED))
+    service = SeedMaterializationService(store=store)
+
+    with pytest.raises(SeedMaterializationError, match="blocking negative_memory_match"):
+        service.materialize(
+            _bundle("evbundle-new-attempt"),
+            source_records=[_source()],
+            evidence_items=[_item()],
+        )
+
+    assert store.count() == 1
+
+
+def test_warning_negative_memory_match_is_persisted_for_seed_card(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    service = SeedMaterializationService(store=store)
+
+    result = service.materialize(
+        _bundle("evbundle-warning-attempt"),
+        source_records=[_source()],
+        evidence_items=[_item()],
+        negative_memory_records=[
+            {
+                "postmortem_id": "pm-twse-liquidity-warning",
+                "status": "published",
+                "title": "TWSE liquidity warning postmortem",
+                "summary": "TWSE equity momentum showed liquidity slippage in crowded sessions.",
+                "asset_class": ["equity"],
+                "market_scope": ["TWSE"],
+                "feature_hints": ["momentum", "liquidity"],
+                "root_cause": "Crowding and slippage warning.",
+            }
+        ],
+    )
+
+    assert result.seed.negative_memory_match["warning_level"] == "warning"
+    assert result.seed.negative_memory_match["matched_memory_id"] == "pm-twse-liquidity-warning"
+    stored = store.get(result.seed.seed_id)
+    assert stored is not None
+    assert stored.negative_memory_match["warning_level"] == "warning"
+
+
 # ---------------------------------------------------------------------------
 # No direct execution route
 # ---------------------------------------------------------------------------
@@ -319,6 +405,25 @@ def test_seed_with_forbidden_execution_route_blocked_by_store(tmp_path: Path) ->
     )
 
     with pytest.raises(StrategySpecSeedStoreError, match="forbidden execution route"):
+        store.save(seed)
+
+
+def test_seed_with_blocking_negative_memory_match_blocked_by_store(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    seed = _memory_seed(
+        seed_id="seed-blocking-negative-memory",
+        status=StrategySpecSeedStatus.DRAFT,
+        negative_memory_match={
+            "warning_level": "blocking",
+            "similarity": 0.92,
+            "reason": "Blocking negative-memory match.",
+            "matched_memory_id": "pm-blocking",
+            "matched_memory_kind": "postmortem",
+            "matched_terms": ["twse", "momentum"],
+        },
+    )
+
+    with pytest.raises(StrategySpecSeedStoreError, match="blocking negative_memory_match"):
         store.save(seed)
 
 

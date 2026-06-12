@@ -11,10 +11,24 @@ import auto_integrator
 
 
 class FakeRunner(auto_integrator.CommandRunner):
-    def __init__(self, pr: Mapping[str, Any] | None = None, rebase_returncode: int = 0) -> None:
+    def __init__(
+        self,
+        pr: Mapping[str, Any] | None = None,
+        rebase_returncode: int = 0,
+        merged_pr: Mapping[str, Any] | None = None,
+        merge_base_returncode: int = 0,
+    ) -> None:
         super().__init__()
         self.pr = pr
+        self.merged_pr = merged_pr
         self.rebase_returncode = rebase_returncode
+        self.merge_base_returncode = merge_base_returncode
+
+    def _pr_for_command_state(self, command: Sequence[str]) -> Mapping[str, Any] | None:
+        if "--state" not in command:
+            return self.pr
+        state = command[command.index("--state") + 1]
+        return self.merged_pr if state == "merged" else self.pr
 
     def run(
         self,
@@ -28,12 +42,19 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.commands.append(command)
         joined = " ".join(command)
         if command[:3] == ["gh", "pr", "list"]:
-            stdout = "[]" if self.pr is None else '[{"number": %s}]' % self.pr["number"]
+            pr = self._pr_for_command_state(command)
+            stdout = "[]" if pr is None else '[{"number": %s}]' % pr["number"]
             return completed(command, stdout=stdout)
         if command[:3] == ["gh", "pr", "view"]:
-            return completed(command, stdout=auto_integrator.json.dumps(dict(self.pr or {})))
+            number = command[3]
+            for pr in (self.pr, self.merged_pr):
+                if pr is not None and str(pr.get("number")) == number:
+                    return completed(command, stdout=auto_integrator.json.dumps(dict(pr)))
+            return completed(command, stdout="{}")
         if command[:3] == ["git", "fetch", "origin"]:
             return completed(command)
+        if command[:3] == ["git", "merge-base", "--is-ancestor"]:
+            return completed(command, returncode=self.merge_base_returncode)
         if command[:3] == ["git", "worktree", "add"]:
             return completed(command)
         if command[:3] == ["git", "rev-parse", "HEAD"]:
@@ -86,6 +107,14 @@ def green_pr(number: int = 44) -> dict[str, Any]:
             {"name": "Smoke acceptance", "state": "SUCCESS"},
         ],
     }
+
+
+def merged_pr(number: int = 55) -> dict[str, Any]:
+    pr = green_pr(number)
+    pr["state"] = "MERGED"
+    pr["mergeCommit"] = {"oid": "merge123"}
+    pr["mergedAt"] = "2026-06-12T01:01:07Z"
+    return pr
 
 
 class CandidateSelectionTests(unittest.TestCase):
@@ -200,6 +229,51 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertEqual(result.action, "blocked")
         self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-REBASE-CONFLICT")
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_execute_reconciles_already_merged_pr_without_unblock(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=None, merged_pr=merged_pr())
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+        )
+
+        self.assertEqual(result.action, "reconciled_done")
+        self.assertEqual(result.pr_number, 55)
+        self.assertTrue(any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands))
+        self.assertFalse(any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands))
+        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+        self.assertIn(["git", "merge-base", "--is-ancestor", "merge123", "origin/dev"], runner.commands)
+
+    def test_missing_pr_still_opens_unblock_when_no_open_or_merged_pr(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=None, merged_pr=None)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-MISSING-PR")
+        self.assertIn("No open or merged PR found", result.detail)
 
 
 if __name__ == "__main__":

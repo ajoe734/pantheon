@@ -78,6 +78,12 @@ guard is absent. This is the single biggest risk called out in the addendum.
   seed card; deterministic/keyword match acceptable for v1 (embedding optional
   later).
 - Depends: IDS-001; reads existing registry retired/failed records.
+- v1 implementation contract: `StrategySpecSeed` carries
+  `negative_memory_match`; `SeedMaterializationService` compares new seed
+  candidates against rejected/retired/failed seed-store records plus supplied
+  failed experiment or postmortem records before store write; `blocking` is
+  refused by `StrategySpecSeedStore.save`, while `warning` is retained for seed
+  card/read-model display.
 
 ### IDS-004 — Trainer-to-seed bridge  [internal sources first]
 - Deliverable: consume committed Trainer events (`trainer_commit` /

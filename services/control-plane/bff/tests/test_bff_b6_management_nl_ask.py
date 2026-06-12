@@ -17,6 +17,8 @@ BFF-B6-002 audit/evidence grounding fields:
 8. Response includes data.evidenceRefs as a list; when evidence is seeded,
    each ref carries an href pointing to /api/v1/knowledge/evidence/{ref_id}.
 9. Response includes meta.redactedEvidenceCount as a non-negative integer.
+10. Completed exchanges expose completed lifecycle fields and publish completion
+   SSE events on the ask channel.
 """
 from __future__ import annotations
 
@@ -51,6 +53,7 @@ def _fresh_client(td: str) -> TestClient:
         storage_path="off",
         attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
     )
+    bff_main._sse_buffers["ask"].clear()
     return TestClient(bff_main.app)
 
 
@@ -72,6 +75,9 @@ def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
             body = resp.json()
             assert body["status"] == "accepted"
             data = body["data"]
+            assert data["status"] == "completed"
+            assert data["lifecycleStatus"] == "completed"
+            assert data["lifecycle_status"] == "completed"
             assert isinstance(data["answer"], str) and data["answer"]
             assert isinstance(data["sessionId"], str) and data["sessionId"]
             assert isinstance(data["session_id"], str) and data["session_id"]
@@ -87,7 +93,29 @@ def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
             assert isinstance(data["sources"], list)
             assert data["confidence"] in {"high", "partial", "unavailable"}
             assert "meta" in body
+            assert body["meta"]["status"] == "completed"
+            assert body["meta"]["lifecycleStatus"] == "completed"
+            assert body["meta"]["lifecycle_status"] == "completed"
             assert "surfaces" in body["meta"]
+            sse_events = [event for _, event in bff_main._sse_buffers["ask"]]
+            event_types = [event.get("type") for event in sse_events]
+            assert "management.nl.ask.accepted" in event_types
+            assert "ask.message.completed" in event_types
+            assert "management.nl.ask.completed" in event_types
+            generic_completed = next(
+                event for event in sse_events if event.get("type") == "ask.message.completed"
+            )
+            assert generic_completed["data"]["status"] == "completed"
+            assert generic_completed["data"]["session_id"] == data["session_id"]
+            assert generic_completed["data"]["trace_id"] == data["trace_id"]
+            assert generic_completed["data"]["provider_status"] == data["providerStatus"]
+            domain_completed = next(
+                event for event in sse_events if event.get("type") == "management.nl.ask.completed"
+            )
+            assert domain_completed["data"]["status"] == "completed"
+            assert domain_completed["data"]["message_id"] == data["message_id"]
+            assert domain_completed["data"]["audit_log"]["href"] == data["auditLog"]["href"]
+            assert domain_completed["data"]["conversation"]["href"] == data["conversation"]["href"]
         finally:
             bff_main.read_store = original
 

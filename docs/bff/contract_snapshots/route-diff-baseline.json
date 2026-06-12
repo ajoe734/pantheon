@@ -2176,6 +2176,13 @@
         "status": "implemented"
       },
       {
+        "family": "unknown",
+        "key": "POST /bff/management/strategy-seeds/{param}/submit-replication",
+        "method": "POST",
+        "path": "/bff/management/strategy-seeds/{param}/submit-replication",
+        "status": "implemented"
+      },
+      {
         "family": "strategy-persona",
         "key": "POST /bff/personas/{param}/strategy-discovery",
         "method": "POST",
@@ -2402,7 +2409,7 @@
   },
   "metadata": {
     "backend_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
-    "backend_snapshot_date": "2026-06-10",
+    "backend_snapshot_date": "2026-06-12",
     "frontend_manifest": "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
     "frontend_snapshot_date": "2026-05-08",
     "generator": "scripts/bff_route_diff.py",
@@ -2424,17 +2431,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 492,
-    "failure_count": 329,
+    "backend_routes": 493,
+    "failure_count": 330,
     "failures": {
-      "backend_missing_frontend": 323,
+      "backend_missing_frontend": 324,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 6
     },
     "frontend_routes": 178,
-    "mode_failure_count": 329,
+    "mode_failure_count": 330,
     "status": "fail",
     "warning_count": 0,
     "warnings": {
