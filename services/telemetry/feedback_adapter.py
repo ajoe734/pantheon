@@ -134,6 +134,8 @@ ORDER_ADAPTER_METADATA_FIELDS = (
     "account_kind",
     "order_quantity",
     "requested_quantity",
+    "computed_quantity",
+    "quantity_type",
     "order_status",
     "readback_status",
     "cancel_status",
@@ -184,6 +186,7 @@ ORDER_ADAPTER_METADATA_FIELDS = (
 ORDER_ADAPTER_METRIC_FIELDS = (
     "order_quantity",
     "requested_quantity",
+    "computed_quantity",
     "fill_quantity",
     "fill_price",
     "filled_quantity",
