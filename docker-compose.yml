@@ -729,7 +729,7 @@ services:
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff
-      - ${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro
+      - ${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:rw
       - governance-data:/data/governance:ro
       - runtime-data:/data/runtime:ro
       - incident-data:/data/incidents:ro

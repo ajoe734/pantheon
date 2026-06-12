@@ -118,6 +118,63 @@ class StrategySpecSeedStore:
             if r.get("evidence_bundle_id") == evidence_bundle_id
         ]
 
+    def record_replication_submission(
+        self,
+        seed_id: str,
+        *,
+        replication_ref: str,
+        experiment_task_id: str,
+        strategy_id: str,
+        strategy_spec_version: str,
+        submitted_by: str,
+        submitted_at: str,
+        idempotency_key: str,
+        research_task_ref: str | None = None,
+    ) -> StrategySpecSeed:
+        """Attach a research replication submission ref to seed lineage."""
+        seed = self.get(seed_id)
+        if seed is None:
+            raise StrategySpecSeedStoreError(f"StrategySpecSeed not found: {seed_id}")
+
+        lineage = dict(seed.lineage)
+        existing_ref = str(lineage.get("replication_ref") or "").strip()
+        existing_task_id = str(lineage.get("experiment_task_id") or "").strip()
+        if existing_ref and existing_task_id:
+            return seed
+
+        submission = {
+            "replication_ref": _require_text(replication_ref, "replication_ref"),
+            "experiment_task_id": _require_text(experiment_task_id, "experiment_task_id"),
+            "strategy_id": _require_text(strategy_id, "strategy_id"),
+            "strategy_spec_version": _require_text(strategy_spec_version, "strategy_spec_version"),
+            "submitted_by": _require_text(submitted_by, "submitted_by"),
+            "submitted_at": _require_text(submitted_at, "submitted_at"),
+            "idempotency_key": _require_text(idempotency_key, "idempotency_key"),
+            "registry_write_performed": False,
+            "execution_route": "none",
+        }
+        if research_task_ref:
+            submission["research_task_ref"] = str(research_task_ref)
+
+        lineage.update(submission)
+        lineage["registry_write_performed"] = False
+        lineage["execution_route"] = "none"
+        submissions = list(lineage.get("replication_submissions") or [])
+        already_recorded = any(
+            item.get("replication_ref") == submission["replication_ref"]
+            for item in submissions
+            if isinstance(item, dict)
+        )
+        if not already_recorded:
+            submissions.append(dict(submission))
+        lineage["replication_submissions"] = submissions
+
+        payload = seed.to_dict()
+        payload["lineage"] = lineage
+        updated = StrategySpecSeed.from_dict(payload)
+        self.save(updated)
+        return updated
+
     def get_by_bundle_idempotent(
         self,
         evidence_bundle_id: str,
@@ -139,3 +196,10 @@ class StrategySpecSeedStore:
 
     def count(self) -> int:
         return len(self._store.read_all())
+
+
+def _require_text(value: Any, field_name: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise StrategySpecSeedStoreError(f"{field_name} is required")
+    return text

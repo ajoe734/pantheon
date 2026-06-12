@@ -5,7 +5,8 @@ BFF_BASE_URL="${BFF_BASE_URL:-https://pantheon-lupin-dev-bff.35.201.239.38.sslip
 BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair}"
 CONTROL_PASSPHRASE="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE:-${CONTROL_MODE_PASSPHRASE:-}}"
 SESSION_ID="${SESSION_ID:-mgmt-ai-control-mode-smoke-$(date -u +%Y%m%dT%H%M%SZ)}"
-TASK_OWNER="${TASK_OWNER:-assistant-supervisor}"
+TASK_OWNER="${TASK_OWNER:-Codex}"
+TASK_REVIEWER="${TASK_REVIEWER:-Claude}"
 
 if [ -z "${CONTROL_PASSPHRASE}" ]; then
   echo "ERROR: set PANTHEON_ASSISTANT_CONTROL_PASSPHRASE to the existing control-mode passphrase." >&2
@@ -69,7 +70,7 @@ if [ "${mode_code}" != "200" ]; then
   exit 1
 fi
 kernel_enabled="$(jq -r '.data.kernel_enabled // false' "${response_tmp}")"
-configured="$(jq -r '.data.control_mode.configured // false' "${response_tmp}")"
+configured="$(jq -r '(.data.control_mode.configured // .data.control_mode.active // false)' "${response_tmp}")"
 echo "kernel_enabled=${kernel_enabled}"
 echo "control_passphrase_configured=${configured}"
 if [ "${kernel_enabled}" != "true" ] || [ "${configured}" != "true" ]; then
@@ -99,6 +100,7 @@ echo "control_mode=$(jq -r '.data.mode // "unknown"' "${response_tmp}")"
 jq -n \
   --arg session "${SESSION_ID}" \
   --arg owner "${TASK_OWNER}" \
+  --arg reviewer "${TASK_REVIEWER}" \
   '{
     conversationId: $session,
     featureSummary: "Smoke Management AI SA/SD generation and supervisor DevTaskPacket queueing from the frontend control-mode workflow.",
@@ -109,6 +111,7 @@ jq -n \
       "openclaw-gateway-adapter"
     ],
     proposedOwner: $owner,
+    proposedReviewer: $reviewer,
     emitTaskPacket: true,
     queueTaskPacket: true,
     extraContext: {

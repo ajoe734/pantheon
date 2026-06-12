@@ -53,6 +53,10 @@ from services.foundation import (  # noqa: E402
     foundation_id,
 )
 from services.foundation.health import register_fastapi_health_routes  # noqa: E402
+from services.source_ingestion.replication_bridge import (  # noqa: E402
+    StrategySeedReplicationBridge,
+    StrategySeedReplicationBridgeError,
+)
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore  # noqa: E402
 from persona_strategy_discovery import (  # noqa: E402
     PersonaStrategyDiscoveryService,
@@ -22449,6 +22453,7 @@ _STRATEGY_BFF_RISK_MAP = {
 }
 
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 
@@ -22470,6 +22475,134 @@ def _strategy_persona_idempotency_check(
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
     return existing.get("result")
+
+
+def _strategy_seed_replication_idempotency_check(
+    resolved_key: str,
+    request_hash: str,
+) -> Optional[Dict[str, Any]]:
+    existing = _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY.get(resolved_key)
+    if existing is None:
+        return None
+    if existing.get("request_hash") != request_hash:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {resolved_key!r} is bound to a different request hash",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        )
+    result = json.loads(json.dumps(existing.get("result") or {}))
+    meta = result.setdefault("meta", {})
+    idempotency = meta.setdefault("idempotency", {})
+    idempotency["replayed"] = True
+    return result
+
+
+def _require_strategy_seed_submit_role(identity: OperatorIdentity) -> None:
+    if {"operator", "admin"}.intersection(identity.roles):
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Strategy seed replication submit requires operator role",
+        "Read-role users cannot submit StrategySpecSeed replication tasks.",
+        precondition_failed="role_check",
+        suggestion="Escalate to a user with operator or admin role",
+    )
+
+
+def _strategy_seed_replication_error(exc: StrategySeedReplicationBridgeError) -> HTTPException:
+    if exc.code == "seed_not_found":
+        return _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "StrategySpecSeed not found",
+            str(exc),
+            precondition_failed="seed_id",
+        )
+    if exc.code == "invalid_seed_status":
+        return _bff_error(
+            409,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "StrategySpecSeed is not eligible for replication",
+            str(exc),
+            precondition_failed="status",
+            suggestion="Promote the seed to StrategySpec before submitting replication.",
+        )
+    return _bff_error(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        "StrategySpecSeed replication request is invalid",
+        str(exc),
+        precondition_failed=exc.code or "replication_request",
+    )
+
+
+def _strategy_seed_replication_response(
+    *,
+    seed_id: str,
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+    resolved_key: str,
+) -> Dict[str, Any]:
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /bff/management/strategy-seeds/{seed_id}/submit-replication",
+            "seed_id": seed_id,
+            "payload": payload,
+        }
+    )
+    cached = _strategy_seed_replication_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+
+    try:
+        submission = StrategySeedReplicationBridge().submit_seed_to_replication(
+            seed_id,
+            requested_by=identity.operator_id,
+            idempotency_key=resolved_key,
+            created_at=payload.get("created_at") or None,
+            strategy_spec_version=str(payload.get("strategy_spec_version") or "1.0.0"),
+        )
+    except StrategySeedReplicationBridgeError as exc:
+        raise _strategy_seed_replication_error(exc) from exc
+
+    snapshot_at = submission.created_at or utc_now()
+    result = {
+        "data": {
+            "seed_id": submission.seed_id,
+            "replication_ref": submission.replication_ref,
+            "experiment_task_id": submission.experiment_task_id,
+            "strategy_id": submission.strategy_id,
+            "strategy_spec_version": submission.strategy_spec_version,
+            "research_task_id": submission.research_task.get("task_id"),
+            "status": submission.research_task.get("status") or "queued",
+            "experiment_task": dict(submission.experiment_task),
+            "registry_write_performed": False,
+            "execution_route": "none",
+            "deployment_authority": "none",
+            "approved_artifact_created": False,
+            "deployment_plan_created": False,
+            "runtime_binding_created": False,
+            "idempotent_replay": submission.idempotent_replay,
+        },
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "research_only": True,
+            "execution_route": "none",
+            "idempotency": {
+                "idempotencyKey": resolved_key,
+                "replayed": False,
+            },
+        },
+    }
+    _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY[resolved_key] = {
+        "request_hash": request_hash,
+        "result": result,
+    }
+    return result
 
 
 def _strategy_persona_action_command(
@@ -34988,6 +35121,27 @@ async def bff_start_persona_strategy_discovery(
         "result": response,
     }
     return response
+
+
+@app.post("/bff/management/strategy-seeds/{seed_id}/submit-replication", status_code=202)
+async def bff_submit_strategy_seed_replication(
+    seed_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: submit a promoted StrategySpecSeed to research replication."""
+    identity = _extract_identity(authorization)
+    _require_strategy_seed_submit_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    return _strategy_seed_replication_response(
+        seed_id=seed_id,
+        payload=payload,
+        identity=identity,
+        resolved_key=resolved_key,
+    )
 
 
 @app.post("/api/v1/personas/{persona_id}/strategy-matches/{match_id}/actions", status_code=202)
