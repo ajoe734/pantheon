@@ -37,6 +37,28 @@ def _slug(text: str, max_len: int = 40) -> str:
     return safe[:max_len].strip("_")
 
 
+def _match_parent_permissions(path: Path, *, mode: int) -> None:
+    try:
+        parent_stat = path.parent.stat()
+        os.chown(path, parent_stat.st_uid, parent_stat.st_gid)
+    except OSError:
+        pass
+    try:
+        path.chmod(mode)
+    except OSError:
+        pass
+
+
+def _ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    _match_parent_permissions(path, mode=0o775)
+
+
+def _write_text(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    _match_parent_permissions(path, mode=0o664)
+
+
 def _source_citation_block(source_refs: list) -> str:
     if not source_refs:
         return ""
@@ -244,36 +266,39 @@ def archive_packet(
     """Write packet artifacts to the canonical doc locations and return paths."""
     root = Path(repo_root)
     slug = _slug(packet.requirement_capture.problem)
-    bundle_dir = root / "docs" / "04" / f"sa_sd_{packet.packet_id}_{slug}"
-    bundle_dir.mkdir(parents=True, exist_ok=True)
+    docs_dir = root / "docs"
+    docs04_dir = docs_dir / "04"
+    _ensure_dir(docs_dir)
+    _ensure_dir(docs04_dir)
+    bundle_dir = docs04_dir / f"sa_sd_{packet.packet_id}_{slug}"
+    _ensure_dir(bundle_dir)
 
     # Requirement capture
     req_path = bundle_dir / "requirement_capture.md"
-    req_path.write_text(requirement_capture_to_md(packet.requirement_capture), encoding="utf-8")
+    _write_text(req_path, requirement_capture_to_md(packet.requirement_capture))
 
     # System analysis
     sa_path = bundle_dir / "system_analysis.md"
-    sa_path.write_text(system_analysis_to_md(packet.system_analysis), encoding="utf-8")
+    _write_text(sa_path, system_analysis_to_md(packet.system_analysis))
 
     # System design
     sd_path = bundle_dir / "system_design.md"
-    sd_path.write_text(system_design_to_md(packet.system_design), encoding="utf-8")
+    _write_text(sd_path, system_design_to_md(packet.system_design))
 
     # Machine-readable packet
     packet_json_path = bundle_dir / "dev_doc_packet.json"
-    packet_json_path.write_text(
-        packet.model_dump_json(indent=2, by_alias=False),
-        encoding="utf-8",
-    )
+    _write_text(packet_json_path, packet.model_dump_json(indent=2, by_alias=False))
 
     # Task briefs
-    briefs_dir = root / ".orchestrator" / "task-briefs"
-    briefs_dir.mkdir(parents=True, exist_ok=True)
+    orchestrator_dir = root / ".orchestrator"
+    briefs_dir = orchestrator_dir / "task-briefs"
+    _ensure_dir(orchestrator_dir)
+    _ensure_dir(briefs_dir)
     brief_paths: list[str] = []
     for task in packet.execution_tasks:
         safe_id = task.task_id.lower().replace("_", "-")
         brief_file = briefs_dir / f"{safe_id}.md"
-        brief_file.write_text(task_brief_to_md(task, packet.packet_id), encoding="utf-8")
+        _write_text(brief_file, task_brief_to_md(task, packet.packet_id))
         brief_paths.append(str(brief_file.relative_to(root)))
 
     # Relative paths returned for callers

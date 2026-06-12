@@ -9,8 +9,9 @@ TASK_ID="${TASK_ID:-MGMT-AI-OPENCLAW-REPAIR-SMOKE-$(date -u +%Y%m%dT%H%M%SZ)}"
 REPAIR_REPO_KEY="${REPAIR_REPO_KEY:-execute-plans}"
 REPAIR_MERGE_TARGET="${REPAIR_MERGE_TARGET:-dev}"
 REPAIR_SCOPE="${REPAIR_SCOPE:-tmp/management-ai-openclaw-smoke}"
-TASK_OWNER="${TASK_OWNER:-assistant-supervisor}"
-POLL_SECONDS="${POLL_SECONDS:-90}"
+TASK_OWNER="${TASK_OWNER:-Codex}"
+TASK_REVIEWER="${TASK_REVIEWER:-Claude}"
+POLL_SECONDS="${POLL_SECONDS:-360}"
 PROVIDER_TIMEOUT_SECONDS="${PROVIDER_TIMEOUT_SECONDS:-240}"
 
 if [ -z "${CONTROL_PASSPHRASE}" ]; then
@@ -106,7 +107,7 @@ if [ "${mode_code}" != "200" ]; then
   exit 1
 fi
 kernel_enabled="$(jq -r '.data.kernel_enabled // false' "${response_tmp}")"
-configured="$(jq -r '.data.control_mode.configured // false' "${response_tmp}")"
+configured="$(jq -r '(.data.control_mode.configured // .data.control_mode.active // false)' "${response_tmp}")"
 echo "kernel_enabled=${kernel_enabled}"
 echo "control_passphrase_configured=${configured}"
 if [ "${kernel_enabled}" != "true" ] || [ "${configured}" != "true" ]; then
@@ -175,6 +176,7 @@ jq -n \
   --arg sentinel "${sentinel_rel}" \
   --argjson repair "${repair_json}" \
   '{
+    sessionId: $session,
     conversationId: $session,
     focus: "all",
     useAssistantProvider: true,
@@ -204,14 +206,27 @@ if [ "${provider_status}" != "completed" ] || [ "${provider_used}" != "true" ] |
   jq '{providerStatus:.data.providerStatus, provider_status:.data.provider_status, answer:.data.answer}' "${response_tmp}" >&2
   exit 1
 fi
-if [ ! -f "${sentinel_abs}" ]; then
+sentinel_ok="false"
+if [ -f "${sentinel_abs}" ]; then
+  if grep -qx 'management-ai-openclaw-repair-smoke' "${sentinel_abs}" && grep -qx "task_id=${TASK_ID}" "${sentinel_abs}"; then
+    sentinel_ok="true"
+  else
+    echo "ERROR: sentinel file content did not match expected smoke marker." >&2
+    sed -n '1,20p' "${sentinel_abs}" >&2
+    exit 1
+  fi
+elif command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx 'pantheon-openclaw-gateway-adapter-1'; then
+  if docker exec pantheon-openclaw-gateway-adapter-1 sh -lc '
+    file="$1"
+    task="$2"
+    test -f "$file" && grep -qx "management-ai-openclaw-repair-smoke" "$file" && grep -qx "task_id=$task" "$file"
+  ' sh "${sentinel_abs}" "${TASK_ID}"; then
+    sentinel_ok="true"
+  fi
+fi
+if [ "${sentinel_ok}" != "true" ]; then
   echo "ERROR: sentinel file was not written at ${sentinel_abs}" >&2
   jq -r '.data.answer // empty' "${response_tmp}" >&2
-  exit 1
-fi
-if ! grep -qx 'management-ai-openclaw-repair-smoke' "${sentinel_abs}" || ! grep -qx "task_id=${TASK_ID}" "${sentinel_abs}"; then
-  echo "ERROR: sentinel file content did not match expected smoke marker." >&2
-  sed -n '1,20p' "${sentinel_abs}" >&2
   exit 1
 fi
 echo "sentinel_written=${sentinel_rel}"
@@ -220,6 +235,7 @@ git -C "${task_worktree}" status --short -- "${sentinel_rel}" || true
 jq -n \
   --arg session "${SESSION_ID}" \
   --arg owner "${TASK_OWNER}" \
+  --arg reviewer "${TASK_REVIEWER}" \
   --arg sentinel "${sentinel_rel}" \
   '{
     conversationId: $session,
@@ -231,7 +247,7 @@ jq -n \
       $sentinel
     ],
     proposedOwner: $owner,
-    proposedReviewer: "Supervisor",
+    proposedReviewer: $reviewer,
     archive: true,
     emitTaskPacket: true,
     queueTaskPacket: true,

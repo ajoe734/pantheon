@@ -30,6 +30,9 @@ def test_control_mode_queue_smoke_hits_closed_loop_endpoints() -> None:
     assert "kernel_repair" in source
     assert "queueTaskPacket: true" in source
     assert "emitTaskPacket: true" in source
+    assert 'TASK_OWNER="${TASK_OWNER:-Codex}"' in source
+    assert 'TASK_REVIEWER="${TASK_REVIEWER:-Claude}"' in source
+    assert "proposedReviewer: $reviewer" in source
     assert "taskPacketQueued" in source
 
 
@@ -61,8 +64,14 @@ def test_openclaw_repair_smoke_hits_write_and_bridge_endpoints() -> None:
     assert "/bff/assistant/dev-docs/generate" in source
     assert "/bff/assistant/orchestrator/status" in source
     assert "openclaw: {repair: $repair}" in source
+    assert "sessionId: $session" in source
     assert "workspace_class" in source
     assert "task_worktree" in source
+    assert 'TASK_OWNER="${TASK_OWNER:-Codex}"' in source
+    assert 'TASK_REVIEWER="${TASK_REVIEWER:-Claude}"' in source
+    assert 'POLL_SECONDS="${POLL_SECONDS:-360}"' in source
+    assert 'proposedReviewer: $reviewer' in source
+    assert "pantheon-openclaw-gateway-adapter-1" in source
     assert "receipt_status" in source
     assert "processed" in source
 

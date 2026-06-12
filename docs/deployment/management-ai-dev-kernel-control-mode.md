@@ -59,6 +59,9 @@ supervisor config's `paths.status_file`. If BFF mounts a deploy checkout while
 the supervisor drains from the main runtime checkout, Management AI can answer
 provider questions but `queueTaskPacket` and assistant dev-bridge readback will
 point at the wrong `.orchestrator/assistant-dev-packets` directory.
+For dev kernel mode, the BFF status-root mount must be read/write. SA/SD
+archive and `queueTaskPacket` writes are intentionally mediated by BFF control
+mode and must land in the same host tree that the supervisor drains.
 
 ## Dev Deploy Persistence
 
@@ -161,7 +164,8 @@ Optional overrides:
 BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
 BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair
 SESSION_ID=mgmt-ai-control-mode-smoke-manual
-TASK_OWNER=assistant-supervisor
+TASK_OWNER=Codex
+TASK_REVIEWER=Claude
 ```
 
 The smoke verifies:
@@ -200,7 +204,9 @@ SESSION_ID=mgmt-ai-openclaw-repair-smoke-manual
 REPAIR_REPO_KEY=execute-plans
 REPAIR_MERGE_TARGET=dev
 REPAIR_SCOPE=tmp/management-ai-openclaw-smoke
-TASK_OWNER=assistant-supervisor
+TASK_OWNER=Codex
+TASK_REVIEWER=Claude
+POLL_SECONDS=360
 ```
 
 The smoke verifies:
@@ -210,13 +216,21 @@ The smoke verifies:
 - control mode activates as `kernel_repair`;
 - `/bff/assistant/repair-worktrees/prepare` returns a clean task worktree;
 - `/bff/management/nl/ask` forwards `openclaw.repair` metadata to the provider;
+  the request must include the same `sessionId` used for control-mode
+  activation so the provider receives the repair workspace instead of a
+  read-only session mismatch;
 - provider status reports `used=true`, `completed`, and
   `workspaceClass=task_worktree`;
 - OpenClaw writes the sentinel file inside the declared repair scope;
 - `/bff/assistant/dev-docs/generate` returns HTTP `201` with
   `queueTaskPacket=true`;
+- generated DevTaskPackets use repository-recognized worker owners/reviewers
+  such as `Codex` and `Claude`, not `assistant-supervisor` or `Supervisor`;
 - the supervisor drains the queued DevTaskPacket and reports a processed
   receipt through `/bff/assistant/orchestrator/status`.
+
+The dev supervisor default poll interval is 300 seconds, so E2E smoke polling
+must cover at least one full supervisor tick after `queueTaskPacket=true`.
 
 The smoke does not commit, push, deploy, or touch broker/live/capital/runtime
 state. A failure at the sentinel step means read/status may work, but
