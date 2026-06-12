@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -76,11 +77,47 @@ def _feature_targets(records: Sequence[SourceRecord], connector: SourceConnector
     return targets
 
 
-def _append_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+def _append_jsonl(path: Path, rows: Sequence[Mapping[str, Any]], *, compression: str = "none") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
+    opener = gzip.open if compression == "gzip" or path.suffix == ".gz" else Path.open
+    mode = "at" if opener is gzip.open else "a"
+    with opener(path, mode, encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(dict(row), ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def _merge_policy(target: dict[str, Any], value: Any) -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if item not in (None, "", [], {}):
+                target[str(key)] = item
+
+
+def _raw_storage_policy(
+    records: Sequence[SourceRecord],
+    connector: SourceConnector,
+    dataset: str,
+) -> dict[str, Any]:
+    policy: dict[str, Any] = {}
+    _merge_policy(policy, connector.metadata.get("raw_storage_policy"))
+    storage_meta = connector.metadata.get("storage")
+    if isinstance(storage_meta, Mapping):
+        _merge_policy(policy, storage_meta.get("raw_storage_policy"))
+    dataset_overrides = policy.pop("dataset_overrides", None)
+    if isinstance(dataset_overrides, Mapping):
+        _merge_policy(policy, dataset_overrides.get(dataset))
+    for record in records:
+        _merge_policy(policy, record.metadata.get("raw_storage_policy"))
+        record_overrides = record.metadata.get("raw_storage_policy_by_dataset")
+        if isinstance(record_overrides, Mapping):
+            _merge_policy(policy, record_overrides.get(dataset))
+    compression = str(policy.get("compression") or "none").strip().lower()
+    if compression not in {"none", "gzip"}:
+        compression = "none"
+    policy["compression"] = compression
+    if policy.get("retention_days") not in (None, "", [], {}):
+        policy["retention_days"] = int(policy["retention_days"])
+    return policy
 
 
 @dataclass(frozen=True)
@@ -135,7 +172,9 @@ class MarketDataStorageWriter:
         source = _slug(connector.connector_id)
         for (dataset, run_date), dataset_records in sorted(grouped.items()):
             dataset_slug = _slug(dataset)
-            raw_path = self.root / "raw" / source / dataset_slug / f"date={run_date}" / f"{result.run.ingest_run_id}.jsonl"
+            raw_policy = _raw_storage_policy(dataset_records, connector, dataset)
+            raw_suffix = ".jsonl.gz" if raw_policy.get("compression") == "gzip" else ".jsonl"
+            raw_path = self.root / "raw" / source / dataset_slug / f"date={run_date}" / f"{result.run.ingest_run_id}{raw_suffix}"
             normalized_path = (
                 self.root
                 / "normalized"
@@ -143,7 +182,11 @@ class MarketDataStorageWriter:
                 / f"date={run_date}"
                 / f"{result.run.ingest_run_id}.jsonl"
             )
-            _append_jsonl(raw_path, [record.to_dict() for record in dataset_records])
+            _append_jsonl(
+                raw_path,
+                [record.to_dict() for record in dataset_records],
+                compression=str(raw_policy.get("compression") or "none"),
+            )
             _append_jsonl(
                 normalized_path,
                 [
@@ -165,6 +208,10 @@ class MarketDataStorageWriter:
                     "date": run_date,
                     "uri": raw_path.as_posix(),
                     "row_count": len(dataset_records),
+                    "compression": raw_policy.get("compression", "none"),
+                    "retention_days": raw_policy.get("retention_days"),
+                    "retention_policy_ref": raw_policy.get("retention_policy_ref"),
+                    "storage_class": raw_policy.get("storage_class"),
                 }
             )
             normalized_refs.append(

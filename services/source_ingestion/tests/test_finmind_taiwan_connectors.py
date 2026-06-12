@@ -104,6 +104,10 @@ def test_finmind_broker_daily_report_adapter_emits_tw_broker_top_records() -> No
     assert connector.auth_policy.secret_ref.secret_ref_id == "env://FINMIND_API_TOKEN"
     assert connector.metadata["source_plan"] == "finmind_first_low_cost_paid_layer"
     assert connector.metadata["fallback_connector_id"] == "tw-yahoo-broker-top15"
+    assert connector.metadata["archive_behavior"] == "skip"
+    assert connector.metadata["max_rank_policy"]["default_max_rank"] == 2
+    assert connector.metadata["max_rank_policy"]["full_branch_storage_allowed_by_default"] is False
+    assert connector.metadata["raw_storage_policy"]["compression"] == "gzip"
     assert len(records) == 3
     assert records[0].connector_id == "tw-finmind-broker-daily-report"
     assert records[0].metadata["dataset"] == "tw_broker_top"
@@ -120,6 +124,9 @@ def test_finmind_generic_dataset_adapter_emits_research_records_without_raw_toke
     )
 
     encoded = json.dumps(records[0].to_dict(), ensure_ascii=False)
+    connector = adapter.connector()
+    assert connector.metadata["archive_behavior"] == "price_baseline_only_elsewhere"
+    assert connector.metadata["raw_storage_policy"]["dataset_overrides"]["TaiwanStockNews"]["retention_days"] == 730
     assert records[0].metadata["provider"] == "FinMind"
     assert records[0].metadata["dataset"] == "TaiwanStockInstitutionalInvestorsBuySell"
     assert "FINMIND_API_TOKEN" not in encoded
@@ -127,6 +134,7 @@ def test_finmind_generic_dataset_adapter_emits_research_records_without_raw_toke
 
 def test_finmind_sponsorpro_storage_object_records_redact_signed_url() -> None:
     adapter = FinMindTaiwanBrokerBulkBackfillAdapter()
+    connector = adapter.connector()
     records = adapter.records_from_storage_objects_payload(
         {
             "data": [
@@ -142,6 +150,9 @@ def test_finmind_sponsorpro_storage_object_records_redact_signed_url() -> None:
     )
 
     encoded = json.dumps(records[0].to_dict(), ensure_ascii=False)
+    assert connector.metadata["raw_storage_policy"]["retention_policy_ref"] == (
+        "market-data://raw-retention/tw-broker-bulk-7y"
+    )
     assert records[0].metadata["signed_url_present"] is True
     assert records[0].metadata["signed_url_redacted"] is True
     assert records[0].metadata["raw_storage_partition"] == (
