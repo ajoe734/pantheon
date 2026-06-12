@@ -387,6 +387,18 @@ class ShioajiBrokerAdapter:
         order.shioaji_order_status = snapshot.get("status")
         order.shioaji_order_status_code = snapshot.get("status_code")
         order.shioaji_order_status_message = snapshot.get("message")
+        normalized_status = str(snapshot.get("status") or "").strip().lower()
+        if normalized_status in {"filled", "fill"}:
+            order.status = "filled"
+            order.fill_qty = float(order.qty)
+            if order.fill_price is None:
+                order.fill_price = float(order.limit_price or 0.0) or None
+            if order.filled_at is None:
+                order.filled_at = _utc_now_iso()
+        elif normalized_status in {"cancelled", "canceled"}:
+            order.status = "cancelled"
+            if order.filled_at is None:
+                order.filled_at = _utc_now_iso()
 
     def _place_order_via_sdk(
         self,
