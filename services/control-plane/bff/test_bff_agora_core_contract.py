@@ -22,6 +22,16 @@ OPERATOR_TOKEN = "Bearer op-agora:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
 
 
+def _error(resp):
+    body = resp.json()
+    if isinstance(body.get("error"), dict):
+        return body["error"]
+    detail = body.get("detail")
+    if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+        return detail["error"]
+    raise AssertionError(f"response did not contain BFF error envelope: {body}")
+
+
 def _seed_read_store(path: Path) -> ReadSurfaceStore:
     path.write_text(
         json.dumps(
@@ -185,7 +195,7 @@ def test_agora_signal_feedback_validates_records_and_replays() -> None:
             json={"decision": "disagree", "confidence": 5},
         )
         assert rejected.status_code == 422, rejected.text
-        assert rejected.json()["detail"]["error"]["details"]["precondition_failed"] == "signal_feedback.reason"
+        assert _error(rejected)["details"]["precondition_failed"] == "signal_feedback.reason"
 
         body = {"decision": "disagree", "confidence": 5, "reason": "Auction slippage risk is elevated"}
         accepted = client.post(
@@ -301,7 +311,7 @@ def test_agora_core_error_envelopes_for_missing_objects() -> None:
     with _isolated_agora_bff() as client:
         signal = client.get("/bff/agora/signals/no-such-signal", headers=HEADERS)
         assert signal.status_code == 404
-        assert signal.json()["detail"]["error"]["code"] == "OBJECT_NOT_FOUND"
+        assert _error(signal)["code"] == "RESOURCE_NOT_FOUND"
 
         memory = client.post(
             "/bff/memory/no-such-memory/actions/quarantine",
@@ -309,4 +319,4 @@ def test_agora_core_error_envelopes_for_missing_objects() -> None:
             json={"reason": "test"},
         )
         assert memory.status_code == 404
-        assert memory.json()["detail"]["error"]["details"]["precondition_failed"] == "memory_id"
+        assert _error(memory)["details"]["precondition_failed"] == "memory_id"

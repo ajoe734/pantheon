@@ -319,6 +319,7 @@ _CORS_EXPOSE_HEADERS = [
 ]
 app = _build_bff_app()
 _OPENAPI_HTTP_CONTEXT: ContextVar[bool] = ContextVar("openapi_http_context", default=False)
+_REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
 
 
 def _schema_with_legacy_action_path_for_http(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -371,6 +372,15 @@ async def _openapi_http_schema_context(request: Request, call_next):
     finally:
         if token is not None:
             _OPENAPI_HTTP_CONTEXT.reset(token)
+
+
+@app.middleware("http")
+async def _request_dry_run_context(request: Request, call_next):
+    token = _REQUEST_DRY_RUN_CONTEXT.set(_truthy_header(request.headers.get("X-Dry-Run")))
+    try:
+        return await call_next(request)
+    finally:
+        _REQUEST_DRY_RUN_CONTEXT.reset(token)
 
 # --------------------------------------------------------------------------- #
 # Storage
@@ -4766,7 +4776,7 @@ _VALIDATORS = {
 # Read surface helpers
 # --------------------------------------------------------------------------- #
 
-_READ_ROLES = {"operator", "approver", "admin", "reviewer"}
+_READ_ROLES = {"viewer", "operator", "approver", "admin", "reviewer"}
 _WRITE_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 
@@ -4775,10 +4785,10 @@ def _require_read_role(identity: OperatorIdentity) -> None:
         raise _bff_error(
             403,
             ErrorCode.FORBIDDEN,
-            "Read access requires operator-level role",
+            "Read access requires viewer-level role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, admin, or reviewer role",
+            suggestion="Escalate to a user with viewer, operator, approver, admin, or reviewer role",
         )
 
 
@@ -4819,7 +4829,11 @@ _ROLE_CAPABILITY_MAP = {
         "job.read",
         "audit.read",
     ],
-    "viewer": [],
+    "viewer": [
+        "metric.read",
+        "strategy.view",
+        "persona.view",
+    ],
 }
 
 
@@ -13345,7 +13359,7 @@ async def create_deployment_plan_v1(
     correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
     response.headers["X-Correlation-Id"] = correlation_id
     request_id = str(x_request_id or "").strip() or None
-    dry_run = _truthy_header(x_dry_run)
+    dry_run = _request_dry_run_requested(x_dry_run)
     request_hash = _stable_json_hash(
         {"route": "POST /api/v1/deployment-plans", "payload": payload}
     )
@@ -19237,6 +19251,19 @@ def _command_response_durable_meta(idempotency_key: str, *, replayed: bool) -> D
     }
 
 
+def _command_response_dry_run_meta(idempotency_key: str) -> Dict[str, Any]:
+    return {
+        "dryRun": True,
+        "durable": False,
+        "liveCapitalSideEffects": False,
+        "idempotency": {
+            "key": idempotency_key,
+            "idempotencyKey": idempotency_key,
+            "replayed": False,
+        },
+    }
+
+
 def _submit_final_command_admission(
     *,
     background_tasks: BackgroundTasks,
@@ -19336,8 +19363,19 @@ def _submit_final_command_admission(
         raise _foundation_bff_error(error, foundation_context=foundation_context)
 
     staleness_warning = _check_read_surface_state()
+    if _request_dry_run_requested():
+        command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+        return _project_final_command_response(
+            command_id=command_envelope.command_id,
+            command=cmd.command,
+            accepted_at=utc_now(),
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=staleness_warning,
+            meta=_command_response_dry_run_meta(resolved_key),
+            deprecation=response_deprecation,
+        )
 
-    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    command_envelope = foundation_context["command_envelope"]
     idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
     idempotency_record = idempotency_record.with_status(
         "succeeded",
@@ -19568,6 +19606,44 @@ _AGORA_EVIDENCE_MAX_TOTAL_SIZE_BYTES = 100 * 1024 * 1024
 
 def _truthy_header(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _request_dry_run_requested(explicit_header: Optional[str] = None) -> bool:
+    return _truthy_header(explicit_header) or bool(_REQUEST_DRY_RUN_CONTEXT.get())
+
+
+def _dry_run_success_response(
+    data: Dict[str, Any],
+    *,
+    status_code: int = 200,
+    snapshot_at: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    evidence_kind: Optional[str] = None,
+    extra_meta: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> JSONResponse:
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at or utc_now(),
+        "dryRun": True,
+        "durable": False,
+        "liveCapitalSideEffects": False,
+    }
+    if idempotency_key:
+        meta["idempotency"] = {
+            "key": idempotency_key,
+            "idempotencyKey": idempotency_key,
+            "replayed": False,
+        }
+    if evidence_kind:
+        meta["evidenceKind"] = evidence_kind
+        meta["evidence_kind"] = evidence_kind
+    if extra_meta:
+        meta.update(extra_meta)
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder({"data": data, "meta": meta}),
+        headers=headers,
+    )
 
 
 def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
@@ -19997,6 +20073,17 @@ def _agora_action_command(
         "action_id": action_id,
         "payload": payload,
     })
+    if _request_dry_run_requested():
+        return _agora_response_payload(
+            _project_final_command_response(
+                command_id=f"dryrun-cmd-{uuid.uuid4().hex[:12]}",
+                command=command_type,
+                accepted_at=utc_now(),
+                status=CommandStatus.SUBMITTED,
+                staleness_warning=_check_read_surface_state(),
+                meta=_command_response_dry_run_meta(resolved_key),
+            )
+        )
     cached = _agora_core_idempotency_check(resolved_key, request_hash)
     if cached is not None:
         return cached
@@ -20243,16 +20330,15 @@ async def bff_create_agora_feedback(
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     feedback_payload = _agora_bulk_feedback_payload(payload)
-    dry_run = str(x_dry_run or "").strip().lower() in {"1", "true", "yes"}
+    dry_run = _request_dry_run_requested(x_dry_run)
     request_hash = _stable_json_hash({
         "route": "POST /bff/agora/feedback",
         "payload": feedback_payload,
-        "dry_run": dry_run,
     })
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        cached_status = 200 if (cached.get("meta") or {}).get("dryRun") else 201
-        return JSONResponse(status_code=cached_status, content=jsonable_encoder(cached))
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return JSONResponse(status_code=201, content=jsonable_encoder(cached))
 
     signal_id = feedback_payload["signal_id"]
     snapshot_at = utc_now()
@@ -20341,7 +20427,8 @@ async def bff_create_agora_feedback(
         },
     }
     result["meta"]["correlationId"] = str(x_correlation_id or "").strip() or str(uuid.uuid4())
-    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    if not dry_run:
+        _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return JSONResponse(status_code=200 if dry_run else 201, content=jsonable_encoder(result))
 
 
@@ -20355,7 +20442,7 @@ async def bff_agora_signal_feedback(
 ):
     """BFF: record trader feedback for an Agora signal."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     feedback_payload = _agora_signal_feedback_payload(payload)
@@ -20364,9 +20451,42 @@ async def bff_agora_signal_feedback(
         "signalId": signalId,
         "payload": feedback_payload,
     })
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
+    if dry_run:
+        signal = read_store.get_agora_signal(signalId)
+        if signal is None:
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Agora signal not found",
+                f"Agora signal {signalId} does not exist",
+                precondition_failed="signal_id",
+            )
+        snapshot_at = utc_now()
+        feedback_id = f"agfb-dryrun-{uuid.uuid4().hex[:8]}"
+        return _dry_run_success_response(
+            {
+                "status": "completed",
+                "signal": {**signal, "reviewStatus": feedback_payload["decision"], "latestFeedbackId": feedback_id},
+                "feedback": {
+                    "id": feedback_id,
+                    "feedbackId": feedback_id,
+                    "signalId": signalId,
+                    "decision": feedback_payload["decision"],
+                    "confidence": feedback_payload["confidence"],
+                    "reason": feedback_payload["reason"],
+                    "actorId": identity.operator_id,
+                    "createdAt": snapshot_at,
+                },
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.signal.feedback",
+        )
     feedback = read_store.record_agora_signal_feedback(
         signalId,
         decision=feedback_payload["decision"],
@@ -20467,16 +20587,36 @@ async def bff_create_agora_session(
 ):
     """BFF: create an Agora ask/session record."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/sessions", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"agora-sess-{uuid.uuid4().hex[:10]}")
     title = str(payload.get("title") or "Untitled Agora session").strip()
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": session_id,
+                "sessionId": session_id,
+                "title": title,
+                "mode": payload.get("mode") or payload.get("sessionType") or "quick_ask",
+                "status": payload.get("status") or "active",
+                "participants": json.loads(json.dumps(payload.get("participants") or [])),
+                "messages": json.loads(json.dumps(payload.get("messages") or [])),
+                "createdBy": identity.operator_id,
+                "createdAt": snapshot_at,
+                "updatedAt": snapshot_at,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.session.create",
+        )
     result = {
         "data": read_store.create_agora_session(
             session_id=session_id,
@@ -20551,7 +20691,7 @@ async def bff_create_agora_session_message(
 ):
     """BFF: append a message to an Agora session."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     content = _agora_required_text(payload, "content", "body", "message")
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
@@ -20560,11 +20700,36 @@ async def bff_create_agora_session_message(
         "sessionId": sessionId,
         "payload": payload,
     })
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     message_id = str(payload.get("id") or payload.get("messageId") or f"agora-msg-{uuid.uuid4().hex[:10]}")
+    if dry_run:
+        if not read_store.get_agora_session(sessionId):
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Agora session not found",
+                f"Agora session {sessionId} does not exist",
+                precondition_failed="session_id",
+            )
+        return _dry_run_success_response(
+            {
+                "id": message_id,
+                "sessionId": sessionId,
+                "sender": payload.get("sender") or {"type": "operator", "id": identity.operator_id},
+                "role": payload.get("role") or "user",
+                "content": content,
+                "language": payload.get("language") or "zh-TW",
+                "createdAt": snapshot_at,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.session_message.create",
+        )
     message = read_store.append_agora_session_message(
         sessionId,
         message_id=message_id,
@@ -20777,16 +20942,34 @@ async def bff_create_agora_note(
 ):
     """BFF: create an Agora notebook/research note."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     body = _agora_required_text(payload, "body", "content")
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/notes", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     note_id = str(payload.get("id") or payload.get("note_id") or f"note-agora-{uuid.uuid4().hex[:10]}")
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": note_id,
+                "note_id": note_id,
+                "title": str(payload.get("title") or "").strip() or None,
+                "body": body,
+                "tags": list(payload.get("tags") or []),
+                "created_at": snapshot_at,
+                "updated_at": snapshot_at,
+                "created_by": identity.operator_id,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.note.create",
+        )
     result = {
         "data": read_store.create_agora_note(
             note_id=note_id,
@@ -20837,9 +21020,11 @@ async def bff_create_agora_journal_entry(
     title = _agora_required_text(payload, "title")
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/journal", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     body = str(payload.get("body") or "").strip()
     if not body:
         body_parts = [
@@ -20860,6 +21045,27 @@ async def bff_create_agora_journal_entry(
             "Journal visibility is not allowed",
             f"Role set cannot create a {visibility} journal entry",
             precondition_failed="journal.visibility",
+        )
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": entry_id,
+                "title": title,
+                "body": body,
+                "tags": _agora_string_list(payload.get("tags")),
+                "linkedStrategyIds": _agora_string_list(payload.get("linkedStrategyIds") or payload.get("linked_strategy_ids")),
+                "linkedPersonaIds": _agora_string_list(payload.get("linkedPersonaIds") or payload.get("linked_persona_ids")),
+                "visibility": visibility,
+                "createdAt": snapshot_at,
+                "updatedAt": snapshot_at,
+                "version": 1,
+                "createdBy": identity.operator_id,
+                "canonicalWriteAuthority": "agora_journal_service",
+                "persistenceMode": "dry_run_preview",
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.journal.create",
         )
     entry = read_store.create_decision_journal_entry(
         entry_id=entry_id,
@@ -20914,16 +21120,34 @@ async def bff_create_agora_insight(
 ):
     """BFF: create an Agora insight card."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     summary = _agora_required_text(payload, "summary", "title")
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/insights", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     insight_id = str(payload.get("id") or payload.get("insight_id") or f"ins-agora-{uuid.uuid4().hex[:10]}")
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": insight_id,
+                "insight_id": insight_id,
+                "summary": summary,
+                "scope": payload.get("scope") or "global",
+                "status": payload.get("status") or "classified",
+                "tags": list(payload.get("tags") or []),
+                "created_at": snapshot_at,
+                "updated_at": snapshot_at,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.insight.create",
+        )
     result = {
         "data": read_store.create_agora_insight(
             insight_id=insight_id,
@@ -21055,15 +21279,32 @@ async def bff_create_agora_training_example(
 ):
     """BFF: create an Agora training example."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/training-examples", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     example_id = str(payload.get("id") or payload.get("trainingExampleId") or f"trn-agora-{uuid.uuid4().hex[:10]}")
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": example_id,
+                "trainingExampleId": example_id,
+                "input": json.loads(json.dumps(payload.get("input") or {})),
+                "expected": json.loads(json.dumps(payload.get("expected") or {})),
+                "labels": list(payload.get("labels") or []),
+                "createdBy": identity.operator_id,
+                "createdAt": snapshot_at,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.training_example.create",
+        )
     result = {
         "data": read_store.create_agora_training_example(
             example_id=example_id,
@@ -21978,13 +22219,15 @@ async def bff_create_capital_pool(
 ):
     """BFF: create capital pool — Idempotency-Key required."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/capital-pools", "payload": payload})
-    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
@@ -21994,6 +22237,23 @@ async def bff_create_capital_pool(
         )
     snapshot_at = utc_now()
     pool_id = f"pool-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": pool_id,
+                "pool_id": pool_id,
+                "name": name,
+                "status": "draft",
+                "risk_policy_ref": payload.get("risk_policy_ref"),
+                "params": payload.get("params") or {},
+                "created_at": snapshot_at,
+                "updated_at": snapshot_at,
+                "created_by": identity.operator_id,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="capital_pool.create",
+        )
     result = read_store.create_capital_pool(
         pool_id=pool_id,
         name=name,
@@ -22072,7 +22332,7 @@ async def bff_patch_capital_pool(
 ):
     """BFF: patch capital pool — Idempotency-Key required."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash(
@@ -22354,13 +22614,15 @@ async def bff_create_rebalance(
 ):
     """BFF: create rebalance command — Idempotency-Key required; produces command/audit metadata."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/rebalances", "payload": payload})
-    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     capital_pool_id = str(payload.get("capital_pool_id") or "").strip()
     if not capital_pool_id:
         raise _bff_error(
@@ -22371,6 +22633,18 @@ async def bff_create_rebalance(
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
+    if dry_run:
+        result = _project_final_command_response(
+            command_id=f"dryrun-cmd-{uuid.uuid4().hex[:12]}",
+            command=CommandType.REBALANCE_ACTION,
+            accepted_at=submitted_at,
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=staleness_warning,
+            meta=_command_response_dry_run_meta(resolved_key),
+        )
+        combined = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
+        combined["rebalance_id"] = f"dryrun-rb-{uuid.uuid4().hex[:8]}"
+        return JSONResponse(status_code=200, content=jsonable_encoder(combined))
     target = TargetObject(type=ObjectType.REBALANCE, id=capital_pool_id)
     audit_record = {
         "operator_id": identity.operator_id,
@@ -34941,13 +35215,15 @@ async def bff_create_strategy(
 ):
     """BFF: create strategy stub (execute-plans compatibility)."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/strategies", "payload": payload})
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
@@ -34973,6 +35249,13 @@ async def bff_create_strategy(
         "availableActions": ["edit", "submit", "retire"],
         "labelKey": f"strategy.{strategy_id}",
     }
+    if dry_run:
+        return _dry_run_success_response(
+            overlay,
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="strategy.create",
+        )
     _STRATEGY_BFF_OVERLAY[strategy_id] = overlay
     result = {
         "data": overlay,
@@ -35021,7 +35304,7 @@ async def bff_patch_strategy(
 ):
     """BFF: patch strategy overlay fields."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash(
@@ -35104,16 +35387,18 @@ async def bff_create_strategy_spec(
 ):
     """BFF: create new spec version stub for a strategy."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     _ensure_strategy_exists(strategy_id)
     request_hash = _stable_json_hash(
         {"route": "POST /bff/strategies/{id}/specs", "id": strategy_id, "payload": payload}
     )
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     spec_version_id = f"spec-{strategy_id}-{uuid.uuid4().hex[:8]}"
     result = {
@@ -35128,6 +35413,13 @@ async def bff_create_strategy_spec(
         },
         "meta": {"snapshot_at": snapshot_at},
     }
+    if dry_run:
+        return _dry_run_success_response(
+            result["data"],
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="strategy_spec.create",
+        )
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
 
@@ -35767,13 +36059,15 @@ async def bff_create_persona(
 ):
     """BFF: create persona stub (execute-plans compatibility)."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/personas", "payload": payload})
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
@@ -35789,22 +36083,40 @@ async def bff_create_persona(
     lifecycle_state = _normalize_lifecycle_state(
         payload.get("state") or payload.get("lifecycleStatus") or "draft"
     )
-    persona_record = read_store.create_persona(
-        persona_id=persona_id,
-        name=name,
-        actor_id=owner,
-        created_at=snapshot_at,
-        archetype=archetype,
-        lifecycle_state=lifecycle_state,
-        risk_level=risk,
-        metadata={
-            "description": payload.get("description"),
-            "memo": payload.get("memo"),
-            "initial_mode": payload.get("initialMode"),
-            "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
-            "success_rate": float(payload.get("successRate") or 0.0),
-        },
-    )
+    persona_metadata = {
+        "description": payload.get("description"),
+        "memo": payload.get("memo"),
+        "initial_mode": payload.get("initialMode"),
+        "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
+        "success_rate": float(payload.get("successRate") or 0.0),
+    }
+    if dry_run:
+        persona_record = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "lifecycle_state": lifecycle_state,
+            "created_at": snapshot_at,
+            "updated_at": snapshot_at,
+            "created_by": owner,
+            "metadata": {
+                **persona_metadata,
+                "owner": owner,
+                "archetype": archetype,
+                "risk_level": risk,
+            },
+        }
+    else:
+        persona_record = read_store.create_persona(
+            persona_id=persona_id,
+            name=name,
+            actor_id=owner,
+            created_at=snapshot_at,
+            archetype=archetype,
+            lifecycle_state=lifecycle_state,
+            risk_level=risk,
+            metadata=persona_metadata,
+        )
     overlay = _project_persona_dto(
         persona_record,
         overlay={
@@ -35813,6 +36125,13 @@ async def bff_create_persona(
         },
         routed_strategies=0,
     )
+    if dry_run:
+        return _dry_run_success_response(
+            overlay,
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="persona.create",
+        )
     _PERSONA_BFF_OVERLAY[persona_id] = overlay
     result = {
         "data": overlay,
@@ -35861,7 +36180,7 @@ async def bff_patch_persona(
 ):
     """BFF: patch persona fields through the BFF read store."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash(
@@ -42767,13 +43086,15 @@ async def bff_create_skill(
 ):
     """BFF: create skill record (Part 06 compatibility surface)."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/skills", "payload": payload})
-    cached = _skills_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _skills_bff_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
@@ -42796,6 +43117,13 @@ async def bff_create_skill(
         "updated_at": snapshot_at,
         "created_by": identity.operator_id,
     }
+    if dry_run:
+        return _dry_run_success_response(
+            result,
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="skill.create",
+        )
     _SKILL_REGISTRY[skill_id] = result
     _SKILLS_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
@@ -42828,7 +43156,7 @@ async def bff_patch_skill(
 ):
     """BFF: patch skill record (Part 06 compatibility surface)."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     clean_id = str(skill_id or "").strip()
     if not clean_id:
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
@@ -43128,6 +43456,18 @@ def _gov_bff_action_command(
     request_hash = _stable_json_hash(
         {"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, "payload": payload}
     )
+    if _request_dry_run_requested():
+        submitted_at = utc_now()
+        command_id = f"dryrun-cmd-{uuid.uuid4().hex[:12]}"
+        result = _project_final_command_response(
+            command_id=command_id,
+            command=command_type,
+            accepted_at=submitted_at,
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=_check_read_surface_state(),
+            meta=_command_response_dry_run_meta(resolved_key),
+        )
+        return result.model_dump(mode="json")
     existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
     if existing is not None:
         if existing.get("request_hash") != request_hash:
@@ -43553,18 +43893,20 @@ async def bff_create_runtime(
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/runtimes", "payload": payload})
-    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is not None:
-        if existing.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        return existing["result"]
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+        if existing is not None:
+            if existing.get("request_hash") != request_hash:
+                raise _bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency key already used with a different payload",
+                    f"Key {resolved_key!r} is bound to a different request hash",
+                    precondition_failed="idempotency_conflict",
+                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                )
+            return existing["result"]
 
     fields = {
         field: _runtime_create_required_string(payload, field)
@@ -43585,23 +43927,44 @@ async def bff_create_runtime(
     snapshot_at = utc_now()
     client_runtime_id = str(payload.get("runtime_id") or payload.get("id") or "").strip()
     runtime_id = client_runtime_id or f"runtime-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-    record = read_store.create_runtime_binding(
-        runtime_id=runtime_id,
-        name=fields["name"],
-        persona_id=fields["persona_id"],
-        binding_id=fields["binding_id"],
-        deployment_plan_id=fields["deployment_plan_id"],
-        runtime_kind=runtime_kind,
-        actor_id=identity.operator_id,
-        created_at=snapshot_at,
-        params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
-    )
+    record = {
+        "id": runtime_id,
+        "runtime_id": runtime_id,
+        "name": fields["name"],
+        "state": "stopped",
+        "status": "stopped",
+        "persona_id": fields["persona_id"],
+        "binding_id": fields["binding_id"],
+        "deployment_plan_id": fields["deployment_plan_id"],
+        "runtime_kind": runtime_kind,
+        "created_at": snapshot_at,
+    }
+    if not dry_run:
+        record = read_store.create_runtime_binding(
+            runtime_id=runtime_id,
+            name=fields["name"],
+            persona_id=fields["persona_id"],
+            binding_id=fields["binding_id"],
+            deployment_plan_id=fields["deployment_plan_id"],
+            runtime_kind=runtime_kind,
+            actor_id=identity.operator_id,
+            created_at=snapshot_at,
+            params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+        )
     data = _project_runtime_create_response(record)
     surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {"runtimes": surface}
     meta["evidenceKind"] = "runtime.create"
     meta["evidence_kind"] = "runtime.create"
+    if dry_run:
+        return _dry_run_success_response(
+            data,
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="runtime.create",
+            extra_meta={"surfaces": {"runtimes": surface}},
+        )
     event_payload = {
         "runtime_id": data["id"],
         "binding_id": data["binding_id"],
@@ -45748,6 +46111,50 @@ def _sem_command_payload_from_record(
     }
 
 
+def _sem_command_dry_run_payload(
+    *,
+    command_type: CommandType,
+    target_type: ObjectType,
+    target_id: str,
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+    idempotency_key: str,
+) -> Dict[str, Any]:
+    submitted_at = utc_now()
+    command_id = f"dryrun-cmd-{uuid.uuid4().hex[:12]}"
+    receipts = _command_dual_write_receipts(
+        command_id=command_id,
+        command=command_type.value,
+        status=ActionCommandStatus.ACCEPTED.value,
+        accepted_at=submitted_at,
+    )
+    receipt = dict(receipts["command_receipt"])
+    receipt["id"] = command_id
+    return {
+        "status": "accepted",
+        "data": {
+            "status": "accepted",
+            "command": command_type.value,
+            "commandId": command_id,
+            "command_id": command_id,
+            "target": {"type": target_type.value, "id": target_id},
+            "params": json.loads(json.dumps(payload)),
+            "submitted_by": identity.operator_id,
+            "receipt_id": command_id,
+            "receipt": receipt,
+            "receipt_dual_write": receipts,
+            "action_receipt": receipts["action_receipt"],
+            "actionReceipt": receipts["action_receipt"],
+            "command_receipt": receipts["command_receipt"],
+            "commandReceipt": receipts["command_receipt"],
+        },
+        "meta": {
+            "snapshot_at": submitted_at,
+            **_command_response_dry_run_meta(idempotency_key),
+        },
+    }
+
+
 def _scoped_idempotency_cache_key(idempotency_key: str, operator_id: str) -> str:
     return f"{operator_id}\x00{idempotency_key}"
 
@@ -45779,6 +46186,18 @@ def _sem_command_response(
         hash_body["target_id"] = target_id
     request_hash = _stable_json_hash(hash_body)
     cache_key = _scoped_idempotency_cache_key(clean_key, identity.operator_id)
+    if _request_dry_run_requested():
+        return JSONResponse(
+            status_code=200,
+            content=_sem_command_dry_run_payload(
+                command_type=command_type,
+                target_type=target_type,
+                target_id=target_id,
+                payload=payload,
+                identity=identity,
+                idempotency_key=clean_key,
+            ),
+        )
     existing = _FINAL_CONTRACT_IDEMPOTENCY.get(cache_key)
     if existing:
         if existing.get("request_hash") != request_hash:
@@ -46003,7 +46422,7 @@ async def sem_create_deployment_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     client_provided_id = payload.get("deployment_id") or payload.get("deploymentId") or payload.get("id")
     deployment_id = str(client_provided_id or f"deployment-{uuid.uuid4().hex[:8]}")
     return _sem_command_response(
@@ -46028,7 +46447,7 @@ async def sem_patch_deployment_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     return _sem_command_response(
         command_type=CommandType.DEPLOYMENT_PATCH,
         target_type=ObjectType.DEPLOYMENT,
@@ -46049,7 +46468,7 @@ async def sem_patch_rebalance_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     return _sem_command_response(
         command_type=CommandType.REBALANCE_PATCH,
         target_type=ObjectType.REBALANCE,
@@ -46069,7 +46488,7 @@ async def sem_audit_export_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     return _sem_command_response(
         command_type=CommandType.AUDIT_EXPORT,
         target_type=ObjectType.AUDIT_EXPORT,
@@ -46463,7 +46882,7 @@ async def sem_v5_intervention_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     return _sem_command_response(
         command_type=CommandType.V5_INTERVENTION_ACTION,
         target_type=ObjectType.SENTINEL_INTERVENTION,
@@ -49031,6 +49450,70 @@ async def bff_get_ranking_formula_facade(
     )
 
 
+@app.post("/bff/ranking-formulas", status_code=201)
+async def bff_create_ranking_formula_facade(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF B2.3: create a ranking formula in the read surface store."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/ranking-formulas", "payload": payload})
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return JSONResponse(status_code=201, content=jsonable_encoder(cached))
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "name is required",
+            "Ranking formula name must be a non-empty string",
+            precondition_failed="name",
+        )
+    description = str(payload.get("description") or "").strip()
+    snapshot_at = utc_now()
+    if dry_run:
+        preview_id = str(payload.get("id") or payload.get("formula_id") or f"rf-dryrun-{uuid.uuid4().hex[:8]}")
+        return _dry_run_success_response(
+            {
+                "id": preview_id,
+                "formula_id": preview_id,
+                "name": name,
+                "description": description,
+                "status": str(payload.get("status") or "active"),
+                "params": payload.get("params") or {},
+                "created_by": identity.operator_id,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="ranking_formula.create.preview",
+        )
+    record = read_store.create_ranking_formula(
+        name=name,
+        description=description,
+        actor_id=identity.operator_id,
+        created_at=snapshot_at,
+        params=payload.get("params"),
+    )
+    result = {
+        "data": record,
+        "meta": _read_surface_meta(
+            "ranking_formulas",
+            "ranking_formula_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
+    _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return JSONResponse(status_code=201, content=jsonable_encoder(result))
+
+
 # ============================================================================
 # BFF-B2-006: v5 closed-loop read routes — dedicated GET handlers
 # Covers: /bff/v5/control-room, /bff/v5/execution/persona-health,
@@ -49237,7 +49720,7 @@ async def sem_final_id_named_read_alias(
 @app.patch("/bff/ranking-formulas/{id}")
 @app.patch("/bff/research-experiments/{id}")
 async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
 
 
@@ -49592,7 +50075,7 @@ async def bff_approvals_batch_decide(
 @app.post("/bff/incidents/{id}/rollback-deployment", status_code=202)
 @app.post("/bff/incidents/{id}/start-mitigation", status_code=202)
 async def sem_final_generic_id_command_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": utc_now()}})
 
 
@@ -49600,9 +50083,17 @@ async def sem_final_generic_id_command_alias(id: str, payload: Dict[str, Any] = 
 @app.post("/bff/ranking-formulas", status_code=201)
 @app.post("/bff/research-experiments", status_code=201)
 async def sem_final_generic_create_alias(payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     status = 202 if "decision" in payload else 201
-    return JSONResponse(status_code=status, content={"data": {"id": str(payload.get("id") or uuid.uuid4().hex[:12]), **payload}, "meta": {"snapshot_at": utc_now()}})
+    snapshot_at = utc_now()
+    data = {"id": str(payload.get("id") or uuid.uuid4().hex[:12]), **payload}
+    if _request_dry_run_requested():
+        return _dry_run_success_response(
+            data,
+            snapshot_at=snapshot_at,
+            evidence_kind="generic_create.preview",
+        )
+    return JSONResponse(status_code=status, content={"data": data, "meta": {"snapshot_at": snapshot_at}})
 
 
 @app.get("/bff/agora/alerts/triage")
@@ -49613,13 +50104,13 @@ async def sem_agora_alerts_triage_alias(authorization: Optional[str] = Header(de
 
 @app.post("/bff/agora/signals/{id}/feedback", status_code=202)
 async def sem_agora_signal_feedback_id_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "signalId": id, **payload}, "meta": {"snapshot_at": utc_now()}})
 
 
 @app.patch("/bff/agora/journal/{id}")
 async def sem_agora_journal_id_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
 
 
