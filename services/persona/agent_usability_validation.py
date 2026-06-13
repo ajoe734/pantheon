@@ -22,8 +22,17 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean, pstdev
+from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
+from services.broker.shioaji.adapter import ShioajiBrokerAdapter
+from services.broker.shioaji.facade import ShioajiSandboxFacade
+from services.broker.shioaji.sandbox_smoke import MockShioajiApi
+from services.execution.lean_runtime.smoke_algorithm import (
+    SMOKE_STRATEGY_ID,
+    SMOKE_VERSION,
+    run_algorithm_smoke_from_binding,
+)
 from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
@@ -92,6 +101,8 @@ OPERATIONAL_SCENARIOS = (
 )
 BROKER_LIFECYCLE_TERMINAL_STATUS = "filled"
 MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
+LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
+SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
     "request_oss",
@@ -1805,6 +1816,11 @@ def _build_operational_context(
         executions=executions,
         scenario=scenario,
     )
+    shioaji_sandbox_lifecycle = _run_shioaji_sandbox_lifecycle(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        market_friction=market_friction,
+    )
     persona_conflict = _build_persona_conflict_resolution(
         episode=episode,
         final_policy=generation_policies[-1],
@@ -1823,6 +1839,11 @@ def _build_operational_context(
         generated_at=generated_at,
         restart_recovery=restart_recovery,
     )
+    lean_engine_replay = _run_lean_engine_replay(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        evolution_decision=evolution_decision,
+    )
     lean_handoff = _build_lean_handoff_packet(
         episode=episode,
         final_policy=generation_policies[-1],
@@ -1830,6 +1851,8 @@ def _build_operational_context(
         oss_inputs=oss_inputs,
         market_friction=market_friction,
         broker_lifecycle=broker_lifecycle,
+        lean_engine_replay=lean_engine_replay,
+        shioaji_sandbox_lifecycle=shioaji_sandbox_lifecycle,
     )
     return {
         "operational_signature": _stable_id(
@@ -1843,9 +1866,11 @@ def _build_operational_context(
         "scenario": scenario,
         "market_friction": market_friction,
         "broker_lifecycle": broker_lifecycle,
+        "shioaji_sandbox_lifecycle": shioaji_sandbox_lifecycle,
         "persona_conflict_resolution": persona_conflict,
         "restart_recovery": restart_recovery,
         "autonomous_schedule": autonomous_schedule,
+        "lean_engine_replay": lean_engine_replay,
         "lean_handoff": lean_handoff,
     }
 
@@ -2124,6 +2149,125 @@ def _build_autonomous_schedule(
     }
 
 
+def _run_lean_engine_replay(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    evolution_decision: EvolutionDecision,
+) -> dict[str, Any]:
+    artifact_id = f"reg-{SMOKE_STRATEGY_ID}-{SMOKE_VERSION}"
+    plan = {
+        "plan_id": f"lean-plan-{episode.case_id}",
+        "approval_decision_id": f"lean-approval-{episode.case_id}",
+        "artifact_id": artifact_id,
+        "artifact_version": SMOKE_VERSION,
+        "artifact_type": "execution_bundle",
+        "target_stage": "paper",
+        "capital_pool_id": f"pool-usability-{_persona_id(episode.persona)}",
+        "strategy_id": SMOKE_STRATEGY_ID,
+    }
+    binding = SimpleNamespace(
+        binding_id=f"lean-binding-{episode.case_id}",
+        runtime_id=f"lean-runtime-{episode.case_id}",
+        plan_id=plan["plan_id"],
+        artifact_id=artifact_id,
+        artifact_version=SMOKE_VERSION,
+        capital_pool_id=plan["capital_pool_id"],
+        deployment_mode="paper",
+        persona_capital_binding_id=f"pcb-usability-{_persona_id(episode.persona)}",
+    )
+    result = run_algorithm_smoke_from_binding(plan, binding).to_dict()
+    runtime_context = dict(result["runtime_context"])
+    return {
+        "replay_id": f"lean-engine-replay-{episode.case_id}",
+        "model_id": LEAN_ENGINE_REPLAY_MODEL_ID,
+        "status": "passed"
+        if _lean_engine_result_is_usable(result, plan, binding)
+        else "failed",
+        "algorithm_module": "pantheon_algo.smoke_loader_test",
+        "case_specific_runtime_binding": True,
+        "case_specific_strategy_packet": {
+            "policy_id": final_policy["policy_id"],
+            "evolution_decision_id": evolution_decision.decision_id,
+            "portfolio_instruments": [window.instrument for window in episode.windows],
+            "validation_signature": episode.validation_signature,
+        },
+        "plan": {
+            "plan_id": plan["plan_id"],
+            "artifact_id": plan["artifact_id"],
+            "artifact_version": plan["artifact_version"],
+            "target_stage": plan["target_stage"],
+            "capital_pool_id": plan["capital_pool_id"],
+        },
+        "binding": {
+            "binding_id": binding.binding_id,
+            "runtime_id": binding.runtime_id,
+            "deployment_mode": binding.deployment_mode,
+            "persona_capital_binding_id": binding.persona_capital_binding_id,
+        },
+        "runtime_context": runtime_context,
+        "synthetic_bar_count": result["synthetic_bar_count"],
+        "raw_on_data_callbacks": result["raw_on_data_callbacks"],
+        "executed_on_data_callbacks": result["executed_on_data_callbacks"],
+        "fill_count": result["fill_count"],
+        "object_store_keys": list(result["object_store_keys"]),
+        "loaded_metadata": {
+            "deployment_plan_id": result["loaded_metadata"].get("deployment_plan_id"),
+            "runtime_binding_id": result["loaded_metadata"].get("runtime_binding_id"),
+            "deployment_stage": result["loaded_metadata"].get("deployment_stage"),
+            "strategy_id": result["loaded_metadata"].get("strategy_id"),
+        },
+        "broker_production_live_enabled": result["broker_production_live_enabled"],
+    }
+
+
+def _run_shioaji_sandbox_lifecycle(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    market_friction: Mapping[str, Any],
+) -> dict[str, Any]:
+    first_window = episode.windows[0]
+    first_leg = final_policy["legs"][first_window.instrument]
+    direction = int(first_leg["direction"])
+    first_cost = market_friction["generation_costs"][-1]["leg_costs"][0]
+    adapter = ShioajiBrokerAdapter(
+        sandbox_enabled=True,
+        _api=MockShioajiApi(),
+        submit_spacing_seconds=0.0,
+    )
+    facade = ShioajiSandboxFacade(adapter)
+    payload = facade.run_lifecycle(
+        capital_pool_id=f"pool-usability-{_persona_id(episode.persona)}",
+        strategy_id=f"{episode.seed_key}-agent-usability-hardening",
+        symbol=_shioaji_symbol_for(first_window.instrument),
+        qty=max(1, int(round(float(first_cost["notional"]) / max(float(first_window.observe_rows[-1]["close"]), 1.0)))),
+        side="buy" if direction > 0 else "sell",
+        order_type="limit",
+        limit_price=round(max(0.01, float(first_window.observe_rows[-1]["close"])), 2),
+    )
+    return {
+        "lifecycle_id": f"shioaji-sandbox-{episode.case_id}",
+        "model_id": SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID,
+        "status": "passed" if _shioaji_sandbox_result_is_usable(payload) else "failed",
+        "run_mode": "mock_api_replay",
+        "adapter": "services.broker.shioaji.ShioajiBrokerAdapter",
+        "facade": "services.broker.shioaji.ShioajiSandboxFacade",
+        "provider": payload["provider"],
+        "environment": payload["environment"],
+        "proof_boundary": payload["proof_boundary"],
+        "place_result": payload["place_result"],
+        "cancel_result": payload["cancel_result"],
+        "readback_result": payload["readback_result"],
+        "reconcile_result": payload["reconcile_result"],
+        "live_disabled_result": payload["live_disabled_result"],
+        "production_live_enabled": payload["production_live_enabled"],
+        "capital_binding_enabled": payload["capital_binding_enabled"],
+        "human_gate_required": payload["human_gate_required"],
+        "error": payload["error"],
+    }
+
+
 def _build_lean_handoff_packet(
     *,
     episode: PortfolioEpisode,
@@ -2132,6 +2276,8 @@ def _build_lean_handoff_packet(
     oss_inputs: Mapping[str, Mapping[str, Any]],
     market_friction: Mapping[str, Any],
     broker_lifecycle: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    shioaji_sandbox_lifecycle: Mapping[str, Any],
 ) -> dict[str, Any]:
     handoff = oss_inputs["handoff"]
     return {
@@ -2146,10 +2292,16 @@ def _build_lean_handoff_packet(
         "portfolio_instruments": [window.instrument for window in episode.windows],
         "market_friction_model_id": market_friction["model_id"],
         "broker_lifecycle_model": broker_lifecycle["lifecycle_model"],
+        "lean_engine_replay_id": lean_engine_replay["replay_id"],
+        "lean_engine_replay_status": lean_engine_replay["status"],
+        "shioaji_sandbox_lifecycle_id": shioaji_sandbox_lifecycle["lifecycle_id"],
+        "shioaji_sandbox_lifecycle_status": shioaji_sandbox_lifecycle["status"],
         "runtime_bundle_refs": [
             f"strategy://{episode.seed_key}-agent-usability-hardening/{final_policy['policy_id']}",
             f"evolution://{evolution_decision.decision_id}",
             f"oss://{handoff['component']}/{handoff['request_id']}",
+            f"lean-engine://{lean_engine_replay['replay_id']}",
+            f"broker-sandbox://{shioaji_sandbox_lifecycle['lifecycle_id']}",
         ],
         "received_by_lean_handoff": handoff.get("status") == "completed",
         "broker_live_submitted": False,
@@ -2215,8 +2367,96 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
         and packet.get("strategy_packet_materialized")
         and packet.get("received_by_lean_handoff")
         and packet.get("target_stage") == "paper"
+        and packet.get("lean_engine_replay_status") == "passed"
+        and packet.get("shioaji_sandbox_lifecycle_status") == "passed"
         and packet.get("broker_live_submitted") is False
         and packet.get("runtime_bundle_refs")
+    )
+
+
+def _lean_engine_result_is_usable(
+    result: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    binding: Any,
+) -> bool:
+    runtime_context = result.get("runtime_context", {})
+    loaded_metadata = result.get("loaded_metadata", {})
+    object_store_keys = set(result.get("object_store_keys", []))
+    return bool(
+        runtime_context.get("runtime_binding_id") == binding.binding_id
+        and runtime_context.get("runtime_id") == binding.runtime_id
+        and runtime_context.get("deployment_plan_id") == plan["plan_id"]
+        and runtime_context.get("deployment_stage") == "paper"
+        and loaded_metadata.get("deployment_plan_id") == plan["plan_id"]
+        and loaded_metadata.get("runtime_binding_id") == binding.binding_id
+        and int(result.get("synthetic_bar_count", 0)) == 5
+        and int(result.get("raw_on_data_callbacks", 0)) == 5
+        and int(result.get("executed_on_data_callbacks", 0)) >= 1
+        and int(result.get("fill_count", 0)) >= 1
+        and result.get("broker_production_live_enabled") == "false"
+        and any(key.endswith("/artifact.bin") for key in object_store_keys)
+        and any(key.endswith("/metadata.json") for key in object_store_keys)
+    )
+
+
+def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
+    runtime_context = replay.get("runtime_context", {})
+    loaded_metadata = replay.get("loaded_metadata", {})
+    return bool(
+        replay.get("model_id") == LEAN_ENGINE_REPLAY_MODEL_ID
+        and replay.get("status") == "passed"
+        and replay.get("case_specific_runtime_binding")
+        and runtime_context.get("runtime_binding_id") == replay.get("binding", {}).get("binding_id")
+        and runtime_context.get("deployment_plan_id") == replay.get("plan", {}).get("plan_id")
+        and runtime_context.get("deployment_stage") == "paper"
+        and loaded_metadata.get("deployment_plan_id") == replay.get("plan", {}).get("plan_id")
+        and loaded_metadata.get("runtime_binding_id") == replay.get("binding", {}).get("binding_id")
+        and int(replay.get("synthetic_bar_count", 0)) == 5
+        and int(replay.get("raw_on_data_callbacks", 0)) == 5
+        and int(replay.get("executed_on_data_callbacks", 0)) >= 1
+        and int(replay.get("fill_count", 0)) >= 1
+        and replay.get("broker_production_live_enabled") == "false"
+        and replay.get("case_specific_strategy_packet", {}).get("validation_signature")
+    )
+
+
+def _shioaji_sandbox_result_is_usable(payload: Mapping[str, Any]) -> bool:
+    live_disabled = payload.get("live_disabled_result", {}).get("response", {})
+    readback = payload.get("readback_result", {})
+    return bool(
+        payload.get("status") == "passed"
+        and payload.get("provider") == "Shioaji"
+        and payload.get("environment") == "sandbox"
+        and payload.get("production_live_enabled") is False
+        and payload.get("capital_binding_enabled") is False
+        and payload.get("human_gate_required") is True
+        and payload.get("reconcile_result", {}).get("status") == "passed"
+        and readback.get("status") == "cancelled"
+        and readback.get("is_real_order") is False
+        and readback.get("is_real_capital") is False
+        and readback.get("deployment_stage") == "sandbox"
+        and live_disabled.get("error_code") == "SHIOAJI_LIVE_DISABLED"
+        and payload.get("error") is None
+    )
+
+
+def _shioaji_sandbox_lifecycle_is_usable(lifecycle: Mapping[str, Any]) -> bool:
+    return bool(
+        lifecycle.get("model_id") == SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID
+        and lifecycle.get("status") == "passed"
+        and lifecycle.get("run_mode") == "mock_api_replay"
+        and lifecycle.get("provider") == "Shioaji"
+        and lifecycle.get("environment") == "sandbox"
+        and lifecycle.get("production_live_enabled") is False
+        and lifecycle.get("capital_binding_enabled") is False
+        and lifecycle.get("human_gate_required") is True
+        and lifecycle.get("reconcile_result", {}).get("status") == "passed"
+        and lifecycle.get("readback_result", {}).get("status") == "cancelled"
+        and lifecycle.get("readback_result", {}).get("is_real_order") is False
+        and lifecycle.get("readback_result", {}).get("is_real_capital") is False
+        and lifecycle.get("live_disabled_result", {}).get("response", {}).get("error_code")
+        == "SHIOAJI_LIVE_DISABLED"
+        and lifecycle.get("error") is None
     )
 
 
@@ -2273,6 +2513,10 @@ def _build_usability_dimensions(
     persona_conflicts = 1.0 if _persona_conflicts_are_resolved(operational_context["persona_conflict_resolution"]) else 0.0
     restart_recovery = 1.0 if _restart_recovery_is_usable(operational_context["restart_recovery"]) else 0.0
     autonomous_scheduler = 1.0 if _autonomous_schedule_is_usable(operational_context["autonomous_schedule"]) else 0.0
+    lean_engine_replay = 1.0 if _lean_engine_replay_is_usable(operational_context["lean_engine_replay"]) else 0.0
+    shioaji_sandbox = 1.0 if _shioaji_sandbox_lifecycle_is_usable(
+        operational_context["shioaji_sandbox_lifecycle"]
+    ) else 0.0
     lean_handoff = 1.0 if _lean_handoff_packet_is_usable(operational_context["lean_handoff"]) else 0.0
     return {
         "return_improvement": return_improvement,
@@ -2292,6 +2536,8 @@ def _build_usability_dimensions(
         "persona_conflict_resolution": persona_conflicts,
         "restart_recovery": restart_recovery,
         "autonomous_scheduler": autonomous_scheduler,
+        "lean_engine_replay": lean_engine_replay,
+        "shioaji_sandbox_lifecycle": shioaji_sandbox,
         "lean_handoff_packet": lean_handoff,
     }
 
@@ -2442,6 +2688,24 @@ def _diagnose_validation_execution(
             {
                 "packet_id": operational_context["lean_handoff"]["packet_id"],
                 "component": operational_context["lean_handoff"]["component"],
+            },
+        ),
+        _diagnostic_check(
+            "lean_engine_replay_uses_case_runtime_binding",
+            _lean_engine_replay_is_usable(operational_context["lean_engine_replay"]),
+            {
+                "replay_id": operational_context["lean_engine_replay"]["replay_id"],
+                "runtime_binding_id": operational_context["lean_engine_replay"]["runtime_context"]["runtime_binding_id"],
+                "fill_count": operational_context["lean_engine_replay"]["fill_count"],
+            },
+        ),
+        _diagnostic_check(
+            "shioaji_sandbox_lifecycle_reconciled",
+            _shioaji_sandbox_lifecycle_is_usable(operational_context["shioaji_sandbox_lifecycle"]),
+            {
+                "lifecycle_id": operational_context["shioaji_sandbox_lifecycle"]["lifecycle_id"],
+                "status": operational_context["shioaji_sandbox_lifecycle"]["status"],
+                "run_mode": operational_context["shioaji_sandbox_lifecycle"]["run_mode"],
             },
         ),
     ]
@@ -2629,6 +2893,8 @@ def _build_case_result(
             "persona_conflicts_resolved": usability_dimensions["persona_conflict_resolution"] == 1.0,
             "restart_recovery_restores_loop": usability_dimensions["restart_recovery"] == 1.0,
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
+            "lean_engine_replay_uses_runtime_binding": usability_dimensions["lean_engine_replay"] == 1.0,
+            "shioaji_sandbox_lifecycle_reconciled": usability_dimensions["shioaji_sandbox_lifecycle"] == 1.0,
             "lean_handoff_packet_materialized": usability_dimensions["lean_handoff_packet"] == 1.0,
             "evolved": _enum_value(evolution_decision.decision_state) == EvolutionDecisionState.EXECUTED.value,
         },
@@ -2686,6 +2952,18 @@ def _build_summary(
             for case in cases
             for phase in case["operational_context"]["autonomous_schedule"]["phases"]
         }),
+        "lean_engine_replay_models": sorted({
+            case["operational_context"]["lean_engine_replay"]["model_id"] for case in cases
+        }),
+        "lean_engine_algorithm_modules": sorted({
+            case["operational_context"]["lean_engine_replay"]["algorithm_module"] for case in cases
+        }),
+        "shioaji_sandbox_models": sorted({
+            case["operational_context"]["shioaji_sandbox_lifecycle"]["model_id"] for case in cases
+        }),
+        "shioaji_sandbox_run_modes": sorted({
+            case["operational_context"]["shioaji_sandbox_lifecycle"]["run_mode"] for case in cases
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -2736,6 +3014,8 @@ def _build_summary(
         "persona_conflict_resolved_count": sum(1 for item in usable if item["persona_conflicts_resolved"]),
         "restart_recovery_count": sum(1 for item in usable if item["restart_recovery_restores_loop"]),
         "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
+        "lean_engine_replay_count": sum(1 for item in usable if item["lean_engine_replay_uses_runtime_binding"]),
+        "shioaji_sandbox_lifecycle_count": sum(1 for item in usable if item["shioaji_sandbox_lifecycle_reconciled"]),
         "lean_handoff_packet_count": sum(1 for item in usable if item["lean_handoff_packet_materialized"]),
         "validation_gap_question_count": sum(
             len(case["validation_cycle"]["planning"]["questions_asked"]) for case in cases
@@ -2866,6 +3146,11 @@ def _regime_for_window(window: InstrumentWindow) -> str:
 def _execution_symbol_for(instrument: str) -> str:
     suffix = "".join(ch for ch in instrument if ch.isdigit())[-4:] or "0000"
     return f"TWS{suffix}.US"
+
+
+def _shioaji_symbol_for(instrument: str) -> str:
+    suffix = "".join(ch for ch in instrument if ch.isdigit())[-4:] or "0000"
+    return f"{suffix}.TWSE"
 
 
 def _period_return(start_row: Mapping[str, Any], end_row: Mapping[str, Any]) -> float:

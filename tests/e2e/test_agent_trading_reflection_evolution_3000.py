@@ -8,10 +8,12 @@ from services.persona.agent_usability_validation import (
     DEFAULT_CASE_COUNT,
     GENERATION_COUNT,
     HISTORICAL_OHLCV_DATASET_ID,
+    LEAN_ENGINE_REPLAY_MODEL_ID,
     MARKET_FRICTION_MODEL_ID,
     MIN_USABILITY_SCORE,
     OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
+    SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID,
     OSS_REQUIRED_COMPONENTS,
     PORTFOLIO_LEG_COUNT,
     QUANTITY_TYPES,
@@ -68,6 +70,8 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["persona_conflict_resolved_count"] == DEFAULT_CASE_COUNT
     assert summary["restart_recovery_count"] == DEFAULT_CASE_COUNT
     assert summary["autonomous_scheduler_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_engine_replay_count"] == DEFAULT_CASE_COUNT
+    assert summary["shioaji_sandbox_lifecycle_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_handoff_packet_count"] == DEFAULT_CASE_COUNT
     assert summary["validation_gap_question_count"] == DEFAULT_CASE_COUNT * len(EXPECTED_GAP_QUESTIONS)
     assert summary["unresolved_validation_deficiency_count"] == 0
@@ -108,6 +112,10 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "weight_conflict",
     }
     assert set(coverage["scheduler_phases"]) == set(AUTONOMOUS_SCHEDULER_PHASES)
+    assert coverage["lean_engine_replay_models"] == [LEAN_ENGINE_REPLAY_MODEL_ID]
+    assert coverage["lean_engine_algorithm_modules"] == ["pantheon_algo.smoke_loader_test"]
+    assert coverage["shioaji_sandbox_models"] == [SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID]
+    assert coverage["shioaji_sandbox_run_modes"] == ["mock_api_replay"]
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -320,10 +328,56 @@ def _assert_operational_context(case: dict) -> None:
     assert schedule["missed_cycle_recovered"] is True
     assert schedule["next_cycle_due_at"]
 
+    replay = operational["lean_engine_replay"]
+    assert replay["model_id"] == LEAN_ENGINE_REPLAY_MODEL_ID
+    assert replay["status"] == "passed"
+    assert replay["algorithm_module"] == "pantheon_algo.smoke_loader_test"
+    assert replay["case_specific_runtime_binding"] is True
+    assert replay["case_specific_strategy_packet"]["validation_signature"] == case["validation_signature"]
+    assert replay["case_specific_strategy_packet"]["policy_id"] == case["generation_results"][-1]["policy_id"]
+    assert replay["plan"]["target_stage"] == "paper"
+    assert replay["binding"]["deployment_mode"] == "paper"
+    assert replay["runtime_context"]["runtime_binding_id"] == replay["binding"]["binding_id"]
+    assert replay["runtime_context"]["runtime_id"] == replay["binding"]["runtime_id"]
+    assert replay["runtime_context"]["deployment_plan_id"] == replay["plan"]["plan_id"]
+    assert replay["runtime_context"]["deployment_stage"] == "paper"
+    assert replay["loaded_metadata"]["deployment_plan_id"] == replay["plan"]["plan_id"]
+    assert replay["loaded_metadata"]["runtime_binding_id"] == replay["binding"]["binding_id"]
+    assert replay["synthetic_bar_count"] == 5
+    assert replay["raw_on_data_callbacks"] == 5
+    assert replay["executed_on_data_callbacks"] >= 1
+    assert replay["fill_count"] >= 1
+    assert replay["broker_production_live_enabled"] == "false"
+    assert any(key.endswith("/artifact.bin") for key in replay["object_store_keys"])
+    assert any(key.endswith("/metadata.json") for key in replay["object_store_keys"])
+
+    sandbox = operational["shioaji_sandbox_lifecycle"]
+    assert sandbox["model_id"] == SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID
+    assert sandbox["status"] == "passed"
+    assert sandbox["run_mode"] == "mock_api_replay"
+    assert sandbox["provider"] == "Shioaji"
+    assert sandbox["environment"] == "sandbox"
+    assert sandbox["production_live_enabled"] is False
+    assert sandbox["capital_binding_enabled"] is False
+    assert sandbox["human_gate_required"] is True
+    assert sandbox["place_result"]["status"] == "submitted"
+    assert sandbox["cancel_result"]["status"] == "cancelled"
+    assert sandbox["readback_result"]["status"] == "cancelled"
+    assert sandbox["readback_result"]["is_real_order"] is False
+    assert sandbox["readback_result"]["is_real_capital"] is False
+    assert sandbox["readback_result"]["deployment_stage"] == "sandbox"
+    assert sandbox["reconcile_result"]["status"] == "passed"
+    assert sandbox["live_disabled_result"]["response"]["error_code"] == "SHIOAJI_LIVE_DISABLED"
+    assert sandbox["error"] is None
+
     handoff = operational["lean_handoff"]
     assert handoff["component"] == "lean_handoff"
     assert handoff["strategy_packet_materialized"] is True
     assert handoff["received_by_lean_handoff"] is True
+    assert handoff["lean_engine_replay_id"] == replay["replay_id"]
+    assert handoff["lean_engine_replay_status"] == "passed"
+    assert handoff["shioaji_sandbox_lifecycle_id"] == sandbox["lifecycle_id"]
+    assert handoff["shioaji_sandbox_lifecycle_status"] == "passed"
     assert handoff["target_stage"] == "paper"
     assert handoff["broker_live_submitted"] is False
     assert set(handoff["portfolio_instruments"]) == set(case["portfolio"]["instruments"])
