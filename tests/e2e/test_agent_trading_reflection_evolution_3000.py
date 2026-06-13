@@ -20,6 +20,10 @@ from services.persona.agent_usability_validation import (
     MIN_USABILITY_SCORE,
     OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
+    PERSONA_CANDIDATE_GENERATOR_MODEL_ID,
+    PERSONA_CANDIDATE_SCORER_MODEL_ID,
+    PERSONA_DECISION_ARTIFACT_MODEL_ID,
+    PERSONA_RISK_EVALUATOR_MODEL_ID,
     SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID,
     OSS_REQUIRED_COMPONENTS,
     PORTFOLIO_LEG_COUNT,
@@ -65,6 +69,8 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["portfolio_trade_generation_fill_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["memory_retrieval_drives_next_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_feedback_drives_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["agent_decision_artifact_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["agent_decision_artifact_replay_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_generation_evolution_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_dimensional_score_pass_count"] == DEFAULT_CASE_COUNT
 
@@ -157,6 +163,11 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "rl_policy",
         "vectorbt_backtest",
     }
+    assert coverage["agent_decision_artifact_models"] == [PERSONA_DECISION_ARTIFACT_MODEL_ID]
+    assert coverage["agent_candidate_generator_models"] == [PERSONA_CANDIDATE_GENERATOR_MODEL_ID]
+    assert coverage["agent_candidate_scorer_models"] == [PERSONA_CANDIDATE_SCORER_MODEL_ID]
+    assert coverage["agent_risk_evaluator_models"] == [PERSONA_RISK_EVALUATOR_MODEL_ID]
+    assert coverage["agent_decision_artifact_generations"] == [1, 2]
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -283,6 +294,73 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert not forbidden.intersection(trace["selected_candidate"]["source_windows"])
         assert trace["selected_candidate"]["evidence_refs"]
         assert trace["evidence_refs"]
+        artifact = trace["agent_decision_artifact"]
+        assert artifact["model_id"] == PERSONA_DECISION_ARTIFACT_MODEL_ID
+        assert artifact["persona_id"] == case["persona_id"]
+        assert artifact["case_id"] == case["case_id"]
+        assert artifact["generation"] in {1, 2}
+
+        input_context = artifact["input_context"]
+        assert input_context["allowed_windows"] == trace["decision_inputs"]["allowed_windows"]
+        assert input_context["forbidden_windows_not_used"] == trace["decision_inputs"]["forbidden_windows_not_used"]
+        assert input_context["telemetry_event_id"] == trace["decision_inputs"]["telemetry_event_id"]
+        assert input_context["memory_ref"] == trace["decision_inputs"]["memory_ref"]
+        if input_context["memory_ref"]:
+            assert input_context["memory_status"] == "retrieved"
+        else:
+            assert input_context["memory_status"] == "cold_start_declared"
+        assert input_context["oss_request_ids_by_role"] == case["oss_feedback"]["request_ids"]
+        assert set(input_context["required_oss_roles"]) == set(case["oss_feedback"]["request_ids"])
+        assert set(input_context["oss_evidence_refs"]).issubset(set(trace["evidence_refs"]))
+        assert input_context["portfolio_instruments"] == case["portfolio"]["instruments"]
+
+        candidate_generation = artifact["candidate_generation"]
+        assert candidate_generation["model_id"] == PERSONA_CANDIDATE_GENERATOR_MODEL_ID
+        response = candidate_generation["response"]
+        trace_candidate_ids = [candidate["candidate_id"] for candidate in trace["candidates"]]
+        assert response["status"] == "completed"
+        assert response["candidate_ids"] == trace_candidate_ids
+        assert response["candidates"] == trace["candidates"]
+
+        scorer = artifact["scorer"]
+        assert scorer["model_id"] == PERSONA_CANDIDATE_SCORER_MODEL_ID
+        scorecards = scorer["scorecards"]
+        assert set(scorecards) == set(trace_candidate_ids)
+        assert all(card["score_replay_match"] is True for card in scorecards.values())
+        selected_id = trace["selected_candidate_id"]
+        selected_score = scorecards[selected_id]["candidate_score"]
+        assert selected_score == max(card["candidate_score"] for card in scorecards.values())
+        assert scorer["scoring_inputs"]["policy_quality"] >= 0
+        assert scorer["scoring_inputs"]["reflection_quality"] >= 0
+
+        risk_evaluator = artifact["risk_evaluator"]
+        assert risk_evaluator["model_id"] == PERSONA_RISK_EVALUATOR_MODEL_ID
+        assert risk_evaluator["status"] == "passed"
+        assert all(check["status"] == "passed" for check in risk_evaluator["checks"])
+        assert risk_evaluator["selected_candidate_id"] == selected_id
+
+        selection = artifact["selection"]
+        assert selection["selected_candidate_id"] == selected_id
+        assert selection["selected_evidence_refs"] == trace["selected_candidate"]["evidence_refs"]
+        assert len(selection["rejected_candidates"]) == len(trace_candidate_ids) - 1
+        assert all(item["candidate_id"] != selected_id for item in selection["rejected_candidates"])
+
+        replay = artifact["replay"]
+        assert replay["replayable"] is True
+        assert replay["selected_candidate_is_top_score"] is True
+        assert replay["no_forbidden_window_sources"] is True
+        assert replay["uses_memory_or_declares_cold_start"] is True
+        assert replay["uses_selected_oss_feedback"] is True
+        assert replay["input_hash"]
+        assert replay["candidate_hash"]
+        assert replay["score_hash"]
+        assert replay["selection_hash"]
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["persona_decision_artifact_replays_candidate_selection"]["status"] == "passed"
 
 
 def _assert_memory_and_oss_closed_loop(case: dict) -> None:
