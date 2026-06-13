@@ -116,6 +116,10 @@ SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
 CASE_UPSTREAM_VECTORBT_MODEL_ID = "case_specific_vectorbt_feedback_v1"
 CASE_UPSTREAM_TRACKING_MODEL_ID = "case_specific_tracking_artifact_roundtrip_v1"
 CASE_SELECTED_OSS_MODEL_ID = "case_specific_selected_oss_feedback_v1"
+PERSONA_DECISION_ARTIFACT_MODEL_ID = "persona_replayable_candidate_decision_v1"
+PERSONA_CANDIDATE_GENERATOR_MODEL_ID = "persona_candidate_generation_from_oss_feedback_v1"
+PERSONA_CANDIDATE_SCORER_MODEL_ID = "persona_multi_factor_candidate_scorer_v1"
+PERSONA_RISK_EVALUATOR_MODEL_ID = "persona_oss_risk_turnover_evaluator_v1"
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
     "request_oss",
@@ -1844,6 +1848,36 @@ def _build_agent_decision_trace(
         if generation == 2
         else episode.reflection_archetype
     )
+    candidate_dicts = [_candidate_to_dict(candidate) for candidate in candidates]
+    selected_dict = _candidate_to_dict(selected)
+    decision_inputs = {
+        "allowed_windows": ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"],
+        "forbidden_windows_not_used": ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"],
+        "telemetry_event_id": telemetry_event["event_id"],
+        "memory_ref": prior_memory.get("memory_id") if prior_memory else None,
+        "oss_components": _oss_components_used(oss_inputs),
+    }
+    evidence_refs = [
+        f"telemetry-event://{telemetry_event['event_id']}",
+        f"historical-ohlcv://{HISTORICAL_OHLCV_DATASET_ID}/observe-feedback/{episode.case_id}",
+        f"alpha-seed://{episode.seed_key}",
+        f"policy://{baseline_policy['policy_id']}",
+        *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
+    ]
+    agent_decision_artifact = _build_persona_decision_artifact(
+        episode=episode,
+        generation=generation,
+        trigger=trigger,
+        baseline_policy=baseline_policy,
+        latest_evaluation=latest_evaluation,
+        telemetry_event=telemetry_event,
+        prior_memory=prior_memory,
+        oss_inputs=oss_inputs,
+        decision_inputs=decision_inputs,
+        evidence_refs=evidence_refs,
+        candidates=candidate_dicts,
+        selected_candidate=selected_dict,
+    )
     return {
         "reflection_id": f"reflection-{episode.case_id}-gen{generation}",
         "persona_id": _persona_id(episode.persona),
@@ -1856,23 +1890,12 @@ def _build_agent_decision_trace(
         "hypothesis": _reflection_hypothesis(trigger, oss_inputs),
         "next_policy_change": "score_candidate_portfolio_policy",
         "candidate_count": len(candidates),
-        "candidates": [_candidate_to_dict(candidate) for candidate in candidates],
+        "candidates": candidate_dicts,
         "selected_candidate_id": selected.candidate_id,
-        "selected_candidate": _candidate_to_dict(selected),
-        "decision_inputs": {
-            "allowed_windows": ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"],
-            "forbidden_windows_not_used": ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"],
-            "telemetry_event_id": telemetry_event["event_id"],
-            "memory_ref": prior_memory.get("memory_id") if prior_memory else None,
-            "oss_components": _oss_components_used(oss_inputs),
-        },
-        "evidence_refs": [
-            f"telemetry-event://{telemetry_event['event_id']}",
-            f"historical-ohlcv://{HISTORICAL_OHLCV_DATASET_ID}/observe-feedback/{episode.case_id}",
-            f"alpha-seed://{episode.seed_key}",
-            f"policy://{baseline_policy['policy_id']}",
-            *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
-        ],
+        "selected_candidate": selected_dict,
+        "decision_inputs": decision_inputs,
+        "evidence_refs": evidence_refs,
+        "agent_decision_artifact": agent_decision_artifact,
     }
 
 
@@ -1947,6 +1970,310 @@ def _score_agent_candidates(
         ),
     ]
     return candidates
+
+
+def _build_persona_decision_artifact(
+    *,
+    episode: PortfolioEpisode,
+    generation: int,
+    trigger: str,
+    baseline_policy: Mapping[str, Any],
+    latest_evaluation: Mapping[str, Any],
+    telemetry_event: Mapping[str, Any],
+    prior_memory: Mapping[str, Any] | None,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    decision_inputs: Mapping[str, Any],
+    evidence_refs: Sequence[str],
+    candidates: Sequence[Mapping[str, Any]],
+    selected_candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    required_roles = {
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    }
+    oss_evidence_refs = [
+        f"oss://{result['component']}/{result['request_id']}"
+        for result in oss_inputs.values()
+    ]
+    scoring_inputs = {
+        "feedback_score": float(latest_evaluation["signed_return"])
+        - abs(float(latest_evaluation["drawdown"])) * 0.1,
+        "policy_hint_risk": _risk_hint_from_oss(oss_inputs, generation),
+        "policy_quality": _policy_quality_from_oss(oss_inputs),
+        "reflection_quality": _reflection_quality_from_oss(oss_inputs),
+        "risk_penalty": _risk_penalty_from_oss(oss_inputs),
+        "memory_bonus": 0.2 if prior_memory else 0.0,
+        "baseline_risk_multiplier": float(baseline_policy["risk_multiplier"]),
+    }
+    scorecards = {
+        str(candidate["candidate_id"]): _persona_candidate_scorecard(
+            candidate=candidate,
+            scoring_inputs=scoring_inputs,
+        )
+        for candidate in candidates
+    }
+    risk_evaluator = _build_persona_risk_evaluator(
+        episode=episode,
+        oss_inputs=oss_inputs,
+        decision_inputs=decision_inputs,
+        candidates=candidates,
+        selected_candidate=selected_candidate,
+    )
+    selected_id = str(selected_candidate["candidate_id"])
+    selected_score = float(scorecards[selected_id]["candidate_score"])
+    rejected_candidates = [
+        {
+            "candidate_id": str(candidate["candidate_id"]),
+            "reason": "lower_replay_score_than_selected",
+            "score_delta_to_selected": round(
+                selected_score - float(scorecards[str(candidate["candidate_id"])]["candidate_score"]),
+                10,
+            ),
+            "evidence_refs": list(candidate.get("evidence_refs", [])),
+        }
+        for candidate in candidates
+        if str(candidate["candidate_id"]) != selected_id
+    ]
+    input_context = {
+        "persona_id": _persona_id(episode.persona),
+        "case_id": episode.case_id,
+        "generation": generation,
+        "trigger": trigger,
+        "telemetry_event_id": telemetry_event["event_id"],
+        "observed_score": latest_evaluation["score"],
+        "observed_signed_return": latest_evaluation["signed_return"],
+        "observed_drawdown": latest_evaluation["drawdown"],
+        "memory_ref": prior_memory.get("memory_id") if prior_memory else None,
+        "memory_status": "retrieved" if prior_memory else "cold_start_declared",
+        "prior_memory_source_event_id": prior_memory.get("source_event_id") if prior_memory else None,
+        "required_oss_roles": sorted(required_roles),
+        "oss_request_ids_by_role": {
+            role: result["request_id"] for role, result in sorted(oss_inputs.items())
+        },
+        "oss_components_by_role": {
+            role: result["component"] for role, result in sorted(oss_inputs.items())
+        },
+        "oss_feedback_status_by_role": {
+            role: result.get("status") for role, result in sorted(oss_inputs.items())
+        },
+        "oss_evidence_refs": oss_evidence_refs,
+        "allowed_windows": list(decision_inputs["allowed_windows"]),
+        "forbidden_windows_not_used": list(decision_inputs["forbidden_windows_not_used"]),
+        "portfolio_instruments": [window.instrument for window in episode.windows],
+        "historical_window_start_indices": [window.start_index for window in episode.windows],
+        "source_strategy_spec_id": episode.source_strategy_spec_id,
+        "source_dataset_refs": list(episode.source_dataset_refs),
+    }
+    candidate_generation = {
+        "model_id": PERSONA_CANDIDATE_GENERATOR_MODEL_ID,
+        "request": {
+            "request_id": f"persona-decision-request-{episode.case_id}-gen{generation}",
+            "objective": "generate portfolio policy candidates from telemetry, memory, alpha seeds, and OSS feedback",
+            "candidate_count_requested": len(candidates),
+            "input_refs": [
+                f"telemetry-event://{telemetry_event['event_id']}",
+                f"alpha-seed://{episode.seed_key}",
+                f"policy://{baseline_policy['policy_id']}",
+                *oss_evidence_refs,
+            ],
+            "allowed_windows": list(decision_inputs["allowed_windows"]),
+            "forbidden_windows_not_used": list(decision_inputs["forbidden_windows_not_used"]),
+        },
+        "response": {
+            "response_id": f"persona-decision-response-{episode.case_id}-gen{generation}",
+            "status": "completed",
+            "candidate_ids": [str(candidate["candidate_id"]) for candidate in candidates],
+            "candidates": copy.deepcopy([dict(candidate) for candidate in candidates]),
+        },
+    }
+    selection = {
+        "selected_candidate_id": selected_id,
+        "selected_candidate_score": selected_score,
+        "selected_evidence_refs": list(selected_candidate.get("evidence_refs", [])),
+        "rejected_candidates": rejected_candidates,
+        "decision_rule": "choose highest replayed persona scorer value after risk evaluator passes",
+    }
+    replay = {
+        "input_hash": _stable_payload_hash("decision-input", input_context),
+        "candidate_hash": _stable_payload_hash("decision-candidates", candidate_generation["response"]),
+        "score_hash": _stable_payload_hash("decision-scores", scorecards),
+        "selection_hash": _stable_payload_hash("decision-selection", selection),
+        "replayable": True,
+        "selected_candidate_is_top_score": selected_score
+        == max(float(card["candidate_score"]) for card in scorecards.values()),
+        "no_forbidden_window_sources": _artifact_candidates_have_no_forbidden_windows(
+            candidates,
+            decision_inputs["forbidden_windows_not_used"],
+        ),
+        "uses_memory_or_declares_cold_start": bool(input_context["memory_ref"])
+        or input_context["memory_status"] == "cold_start_declared",
+        "uses_selected_oss_feedback": set(selected_candidate.get("evidence_refs", [])).issuperset(
+            _selected_persona_decision_oss_refs(oss_inputs)
+        ),
+    }
+    return {
+        "artifact_id": f"persona-decision-artifact-{episode.case_id}-gen{generation}",
+        "model_id": PERSONA_DECISION_ARTIFACT_MODEL_ID,
+        "persona_id": _persona_id(episode.persona),
+        "case_id": episode.case_id,
+        "generation": generation,
+        "trigger": trigger,
+        "input_context": input_context,
+        "candidate_generation": candidate_generation,
+        "scorer": {
+            "model_id": PERSONA_CANDIDATE_SCORER_MODEL_ID,
+            "scoring_inputs": scoring_inputs,
+            "scorecards": scorecards,
+        },
+        "risk_evaluator": risk_evaluator,
+        "selection": selection,
+        "evidence_refs": list(evidence_refs),
+        "replay": replay,
+    }
+
+
+def _persona_candidate_scorecard(
+    *,
+    candidate: Mapping[str, Any],
+    scoring_inputs: Mapping[str, Any],
+) -> dict[str, Any]:
+    candidate_id = str(candidate["candidate_id"])
+    feedback_score = float(scoring_inputs["feedback_score"])
+    policy_quality = float(scoring_inputs["policy_quality"])
+    reflection_quality = float(scoring_inputs["reflection_quality"])
+    risk_penalty = float(scoring_inputs["risk_penalty"])
+    memory_bonus = float(scoring_inputs["memory_bonus"])
+    if candidate_id.endswith("-feedback-adapt"):
+        formula_id = "feedback_adapt_score_v1"
+        replayed_score = round(
+            3.0 + memory_bonus + feedback_score + policy_quality + reflection_quality - risk_penalty * 0.2,
+            10,
+        )
+        components = {
+            "base": 3.0,
+            "memory_bonus": memory_bonus,
+            "feedback_score": feedback_score,
+            "policy_quality": policy_quality,
+            "reflection_quality": reflection_quality,
+            "risk_penalty_weighted": round(-risk_penalty * 0.2, 10),
+        }
+    elif candidate_id.endswith("-retain-observe"):
+        formula_id = "retain_observe_score_v1"
+        replayed_score = round(1.0 + max(feedback_score, 0.0), 10)
+        components = {
+            "base": 1.0,
+            "positive_feedback_score": round(max(feedback_score, 0.0), 10),
+        }
+    elif candidate_id.endswith("-risk-off"):
+        formula_id = "risk_off_score_v1"
+        replayed_score = round(2.0 + memory_bonus + max(0.0, risk_penalty), 10)
+        components = {
+            "base": 2.0,
+            "memory_bonus": memory_bonus,
+            "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
+        }
+    else:
+        formula_id = "contrarian_control_score_v1"
+        replayed_score = 0.25
+        components = {"base": 0.25}
+    candidate_score = round(float(candidate["score"]), 10)
+    return {
+        "candidate_id": candidate_id,
+        "formula_id": formula_id,
+        "components": components,
+        "candidate_score": candidate_score,
+        "replayed_score": replayed_score,
+        "score_replay_match": abs(candidate_score - replayed_score) <= 1e-9,
+        "source_windows": list(candidate.get("source_windows", [])),
+        "evidence_refs": list(candidate.get("evidence_refs", [])),
+        "rationale": candidate.get("rationale"),
+    }
+
+
+def _build_persona_risk_evaluator(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    decision_inputs: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, Any]],
+    selected_candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    selected_refs = set(selected_candidate.get("evidence_refs", []))
+    portfolio_instruments = {window.instrument for window in episode.windows}
+    forbidden_windows = set(decision_inputs["forbidden_windows_not_used"])
+    risk_ref = f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}"
+    checks = [
+        _persona_risk_check(
+            "risk_multiplier_within_bounds",
+            all(0.25 <= float(candidate["risk_multiplier"]) <= 1.15 for candidate in candidates),
+            {
+                "min_allowed": 0.25,
+                "max_allowed": 1.15,
+                "observed": [candidate["risk_multiplier"] for candidate in candidates],
+            },
+        ),
+        _persona_risk_check(
+            "portfolio_direction_complete",
+            all(set(candidate["direction_by_instrument"]) == portfolio_instruments for candidate in candidates),
+            {"portfolio_instruments": sorted(portfolio_instruments)},
+        ),
+        _persona_risk_check(
+            "forbidden_windows_excluded",
+            _artifact_candidates_have_no_forbidden_windows(candidates, forbidden_windows),
+            {"forbidden_windows_not_used": sorted(forbidden_windows)},
+        ),
+        _persona_risk_check(
+            "selected_candidate_uses_risk_analytics",
+            risk_ref in selected_refs,
+            {"risk_ref": risk_ref, "selected_candidate_id": selected_candidate["candidate_id"]},
+        ),
+    ]
+    return {
+        "model_id": PERSONA_RISK_EVALUATOR_MODEL_ID,
+        "status": "passed" if all(check["status"] == "passed" for check in checks) else "failed",
+        "checks": checks,
+        "risk_analytics_ref": risk_ref,
+        "selected_candidate_id": selected_candidate["candidate_id"],
+    }
+
+
+def _persona_risk_check(check: str, condition: bool, observed: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "check": check,
+        "status": "passed" if condition else "failed",
+        "observed": dict(observed),
+    }
+
+
+def _selected_persona_decision_oss_refs(oss_inputs: Mapping[str, Mapping[str, Any]]) -> set[str]:
+    return {
+        f"oss://{oss_inputs[role]['component']}/{oss_inputs[role]['request_id']}"
+        for role in (
+            "alpha_model",
+            "backtest",
+            "policy_candidate",
+            "reflection_artifact",
+            "tracker",
+            "risk_analytics",
+        )
+    }
+
+
+def _artifact_candidates_have_no_forbidden_windows(
+    candidates: Sequence[Mapping[str, Any]],
+    forbidden_windows: Sequence[str] | set[str],
+) -> bool:
+    forbidden = set(forbidden_windows)
+    return all(
+        not forbidden.intersection(set(candidate.get("source_windows", [])))
+        for candidate in candidates
+    )
 
 
 def _policy_from_decision_trace(
@@ -3208,6 +3535,90 @@ def _case_selected_oss_feedback_is_usable(
     return True
 
 
+def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
+    artifact = trace.get("agent_decision_artifact", {})
+    if not isinstance(artifact, Mapping):
+        return False
+    input_context = artifact.get("input_context", {})
+    candidate_generation = artifact.get("candidate_generation", {})
+    response = candidate_generation.get("response", {})
+    scorer = artifact.get("scorer", {})
+    scorecards = scorer.get("scorecards", {})
+    risk_evaluator = artifact.get("risk_evaluator", {})
+    selection = artifact.get("selection", {})
+    replay = artifact.get("replay", {})
+    if not all(isinstance(item, Mapping) for item in (input_context, response, scorer, scorecards, risk_evaluator, selection, replay)):
+        return False
+
+    required_roles = {
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    }
+    trace_candidate_ids = [str(candidate["candidate_id"]) for candidate in trace.get("candidates", [])]
+    response_candidate_ids = [str(candidate_id) for candidate_id in response.get("candidate_ids", [])]
+    selected_id = str(trace.get("selected_candidate_id"))
+    if not trace_candidate_ids or response_candidate_ids != trace_candidate_ids:
+        return False
+    if set(scorecards) != set(trace_candidate_ids):
+        return False
+    if selection.get("selected_candidate_id") != selected_id:
+        return False
+    if selected_id not in scorecards:
+        return False
+    selected_score = float(scorecards[selected_id].get("candidate_score", -math.inf))
+    if selected_score != max(float(card.get("candidate_score", -math.inf)) for card in scorecards.values()):
+        return False
+
+    decision_inputs = trace.get("decision_inputs", {})
+    selected_refs = set(trace.get("selected_candidate", {}).get("evidence_refs", []))
+    selected_oss_refs = {
+        ref
+        for ref in selected_refs
+        if ref.startswith("oss://")
+        and not ref.startswith("oss://lean_handoff/")
+    }
+    return bool(
+        artifact.get("model_id") == PERSONA_DECISION_ARTIFACT_MODEL_ID
+        and candidate_generation.get("model_id") == PERSONA_CANDIDATE_GENERATOR_MODEL_ID
+        and scorer.get("model_id") == PERSONA_CANDIDATE_SCORER_MODEL_ID
+        and risk_evaluator.get("model_id") == PERSONA_RISK_EVALUATOR_MODEL_ID
+        and risk_evaluator.get("status") == "passed"
+        and all(check.get("status") == "passed" for check in risk_evaluator.get("checks", []))
+        and set(input_context.get("required_oss_roles", [])) == required_roles
+        and set(input_context.get("oss_request_ids_by_role", {})) == required_roles
+        and set(input_context.get("oss_components_by_role", {})) == required_roles
+        and set(input_context.get("oss_feedback_status_by_role", {})) == required_roles
+        and all(status == "completed" for status in input_context.get("oss_feedback_status_by_role", {}).values())
+        and set(input_context.get("oss_evidence_refs", [])).issubset(set(trace.get("evidence_refs", [])))
+        and selected_oss_refs.issubset(set(selection.get("selected_evidence_refs", [])))
+        and input_context.get("allowed_windows") == decision_inputs.get("allowed_windows")
+        and input_context.get("forbidden_windows_not_used") == decision_inputs.get("forbidden_windows_not_used")
+        and input_context.get("telemetry_event_id") == decision_inputs.get("telemetry_event_id")
+        and input_context.get("memory_ref") == decision_inputs.get("memory_ref")
+        and (input_context.get("memory_ref") or input_context.get("memory_status") == "cold_start_declared")
+        and response.get("status") == "completed"
+        and response.get("candidates") == trace.get("candidates")
+        and all(card.get("score_replay_match") for card in scorecards.values())
+        and len(selection.get("rejected_candidates", [])) == len(trace_candidate_ids) - 1
+        and replay.get("replayable") is True
+        and replay.get("selected_candidate_is_top_score") is True
+        and replay.get("no_forbidden_window_sources") is True
+        and replay.get("uses_memory_or_declares_cold_start") is True
+        and replay.get("uses_selected_oss_feedback") is True
+        and replay.get("input_hash")
+        and replay.get("candidate_hash")
+        and replay.get("score_hash")
+        and replay.get("selection_hash")
+        and _trace_has_no_forbidden_window_leakage(trace)
+    )
+
+
 def _build_usability_dimensions(
     *,
     episode: PortfolioEpisode,
@@ -3239,6 +3650,10 @@ def _build_usability_dimensions(
         trace["candidate_count"] >= 4
         and trace["selected_candidate"]["rationale"]
         and trace["selected_candidate"]["evidence_refs"]
+        for trace in decision_traces
+    ) else 0.0
+    persona_decision_artifact = 1.0 if all(
+        _persona_decision_artifact_is_usable(trace)
         for trace in decision_traces
     ) else 0.0
     required_roles = {
@@ -3280,6 +3695,7 @@ def _build_usability_dimensions(
         "regime_adaptation": regime_adaptation,
         "memory_reuse": memory_reuse,
         "decision_explainability": decision_explainability,
+        "persona_decision_artifact": persona_decision_artifact,
         "oss_evidence_completeness": min(1.0, oss_evidence_completeness),
         "portfolio_breadth": portfolio_breadth,
         "no_leakage": no_leakage,
@@ -3341,6 +3757,18 @@ def _diagnose_validation_execution(
             "no_holdout_or_future_leakage_in_agent_trace",
             all(_trace_has_no_forbidden_window_leakage(trace) for trace in decision_traces),
             {"trace_ids": [trace["reflection_id"] for trace in decision_traces]},
+        ),
+        _diagnostic_check(
+            "persona_decision_artifact_replays_candidate_selection",
+            all(_persona_decision_artifact_is_usable(trace) for trace in decision_traces),
+            {
+                "artifact_ids": [
+                    trace["agent_decision_artifact"]["artifact_id"] for trace in decision_traces
+                ],
+                "selected_candidate_ids": [
+                    trace["selected_candidate_id"] for trace in decision_traces
+                ],
+            },
         ),
         _diagnostic_check(
             "generation1_improves_unseen_holdout",
@@ -3788,6 +4216,7 @@ def _build_case_result(
             "no_leakage_holdout": usability_dimensions["no_leakage"] == 1.0,
             "memory_retrieval_drives_next_decision": usability_dimensions["memory_reuse"] == 1.0,
             "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
+            "persona_decision_artifacts_replay": usability_dimensions["persona_decision_artifact"] == 1.0,
             "multi_generation_evolution": usability_dimensions["multi_generation_improvement"] == 1.0,
             "portfolio_level": len(episode.windows) == PORTFOLIO_LEG_COUNT,
             "multi_dimensional_score_passed": overall_usability_score >= MIN_USABILITY_SCORE,
@@ -3834,6 +4263,11 @@ def _build_summary(
     usable = [case["usable"] for case in cases]
     dimensions = [case["usability_dimensions"] for case in cases]
     all_components = sorted({component for case in cases for component in case["oss_feedback"]["components_used"]})
+    decision_artifacts = [
+        trace["agent_decision_artifact"]
+        for case in cases
+        for trace in case["reflection"]["agent_decision_traces"]
+    ]
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
@@ -3907,6 +4341,21 @@ def _build_summary(
             for case in cases
             for entry in case["case_upstream_artifacts"]["selected_oss"].values()
         }),
+        "agent_decision_artifact_models": sorted({
+            artifact["model_id"] for artifact in decision_artifacts
+        }),
+        "agent_candidate_generator_models": sorted({
+            artifact["candidate_generation"]["model_id"] for artifact in decision_artifacts
+        }),
+        "agent_candidate_scorer_models": sorted({
+            artifact["scorer"]["model_id"] for artifact in decision_artifacts
+        }),
+        "agent_risk_evaluator_models": sorted({
+            artifact["risk_evaluator"]["model_id"] for artifact in decision_artifacts
+        }),
+        "agent_decision_artifact_generations": sorted({
+            artifact["generation"] for artifact in decision_artifacts
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -3945,6 +4394,10 @@ def _build_summary(
         ),
         "multi_oss_feedback_drives_decision_count": sum(
             1 for item in usable if item["multi_oss_feedback_drives_decision"]
+        ),
+        "agent_decision_artifact_count": len(decision_artifacts),
+        "agent_decision_artifact_replay_count": sum(
+            1 for item in usable if item["persona_decision_artifacts_replay"]
         ),
         "multi_generation_evolution_count": sum(1 for item in usable if item["multi_generation_evolution"]),
         "multi_dimensional_score_pass_count": sum(1 for item in usable if item["multi_dimensional_score_passed"]),
@@ -3996,6 +4449,7 @@ def _build_summary(
             "Every case trades a three-instrument portfolio across three generations through paper runtime fills.",
             "Every case writes memory and retrieves that memory for the next generation's decision.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
+            "Every persona decision emits a replayable request-response artifact covering candidate generation, scoring, risk checks, and rejected alternatives.",
             "Every case has a case-specific vectorbt historical backtest artifact and a case-specific experiment tracking readback before persona decisions.",
             "Every case runs its selected alpha, policy, reflection, and risk OSS route as case-specific persona feedback and uses those refs in the selected decision trace.",
             "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",
@@ -4349,6 +4803,12 @@ def _persona_id(persona: Mapping[str, Any]) -> str:
 
 def _stable_id(prefix: str, *parts: str) -> str:
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
+    return f"{prefix}-{digest}"
+
+
+def _stable_payload_hash(prefix: str, payload: Any) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
     return f"{prefix}-{digest}"
 
 
