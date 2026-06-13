@@ -6,6 +6,7 @@ import importlib.util
 
 from services.persona.agent_usability_validation import (
     AUTONOMOUS_SCHEDULER_PHASES,
+    BROKER_ADAPTER_LIFECYCLE_MODEL_ID,
     BROKER_LIFECYCLE_TERMINAL_STATUS,
     CASE_SELECTED_OSS_MODEL_ID,
     CASE_UPSTREAM_TRACKING_MODEL_ID,
@@ -99,6 +100,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["cross_case_memory_retrieval_count"] == DEFAULT_CASE_COUNT - summary["persona_count"]
     assert summary["market_friction_model_count"] == DEFAULT_CASE_COUNT
     assert summary["broker_lifecycle_reconciled_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_adapter_lifecycle_packet_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_adapter_lifecycle_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_adapter_lifecycle_replayed_count"] == DEFAULT_CASE_COUNT
     assert summary["persona_conflict_resolved_count"] == DEFAULT_CASE_COUNT
     assert summary["restart_recovery_count"] == DEFAULT_CASE_COUNT
     assert summary["autonomous_scheduler_count"] == DEFAULT_CASE_COUNT
@@ -142,6 +146,34 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "resubmitted",
         "risk_reduced",
         "submitted",
+    }
+    assert coverage["broker_adapter_lifecycle_models"] == [BROKER_ADAPTER_LIFECYCLE_MODEL_ID]
+    assert set(coverage["broker_adapter_lifecycle_scenarios"]) == set(OPERATIONAL_SCENARIOS)
+    assert set(coverage["broker_adapter_lifecycle_required_statuses"]) == {
+        "acknowledged",
+        "cancel_acknowledged",
+        "cancel_requested",
+        "filled",
+        "limit_missed",
+        "liquidity_scaled",
+        "partially_filled",
+        "rejected",
+        "replace_submitted",
+        "repriced",
+        "resubmitted",
+        "risk_reduced",
+        "submitted",
+    }
+    assert set(coverage["broker_adapter_lifecycle_replay_flags"]) == {
+        "all_orders_end_filled",
+        "all_orders_have_status_paths",
+        "live_order_rejected_without_capital",
+        "no_live_broker_submission",
+        "paper_readback_reconciled",
+        "replayable",
+        "restart_recovery_preserves_readback_context",
+        "sandbox_place_cancel_readback_reconciled",
+        "scenario_required_statuses_observed",
     }
     assert set(coverage["persona_conflict_types"]) == {
         "direction_conflict",
@@ -930,6 +962,51 @@ def _assert_operational_context(case: dict) -> None:
     assert sandbox["reconcile_result"]["status"] == "passed"
     assert sandbox["live_disabled_result"]["response"]["error_code"] == "SHIOAJI_LIVE_DISABLED"
     assert sandbox["error"] is None
+
+    adapter_lifecycle = operational["broker_adapter_lifecycle"]
+    assert adapter_lifecycle["packet_id"] == f"broker-adapter-lifecycle-{case['case_id']}"
+    assert adapter_lifecycle["model_id"] == BROKER_ADAPTER_LIFECYCLE_MODEL_ID
+    assert adapter_lifecycle["case_id"] == case["case_id"]
+    assert adapter_lifecycle["persona_id"] == case["persona_id"]
+    assert adapter_lifecycle["provider"] == "Shioaji"
+    assert adapter_lifecycle["environment"] == "sandbox"
+    assert adapter_lifecycle["scenario"] == operational["scenario"]
+    assert adapter_lifecycle["broker_lifecycle_model"] == lifecycle["lifecycle_model"]
+    assert adapter_lifecycle["shioaji_lifecycle_ref"] == f"broker-sandbox://{sandbox['lifecycle_id']}"
+    assert adapter_lifecycle["restart_checkpoint_ref"] == recovery["checkpoint_id"]
+    assert adapter_lifecycle["decision_trace_refs"] == [
+        trace["reflection_id"] for trace in case["reflection"]["agent_decision_traces"]
+    ]
+    assert adapter_lifecycle["paper_order_count"] == GENERATION_COUNT * PORTFOLIO_LEG_COUNT
+    assert adapter_lifecycle["paper_order_refs"] == [order["order_id"] for order in lifecycle["orders"]]
+    assert set(adapter_lifecycle["required_statuses"]).issubset(set(lifecycle["lifecycle_statuses"]))
+    assert adapter_lifecycle["observed_statuses"] == lifecycle["lifecycle_statuses"]
+    assert adapter_lifecycle["input_hash"]
+
+    adapter_order = adapter_lifecycle["adapter_order"]
+    assert adapter_order["place_order_id"] == sandbox["place_result"]["order_id"]
+    assert adapter_order["place_status"] == "submitted"
+    assert adapter_order["cancel_status"] == "cancelled"
+    assert adapter_order["readback_status"] == "cancelled"
+    assert adapter_order["readback_is_real_order"] is False
+    assert adapter_order["readback_is_real_capital"] is False
+    assert adapter_order["deployment_stage"] == "sandbox"
+    assert adapter_order["live_disabled_error_code"] == "SHIOAJI_LIVE_DISABLED"
+    assert {check["check"] for check in adapter_lifecycle["scenario_checks"]} == {
+        "live_order_rejected_without_capital",
+        "paper_orders_reconciled_to_readback",
+        "required_statuses_observed",
+        "restart_recovery_preserves_readback_context",
+        "sandbox_adapter_place_cancel_readback",
+    }
+    assert all(check["status"] == "passed" for check in adapter_lifecycle["scenario_checks"])
+    assert all(adapter_lifecycle["replay"].values())
+    assert case["usability_dimensions"]["broker_adapter_lifecycle"] == 1.0
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["broker_adapter_lifecycle_replays_submit_readback_recovery"]["status"] == "passed"
 
     operational_artifacts = operational["case_upstream_artifacts"]
     assert operational_artifacts["feedback_id"] == case["case_upstream_artifacts"]["feedback_id"]
