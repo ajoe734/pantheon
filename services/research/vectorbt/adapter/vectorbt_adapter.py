@@ -393,14 +393,14 @@ class VectorbtBackend:
                 exits=exits,
                 init_cash=config.init_cash,
                 fees=config.fees,
+                freq="1D",
             )
-            stats = pf.stats()
             per_instrument[inst] = {
                 "total_return": round(float(pf.total_return()), 6),
                 "sharpe_ratio": round(float(pf.sharpe_ratio()), 6),
                 "max_drawdown": round(float(pf.max_drawdown()), 6),
                 "final_portfolio_value": round(float(pf.final_value()), 4),
-                "trade_count": int(pf.trade_records_readable.shape[0]),
+                "trade_count": int(pf.trades.count()),
                 "num_bars": len(bars),
             }
 

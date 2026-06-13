@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import services.persona.oss_runtime as oss_runtime
 from services.persona.oss_runtime import (
     PERSONA_OSS_COMPONENTS,
     PersonaOSSRequest,
@@ -67,6 +70,49 @@ def test_vectorbt_request_runs_real_historical_fixture_backtest() -> None:
     assert result.registry_entry["artifact_type"] == "backtest_result"
     assert result.persona_followup["ooda_phase"] == "decide"
     assert result.persona_followup["next_action"] == "draft_strategy_proposal"
+
+
+def test_vectorbt_request_honors_real_backend_env(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeVectorbtBackend:
+        pass
+
+    def fake_run_vectorbt_workflow(dataset, *, backend=None, config=None):
+        captured["backend"] = backend
+        captured["config"] = config
+        return SimpleNamespace(
+            prepared_dataset=SimpleNamespace(source_dataset_refs=("dataset:fixture",)),
+            backtest_result=SimpleNamespace(
+                backend="vectorbt_portfolio",
+                run_id="vbt-real-test",
+                per_instrument_metrics={},
+                aggregate_metrics={"num_instruments": 2, "total_trades": 1},
+            ),
+            artifact_bundle={"artifact_family": "vectorbt_backtest"},
+            registry_entry={
+                "artifact_type": "backtest_result",
+                "strategy_id": "strategy-real-backend-test",
+                "version": "1.0.0",
+            },
+        )
+
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    monkeypatch.setattr(oss_runtime, "VectorbtBackend", FakeVectorbtBackend)
+    monkeypatch.setattr(oss_runtime, "run_vectorbt_workflow", fake_run_vectorbt_workflow)
+
+    result = run_persona_oss_request(
+        PersonaOSSRequest(
+            persona_id="persona-alpha",
+            session_id="session-vectorbt-real-env",
+            component="vectorbt",
+            intent="verify_real_backend_env_selection",
+        )
+    )
+
+    assert result.primary_output["backend"] == "vectorbt_portfolio"
+    assert isinstance(captured["backend"], FakeVectorbtBackend)
+    assert captured["config"].requested_by == "persona-alpha"
 
 
 def test_mlflow_request_records_vectorbt_run_metrics_and_artifacts() -> None:
