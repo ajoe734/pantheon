@@ -6,6 +6,8 @@ import importlib.util
 
 from services.persona.agent_usability_validation import (
     AUTONOMOUS_SCHEDULER_PHASES,
+    BROKER_ADAPTER_FOLLOWUP_ACTIONS_BY_SCENARIO,
+    BROKER_ADAPTER_FOLLOWUP_MODEL_ID,
     BROKER_ADAPTER_LIFECYCLE_MODEL_ID,
     BROKER_LIFECYCLE_TERMINAL_STATUS,
     CASE_SELECTED_OSS_MODEL_ID,
@@ -103,6 +105,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["broker_adapter_lifecycle_packet_count"] == DEFAULT_CASE_COUNT
     assert summary["broker_adapter_lifecycle_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["broker_adapter_lifecycle_replayed_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_adapter_followup_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_adapter_followup_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_adapter_response_drives_followup_count"] == DEFAULT_CASE_COUNT
     assert summary["persona_conflict_resolved_count"] == DEFAULT_CASE_COUNT
     assert summary["restart_recovery_count"] == DEFAULT_CASE_COUNT
     assert summary["autonomous_scheduler_count"] == DEFAULT_CASE_COUNT
@@ -174,6 +179,27 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "restart_recovery_preserves_readback_context",
         "sandbox_place_cancel_readback_reconciled",
         "scenario_required_statuses_observed",
+    }
+    assert coverage["broker_adapter_followup_models"] == [BROKER_ADAPTER_FOLLOWUP_MODEL_ID]
+    assert set(coverage["broker_adapter_followup_actions"]) == set(
+        BROKER_ADAPTER_FOLLOWUP_ACTIONS_BY_SCENARIO.values()
+    )
+    assert set(coverage["broker_adapter_followup_action_families"]) == {
+        "cancel_replace_recovery",
+        "limit_repricing",
+        "liquidity_sizing",
+        "position_reconciliation",
+        "risk_control",
+    }
+    assert coverage["broker_adapter_followup_next_steps"] == ["execution_feedback_review"]
+    assert set(coverage["broker_adapter_followup_replay_flags"]) == {
+        "adapter_response_consumed",
+        "drives_persona_next_step",
+        "next_cycle_scheduled",
+        "paper_only_guard_retained",
+        "recovery_context_preserved",
+        "scenario_action_selected",
+        "source_refs_bound",
     }
     assert set(coverage["persona_conflict_types"]) == {
         "direction_conflict",
@@ -1007,6 +1033,46 @@ def _assert_operational_context(case: dict) -> None:
         for check in case["validation_cycle"]["execution_review"]["checks"]
     }
     assert check_by_name["broker_adapter_lifecycle_replays_submit_readback_recovery"]["status"] == "passed"
+
+    adapter_followup = operational["broker_adapter_followup"]
+    expected_followup_action = BROKER_ADAPTER_FOLLOWUP_ACTIONS_BY_SCENARIO[operational["scenario"]]
+    assert adapter_followup["followup_id"] == f"broker-adapter-followup-{case['case_id']}"
+    assert adapter_followup["model_id"] == BROKER_ADAPTER_FOLLOWUP_MODEL_ID
+    assert adapter_followup["status"] == "accepted"
+    assert adapter_followup["case_id"] == case["case_id"]
+    assert adapter_followup["persona_id"] == case["persona_id"]
+    assert adapter_followup["scenario"] == operational["scenario"]
+    assert adapter_followup["source_packet_ref"] == f"broker-adapter://{adapter_lifecycle['packet_id']}"
+    assert adapter_followup["source_packet_model"] == BROKER_ADAPTER_LIFECYCLE_MODEL_ID
+    assert adapter_followup["source_packet_hash"] == adapter_lifecycle["input_hash"]
+    assert adapter_followup["decision_trace_ref"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
+    assert adapter_followup["restart_checkpoint_ref"] == recovery["checkpoint_id"]
+    assert adapter_followup["schedule_ref"] == schedule["schedule_id"]
+    assert adapter_followup["request_response_flow"] == [
+        "persona_order_intent",
+        "broker_adapter_lifecycle_response",
+        "persona_followup_action",
+    ]
+    persona_followup = adapter_followup["persona_followup"]
+    assert persona_followup["action"] == expected_followup_action
+    assert persona_followup["next_persona_step"] == "execution_feedback_review"
+    assert persona_followup["required_before_next_cycle"] is True
+    assert persona_followup["paper_only"] is True
+    assert persona_followup["rationale"]
+    assert persona_followup["evidence_refs"] == [
+        adapter_followup["source_packet_ref"],
+        f"reflection://{adapter_followup['decision_trace_ref']}",
+        f"checkpoint://{recovery['checkpoint_id']}",
+        f"schedule://{schedule['schedule_id']}",
+    ]
+    assert adapter_followup["state_updates"]["mark_adapter_response_seen"] is True
+    assert adapter_followup["state_updates"]["bind_recovery_checkpoint"] == recovery["checkpoint_id"]
+    assert adapter_followup["state_updates"]["schedule_next_cycle_after_followup"] == schedule["next_cycle_due_at"]
+    assert adapter_followup["state_updates"]["attach_to_decision_trace"] == adapter_followup["decision_trace_ref"]
+    assert all(adapter_followup["replay"].values())
+    assert adapter_followup["input_hash"]
+    assert case["usability_dimensions"]["broker_adapter_followup"] == 1.0
+    assert check_by_name["broker_adapter_response_drives_persona_followup"]["status"] == "passed"
 
     operational_artifacts = operational["case_upstream_artifacts"]
     assert operational_artifacts["feedback_id"] == case["case_upstream_artifacts"]["feedback_id"]
