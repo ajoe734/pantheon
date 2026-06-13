@@ -150,6 +150,28 @@ PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
 EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v1"
 NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
+PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
+OSS_DISAGREEMENT_TYPES_BY_SCENARIO: dict[str, str] = {
+    "cancel_replace_readback": "reflection_handoff_execution_conflict",
+    "limit_miss_reprice": "alpha_backtest_price_conflict",
+    "liquidity_cap_scale": "policy_risk_liquidity_conflict",
+    "partial_fill_reconcile": "backtest_policy_fill_conflict",
+    "risk_reject_reduce": "alpha_risk_rejection_conflict",
+}
+OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE: dict[str, tuple[str, str]] = {
+    "alpha_backtest_price_conflict": ("alpha_model", "backtest"),
+    "alpha_risk_rejection_conflict": ("alpha_model", "risk_analytics"),
+    "backtest_policy_fill_conflict": ("backtest", "policy_candidate"),
+    "policy_risk_liquidity_conflict": ("policy_candidate", "risk_analytics"),
+    "reflection_handoff_execution_conflict": ("reflection_artifact", "handoff"),
+}
+OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE: dict[str, str] = {
+    "alpha_backtest_price_conflict": "feedback-adapt",
+    "alpha_risk_rejection_conflict": "risk-off",
+    "backtest_policy_fill_conflict": "feedback-adapt",
+    "policy_risk_liquidity_conflict": "risk-off",
+    "reflection_handoff_execution_conflict": "contrarian-check",
+}
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
     "request_oss",
@@ -411,6 +433,19 @@ def run_agent_usability_validations(
             oss_inputs=oss_inputs,
             case_upstream_artifacts=case_upstream_artifacts,
         )
+        oss_disagreement_arbitration = _build_oss_disagreement_arbitration(
+            episode=episode,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
+            oss_followup_loop=oss_followup_loop,
+        )
+        case_upstream_artifacts["oss_disagreement_arbitration"] = oss_disagreement_arbitration
+        case_upstream_artifacts["persona_response"]["evidence_refs"].append(
+            oss_disagreement_arbitration["arbitration_ref"]
+        )
+        case_upstream_artifacts["persona_response"][
+            "next_disagreement_action"
+        ] = "arbitrate_multi_oss_disagreement"
         prior_memory = _retrieve_prior_lesson(persona_store, persona_id)
         validation_plan = _build_validation_planning_step(
             episode=episode,
@@ -450,6 +485,7 @@ def run_agent_usability_validations(
             prior_memory=prior_memory,
             oss_inputs=oss_inputs,
             oss_followup_loop=oss_followup_loop,
+            oss_disagreement_arbitration=oss_disagreement_arbitration,
         )
         memory_write0 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -508,6 +544,7 @@ def run_agent_usability_validations(
             prior_memory=current_memory0,
             oss_inputs=oss_inputs,
             oss_followup_loop=oss_followup_loop,
+            oss_disagreement_arbitration=oss_disagreement_arbitration,
         )
         memory_write1 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -1236,6 +1273,161 @@ def _build_oss_response_followup_loop(
     return loop
 
 
+def _build_oss_disagreement_arbitration(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    oss_followup_loop: Mapping[str, Any],
+) -> dict[str, Any]:
+    disagreement_type = OSS_DISAGREEMENT_TYPES_BY_SCENARIO[_operational_scenario_for_episode(episode)]
+    source_roles = OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE[disagreement_type]
+    resolution_action = OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE[disagreement_type]
+    arbitration_id = f"oss-disagreement-arbitration-{episode.case_id}"
+    arbitration_ref = f"oss-disagreement://{arbitration_id}"
+    source_refs = [_oss_ref_for_role(oss_inputs, role) for role in source_roles]
+    all_selected_refs = [
+        _oss_ref_for_role(oss_inputs, role)
+        for role in ("alpha_model", "backtest", "policy_candidate", "reflection_artifact", "tracker", "risk_analytics")
+    ]
+    conflict = {
+        "conflict_id": f"{arbitration_id}-{disagreement_type}",
+        "conflict_type": disagreement_type,
+        "source_roles": list(source_roles),
+        "source_refs": source_refs,
+        "observed_signals": _oss_disagreement_observed_signals(
+            disagreement_type=disagreement_type,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
+        ),
+        "severity": "high" if "risk" in disagreement_type else "medium",
+        "resolution_action": resolution_action,
+        "resolved_by": "persona_scorer_risk_evaluator_arbitration",
+        "resolution_ref": f"{arbitration_ref}/{disagreement_type}/{resolution_action}",
+    }
+    candidate_score_adjustments = {
+        "feedback-adapt": 0.08,
+        "retain-observe": 0.0,
+        "risk-off": 0.04,
+        "contrarian-check": 0.02,
+    }
+    candidate_score_adjustments[resolution_action] = round(
+        candidate_score_adjustments[resolution_action] + 0.06,
+        10,
+    )
+    candidate_evidence_refs_by_action = {
+        "feedback-adapt": [arbitration_ref, conflict["resolution_ref"], *all_selected_refs],
+        "risk-off": [
+            arbitration_ref,
+            conflict["resolution_ref"],
+            _oss_ref_for_role(oss_inputs, "risk_analytics"),
+            _oss_ref_for_role(oss_inputs, "policy_candidate"),
+        ],
+        "retain-observe": [arbitration_ref, _oss_ref_for_role(oss_inputs, "tracker")],
+        "contrarian-check": [
+            arbitration_ref,
+            conflict["resolution_ref"],
+            _oss_ref_for_role(oss_inputs, "reflection_artifact"),
+        ],
+    }
+    replay = {
+        "replayable": True,
+        "all_source_roles_completed": all(oss_inputs[role].get("status") == "completed" for role in source_roles),
+        "conflict_detected": bool(conflict["observed_signals"]),
+        "conflict_sources_bound": all(ref.startswith("oss://") for ref in source_refs),
+        "resolution_action_selected": resolution_action in candidate_score_adjustments,
+        "resolution_drives_candidate_scoring": float(candidate_score_adjustments[resolution_action]) > 0.0,
+        "followup_loop_available": _oss_response_followup_loop_is_usable(oss_followup_loop),
+        "selected_oss_refs_available": set(all_selected_refs).issubset(
+            set(case_upstream_artifacts["persona_response"]["evidence_refs"])
+        ),
+        "feedback_adapt_gets_all_selected_refs": set(all_selected_refs).issubset(
+            set(candidate_evidence_refs_by_action["feedback-adapt"])
+        ),
+    }
+    return {
+        "arbitration_id": arbitration_id,
+        "arbitration_ref": arbitration_ref,
+        "model_id": PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
+        "status": "resolved" if all(replay.values()) else "blocked",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "scenario": _operational_scenario_for_episode(episode),
+        "source_feedback_id": case_upstream_artifacts["feedback_id"],
+        "source_followup_loop_ref": oss_followup_loop["loop_ref"],
+        "conflicts": [conflict],
+        "candidate_score_adjustments": candidate_score_adjustments,
+        "candidate_evidence_refs_by_action": candidate_evidence_refs_by_action,
+        "persona_arbitration_response": {
+            "next_action": "score_candidates_with_arbitrated_oss_weights",
+            "preferred_candidate_action": "feedback-adapt",
+            "resolution_actions": [resolution_action],
+            "evidence_refs": [arbitration_ref, conflict["resolution_ref"], *source_refs],
+            "used_by_generations": [1, 2],
+        },
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "oss-disagreement-arbitration",
+            {
+                "case_id": episode.case_id,
+                "scenario": _operational_scenario_for_episode(episode),
+                "conflict": conflict,
+                "candidate_score_adjustments": candidate_score_adjustments,
+                "candidate_evidence_refs_by_action": candidate_evidence_refs_by_action,
+            },
+        ),
+    }
+
+
+def _oss_ref_for_role(oss_inputs: Mapping[str, Mapping[str, Any]], role: str) -> str:
+    result = oss_inputs[role]
+    return f"oss://{result['component']}/{result['request_id']}"
+
+
+def _oss_disagreement_observed_signals(
+    *,
+    disagreement_type: str,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+) -> dict[str, Any]:
+    vectorbt_metrics = case_upstream_artifacts["vectorbt"]["aggregate_metrics"]
+    tracker_readback = case_upstream_artifacts["tracker"]["readback"]
+    risk_metrics = oss_inputs["risk_analytics"].get("metrics", {})
+    policy_metrics = oss_inputs["policy_candidate"].get("metrics", {})
+    if disagreement_type == "alpha_backtest_price_conflict":
+        return {
+            "alpha_component": oss_inputs["alpha_model"]["component"],
+            "backtest_total_trades": vectorbt_metrics.get("total_trades"),
+            "interpretation": "alpha update wants adaptation while backtest price path asks for repricing evidence",
+        }
+    if disagreement_type == "alpha_risk_rejection_conflict":
+        return {
+            "alpha_component": oss_inputs["alpha_model"]["component"],
+            "risk_component": oss_inputs["risk_analytics"]["component"],
+            "risk_metric_keys": sorted(risk_metrics),
+            "interpretation": "alpha response wants mutation while risk response asks for reduced exposure",
+        }
+    if disagreement_type == "backtest_policy_fill_conflict":
+        return {
+            "backtest_total_trades": vectorbt_metrics.get("total_trades"),
+            "policy_component": oss_inputs["policy_candidate"]["component"],
+            "policy_metric_keys": sorted(policy_metrics),
+            "interpretation": "backtest fill evidence and policy candidate risk hint need scorer arbitration",
+        }
+    if disagreement_type == "policy_risk_liquidity_conflict":
+        return {
+            "policy_component": oss_inputs["policy_candidate"]["component"],
+            "risk_component": oss_inputs["risk_analytics"]["component"],
+            "interpretation": "policy candidate searches for return while risk analytics asks for liquidity scaling",
+        }
+    return {
+        "reflection_component": oss_inputs["reflection_artifact"]["component"],
+        "handoff_component": oss_inputs["handoff"]["component"],
+        "tracking_readback_status": tracker_readback.get("run_readback_status"),
+        "interpretation": "reflection response asks for a control candidate while handoff wants executable packet continuity",
+    }
+
+
 def _oss_followup_phase(role: str) -> str:
     return {
         "session": "observe",
@@ -1298,6 +1490,16 @@ def _oss_followup_refs_for_action(
     action: str,
 ) -> list[str]:
     refs_by_action = loop.get("candidate_evidence_refs_by_action", {})
+    if not isinstance(refs_by_action, Mapping):
+        return []
+    return [str(ref) for ref in refs_by_action.get(action, [])]
+
+
+def _oss_disagreement_refs_for_action(
+    arbitration: Mapping[str, Any],
+    action: str,
+) -> list[str]:
+    refs_by_action = arbitration.get("candidate_evidence_refs_by_action", {})
     if not isinstance(refs_by_action, Mapping):
         return []
     return [str(ref) for ref in refs_by_action.get(action, [])]
@@ -2230,6 +2432,7 @@ def _build_persona_reasoning_response(
     memory_influence: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
+    oss_disagreement_arbitration: Mapping[str, Any],
 ) -> dict[str, Any]:
     allowed_windows = ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"]
     forbidden_windows = ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"]
@@ -2249,6 +2452,7 @@ def _build_persona_reasoning_response(
             f"alpha-seed://{episode.seed_key}",
             *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
             str(oss_followup_loop["loop_ref"]),
+            str(oss_disagreement_arbitration["arbitration_ref"]),
             *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
         ],
         "portfolio_instruments": [window.instrument for window in episode.windows],
@@ -2264,6 +2468,7 @@ def _build_persona_reasoning_response(
             role: result["component"] for role, result in sorted(oss_inputs.items())
         },
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
+        "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
         "oss_followup_request_ids": [
             followup["request"]["request_id"]
             for followup in oss_followup_loop["followups"]
@@ -2275,6 +2480,7 @@ def _build_persona_reasoning_response(
         memory_influence=memory_influence,
         oss_inputs=oss_inputs,
         oss_followup_loop=oss_followup_loop,
+        oss_disagreement_arbitration=oss_disagreement_arbitration,
     )
     reasoning_response = {
         "response_id": f"persona-reasoning-response-{episode.case_id}-gen{generation}",
@@ -2289,6 +2495,7 @@ def _build_persona_reasoning_response(
             "retrieve_or_declare_memory_context",
             "inspect_alpha_policy_reflection_risk_tracking_oss_feedback",
             "process_oss_response_followup_requests",
+            "arbitrate_multi_oss_disagreement",
             "draft_candidate_policy_blueprints",
             "send_blueprints_to_scorer_and_risk_evaluator",
         ],
@@ -2305,6 +2512,16 @@ def _build_persona_reasoning_response(
             "followup_count": len(oss_followup_loop["followups"]),
             "candidate_score_adjustments": copy.deepcopy(
                 dict(oss_followup_loop["candidate_score_adjustments"])
+            ),
+        },
+        "oss_disagreement_arbitration_usage": {
+            "arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
+            "model_id": oss_disagreement_arbitration["model_id"],
+            "conflict_types": [
+                conflict["conflict_type"] for conflict in oss_disagreement_arbitration["conflicts"]
+            ],
+            "candidate_score_adjustments": copy.deepcopy(
+                dict(oss_disagreement_arbitration["candidate_score_adjustments"])
             ),
         },
         "candidate_blueprints": candidate_blueprints,
@@ -2338,6 +2555,7 @@ def _persona_reasoning_candidate_blueprints(
     memory_influence: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
+    oss_disagreement_arbitration: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     del oss_inputs
     shared_windows = list(allowed_windows)
@@ -2348,6 +2566,10 @@ def _persona_reasoning_candidate_blueprints(
     risk_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "risk-off")
     retain_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "retain-observe")
     contrarian_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "contrarian-check")
+    feedback_arbitration_refs = _oss_disagreement_refs_for_action(oss_disagreement_arbitration, "feedback-adapt")
+    risk_arbitration_refs = _oss_disagreement_refs_for_action(oss_disagreement_arbitration, "risk-off")
+    retain_arbitration_refs = _oss_disagreement_refs_for_action(oss_disagreement_arbitration, "retain-observe")
+    contrarian_arbitration_refs = _oss_disagreement_refs_for_action(oss_disagreement_arbitration, "contrarian-check")
     return [
         {
             "action": "feedback-adapt",
@@ -2363,7 +2585,7 @@ def _persona_reasoning_candidate_blueprints(
                 "backtest",
                 "tracker",
             ],
-            "extra_evidence_refs": [*feedback_followup_refs, *memory_refs],
+            "extra_evidence_refs": [*feedback_followup_refs, *feedback_arbitration_refs, *memory_refs],
             "memory_adjustment_key": "feedback-adapt",
             "rationale": (
                 "Use the feedback direction because alpha, policy, reflection, risk, backtest, "
@@ -2377,7 +2599,7 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "baseline_policy",
             "source_windows": ["observe"],
             "evidence_roles": [],
-            "extra_evidence_refs": retain_followup_refs,
+            "extra_evidence_refs": [*retain_followup_refs, *retain_arbitration_refs],
             "memory_adjustment_key": "retain-observe",
             "rationale": "Keep the observe-only baseline as a scored alternative before rejecting it.",
         },
@@ -2388,9 +2610,9 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "risk_analytics_reduced_exposure",
             "source_windows": feedback_windows,
             "evidence_roles": ["risk_analytics"],
-            "extra_evidence_refs": [*risk_followup_refs, *memory_refs]
+            "extra_evidence_refs": [*risk_followup_refs, *risk_arbitration_refs, *memory_refs]
             if float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
-            else risk_followup_refs,
+            else [*risk_followup_refs, *risk_arbitration_refs],
             "memory_adjustment_key": "risk-off",
             "rationale": "Use feedback direction but reduce exposure when the risk interpretation asks for caution.",
         },
@@ -2401,7 +2623,7 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "fixed_control_risk",
             "source_windows": feedback_windows,
             "evidence_roles": ["reflection_artifact"],
-            "extra_evidence_refs": contrarian_followup_refs,
+            "extra_evidence_refs": [*contrarian_followup_refs, *contrarian_arbitration_refs],
             "memory_adjustment_key": "contrarian-check",
             "rationale": "Retain a contrarian control candidate for scored comparison and rejection.",
         },
@@ -2457,6 +2679,18 @@ def _evaluate_persona_reasoning_response(
             },
         ),
         _persona_risk_check(
+            "reasoning_uses_oss_disagreement_arbitration",
+            request.get("oss_disagreement_arbitration_ref")
+            == response.get("oss_disagreement_arbitration_usage", {}).get("arbitration_ref")
+            and request.get("oss_disagreement_arbitration_ref") in request.get("input_refs", [])
+            and response.get("oss_disagreement_arbitration_usage", {}).get("model_id")
+            == PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
+            {
+                "oss_disagreement_arbitration_ref": request.get("oss_disagreement_arbitration_ref"),
+                "usage": copy.deepcopy(dict(response.get("oss_disagreement_arbitration_usage", {}))),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_routes_to_scorer_and_risk_evaluator",
             response.get("output_contract", {}).get("scorer_required") is True
             and response.get("output_contract", {}).get("risk_evaluator_required") is True,
@@ -2480,6 +2714,7 @@ def _build_agent_decision_trace(
     prior_memory: Mapping[str, Any] | None,
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
+    oss_disagreement_arbitration: Mapping[str, Any],
 ) -> dict[str, Any]:
     memory_influence = _memory_influence_profile(prior_memory)
     trigger = (
@@ -2497,6 +2732,7 @@ def _build_agent_decision_trace(
         memory_influence=memory_influence,
         oss_inputs=oss_inputs,
         oss_followup_loop=oss_followup_loop,
+        oss_disagreement_arbitration=oss_disagreement_arbitration,
     )
     candidates = _score_agent_candidates(
         episode=episode,
@@ -2508,6 +2744,7 @@ def _build_agent_decision_trace(
         memory_influence=memory_influence,
         persona_reasoning=persona_reasoning,
         oss_followup_loop=oss_followup_loop,
+        oss_disagreement_arbitration=oss_disagreement_arbitration,
     )
     selected = max(candidates, key=lambda item: item.score)
     candidate_dicts = [_candidate_to_dict(candidate) for candidate in candidates]
@@ -2520,6 +2757,7 @@ def _build_agent_decision_trace(
         "memory_influence_ref": memory_influence["influence_ref"],
         "oss_components": _oss_components_used(oss_inputs),
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
+        "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
     }
     evidence_refs = [
         f"telemetry-event://{telemetry_event['event_id']}",
@@ -2528,6 +2766,7 @@ def _build_agent_decision_trace(
         f"policy://{baseline_policy['policy_id']}",
         *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
         str(oss_followup_loop["loop_ref"]),
+        str(oss_disagreement_arbitration["arbitration_ref"]),
     ]
     agent_decision_artifact = _build_persona_decision_artifact(
         episode=episode,
@@ -2541,6 +2780,7 @@ def _build_agent_decision_trace(
         memory_influence=memory_influence,
         persona_reasoning=persona_reasoning,
         oss_followup_loop=oss_followup_loop,
+        oss_disagreement_arbitration=oss_disagreement_arbitration,
         decision_inputs=decision_inputs,
         evidence_refs=evidence_refs,
         candidates=candidate_dicts,
@@ -2578,6 +2818,7 @@ def _score_agent_candidates(
     memory_influence: Mapping[str, Any],
     persona_reasoning: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
+    oss_disagreement_arbitration: Mapping[str, Any],
 ) -> list[PolicyCandidate]:
     del prior_memory
     feedback_directions = {
@@ -2594,6 +2835,7 @@ def _score_agent_candidates(
     reflection_quality = _reflection_quality_from_oss(oss_inputs)
     risk_penalty = _risk_penalty_from_oss(oss_inputs)
     followup_score_adjustments = dict(oss_followup_loop["candidate_score_adjustments"])
+    disagreement_score_adjustments = dict(oss_disagreement_arbitration["candidate_score_adjustments"])
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_score_adjustments = dict(memory_influence["candidate_score_adjustments"])
     memory_ref = memory_influence.get("influence_ref")
@@ -2621,6 +2863,7 @@ def _score_agent_candidates(
                 3.0
                 + float(memory_score_adjustments["feedback-adapt"])
                 + float(followup_score_adjustments["feedback-adapt"])
+                + float(disagreement_score_adjustments["feedback-adapt"])
                 + feedback_score
                 + policy_quality
                 + reflection_quality
@@ -2635,6 +2878,7 @@ def _score_agent_candidates(
                 1.0
                 + float(memory_score_adjustments["retain-observe"])
                 + float(followup_score_adjustments["retain-observe"])
+                + float(disagreement_score_adjustments["retain-observe"])
                 + max(feedback_score, 0)
             ),
             "fallback_evidence_refs": (f"policy://{baseline_policy['policy_id']}",),
@@ -2646,6 +2890,7 @@ def _score_agent_candidates(
                 2.0
                 + float(memory_score_adjustments["risk-off"])
                 + float(followup_score_adjustments["risk-off"])
+                + float(disagreement_score_adjustments["risk-off"])
                 + max(0.0, risk_penalty)
             ),
             "fallback_evidence_refs": tuple(risk_off_evidence_refs),
@@ -2657,6 +2902,7 @@ def _score_agent_candidates(
                 0.25
                 + float(memory_score_adjustments["contrarian-check"])
                 + float(followup_score_adjustments["contrarian-check"])
+                + float(disagreement_score_adjustments["contrarian-check"])
             ),
             "fallback_evidence_refs": (
                 f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",
@@ -2719,6 +2965,7 @@ def _build_persona_decision_artifact(
     memory_influence: Mapping[str, Any],
     persona_reasoning: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
+    oss_disagreement_arbitration: Mapping[str, Any],
     decision_inputs: Mapping[str, Any],
     evidence_refs: Sequence[str],
     candidates: Sequence[Mapping[str, Any]],
@@ -2750,6 +2997,10 @@ def _build_persona_decision_artifact(
         "oss_followup_loop": copy.deepcopy(dict(oss_followup_loop)),
         "oss_followup_score_adjustments": copy.deepcopy(
             dict(oss_followup_loop["candidate_score_adjustments"])
+        ),
+        "oss_disagreement_arbitration": copy.deepcopy(dict(oss_disagreement_arbitration)),
+        "oss_disagreement_score_adjustments": copy.deepcopy(
+            dict(oss_disagreement_arbitration["candidate_score_adjustments"])
         ),
         "persona_reasoning_ref": persona_reasoning["response"]["reasoning_ref"],
         "persona_reasoning_preferred_action": persona_reasoning["response"]["preferred_action_hint"],
@@ -2810,6 +3061,13 @@ def _build_persona_decision_artifact(
         },
         "oss_evidence_refs": oss_evidence_refs,
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
+        "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
+        "oss_disagreement_conflict_types": [
+            conflict["conflict_type"] for conflict in oss_disagreement_arbitration["conflicts"]
+        ],
+        "oss_disagreement_resolution_actions": list(
+            oss_disagreement_arbitration["persona_arbitration_response"]["resolution_actions"]
+        ),
         "oss_followup_response_refs": [
             followup["response"]["output_ref"]
             for followup in oss_followup_loop["followups"]
@@ -2837,10 +3095,15 @@ def _build_persona_decision_artifact(
                 f"policy://{baseline_policy['policy_id']}",
                 persona_reasoning["response"]["reasoning_ref"],
                 str(oss_followup_loop["loop_ref"]),
+                str(oss_disagreement_arbitration["arbitration_ref"]),
                 *oss_evidence_refs,
                 *[
                     followup["response"]["output_ref"]
                     for followup in oss_followup_loop["followups"]
+                ],
+                *[
+                    conflict["resolution_ref"]
+                    for conflict in oss_disagreement_arbitration["conflicts"]
                 ],
                 *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
             ],
@@ -2899,6 +3162,19 @@ def _build_persona_decision_artifact(
                 for value in scoring_inputs["oss_followup_score_adjustments"].values()
             )
         ),
+        "uses_oss_disagreement_arbitration": (
+            _oss_disagreement_arbitration_is_usable(oss_disagreement_arbitration)
+            and str(oss_disagreement_arbitration["arbitration_ref"]) in candidate_generation["request"]["input_refs"]
+            and set(
+                oss_disagreement_arbitration["candidate_evidence_refs_by_action"][
+                    _candidate_action_key(str(selected_candidate["candidate_id"]))
+                ]
+            ).issubset(set(selected_candidate.get("evidence_refs", [])))
+            and any(
+                float(value) > 0
+                for value in scoring_inputs["oss_disagreement_score_adjustments"].values()
+            )
+        ),
     }
     return {
         "artifact_id": f"persona-decision-artifact-{episode.case_id}-gen{generation}",
@@ -2935,14 +3211,17 @@ def _persona_candidate_scorecard(
     risk_penalty = float(scoring_inputs["risk_penalty"])
     memory_score_adjustments = dict(scoring_inputs["memory_score_adjustments"])
     followup_score_adjustments = dict(scoring_inputs["oss_followup_score_adjustments"])
+    disagreement_score_adjustments = dict(scoring_inputs["oss_disagreement_score_adjustments"])
     if candidate_id.endswith("-feedback-adapt"):
         formula_id = "feedback_adapt_score_v1"
         memory_adjustment = float(memory_score_adjustments["feedback-adapt"])
         followup_adjustment = float(followup_score_adjustments["feedback-adapt"])
+        disagreement_adjustment = float(disagreement_score_adjustments["feedback-adapt"])
         replayed_score = round(
             3.0
             + memory_adjustment
             + followup_adjustment
+            + disagreement_adjustment
             + feedback_score
             + policy_quality
             + reflection_quality
@@ -2953,6 +3232,7 @@ def _persona_candidate_scorecard(
             "base": 3.0,
             "memory_adjustment": memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
+            "oss_disagreement_adjustment": disagreement_adjustment,
             "feedback_score": feedback_score,
             "policy_quality": policy_quality,
             "reflection_quality": reflection_quality,
@@ -2962,33 +3242,45 @@ def _persona_candidate_scorecard(
         formula_id = "retain_observe_score_v1"
         memory_adjustment = float(memory_score_adjustments["retain-observe"])
         followup_adjustment = float(followup_score_adjustments["retain-observe"])
-        replayed_score = round(1.0 + memory_adjustment + followup_adjustment + max(feedback_score, 0.0), 10)
+        disagreement_adjustment = float(disagreement_score_adjustments["retain-observe"])
+        replayed_score = round(
+            1.0 + memory_adjustment + followup_adjustment + disagreement_adjustment + max(feedback_score, 0.0),
+            10,
+        )
         components = {
             "base": 1.0,
             "memory_adjustment": memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
+            "oss_disagreement_adjustment": disagreement_adjustment,
             "positive_feedback_score": round(max(feedback_score, 0.0), 10),
         }
     elif candidate_id.endswith("-risk-off"):
         formula_id = "risk_off_score_v1"
         memory_adjustment = float(memory_score_adjustments["risk-off"])
         followup_adjustment = float(followup_score_adjustments["risk-off"])
-        replayed_score = round(2.0 + memory_adjustment + followup_adjustment + max(0.0, risk_penalty), 10)
+        disagreement_adjustment = float(disagreement_score_adjustments["risk-off"])
+        replayed_score = round(
+            2.0 + memory_adjustment + followup_adjustment + disagreement_adjustment + max(0.0, risk_penalty),
+            10,
+        )
         components = {
             "base": 2.0,
             "memory_adjustment": memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
+            "oss_disagreement_adjustment": disagreement_adjustment,
             "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
         }
     else:
         formula_id = "contrarian_control_score_v1"
         memory_adjustment = float(memory_score_adjustments["contrarian-check"])
         followup_adjustment = float(followup_score_adjustments["contrarian-check"])
-        replayed_score = round(0.25 + memory_adjustment + followup_adjustment, 10)
+        disagreement_adjustment = float(disagreement_score_adjustments["contrarian-check"])
+        replayed_score = round(0.25 + memory_adjustment + followup_adjustment + disagreement_adjustment, 10)
         components = {
             "base": 0.25,
             "memory_adjustment": memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
+            "oss_disagreement_adjustment": disagreement_adjustment,
         }
     candidate_score = round(float(candidate["score"]), 10)
     return {
@@ -4802,6 +5094,9 @@ def _case_upstream_artifacts_are_usable(
         and f"oss://vectorbt/{vectorbt.get('request_id')}" in persona_response.get("evidence_refs", [])
         and f"experiment://{tracker.get('backend')}/{tracker.get('run_id')}" in persona_response.get("evidence_refs", [])
         and _case_selected_oss_feedback_is_usable(episode=episode, artifacts=artifacts)
+        and _oss_disagreement_arbitration_is_usable(artifacts.get("oss_disagreement_arbitration", {}))
+        and artifacts.get("oss_disagreement_arbitration", {}).get("arbitration_ref")
+        in persona_response.get("evidence_refs", [])
     )
 
 
@@ -4842,6 +5137,46 @@ def _case_selected_oss_feedback_is_usable(
         if not (entry.get("primary_output") or entry.get("metrics")):
             return False
     return True
+
+
+def _oss_disagreement_arbitration_is_usable(arbitration: Mapping[str, Any]) -> bool:
+    replay = arbitration.get("replay", {})
+    conflicts = list(arbitration.get("conflicts", []))
+    adjustments = arbitration.get("candidate_score_adjustments", {})
+    refs_by_action = arbitration.get("candidate_evidence_refs_by_action", {})
+    response = arbitration.get("persona_arbitration_response", {})
+    if len(conflicts) != 1:
+        return False
+    conflict = conflicts[0]
+    conflict_type = str(conflict.get("conflict_type"))
+    expected_roles = OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE.get(conflict_type)
+    resolution_action = OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE.get(conflict_type)
+    return bool(
+        arbitration.get("model_id") == PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID
+        and arbitration.get("status") == "resolved"
+        and arbitration.get("arbitration_ref", "").startswith("oss-disagreement://")
+        and arbitration.get("input_hash")
+        and expected_roles
+        and tuple(conflict.get("source_roles", [])) == expected_roles
+        and conflict.get("resolution_action") == resolution_action
+        and conflict.get("resolution_ref", "").startswith(str(arbitration.get("arbitration_ref")))
+        and set(adjustments) == {"feedback-adapt", "retain-observe", "risk-off", "contrarian-check"}
+        and float(adjustments.get(str(resolution_action), 0.0)) > 0.0
+        and set(refs_by_action) == {"feedback-adapt", "retain-observe", "risk-off", "contrarian-check"}
+        and arbitration.get("arbitration_ref") in refs_by_action.get("feedback-adapt", [])
+        and response.get("next_action") == "score_candidates_with_arbitrated_oss_weights"
+        and response.get("preferred_candidate_action") == "feedback-adapt"
+        and resolution_action in response.get("resolution_actions", [])
+        and replay.get("replayable") is True
+        and replay.get("all_source_roles_completed") is True
+        and replay.get("conflict_detected") is True
+        and replay.get("conflict_sources_bound") is True
+        and replay.get("resolution_action_selected") is True
+        and replay.get("resolution_drives_candidate_scoring") is True
+        and replay.get("followup_loop_available") is True
+        and replay.get("selected_oss_refs_available") is True
+        and replay.get("feedback_adapt_gets_all_selected_refs") is True
+    )
 
 
 def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
@@ -4923,6 +5258,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("uses_persona_reasoning_response") is True
         and replay.get("uses_selected_oss_feedback") is True
         and replay.get("uses_oss_response_followup_loop") is True
+        and replay.get("uses_oss_disagreement_arbitration") is True
         and replay.get("input_hash")
         and replay.get("candidate_hash")
         and replay.get("score_hash")
@@ -4931,6 +5267,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and _trace_memory_influence_is_usable(trace)
         and _trace_persona_reasoning_is_usable(trace)
         and _trace_oss_followup_loop_is_usable(trace)
+        and _trace_oss_disagreement_arbitration_is_usable(trace)
     )
 
 
@@ -4982,6 +5319,8 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
     memory_usage = response.get("memory_usage", {})
     followup_ref = input_context.get("oss_followup_loop_ref")
     followup_usage = response.get("oss_followup_usage", {})
+    arbitration_ref = input_context.get("oss_disagreement_arbitration_ref")
+    arbitration_usage = response.get("oss_disagreement_arbitration_usage", {})
     return bool(
         request.get("model_id") == PERSONA_REASONING_MODEL_ID
         and response.get("model_id") == PERSONA_REASONING_MODEL_ID
@@ -4995,6 +5334,11 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
         and followup_usage.get("loop_ref") == followup_ref
         and followup_ref in request.get("input_refs", [])
         and followup_ref in generation_request.get("input_refs", [])
+        and request.get("oss_disagreement_arbitration_ref") == arbitration_ref
+        and arbitration_usage.get("arbitration_ref") == arbitration_ref
+        and arbitration_usage.get("model_id") == PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID
+        and arbitration_ref in request.get("input_refs", [])
+        and arbitration_ref in generation_request.get("input_refs", [])
         and int(followup_usage.get("followup_count", 0)) >= 8
         and response.get("reasoning_ref") in generation_request.get("input_refs", [])
         and generation_response.get("source_reasoning_response_id") == response.get("response_id")
@@ -5033,6 +5377,33 @@ def _trace_oss_followup_loop_is_usable(trace: Mapping[str, Any]) -> bool:
         and set(input_context.get("oss_followup_response_refs", [])).issubset(
             set(candidate_request.get("input_refs", []))
         )
+        and set(expected_refs).issubset(selected_refs)
+        and float(score_adjustments.get(selected_action, 0.0)) > 0.0
+    )
+
+
+def _trace_oss_disagreement_arbitration_is_usable(trace: Mapping[str, Any]) -> bool:
+    artifact = trace.get("agent_decision_artifact", {})
+    if not isinstance(artifact, Mapping):
+        return False
+    input_context = artifact.get("input_context", {})
+    candidate_request = artifact.get("candidate_generation", {}).get("request", {})
+    scorer_inputs = artifact.get("scorer", {}).get("scoring_inputs", {})
+    selected_candidate = trace.get("selected_candidate", {})
+    selected_action = _candidate_action_key(str(selected_candidate.get("candidate_id")))
+    arbitration = scorer_inputs.get("oss_disagreement_arbitration", {})
+    if not isinstance(arbitration, Mapping):
+        return False
+    arbitration_ref = arbitration.get("arbitration_ref")
+    expected_refs = _oss_disagreement_refs_for_action(arbitration, selected_action)
+    selected_refs = set(selected_candidate.get("evidence_refs", []))
+    score_adjustments = scorer_inputs.get("oss_disagreement_score_adjustments", {})
+    return bool(
+        _oss_disagreement_arbitration_is_usable(arbitration)
+        and input_context.get("oss_disagreement_arbitration_ref") == arbitration_ref
+        and trace.get("decision_inputs", {}).get("oss_disagreement_arbitration_ref") == arbitration_ref
+        and arbitration_ref in trace.get("evidence_refs", [])
+        and arbitration_ref in candidate_request.get("input_refs", [])
         and set(expected_refs).issubset(selected_refs)
         and float(score_adjustments.get(selected_action, 0.0)) > 0.0
     )
@@ -5568,6 +5939,10 @@ def _build_usability_dimensions(
         _oss_response_followup_loop_is_usable(oss_followup_loop)
         and all(_trace_oss_followup_loop_is_usable(trace) for trace in decision_traces)
     ) else 0.0
+    oss_disagreement_arbitration = 1.0 if all(
+        _trace_oss_disagreement_arbitration_is_usable(trace)
+        for trace in decision_traces
+    ) else 0.0
     return {
         "return_improvement": return_improvement,
         "multi_generation_improvement": multi_generation_improvement,
@@ -5583,6 +5958,7 @@ def _build_usability_dimensions(
         "persona_decision_artifact": persona_decision_artifact,
         "persona_reasoning_generation": persona_reasoning_generation,
         "oss_response_followup_loop": oss_response_followup_loop,
+        "oss_disagreement_arbitration": oss_disagreement_arbitration,
         "oss_evidence_completeness": min(1.0, oss_evidence_completeness),
         "portfolio_breadth": portfolio_breadth,
         "no_leakage": no_leakage,
@@ -5764,6 +6140,21 @@ def _diagnose_validation_execution(
                 "candidate_score_adjustments": copy.deepcopy(
                     dict(oss_followup_loop["candidate_score_adjustments"])
                 ),
+                "trace_ids": [trace["reflection_id"] for trace in decision_traces],
+            },
+        ),
+        _diagnostic_check(
+            "multi_oss_disagreement_arbitration_drives_persona_scoring",
+            all(_trace_oss_disagreement_arbitration_is_usable(trace) for trace in decision_traces),
+            {
+                "arbitration_id": case_upstream_artifacts["oss_disagreement_arbitration"]["arbitration_id"],
+                "conflict_types": [
+                    conflict["conflict_type"]
+                    for conflict in case_upstream_artifacts["oss_disagreement_arbitration"]["conflicts"]
+                ],
+                "resolution_actions": case_upstream_artifacts["oss_disagreement_arbitration"][
+                    "persona_arbitration_response"
+                ]["resolution_actions"],
                 "trace_ids": [trace["reflection_id"] for trace in decision_traces],
             },
         ),
@@ -6023,6 +6414,7 @@ def _case_upstream_artifacts_case_summary(artifacts: Mapping[str, Any]) -> dict[
             role: _case_selected_oss_case_summary(entry)
             for role, entry in artifacts["selected_oss"].items()
         },
+        "oss_disagreement_arbitration": copy.deepcopy(artifacts["oss_disagreement_arbitration"]),
         "persona_response": copy.deepcopy(artifacts["persona_response"]),
     }
 
@@ -6211,6 +6603,7 @@ def _build_case_result(
             "oss_response_followup_loop_drives_decision": usability_dimensions[
                 "oss_response_followup_loop"
             ] == 1.0,
+            "multi_oss_disagreement_arbitrated": usability_dimensions["oss_disagreement_arbitration"] == 1.0,
             "persona_decision_artifacts_replay": usability_dimensions["persona_decision_artifact"] == 1.0,
             "persona_reasoning_drives_candidate_generation": usability_dimensions[
                 "persona_reasoning_generation"
@@ -6272,6 +6665,9 @@ def _build_summary(
     evolution_trajectories = [case["evolution"]["trajectory"] for case in cases]
     no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
     oss_followup_loops = [case["oss_feedback"]["response_followup_loop"] for case in cases]
+    oss_disagreement_arbitrations = [
+        case["case_upstream_artifacts"]["oss_disagreement_arbitration"] for case in cases
+    ]
     broker_adapter_lifecycles = [
         case["operational_context"]["broker_adapter_lifecycle"] for case in cases
     ]
@@ -6425,6 +6821,29 @@ def _build_summary(
             for loop in oss_followup_loops
             for followup in loop["followups"]
         }),
+        "oss_disagreement_arbitration_models": sorted({
+            arbitration["model_id"] for arbitration in oss_disagreement_arbitrations
+        }),
+        "oss_disagreement_types": sorted({
+            conflict["conflict_type"]
+            for arbitration in oss_disagreement_arbitrations
+            for conflict in arbitration["conflicts"]
+        }),
+        "oss_disagreement_source_role_pairs": sorted({
+            "+".join(conflict["source_roles"])
+            for arbitration in oss_disagreement_arbitrations
+            for conflict in arbitration["conflicts"]
+        }),
+        "oss_disagreement_resolution_actions": sorted({
+            action
+            for arbitration in oss_disagreement_arbitrations
+            for action in arbitration["persona_arbitration_response"]["resolution_actions"]
+        }),
+        "oss_disagreement_candidate_actions": sorted({
+            action
+            for arbitration in oss_disagreement_arbitrations
+            for action in arbitration["candidate_evidence_refs_by_action"]
+        }),
         "agent_decision_artifact_models": sorted({
             artifact["model_id"] for artifact in decision_artifacts
         }),
@@ -6545,6 +6964,15 @@ def _build_summary(
         "oss_response_followup_loop_drives_decision_count": sum(
             1 for item in usable if item["oss_response_followup_loop_drives_decision"]
         ),
+        "oss_disagreement_arbitration_count": len(oss_disagreement_arbitrations),
+        "oss_disagreement_arbitration_pass_count": sum(
+            1
+            for arbitration in oss_disagreement_arbitrations
+            if _oss_disagreement_arbitration_is_usable(arbitration)
+        ),
+        "multi_oss_disagreement_arbitrated_count": sum(
+            1 for item in usable if item["multi_oss_disagreement_arbitrated"]
+        ),
         "agent_decision_artifact_count": len(decision_artifacts),
         "agent_decision_artifact_replay_count": sum(
             1 for item in usable if item["persona_decision_artifacts_replay"]
@@ -6630,6 +7058,7 @@ def _build_summary(
             "Every case writes memory and proves retrieved lessons influence later candidate scoring and selected evidence refs.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every case converts OSS responses into persona follow-up requests that feed reasoning, candidate evidence, and scorer adjustments.",
+            "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every persona decision emits a replayable request-response artifact covering candidate generation, scoring, risk checks, and rejected alternatives.",
             "Every persona decision first emits a structured reasoning response whose candidate blueprints drive the scored candidates.",
             "Every case records a multi-generation evolution trajectory proving gen0->gen1->gen2 lineage, two distinct unseen-window improvements, and bounded turnover.",
