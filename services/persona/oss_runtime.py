@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import uuid
@@ -61,7 +62,7 @@ from services.research.statsmodels.adapter.statsmodels_adapter import (
     GovernedDataset,
     run_statsmodels_workflow,
 )
-from services.research.vectorbt.adapter import BacktestConfig, run_vectorbt_workflow
+from services.research.vectorbt.adapter import BacktestConfig, VectorbtBackend, run_vectorbt_workflow
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -649,8 +650,14 @@ def _run_vectorbt(request: PersonaOSSRequest) -> PersonaOSSResult:
         instrument_count=_payload_int(request, "instrument_count", 0),
         instrument_offset=_payload_int(request, "instrument_offset", 0),
     )
+    backend = (
+        VectorbtBackend()
+        if os.environ.get("PANTHEON_VECTORBT_BACKEND", "stub").lower() == "real"
+        else None
+    )
     result = run_vectorbt_workflow(
         dataset,
+        backend=backend,
         config=BacktestConfig(
             version=_version_for(request),
             requested_by=request.persona_id,
