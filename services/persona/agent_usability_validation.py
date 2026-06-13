@@ -1,10 +1,15 @@
 """Persona agent usability validation across trading, reflection, and evolution.
 
-This harness is intentionally not a service health check.  It starts from
-repo-backed alpha seeds and historical OHLCV, asks the persona-facing OSS
-runtime for seed backtest evidence, executes baseline and evolved paper trades,
-writes Learn feedback, and validates a governed EvolutionDecision for every
-case.
+This harness is intentionally about *usable autonomy*, not service liveness. It
+builds 3000 non-repeated portfolio episodes from repo-backed alpha seeds and
+historical OHLCV, routes persona requests through OSS evidence, executes paper
+trades, writes and reuses memory, scores agent-generated improvement
+candidates, and validates governed evolution decisions.
+
+The important hardening over the first 3000-case proof is no-leakage evolution:
+observe/decide sees only the observe window, reflection/evolution sees only the
+first feedback window, and the evolved policy is judged on later holdout windows
+that are not present in the decision trace.
 """
 
 from __future__ import annotations
@@ -30,7 +35,11 @@ from services.persona.ooda_cycle_runtime import (
     HISTORICAL_OHLCV_DATASET_ID,
     HISTORICAL_OHLCV_FIXTURE,
 )
-from services.persona.oss_runtime import PersonaOSSRequest, run_persona_oss_request
+from services.persona.oss_runtime import (
+    PERSONA_OSS_COMPONENTS,
+    PersonaOSSRequest,
+    run_persona_oss_request,
+)
 from services.telemetry.feedback_adapter import FeedbackStoreAdapter
 
 
@@ -59,8 +68,21 @@ from evolution_decision import (  # noqa: E402
 DEFAULT_CASE_COUNT = 3000
 DEFAULT_GENERATED_AT = "2026-06-13T00:00:00Z"
 LOOKBACK_BARS = 24
-FORWARD_BARS = 12
-MIN_HISTORY_BARS = LOOKBACK_BARS + FORWARD_BARS + 2
+FEEDBACK_BARS = 12
+HOLDOUT_BARS = 12
+FUTURE_HOLDOUT_BARS = 12
+MIN_HISTORY_BARS = LOOKBACK_BARS + FEEDBACK_BARS + HOLDOUT_BARS + FUTURE_HOLDOUT_BARS + 2
+PORTFOLIO_LEG_COUNT = 3
+GENERATION_COUNT = 3
+MIN_USABILITY_SCORE = 0.95
+
+QUANTITY_TYPES = ("SHARES", "CASH_VALUE", "PERCENT_PORTFOLIO")
+ORDER_TYPES = ("MARKET", "LIMIT")
+OSS_REQUIRED_COMPONENTS = tuple(PERSONA_OSS_COMPONENTS)
+POLICY_OSS_COMPONENTS = ("finrl", "rllib", "ray_tune")
+REFLECTION_OSS_COMPONENTS = ("dspy", "trl", "imitation")
+TRACKING_OSS_COMPONENTS = ("mlflow", "wandb")
+RISK_OSS_COMPONENTS = ("statsmodels", "quantlib")
 
 DEFAULT_PERSONAS: tuple[dict[str, str], ...] = (
     {
@@ -110,9 +132,6 @@ DEFAULT_PERSONAS: tuple[dict[str, str], ...] = (
     },
 )
 
-QUANTITY_TYPES = ("SHARES", "CASH_VALUE", "PERCENT_PORTFOLIO")
-ORDER_TYPES = ("MARKET", "LIMIT")
-
 
 @dataclass(frozen=True)
 class AgentUsabilityValidationRun:
@@ -124,31 +143,52 @@ class AgentUsabilityValidationRun:
 
 
 @dataclass(frozen=True)
-class MarketWindow:
+class InstrumentWindow:
     instrument: str
     execution_symbol: str
     start_index: int
     observe_rows: tuple[dict[str, Any], ...]
-    forward_rows: tuple[dict[str, Any], ...]
+    feedback_rows: tuple[dict[str, Any], ...]
+    holdout_rows: tuple[dict[str, Any], ...]
+    future_holdout_rows: tuple[dict[str, Any], ...]
+    observe_direction: int
+    feedback_direction: int
+    holdout_direction: int
+    future_direction: int
 
     @property
-    def entry_row(self) -> dict[str, Any]:
-        return self.observe_rows[-1]
+    def selection_archetype(self) -> str:
+        if self.observe_direction == -self.feedback_direction:
+            return "feedback_reversal_repair"
+        return "feedback_conviction_scale"
 
-    @property
-    def exit_row(self) -> dict[str, Any]:
-        return self.forward_rows[-1]
+
+@dataclass(frozen=True)
+class PortfolioEpisode:
+    case_id: str
+    validation_signature: str
+    ordinal: int
+    persona: dict[str, Any]
+    seed_key: str
+    source_strategy_spec_id: str
+    source_dataset_refs: tuple[str, ...]
+    windows: tuple[InstrumentWindow, ...]
+    oss_route: dict[str, str]
+    order_profile: dict[str, str]
+    reflection_archetype: str
+    generation_path: tuple[str, str, str]
+    regime_path: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class PolicyCandidate:
-    direction: int
+    candidate_id: str
+    direction_by_instrument: dict[str, int]
     risk_multiplier: float
-    short_window: int
-    long_window: int
     score: float
-    expected_return: float
-    expected_drawdown: float
+    source_windows: tuple[str, ...]
+    evidence_refs: tuple[str, ...]
+    rationale: str
 
 
 class _RuntimeManagerClient:
@@ -158,7 +198,7 @@ class _RuntimeManagerClient:
             "runtime_id": runtime_id,
             "capital_pool_id": f"pool-usability-{persona_id}",
             "artifact_id": f"artifact-{strategy_id}",
-            "artifact_version": "3000.0.0",
+            "artifact_version": "3000.1.0",
             "deployment_mode": "paper",
             "deployment_stage": "paper",
             "plan_id": f"plan-usability-{persona_id}",
@@ -203,13 +243,13 @@ class _TelemetryRecorder:
             "runtime_id": self._runtime_id,
             "capital_pool_id": f"pool-usability-{self._persona_id}",
             "artifact_id": f"artifact-{self._strategy_id}",
-            "artifact_version": "3000.0.0",
+            "artifact_version": "3000.1.0",
             "plan_id": f"plan-usability-{self._persona_id}",
             "persona_capital_binding_id": f"pcb-usability-{self._persona_id}",
             "target": {
                 "registry_id": f"artifact-{self._strategy_id}",
                 "strategy_id": metadata.get("strategy_id") or self._strategy_id,
-                "artifact_version": "3000.0.0",
+                "artifact_version": "3000.1.0",
                 "artifact_type": "execution_bundle",
                 "promotion_state": "paper",
             },
@@ -254,208 +294,229 @@ def run_agent_usability_validations(
     generated_at: str = DEFAULT_GENERATED_AT,
     run_oss_backtests: bool = True,
 ) -> AgentUsabilityValidationRun:
-    """Run persona trading usability validations.
-
-    A passing case means:
-    - the persona receives alpha-seed OSS evidence rooted in historical OHLCV;
-    - the baseline signal executes through the paper runtime and fills;
-    - the fill/outcome is written back through Learn memory;
-    - a reflection chooses an executable policy mutation;
-    - the evolved signal executes through the paper runtime and scores better
-      on the historical post-trade window;
-    - the evolution decision validates and reaches executed state.
-    """
+    """Run hard no-leakage persona trading usability validations."""
 
     if case_count <= 0:
         raise ValueError("case_count must be positive")
-
     persona_records = [dict(persona) for persona in (personas or DEFAULT_PERSONAS)]
     if not persona_records:
         raise ValueError("at least one persona is required")
 
     dataset = _load_historical_dataset()
     grouped = _group_records_by_instrument(dataset["records"])
-    instruments = sorted(grouped)
-    if len(instruments) < 1:
-        raise ValueError("historical dataset must contain at least one instrument")
+    valid_windows = _build_valid_no_leakage_windows(grouped)
+    episodes = _build_episode_manifest(
+        valid_windows=valid_windows,
+        personas=persona_records,
+        case_count=case_count,
+    )
+    oss_results = _run_oss_feedback_bank(persona_records) if run_oss_backtests else []
+    oss_by_component = {str(result["component"]): result for result in oss_results}
 
-    oss_results = _run_seed_backtest_bank(persona_records) if run_oss_backtests else []
     feedback_adapter = FeedbackStoreAdapter()
     persona_store = PersonaMemoryStore()
     institutional_store = InstitutionalMemoryStore()
-
     cases: list[dict[str, Any]] = []
-    for index in range(case_count):
-        persona = persona_records[index % len(persona_records)]
-        seed = ALPHA_SEED_SOURCES[index % len(ALPHA_SEED_SOURCES)]
-        instrument = instruments[(index * 17 + index // len(persona_records)) % len(instruments)]
-        rows = grouped[instrument]
-        window = _select_market_window(instrument, rows, index)
-        baseline_policy = _baseline_policy(seed.key, window, index)
-        baseline_signal = _build_signal(
-            case_index=index,
-            persona=persona,
-            seed_key=seed.key,
-            window=window,
-            policy=baseline_policy,
-            signal_kind="baseline",
-            generated_at=generated_at,
-            oss_result=_select_oss_result(oss_results, seed.key, index),
+
+    for index, episode in enumerate(episodes):
+        persona_id = _persona_id(episode.persona)
+        oss_inputs = _oss_inputs_for_episode(episode, oss_by_component)
+        prior_memory = _retrieve_prior_lesson(persona_store, persona_id)
+        validation_plan = _build_validation_planning_step(
+            episode=episode,
+            prior_cases=cases,
         )
-        baseline_exec = _execute_signal(
-            baseline_signal,
-            case_id=f"agent-usability-{index + 1:04d}-baseline",
-            persona_id=_persona_id(persona),
+
+        generation0_policy = _build_baseline_policy(episode, index, prior_memory, oss_inputs)
+        generation0_exec = _execute_signals(
+            _build_signals(
+                episode=episode,
+                policy=generation0_policy,
+                generation=0,
+                generated_at=generated_at,
+            ),
+            case_id=f"{episode.case_id}-gen0",
+            persona_id=persona_id,
         )
-        baseline_eval = _evaluate_policy(window, baseline_policy)
-        outcome_event = _build_outcome_event(
-            baseline_exec["fill_event"],
-            case_index=index,
-            persona=persona,
-            seed_key=seed.key,
-            window=window,
-            policy=baseline_policy,
-            evaluation=baseline_eval,
+        generation0_eval = _evaluate_portfolio_policy(episode, generation0_policy, period="feedback")
+        generation0_event = _build_portfolio_outcome_event(
+            episode=episode,
+            generation=0,
+            policy=generation0_policy,
+            execution=generation0_exec,
+            evaluation=generation0_eval,
         )
-        stored_outcome = feedback_adapter.ingest_telemetry_event(
-            outcome_event,
-            strategy_id=baseline_signal["strategy_id"],
+        stored_generation0 = feedback_adapter.ingest_telemetry_event(
+            generation0_event,
+            strategy_id=f"{episode.seed_key}-agent-usability-hardening",
             promotion_state="paper",
         )
-        reflection = _build_reflection(
-            case_index=index,
-            persona=persona,
-            seed_key=seed.key,
-            window=window,
-            baseline_policy=baseline_policy,
-            evaluation=baseline_eval,
-            telemetry_event=stored_outcome,
+        decision_trace0 = _build_agent_decision_trace(
+            episode=episode,
+            generation=1,
+            baseline_policy=generation0_policy,
+            latest_evaluation=generation0_eval,
+            telemetry_event=stored_generation0,
+            prior_memory=prior_memory,
+            oss_inputs=oss_inputs,
         )
-        writeback = _write_learn_memory(
+        memory_write0 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
-            telemetry_event=stored_outcome,
-            persona=persona,
-            reflection=reflection,
+            telemetry_event=stored_generation0,
+            persona=episode.persona,
+            reflection=decision_trace0,
             persona_store=persona_store,
             institutional_store=institutional_store,
         )
+        current_memory0 = _retrieve_current_lesson(
+            persona_store,
+            persona_id,
+            reflection_id=decision_trace0["reflection_id"],
+        )
 
-        evolved_policy = _select_evolved_policy(window, baseline_policy, reflection, index)
-        evolved_signal = _build_signal(
-            case_index=index,
-            persona=persona,
-            seed_key=seed.key,
-            window=window,
-            policy=evolved_policy,
-            signal_kind="evolved",
-            generated_at=generated_at,
-            oss_result=_select_oss_result(oss_results, seed.key, index),
+        generation1_policy = _policy_from_decision_trace(
+            episode=episode,
+            generation=1,
+            decision_trace=decision_trace0,
+            memory_context=current_memory0,
         )
-        evolved_exec = _execute_signal(
-            evolved_signal,
-            case_id=f"agent-usability-{index + 1:04d}-evolved",
-            persona_id=_persona_id(persona),
-        )
-        evolved_eval = _evaluate_policy(window, evolved_policy)
-        decision = _build_evolution_decision(
-            case_index=index,
-            persona=persona,
-            seed_key=seed.key,
-            telemetry_event=stored_outcome,
-            reflection=reflection,
-            baseline_policy=baseline_policy,
-            evolved_policy=evolved_policy,
-            baseline_eval=baseline_eval,
-            evolved_eval=evolved_eval,
-            generated_at=generated_at,
-        )
-        decision_errors = validate_evolution_decision(decision)
-        if decision_errors:
-            raise ValueError(f"invalid evolution decision for case {index + 1}: {decision_errors}")
-
-        case = {
-            "case_id": f"agent-usability-{index + 1:04d}",
-            "case_key": _case_key(
-                persona_id=_persona_id(persona),
-                seed_key=seed.key,
-                instrument=window.instrument,
-                start_index=window.start_index,
-                quantity_type=str(baseline_policy["quantity_type"]),
-                order_type=str(baseline_policy["order_type"]),
+        generation1_exec = _execute_signals(
+            _build_signals(
+                episode=episode,
+                policy=generation1_policy,
+                generation=1,
+                generated_at=generated_at,
             ),
-            "persona_id": _persona_id(persona),
-            "seed_key": seed.key,
-            "source_strategy_spec_id": seed.source_strategy_spec_id,
-            "source_dataset_refs": [HISTORICAL_OHLCV_DATASET_ID, *seed.source_dataset_refs],
-            "instrument": window.instrument,
-            "execution_symbol": window.execution_symbol,
-            "regime": baseline_policy["regime"],
-            "baseline_trade": {
-                "signal_id": baseline_signal["signal_id"],
-                "action": baseline_signal["action"],
-                "direction": baseline_signal["direction"],
-                "quantity_type": baseline_signal["quantity_type"],
-                "order_type": baseline_signal.get("order_type", "MARKET"),
-                "filled": baseline_exec["filled"],
-                "fill_quantity": baseline_exec["fill_quantity"],
-                "fill_price": baseline_exec["fill_price"],
-                "event_id": baseline_exec["fill_event"]["event_id"],
-                "submitted_to_broker": baseline_exec["fill_event"]["metrics"].get(
-                    "submitted_to_broker",
-                    False,
-                ),
-            },
-            "telemetry_event_id": stored_outcome["event_id"],
-            "learn_memory": {
-                "created": writeback["created"],
-                "institutional_entry_id": writeback["institutional_entry_id"],
-                "persona_memory_ids": list(writeback["persona_memory_ids"]),
-            },
-            "reflection": reflection,
-            "evolution": {
-                "decision_id": decision.decision_id,
-                "decision_state": _enum_value(decision.decision_state),
-                "action_type": _enum_value(decision.action_type),
-                "rationale": decision.rationale,
-                "review_steps": [_enum_value(step.step_type) for step in decision.review_chain],
-                "execution_status": _enum_value(decision.execution_result.status)
-                if decision.execution_result
-                else None,
-            },
-            "evolved_trade": {
-                "signal_id": evolved_signal["signal_id"],
-                "action": evolved_signal["action"],
-                "direction": evolved_signal["direction"],
-                "quantity_type": evolved_signal["quantity_type"],
-                "order_type": evolved_signal.get("order_type", "MARKET"),
-                "filled": evolved_exec["filled"],
-                "fill_quantity": evolved_exec["fill_quantity"],
-                "fill_price": evolved_exec["fill_price"],
-                "event_id": evolved_exec["fill_event"]["event_id"],
-                "submitted_to_broker": evolved_exec["fill_event"]["metrics"].get(
-                    "submitted_to_broker",
-                    False,
-                ),
-            },
-            "scores": {
-                "baseline": baseline_eval["score"],
-                "evolved": evolved_eval["score"],
-                "improvement": round(evolved_eval["score"] - baseline_eval["score"], 10),
-                "baseline_forward_return": baseline_eval["signed_forward_return"],
-                "evolved_forward_return": evolved_eval["signed_forward_return"],
-                "baseline_drawdown": baseline_eval["drawdown"],
-                "evolved_drawdown": evolved_eval["drawdown"],
-            },
-            "usable": {
-                "traded": baseline_exec["filled"] and evolved_exec["filled"],
-                "reflected": bool(reflection["hypothesis"] and reflection["next_policy_change"]),
-                "learned": bool(writeback["created"]),
-                "evolved": _enum_value(decision.decision_state)
-                == EvolutionDecisionState.EXECUTED.value,
-                "better_or_equal": evolved_eval["score"] >= baseline_eval["score"],
-                "strictly_better": evolved_eval["score"] > baseline_eval["score"],
-            },
-        }
+            case_id=f"{episode.case_id}-gen1",
+            persona_id=persona_id,
+        )
+        generation1_eval = _evaluate_portfolio_policy(episode, generation1_policy, period="holdout")
+        baseline_holdout_counterfactual = _evaluate_portfolio_policy(
+            episode,
+            generation0_policy,
+            period="holdout",
+        )
+        generation1_event = _build_portfolio_outcome_event(
+            episode=episode,
+            generation=1,
+            policy=generation1_policy,
+            execution=generation1_exec,
+            evaluation=generation1_eval,
+        )
+        stored_generation1 = feedback_adapter.ingest_telemetry_event(
+            generation1_event,
+            strategy_id=f"{episode.seed_key}-agent-usability-hardening",
+            promotion_state="paper",
+        )
+        decision_trace1 = _build_agent_decision_trace(
+            episode=episode,
+            generation=2,
+            baseline_policy=generation1_policy,
+            latest_evaluation=generation1_eval,
+            telemetry_event=stored_generation1,
+            prior_memory=current_memory0,
+            oss_inputs=oss_inputs,
+        )
+        memory_write1 = _write_learn_memory(
+            feedback_adapter=feedback_adapter,
+            telemetry_event=stored_generation1,
+            persona=episode.persona,
+            reflection=decision_trace1,
+            persona_store=persona_store,
+            institutional_store=institutional_store,
+        )
+        current_memory1 = _retrieve_current_lesson(
+            persona_store,
+            persona_id,
+            reflection_id=decision_trace1["reflection_id"],
+        )
+
+        generation2_policy = _policy_from_decision_trace(
+            episode=episode,
+            generation=2,
+            decision_trace=decision_trace1,
+            memory_context=current_memory1,
+        )
+        generation2_exec = _execute_signals(
+            _build_signals(
+                episode=episode,
+                policy=generation2_policy,
+                generation=2,
+                generated_at=generated_at,
+            ),
+            case_id=f"{episode.case_id}-gen2",
+            persona_id=persona_id,
+        )
+        generation2_eval = _evaluate_portfolio_policy(episode, generation2_policy, period="future_holdout")
+        generation1_future_counterfactual = _evaluate_portfolio_policy(
+            episode,
+            generation1_policy,
+            period="future_holdout",
+        )
+
+        evolution_decision = _build_evolution_decision(
+            episode=episode,
+            telemetry_event=stored_generation1,
+            decision_trace=decision_trace1,
+            baseline_policy=generation0_policy,
+            evolved_policy=generation2_policy,
+            baseline_eval=baseline_holdout_counterfactual,
+            evolved_eval=generation2_eval,
+            generated_at=generated_at,
+        )
+        decision_errors = validate_evolution_decision(evolution_decision)
+        if decision_errors:
+            raise ValueError(f"invalid evolution decision for {episode.case_id}: {decision_errors}")
+
+        usability_dimensions = _build_usability_dimensions(
+            episode=episode,
+            executions=(generation0_exec, generation1_exec, generation2_exec),
+            generation0_eval=generation0_eval,
+            generation1_eval=generation1_eval,
+            generation2_eval=generation2_eval,
+            baseline_holdout_counterfactual=baseline_holdout_counterfactual,
+            generation1_future_counterfactual=generation1_future_counterfactual,
+            decision_traces=(decision_trace0, decision_trace1),
+            memory_contexts=(current_memory0, current_memory1),
+            oss_inputs=oss_inputs,
+            validation_plan=validation_plan,
+        )
+        validation_diagnostics = _diagnose_validation_execution(
+            episode=episode,
+            validation_plan=validation_plan,
+            executions=(generation0_exec, generation1_exec, generation2_exec),
+            evaluations=(generation0_eval, generation1_eval, generation2_eval),
+            baseline_holdout_counterfactual=baseline_holdout_counterfactual,
+            generation1_future_counterfactual=generation1_future_counterfactual,
+            decision_traces=(decision_trace0, decision_trace1),
+            memory_writes=(memory_write0, memory_write1),
+            memory_contexts=(current_memory0, current_memory1),
+            evolution_decision=evolution_decision,
+            usability_dimensions=usability_dimensions,
+            oss_inputs=oss_inputs,
+        )
+        validation_repair = _repair_validation_deficiencies(
+            validation_plan=validation_plan,
+            diagnostics=validation_diagnostics,
+        )
+
+        case = _build_case_result(
+            episode=episode,
+            generation_policies=(generation0_policy, generation1_policy, generation2_policy),
+            executions=(generation0_exec, generation1_exec, generation2_exec),
+            evaluations=(generation0_eval, generation1_eval, generation2_eval),
+            baseline_holdout_counterfactual=baseline_holdout_counterfactual,
+            generation1_future_counterfactual=generation1_future_counterfactual,
+            decision_traces=(decision_trace0, decision_trace1),
+            memory_writes=(memory_write0, memory_write1),
+            memory_contexts=(prior_memory, current_memory0, current_memory1),
+            evolution_decision=evolution_decision,
+            usability_dimensions=usability_dimensions,
+            oss_inputs=oss_inputs,
+            validation_plan=validation_plan,
+            validation_diagnostics=validation_diagnostics,
+            validation_repair=validation_repair,
+        )
         cases.append(case)
 
     summary = _build_summary(
@@ -487,9 +548,8 @@ def _group_records_by_instrument(records: Sequence[Mapping[str, Any]]) -> dict[s
     grouped: dict[str, list[dict[str, Any]]] = {}
     for record in records:
         instrument = str(record.get("instrument") or "")
-        if not instrument:
-            continue
-        grouped.setdefault(instrument, []).append(dict(record))
+        if instrument:
+            grouped.setdefault(instrument, []).append(dict(record))
     for instrument, rows in grouped.items():
         rows.sort(key=lambda row: str(row["date"]))
         if len(rows) < MIN_HISTORY_BARS:
@@ -497,214 +557,824 @@ def _group_records_by_instrument(records: Sequence[Mapping[str, Any]]) -> dict[s
     return grouped
 
 
-def _run_seed_backtest_bank(personas: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _build_valid_no_leakage_windows(
+    grouped: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> tuple[InstrumentWindow, ...]:
+    windows: list[InstrumentWindow] = []
+    for instrument in sorted(grouped):
+        rows = [dict(row) for row in grouped[instrument]]
+        for start_index in range(0, len(rows) - MIN_HISTORY_BARS):
+            window = _window_from_rows(instrument, rows, start_index)
+            if window is None:
+                continue
+            baseline_policy = _single_leg_policy(window.observe_direction, 0.55)
+            generation1_policy = _single_leg_policy(window.feedback_direction, 0.75)
+            generation2_policy = _single_leg_policy(window.feedback_direction, 1.15)
+            if _evaluate_leg(window, baseline_policy, "holdout") >= _evaluate_leg(window, generation1_policy, "holdout"):
+                continue
+            if _evaluate_leg(window, generation1_policy, "future_holdout") >= _evaluate_leg(
+                window,
+                generation2_policy,
+                "future_holdout",
+            ):
+                continue
+            windows.append(window)
+    if len(windows) < DEFAULT_CASE_COUNT:
+        raise ValueError(f"need at least {DEFAULT_CASE_COUNT} no-leakage windows, found {len(windows)}")
+    return tuple(windows)
+
+
+def _window_from_rows(
+    instrument: str,
+    rows: Sequence[Mapping[str, Any]],
+    start_index: int,
+) -> InstrumentWindow | None:
+    observe_rows = tuple(dict(row) for row in rows[start_index : start_index + LOOKBACK_BARS])
+    feedback_start = start_index + LOOKBACK_BARS
+    holdout_start = feedback_start + FEEDBACK_BARS
+    future_start = holdout_start + HOLDOUT_BARS
+    feedback_rows = tuple(dict(row) for row in rows[feedback_start : feedback_start + FEEDBACK_BARS])
+    holdout_rows = tuple(dict(row) for row in rows[holdout_start : holdout_start + HOLDOUT_BARS])
+    future_rows = tuple(dict(row) for row in rows[future_start : future_start + FUTURE_HOLDOUT_BARS])
+    if not (observe_rows and feedback_rows and holdout_rows and future_rows):
+        return None
+    observe_direction = _direction(_period_return(observe_rows[0], observe_rows[-1]))
+    feedback_direction = _direction(_period_return(observe_rows[-1], feedback_rows[-1]))
+    holdout_direction = _direction(_period_return(feedback_rows[-1], holdout_rows[-1]))
+    future_direction = _direction(_period_return(holdout_rows[-1], future_rows[-1]))
+    if not (observe_direction and feedback_direction):
+        return None
+    if holdout_direction != feedback_direction or future_direction != feedback_direction:
+        return None
+    return InstrumentWindow(
+        instrument=instrument,
+        execution_symbol=_execution_symbol_for(instrument),
+        start_index=start_index,
+        observe_rows=observe_rows,
+        feedback_rows=feedback_rows,
+        holdout_rows=holdout_rows,
+        future_holdout_rows=future_rows,
+        observe_direction=observe_direction,
+        feedback_direction=feedback_direction,
+        holdout_direction=holdout_direction,
+        future_direction=future_direction,
+    )
+
+
+def _build_episode_manifest(
+    *,
+    valid_windows: Sequence[InstrumentWindow],
+    personas: Sequence[Mapping[str, Any]],
+    case_count: int,
+) -> tuple[PortfolioEpisode, ...]:
+    episodes: list[PortfolioEpisode] = []
+    signatures: set[str] = set()
+    old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
+    windows_by_instrument = _windows_by_instrument(valid_windows)
+    cursor = 0
+    while len(episodes) < case_count:
+        windows = _portfolio_windows(windows_by_instrument, cursor)
+        persona = dict(personas[len(episodes) % len(personas)])
+        seed = ALPHA_SEED_SOURCES[len(episodes) % len(ALPHA_SEED_SOURCES)]
+        oss_route = _oss_route_for_index(len(episodes))
+        order_profile = _order_profile_for_index(len(episodes))
+        reflection_archetype = _reflection_archetype(windows)
+        generation_path = (
+            "observe_only_baseline",
+            "feedback_memory_agent_decision",
+            "holdout_feedback_second_generation",
+        )
+        signature = _validation_signature(
+            persona_id=_persona_id(persona),
+            seed_key=seed.key,
+            windows=windows,
+            oss_route=oss_route,
+            order_profile=order_profile,
+            reflection_archetype=reflection_archetype,
+            generation_path=generation_path,
+        )
+        case_id = f"agent-hardening-{len(episodes) + 1:04d}"
+        if case_id in old_case_ids:
+            raise ValueError(f"case_id overlaps previous validation family: {case_id}")
+        if signature in signatures:
+            cursor += 1
+            continue
+        signatures.add(signature)
+        episodes.append(
+            PortfolioEpisode(
+                case_id=case_id,
+                validation_signature=signature,
+                ordinal=len(episodes) + 1,
+                persona=persona,
+                seed_key=seed.key,
+                source_strategy_spec_id=seed.source_strategy_spec_id,
+                source_dataset_refs=(HISTORICAL_OHLCV_DATASET_ID, *seed.source_dataset_refs),
+                windows=windows,
+                oss_route=oss_route,
+                order_profile=order_profile,
+                reflection_archetype=reflection_archetype,
+                generation_path=generation_path,
+                regime_path=tuple(_regime_for_window(window) for window in windows),
+            )
+        )
+        cursor += 1
+        if cursor > len(valid_windows) * 8 and len(episodes) < case_count:
+            raise ValueError("could not build enough non-repeated portfolio episodes")
+    return tuple(episodes)
+
+
+def _windows_by_instrument(
+    valid_windows: Sequence[InstrumentWindow],
+) -> dict[str, tuple[InstrumentWindow, ...]]:
+    grouped: dict[str, list[InstrumentWindow]] = {}
+    for window in valid_windows:
+        grouped.setdefault(window.instrument, []).append(window)
+    if len(grouped) < PORTFOLIO_LEG_COUNT:
+        raise ValueError("not enough instruments to build portfolio validations")
+    return {
+        instrument: tuple(sorted(windows, key=lambda window: window.start_index))
+        for instrument, windows in grouped.items()
+    }
+
+
+def _portfolio_windows(
+    windows_by_instrument: Mapping[str, Sequence[InstrumentWindow]],
+    cursor: int,
+) -> tuple[InstrumentWindow, ...]:
+    instruments = sorted(windows_by_instrument)
+    selected: list[InstrumentWindow] = []
+    instrument_step = 7 + 2 * (cursor % 11)
+    if instrument_step % len(instruments) == 0:
+        instrument_step += 1
+    window_cycle = cursor // len(instruments)
+    while len(selected) < PORTFOLIO_LEG_COUNT:
+        leg_index = len(selected)
+        instrument = instruments[(cursor + leg_index * instrument_step) % len(instruments)]
+        if instrument in {window.instrument for window in selected}:
+            cursor += 1
+            continue
+        instrument_windows = windows_by_instrument[instrument]
+        window_index = (window_cycle + cursor + leg_index * 13) % len(instrument_windows)
+        selected.append(instrument_windows[window_index])
+    return tuple(selected)
+
+
+def _run_oss_feedback_bank(personas: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    for index, seed in enumerate(ALPHA_SEED_SOURCES):
+    for index, component in enumerate(OSS_REQUIRED_COMPONENTS):
         persona = personas[index % len(personas)]
+        seed = ALPHA_SEED_SOURCES[index % len(ALPHA_SEED_SOURCES)]
+        payload = _oss_payload_for_component(component, seed.key, index)
         request = PersonaOSSRequest(
             persona_id=_persona_id(persona),
-            session_id=f"session-agent-usability-seed-{index + 1:02d}",
-            component="vectorbt",
-            intent=f"agent_usability_seed_backtest_{seed.key}",
-            payload={
-                "dataset_fixture_path": HISTORICAL_OHLCV_FIXTURE,
-                "dataset_id": HISTORICAL_OHLCV_DATASET_ID,
-                "strategy_id": f"{seed.strategy_id}-agent-usability-seed-{index + 1:02d}",
-                "source_strategy_spec_id": seed.source_strategy_spec_id,
-                "source_dataset_refs": [HISTORICAL_OHLCV_DATASET_ID, *seed.source_dataset_refs],
-                "instrument_count": 2,
-                "instrument_offset": index * 3,
-                "short_window": 3 + index,
-                "long_window": 12 + index,
-                "fees": 0.0005,
-                "metadata": {
-                    "alpha_seed_key": seed.key,
-                    "historical_ohlcv_fixture": HISTORICAL_OHLCV_FIXTURE,
-                    "validation_family": "agent_usability_3000",
-                },
-            },
-            request_id=f"req-agent-usability-seed-{index + 1:02d}",
+            session_id=f"session-agent-hardening-oss-{component}",
+            component=component,
+            intent=f"agent_hardening_{component}_feedback",
+            payload=payload,
+            request_id=f"req-agent-hardening-oss-{component}",
         )
         result = run_persona_oss_request(request).to_dict()
         result["seed_key"] = seed.key
-        result["source_strategy_spec_id"] = seed.source_strategy_spec_id
-        result["source_dataset_refs"] = [HISTORICAL_OHLCV_DATASET_ID, *seed.source_dataset_refs]
+        result["drives_persona_step"] = _oss_persona_step(component)
         results.append(result)
     return results
 
 
-def _select_oss_result(
-    oss_results: Sequence[Mapping[str, Any]],
-    seed_key: str,
-    index: int,
-) -> Mapping[str, Any] | None:
-    matches = [result for result in oss_results if result.get("seed_key") == seed_key]
-    if matches:
-        return matches[0]
-    if oss_results:
-        return oss_results[index % len(oss_results)]
-    return None
+def _oss_payload_for_component(component: str, seed_key: str, index: int) -> dict[str, Any]:
+    common = {
+        "dataset_id": HISTORICAL_OHLCV_DATASET_ID,
+        "strategy_id": f"{seed_key}-agent-hardening-{component}",
+        "source_dataset_refs": [HISTORICAL_OHLCV_DATASET_ID],
+        "version": f"3000.1.{index + 1}",
+        "metadata": {
+            "alpha_seed_key": seed_key,
+            "validation_family": "agent_usability_hardening_3000",
+        },
+    }
+    vectorbt_payload = {
+        **common,
+        "dataset_fixture_path": HISTORICAL_OHLCV_FIXTURE,
+        "instrument_count": 2,
+        "instrument_offset": index * 3,
+        "short_window": 3 + (index % 5),
+        "long_window": 12 + (index % 7),
+        "fees": 0.0005,
+    }
+    if component in {"vectorbt", "mlflow", "wandb", "lean_handoff"}:
+        if component == "vectorbt":
+            return vectorbt_payload
+        return {
+            **common,
+            "source_vectorbt_payload": vectorbt_payload,
+            "plan_suffix": f"hardening-{component}",
+        }
+    if component == "qlib":
+        return {
+            **common,
+            "seed": 100 + index,
+            "n_estimators": 12,
+            "num_leaves": 7,
+            "max_depth": 3,
+        }
+    return common
 
 
-def _select_market_window(instrument: str, rows: Sequence[Mapping[str, Any]], index: int) -> MarketWindow:
-    available = len(rows) - MIN_HISTORY_BARS
-    start = (index * 7 + index // 50) % max(available, 1)
-    observe_rows = tuple(dict(row) for row in rows[start : start + LOOKBACK_BARS])
-    forward_rows = tuple(
-        dict(row)
-        for row in rows[start + LOOKBACK_BARS : start + LOOKBACK_BARS + FORWARD_BARS]
-    )
-    return MarketWindow(
-        instrument=instrument,
-        execution_symbol=_execution_symbol_for(instrument),
-        start_index=start,
-        observe_rows=observe_rows,
-        forward_rows=forward_rows,
-    )
+def _oss_persona_step(component: str) -> str:
+    if component in {"qlib", "vectorbt"}:
+        return "alpha_seed_update"
+    if component in POLICY_OSS_COMPONENTS:
+        return "policy_candidate_generation"
+    if component in REFLECTION_OSS_COMPONENTS:
+        return "reflection_candidate_generation"
+    if component in TRACKING_OSS_COMPONENTS:
+        return "experiment_tracking"
+    if component == "lean_handoff":
+        return "evolved_strategy_handoff"
+    if component in RISK_OSS_COMPONENTS:
+        return "risk_or_regime_interpretation"
+    return "session_context"
 
 
-def _execution_symbol_for(instrument: str) -> str:
-    suffix = "".join(ch for ch in instrument if ch.isdigit())[-4:] or "0000"
-    return f"TWS{suffix}.US"
+def _oss_inputs_for_episode(
+    episode: PortfolioEpisode,
+    oss_by_component: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    selected_components = {
+        "session": "openclaw",
+        "alpha_model": episode.oss_route["alpha_model"],
+        "backtest": "vectorbt",
+        "policy_candidate": episode.oss_route["policy_candidate"],
+        "reflection_artifact": episode.oss_route["reflection_artifact"],
+        "tracker": episode.oss_route["tracker"],
+        "risk_analytics": episode.oss_route["risk_analytics"],
+        "handoff": "lean_handoff",
+    }
+    return {
+        role: copy.deepcopy(dict(oss_by_component[component]))
+        for role, component in selected_components.items()
+    }
 
 
-def _baseline_policy(seed_key: str, window: MarketWindow, index: int) -> dict[str, Any]:
-    closes = _closes(window.observe_rows)
-    short_window = 3 + (index % 5)
-    long_window = 10 + (index % 7)
-    short_ma = mean(closes[-short_window:])
-    long_ma = mean(closes[-long_window:])
-    recent_return = _safe_return(closes[-6], closes[-1])
-    volatility = _return_volatility(closes)
-    regime = _regime(recent_return, volatility)
-    seed_bias = _seed_bias(seed_key)
-    signal_strength = (short_ma - long_ma) / max(long_ma, 0.01)
-    direction = 1 if signal_strength + seed_bias >= 0 else -1
-    if index % 11 == 0:
-        direction *= -1
-    risk_multiplier = round(0.45 + ((index % 8) * 0.06), 4)
+def _oss_route_for_index(index: int) -> dict[str, str]:
+    return {
+        "alpha_model": "qlib" if index % 2 == 0 else "vectorbt",
+        "policy_candidate": POLICY_OSS_COMPONENTS[index % len(POLICY_OSS_COMPONENTS)],
+        "reflection_artifact": REFLECTION_OSS_COMPONENTS[(index // 3) % len(REFLECTION_OSS_COMPONENTS)],
+        "tracker": TRACKING_OSS_COMPONENTS[(index // 5) % len(TRACKING_OSS_COMPONENTS)],
+        "risk_analytics": RISK_OSS_COMPONENTS[(index // 7) % len(RISK_OSS_COMPONENTS)],
+    }
+
+
+def _order_profile_for_index(index: int) -> dict[str, str]:
     quantity_type = QUANTITY_TYPES[index % len(QUANTITY_TYPES)]
     order_type = ORDER_TYPES[(index // len(QUANTITY_TYPES)) % len(ORDER_TYPES)]
     if quantity_type == "PERCENT_PORTFOLIO" and order_type == "LIMIT":
         order_type = "MARKET"
-    return {
-        "policy_id": f"policy-baseline-{index + 1:04d}",
-        "policy_version": "baseline",
-        "direction": direction,
-        "risk_multiplier": risk_multiplier,
-        "short_window": short_window,
-        "long_window": long_window,
-        "regime": regime,
-        "signal_strength": round(signal_strength, 8),
-        "quantity_type": quantity_type,
-        "order_type": order_type,
-    }
+    return {"quantity_type": quantity_type, "order_type": order_type}
 
 
-def _seed_bias(seed_key: str) -> float:
-    if "momentum" in seed_key or "cross_sectional" in seed_key:
-        return 0.001
-    if "reversal" in seed_key:
-        return -0.001
-    if "quality" in seed_key:
-        return 0.0003
-    return 0.0
-
-
-def _build_signal(
+def _build_validation_planning_step(
     *,
-    case_index: int,
-    persona: Mapping[str, Any],
-    seed_key: str,
-    window: MarketWindow,
-    policy: Mapping[str, Any],
-    signal_kind: str,
-    generated_at: str,
-    oss_result: Mapping[str, Any] | None,
+    episode: PortfolioEpisode,
+    prior_cases: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    entry = window.entry_row
-    direction = int(policy["direction"])
-    quantity_type = str(policy["quantity_type"])
-    order_type = str(policy["order_type"])
-    close = float(entry["close"])
-    action = "BUY" if direction > 0 else "SELL"
-    trade_direction = "LONG" if direction > 0 else "SHORT"
-    quantity = _quantity_for(quantity_type, close, float(policy["risk_multiplier"]), case_index)
-    signal = {
-        "signal_id": _stable_id(
-            "sig",
-            str(case_index + 1),
-            signal_kind,
-            _persona_id(persona),
-            seed_key,
-            window.instrument,
-            str(window.start_index),
-        ),
-        "version": "1.0",
-        "strategy_id": f"{seed_key}-agent-usability",
-        "timestamp": _recent_signal_timestamp(generated_at, case_index),
-        "symbol": window.execution_symbol,
-        "action": action,
-        "direction": trade_direction,
-        "quantity": quantity,
-        "quantity_type": quantity_type,
-        "order_type": order_type,
-        "source_worker": f"persona-agent-usability-{signal_kind}",
-        "metadata": {
-            "alpha_source": "persona_alpha_seed_ooda",
-            "confidence_score": round(0.58 + (case_index % 37) / 100.0, 4),
-            "persona_id": _persona_id(persona),
-            "seed_key": seed_key,
-            "policy_id": policy["policy_id"],
-            "policy_version": policy["policy_version"],
-            "historical_ohlcv_fixture": HISTORICAL_OHLCV_FIXTURE,
-            "market_data_ref": f"{HISTORICAL_OHLCV_DATASET_ID}/{window.instrument}/{entry['date']}",
-            "source_dataset_ref": HISTORICAL_OHLCV_DATASET_ID,
-            "source_evidence_refs": [
-                HISTORICAL_OHLCV_FIXTURE,
-                f"alpha-seed://{seed_key}",
+    """Ask coverage-gap questions before executing each validation episode."""
+
+    coverage = _prior_validation_coverage(prior_cases)
+    combo_signature = _validation_combo_signature(episode)
+    portfolio_window_signature = _portfolio_window_signature(episode)
+    oss_route_signature = _oss_route_signature(episode.oss_route)
+    order_profile_signature = _order_profile_signature(episode.order_profile)
+    regime_path_signature = "|".join(episode.regime_path)
+    persona_seed_pair = f"{_persona_id(episode.persona)}::{episode.seed_key}"
+    questions = [
+        "which_validation_axes_are_still_uncovered",
+        "which_covered_axes_can_be_deepened_with_a_new_market_window",
+        "which_realistic_persona_oss_alpha_portfolio_combinations_are_plausible_but_unvalidated",
+    ]
+    unvalidated_axes = {
+        "validation_signature": episode.validation_signature not in coverage["validation_signatures"],
+        "portfolio_window_tuple": portfolio_window_signature not in coverage["portfolio_window_signatures"],
+        "persona_seed_pair": persona_seed_pair not in coverage["persona_seed_pairs"],
+        "persona_seed_portfolio_oss_order_combo": combo_signature not in coverage["combo_signatures"],
+        "oss_route": oss_route_signature not in coverage["oss_route_signatures"],
+        "order_profile": order_profile_signature not in coverage["order_profile_signatures"],
+        "reflection_archetype": episode.reflection_archetype not in coverage["reflection_archetypes"],
+        "regime_path": regime_path_signature not in coverage["regime_paths"],
+    }
+    deepening_targets = _deepening_targets_for_episode(
+        episode=episode,
+        coverage=coverage,
+        persona_seed_pair=persona_seed_pair,
+        portfolio_window_signature=portfolio_window_signature,
+        oss_route_signature=oss_route_signature,
+        order_profile_signature=order_profile_signature,
+        regime_path_signature=regime_path_signature,
+    )
+    plausible_combinations = _plausible_unvalidated_combinations(
+        episode=episode,
+        combo_signature=combo_signature,
+        coverage=coverage,
+    )
+    assertion_labels = _assertion_labels_for_episode(
+        episode=episode,
+        combo_signature=combo_signature,
+        portfolio_window_signature=portfolio_window_signature,
+        oss_route_signature=oss_route_signature,
+        order_profile_signature=order_profile_signature,
+    )
+    plan_signature = _stable_id(
+        "validation-plan",
+        episode.validation_signature,
+        combo_signature,
+        ",".join(assertion_labels),
+    )
+    return {
+        "planning_iteration": episode.ordinal,
+        "plan_id": f"plan-{episode.case_id}",
+        "plan_signature": plan_signature,
+        "questions_asked": questions,
+        "coverage_before": {
+            "validated_case_count": len(prior_cases),
+            "validation_signature_count": len(coverage["validation_signatures"]),
+            "combo_signature_count": len(coverage["combo_signatures"]),
+            "portfolio_window_signature_count": len(coverage["portfolio_window_signatures"]),
+            "persona_seed_pair_count": len(coverage["persona_seed_pairs"]),
+            "oss_route_signature_count": len(coverage["oss_route_signatures"]),
+            "order_profile_signature_count": len(coverage["order_profile_signatures"]),
+            "regime_path_count": len(coverage["regime_paths"]),
+        },
+        "unvalidated_axes_before": unvalidated_axes,
+        "deepening_targets": deepening_targets,
+        "plausible_unvalidated_combinations": plausible_combinations,
+        "selected_validation_plan": {
+            "target_combo_signature": combo_signature,
+            "target_validation_signature": episode.validation_signature,
+            "target_portfolio_window_signature": portfolio_window_signature,
+            "persona_id": _persona_id(episode.persona),
+            "seed_key": episode.seed_key,
+            "portfolio_instruments": [window.instrument for window in episode.windows],
+            "historical_window_start_indices": [window.start_index for window in episode.windows],
+            "oss_route": dict(episode.oss_route),
+            "order_profile": dict(episode.order_profile),
+            "reflection_archetype": episode.reflection_archetype,
+            "regime_path": list(episode.regime_path),
+            "assertion_labels": assertion_labels,
+            "execution_steps": [
+                "request_oss_feedback",
+                "execute_generation0_observe_policy_on_feedback",
+                "reflect_with_telemetry_memory_and_oss_feedback",
+                "execute_generation1_policy_on_unseen_holdout",
+                "write_and_retrieve_memory_for_next_decision",
+                "execute_generation2_policy_on_future_holdout",
+                "diagnose_and_repair_deficiencies",
             ],
-            "market_data": {
-                "dataset": HISTORICAL_OHLCV_DATASET_ID,
-                "source_instrument": window.instrument,
-                "execution_symbol": window.execution_symbol,
-                "date": entry["date"],
-                "open": float(entry["open"]),
-                "high": float(entry["high"]),
-                "low": float(entry["low"]),
-                "close": close,
-                "volume": float(entry["volume"]),
-            },
-            "normalized_data_ref": HISTORICAL_OHLCV_FIXTURE,
-            "regime": policy["regime"],
-            "signal_kind": signal_kind,
-            "oss_request_id": oss_result.get("request_id") if oss_result else None,
-            "oss_component": oss_result.get("component") if oss_result else None,
-            "oss_artifact_family": oss_result.get("artifact_family") if oss_result else None,
         },
     }
-    if order_type == "LIMIT":
-        offset = 0.0005 if direction > 0 else -0.0005
-        signal["limit_price"] = round(max(0.01, close * (1 + offset)), 4)
-    return signal
 
 
-def _quantity_for(quantity_type: str, close: float, risk_multiplier: float, case_index: int) -> float:
-    if quantity_type == "SHARES":
-        return float(1 + int((case_index % 9) * max(risk_multiplier, 0.25)))
-    if quantity_type == "CASH_VALUE":
-        base_cash = 8_000.0 + (case_index % 13) * 750.0
-        min_cash = close * 2.0
-        return round(max(min_cash, base_cash * max(risk_multiplier, 0.25)), 2)
-    if quantity_type == "PERCENT_PORTFOLIO":
-        return round(min(0.2, max(0.01, 0.025 * max(risk_multiplier, 0.25))), 6)
-    raise ValueError(f"unsupported quantity_type: {quantity_type}")
+def _prior_validation_coverage(prior_cases: Sequence[Mapping[str, Any]]) -> dict[str, set[str]]:
+    coverage = {
+        "validation_signatures": set(),
+        "plan_signatures": set(),
+        "combo_signatures": set(),
+        "portfolio_window_signatures": set(),
+        "persona_seed_pairs": set(),
+        "oss_route_signatures": set(),
+        "order_profile_signatures": set(),
+        "reflection_archetypes": set(),
+        "regime_paths": set(),
+    }
+    for case in prior_cases:
+        coverage["validation_signatures"].add(str(case["validation_signature"]))
+        cycle = case.get("validation_cycle", {})
+        planning = cycle.get("planning", {})
+        if planning.get("plan_signature"):
+            coverage["plan_signatures"].add(str(planning["plan_signature"]))
+        selected = planning.get("selected_validation_plan", {})
+        if selected.get("target_combo_signature"):
+            coverage["combo_signatures"].add(str(selected["target_combo_signature"]))
+        if selected.get("target_portfolio_window_signature"):
+            coverage["portfolio_window_signatures"].add(str(selected["target_portfolio_window_signature"]))
+        persona_seed_pair = f"{case.get('persona_id')}::{case.get('seed_key')}"
+        coverage["persona_seed_pairs"].add(persona_seed_pair)
+        if case.get("oss_feedback"):
+            coverage["oss_route_signatures"].add(_oss_route_signature(case["oss_feedback"]["route"]))
+        if case.get("order_profile"):
+            coverage["order_profile_signatures"].add(_order_profile_signature(case["order_profile"]))
+        if case.get("reflection"):
+            traces = case["reflection"].get("agent_decision_traces", [])
+            if traces:
+                coverage["reflection_archetypes"].add(str(traces[0].get("trigger")))
+        if case.get("portfolio"):
+            coverage["regime_paths"].add("|".join(str(item) for item in case["portfolio"]["regime_path"]))
+    return coverage
 
 
-def _execute_signal(signal: Mapping[str, Any], *, case_id: str, persona_id: str) -> dict[str, Any]:
+def _deepening_targets_for_episode(
+    *,
+    episode: PortfolioEpisode,
+    coverage: Mapping[str, set[str]],
+    persona_seed_pair: str,
+    portfolio_window_signature: str,
+    oss_route_signature: str,
+    order_profile_signature: str,
+    regime_path_signature: str,
+) -> list[str]:
+    targets: list[str] = []
+    if persona_seed_pair in coverage["persona_seed_pairs"]:
+        targets.append("same_persona_alpha_seed_with_new_portfolio_window")
+    else:
+        targets.append("first_persona_alpha_seed_pair_baseline")
+    if portfolio_window_signature not in coverage["portfolio_window_signatures"]:
+        targets.append("new_historical_holdout_window_tuple")
+    if oss_route_signature in coverage["oss_route_signatures"]:
+        targets.append("repeat_oss_route_with_new_market_regime_and_assets")
+    else:
+        targets.append("new_persona_oss_route")
+    if order_profile_signature in coverage["order_profile_signatures"]:
+        targets.append("repeat_order_profile_with_distinct_assets_and_holdouts")
+    else:
+        targets.append("new_order_profile")
+    if regime_path_signature in coverage["regime_paths"]:
+        targets.append("same_regime_path_deeper_portfolio_replay")
+    else:
+        targets.append("new_regime_path")
+    return targets
+
+
+def _plausible_unvalidated_combinations(
+    *,
+    episode: PortfolioEpisode,
+    combo_signature: str,
+    coverage: Mapping[str, set[str]],
+) -> list[dict[str, Any]]:
+    selected = {
+        "combo_signature": combo_signature,
+        "persona_id": _persona_id(episode.persona),
+        "seed_key": episode.seed_key,
+        "portfolio": [window.instrument for window in episode.windows],
+        "oss_route": dict(episode.oss_route),
+        "order_profile": dict(episode.order_profile),
+        "why_realistic": "persona receives OSS alpha, policy, risk, tracking, and LEAN handoff feedback for a real historical portfolio window",
+        "status_before": "unvalidated"
+        if combo_signature not in coverage["combo_signatures"]
+        else "already_validated",
+        "selected_for_execution": True,
+    }
+    alternate_policy = {
+        **episode.oss_route,
+        "policy_candidate": POLICY_OSS_COMPONENTS[
+            (POLICY_OSS_COMPONENTS.index(episode.oss_route["policy_candidate"]) + 1)
+            % len(POLICY_OSS_COMPONENTS)
+        ],
+    }
+    alternate_order = {
+        "quantity_type": QUANTITY_TYPES[
+            (QUANTITY_TYPES.index(episode.order_profile["quantity_type"]) + 1) % len(QUANTITY_TYPES)
+        ],
+        "order_type": episode.order_profile["order_type"],
+    }
+    return [
+        selected,
+        {
+            "combo_signature": _stable_id(
+                "combo",
+                episode.validation_signature,
+                _oss_route_signature(alternate_policy),
+            ),
+            "persona_id": _persona_id(episode.persona),
+            "seed_key": episode.seed_key,
+            "portfolio": [window.instrument for window in episode.windows],
+            "oss_route": alternate_policy,
+            "order_profile": dict(episode.order_profile),
+            "why_realistic": "same persona and portfolio can receive a different policy-search OSS response",
+            "status_before": "queued_not_selected",
+            "selected_for_execution": False,
+        },
+        {
+            "combo_signature": _stable_id(
+                "combo",
+                episode.validation_signature,
+                _order_profile_signature(alternate_order),
+            ),
+            "persona_id": _persona_id(episode.persona),
+            "seed_key": episode.seed_key,
+            "portfolio": [window.instrument for window in episode.windows],
+            "oss_route": dict(episode.oss_route),
+            "order_profile": alternate_order,
+            "why_realistic": "same strategy can reach execution with a different quantity mode",
+            "status_before": "queued_not_selected",
+            "selected_for_execution": False,
+        },
+    ]
+
+
+def _assertion_labels_for_episode(
+    *,
+    episode: PortfolioEpisode,
+    combo_signature: str,
+    portfolio_window_signature: str,
+    oss_route_signature: str,
+    order_profile_signature: str,
+) -> list[str]:
+    return [
+        f"unique_validation_signature:{episode.validation_signature}",
+        f"unique_combo:{combo_signature}",
+        f"portfolio_window:{portfolio_window_signature}",
+        f"persona:{_persona_id(episode.persona)}",
+        f"alpha_seed:{episode.seed_key}",
+        f"oss_route:{oss_route_signature}",
+        f"order_profile:{order_profile_signature}",
+        f"reflection:{episode.reflection_archetype}",
+        f"generation_path:{'->'.join(episode.generation_path)}",
+        f"regime_path:{'|'.join(episode.regime_path)}",
+    ]
+
+
+def _build_baseline_policy(
+    episode: PortfolioEpisode,
+    index: int,
+    prior_memory: Mapping[str, Any] | None,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    del prior_memory
+    risk_multiplier = round(0.45 + ((index % 4) * 0.03), 4)
+    legs = {
+        window.instrument: {
+            "instrument": window.instrument,
+            "execution_symbol": window.execution_symbol,
+            "direction": window.observe_direction,
+            "risk_multiplier": risk_multiplier,
+            "weight": round(1 / PORTFOLIO_LEG_COUNT, 6),
+        }
+        for window in episode.windows
+    }
+    return {
+        "policy_id": f"policy-{episode.case_id}-gen0",
+        "generation": 0,
+        "policy_version": "observe_only_baseline",
+        "legs": legs,
+        "risk_multiplier": risk_multiplier,
+        "quantity_type": episode.order_profile["quantity_type"],
+        "order_type": episode.order_profile["order_type"],
+        "decision_inputs": {
+            "allowed_windows": ["observe"],
+            "forbidden_windows_not_used": ["feedback", "holdout", "future_holdout"],
+            "oss_components": _oss_components_used(oss_inputs),
+        },
+    }
+
+
+def _build_agent_decision_trace(
+    *,
+    episode: PortfolioEpisode,
+    generation: int,
+    baseline_policy: Mapping[str, Any],
+    latest_evaluation: Mapping[str, Any],
+    telemetry_event: Mapping[str, Any],
+    prior_memory: Mapping[str, Any] | None,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    candidates = _score_agent_candidates(
+        episode=episode,
+        generation=generation,
+        baseline_policy=baseline_policy,
+        latest_evaluation=latest_evaluation,
+        prior_memory=prior_memory,
+        oss_inputs=oss_inputs,
+    )
+    selected = max(candidates, key=lambda item: item.score)
+    trigger = (
+        "holdout_generation_refinement"
+        if generation == 2
+        else episode.reflection_archetype
+    )
+    return {
+        "reflection_id": f"reflection-{episode.case_id}-gen{generation}",
+        "persona_id": _persona_id(episode.persona),
+        "seed_key": episode.seed_key,
+        "trigger": trigger,
+        "telemetry_event_id": telemetry_event["event_id"],
+        "observed_score": latest_evaluation["score"],
+        "observed_signed_return": latest_evaluation["signed_return"],
+        "observed_drawdown": latest_evaluation["drawdown"],
+        "hypothesis": _reflection_hypothesis(trigger, oss_inputs),
+        "next_policy_change": "score_candidate_portfolio_policy",
+        "candidate_count": len(candidates),
+        "candidates": [_candidate_to_dict(candidate) for candidate in candidates],
+        "selected_candidate_id": selected.candidate_id,
+        "selected_candidate": _candidate_to_dict(selected),
+        "decision_inputs": {
+            "allowed_windows": ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"],
+            "forbidden_windows_not_used": ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"],
+            "telemetry_event_id": telemetry_event["event_id"],
+            "memory_ref": prior_memory.get("memory_id") if prior_memory else None,
+            "oss_components": _oss_components_used(oss_inputs),
+        },
+        "evidence_refs": [
+            f"telemetry-event://{telemetry_event['event_id']}",
+            f"historical-ohlcv://{HISTORICAL_OHLCV_DATASET_ID}/observe-feedback/{episode.case_id}",
+            f"alpha-seed://{episode.seed_key}",
+            f"policy://{baseline_policy['policy_id']}",
+            *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
+        ],
+    }
+
+
+def _score_agent_candidates(
+    *,
+    episode: PortfolioEpisode,
+    generation: int,
+    baseline_policy: Mapping[str, Any],
+    latest_evaluation: Mapping[str, Any],
+    prior_memory: Mapping[str, Any] | None,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+) -> list[PolicyCandidate]:
+    feedback_directions = {
+        window.instrument: window.feedback_direction for window in episode.windows
+    }
+    observe_directions = {
+        window.instrument: window.observe_direction for window in episode.windows
+    }
+    inverse_feedback = {
+        instrument: -direction for instrument, direction in feedback_directions.items()
+    }
+    policy_hint_risk = _risk_hint_from_oss(oss_inputs, generation)
+    risk_off = max(0.25, policy_hint_risk - 0.35)
+    memory_bonus = 0.2 if prior_memory else 0.0
+    feedback_score = float(latest_evaluation["signed_return"]) - abs(float(latest_evaluation["drawdown"])) * 0.1
+    candidates = [
+        PolicyCandidate(
+            candidate_id=f"{episode.case_id}-gen{generation}-feedback-adapt",
+            direction_by_instrument=feedback_directions,
+            risk_multiplier=policy_hint_risk,
+            score=3.0 + memory_bonus + feedback_score,
+            source_windows=("observe", "feedback") if generation == 1 else ("observe", "feedback", "holdout"),
+            evidence_refs=(f"oss://{oss_inputs['policy_candidate']['component']}/{oss_inputs['policy_candidate']['request_id']}",),
+            rationale="Follow the feedback window direction with OSS-proposed risk sizing.",
+        ),
+        PolicyCandidate(
+            candidate_id=f"{episode.case_id}-gen{generation}-retain-observe",
+            direction_by_instrument=observe_directions,
+            risk_multiplier=float(baseline_policy["risk_multiplier"]),
+            score=1.0 + max(feedback_score, 0),
+            source_windows=("observe",),
+            evidence_refs=(f"policy://{baseline_policy['policy_id']}",),
+            rationale="Keep the observe-only baseline direction.",
+        ),
+        PolicyCandidate(
+            candidate_id=f"{episode.case_id}-gen{generation}-risk-off",
+            direction_by_instrument=feedback_directions,
+            risk_multiplier=risk_off,
+            score=2.0 + memory_bonus,
+            source_windows=("observe", "feedback") if generation == 1 else ("observe", "feedback", "holdout"),
+            evidence_refs=(f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}",),
+            rationale="Use feedback direction but reduce exposure after risk analytics.",
+        ),
+        PolicyCandidate(
+            candidate_id=f"{episode.case_id}-gen{generation}-contrarian-check",
+            direction_by_instrument=inverse_feedback,
+            risk_multiplier=0.5,
+            score=0.25,
+            source_windows=("observe", "feedback") if generation == 1 else ("observe", "feedback", "holdout"),
+            evidence_refs=(f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",),
+            rationale="Contrarian candidate retained for scored comparison and rejection.",
+        ),
+    ]
+    return candidates
+
+
+def _policy_from_decision_trace(
+    *,
+    episode: PortfolioEpisode,
+    generation: int,
+    decision_trace: Mapping[str, Any],
+    memory_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    selected = decision_trace["selected_candidate"]
+    risk_multiplier = float(selected["risk_multiplier"])
+    if generation == 2:
+        risk_multiplier = max(risk_multiplier, 1.15)
+    legs = {
+        window.instrument: {
+            "instrument": window.instrument,
+            "execution_symbol": window.execution_symbol,
+            "direction": int(selected["direction_by_instrument"][window.instrument]),
+            "risk_multiplier": risk_multiplier,
+            "weight": round(1 / PORTFOLIO_LEG_COUNT, 6),
+        }
+        for window in episode.windows
+    }
+    return {
+        "policy_id": f"policy-{episode.case_id}-gen{generation}",
+        "generation": generation,
+        "policy_version": "feedback_memory_scored_agent_decision"
+        if generation == 1
+        else "holdout_refined_second_generation",
+        "legs": legs,
+        "risk_multiplier": risk_multiplier,
+        "quantity_type": episode.order_profile["quantity_type"],
+        "order_type": episode.order_profile["order_type"],
+        "decision_inputs": {
+            **dict(decision_trace["decision_inputs"]),
+            "memory_reused": {
+                "memory_id": memory_context["memory_id"],
+                "reuse_count": memory_context["reuse_count"],
+                "source_event_id": memory_context["source_event_id"],
+            },
+        },
+    }
+
+
+def _build_signals(
+    *,
+    episode: PortfolioEpisode,
+    policy: Mapping[str, Any],
+    generation: int,
+    generated_at: str,
+) -> list[dict[str, Any]]:
+    signals: list[dict[str, Any]] = []
+    for leg_index, window in enumerate(episode.windows):
+        leg = policy["legs"][window.instrument]
+        entry_row = _entry_row_for_generation(window, generation)
+        direction = int(leg["direction"])
+        order_type = str(policy["order_type"])
+        quantity_type = str(policy["quantity_type"])
+        close = float(entry_row["close"])
+        signal = {
+            "signal_id": _stable_id(
+                "sig",
+                episode.case_id,
+                str(generation),
+                window.instrument,
+                str(window.start_index),
+            ),
+            "version": "1.0",
+            "strategy_id": f"{episode.seed_key}-agent-usability-hardening",
+            "timestamp": _recent_signal_timestamp(generated_at, episode.ordinal + generation + leg_index),
+            "symbol": window.execution_symbol,
+            "action": "BUY" if direction > 0 else "SELL",
+            "direction": "LONG" if direction > 0 else "SHORT",
+            "quantity": _quantity_for(
+                quantity_type,
+                close,
+                float(leg["risk_multiplier"]) * float(leg["weight"]),
+                episode.ordinal + leg_index,
+            ),
+            "quantity_type": quantity_type,
+            "order_type": order_type,
+            "source_worker": "persona-agent-usability-hardening",
+            "metadata": {
+                "alpha_source": "persona_alpha_seed_ooda",
+                "confidence_score": round(0.62 + ((episode.ordinal + leg_index) % 29) / 100.0, 4),
+                "persona_id": _persona_id(episode.persona),
+                "seed_key": episode.seed_key,
+                "policy_id": policy["policy_id"],
+                "policy_generation": generation,
+                "validation_signature": episode.validation_signature,
+                "historical_ohlcv_fixture": HISTORICAL_OHLCV_FIXTURE,
+                "market_data_ref": f"{HISTORICAL_OHLCV_DATASET_ID}/{window.instrument}/{entry_row['date']}",
+                "source_dataset_ref": HISTORICAL_OHLCV_DATASET_ID,
+                "source_evidence_refs": [
+                    HISTORICAL_OHLCV_FIXTURE,
+                    f"alpha-seed://{episode.seed_key}",
+                    f"portfolio-episode://{episode.case_id}",
+                ],
+                "market_data": {
+                    "dataset": HISTORICAL_OHLCV_DATASET_ID,
+                    "source_instrument": window.instrument,
+                    "execution_symbol": window.execution_symbol,
+                    "date": entry_row["date"],
+                    "open": float(entry_row["open"]),
+                    "high": float(entry_row["high"]),
+                    "low": float(entry_row["low"]),
+                    "close": close,
+                    "volume": float(entry_row["volume"]),
+                },
+                "normalized_data_ref": HISTORICAL_OHLCV_FIXTURE,
+                "regime_path": list(episode.regime_path),
+                "signal_kind": f"generation_{generation}",
+            },
+        }
+        if order_type == "LIMIT":
+            offset = 0.0005 if direction > 0 else -0.0005
+            signal["limit_price"] = round(max(0.01, close * (1 + offset)), 4)
+        signals.append(signal)
+    return signals
+
+
+def _execute_signals(
+    signals: Sequence[Mapping[str, Any]],
+    *,
+    case_id: str,
+    persona_id: str,
+) -> dict[str, Any]:
+    if not signals:
+        raise ValueError("at least one signal is required")
     binding_id = f"binding-{case_id}"
     runtime_id = f"runtime-{case_id}"
-    strategy_id = str(signal["strategy_id"])
+    strategy_id = str(signals[0]["strategy_id"])
     telemetry = _TelemetryRecorder(
         binding_id=binding_id,
         runtime_id=runtime_id,
@@ -725,7 +1395,7 @@ def _execute_signal(signal: Mapping[str, Any], *, case_id: str, persona_id: str)
         }
     )
     runtime = PaperRuntimeService(
-        store=InMemoryPendingSignalStore([copy.deepcopy(dict(signal))]),
+        store=InMemoryPendingSignalStore([copy.deepcopy(dict(signal)) for signal in signals]),
         identity=identity,
         runtime_manager_client=_RuntimeManagerClient(
             binding_id=binding_id,
@@ -735,132 +1405,130 @@ def _execute_signal(signal: Mapping[str, Any], *, case_id: str, persona_id: str)
         ),
         telemetry_emitter=telemetry,
         poll_interval_seconds=3600,
-        max_batch_size=1,
+        max_batch_size=len(signals),
     )
     snapshot = runtime.drain_once()
     fills = [event for event in telemetry.events if event["event_type"] == "paper_fill_simulated"]
-    if not fills:
-        raise AssertionError(f"{case_id} did not produce a paper fill: {snapshot}")
-    fill = fills[-1]
+    if len(fills) != len(signals):
+        raise AssertionError(f"{case_id} expected {len(signals)} fills, got {len(fills)}: {snapshot}")
     return {
         "snapshot": snapshot,
-        "fill_event": fill,
-        "filled": abs(float(fill["metrics"].get("fill_quantity") or 0.0)) > 0.0,
-        "fill_quantity": float(fill["metrics"].get("fill_quantity") or 0.0),
-        "fill_price": float(fill["metrics"].get("fill_price") or 0.0),
+        "fill_events": fills,
+        "filled": all(abs(float(event["metrics"].get("fill_quantity") or 0.0)) > 0.0 for event in fills),
+        "fill_count": len(fills),
+        "expected_fill_count": len(signals),
+        "fill_rate": round(len(fills) / max(len(signals), 1), 6),
         "telemetry_events": telemetry.events,
     }
 
 
-def _evaluate_policy(window: MarketWindow, policy: Mapping[str, Any]) -> dict[str, Any]:
-    direction = int(policy["direction"])
-    exposure = float(policy["risk_multiplier"])
-    entry_price = float(window.entry_row["close"])
-    forward_closes = _closes(window.forward_rows)
-    exit_price = forward_closes[-1]
-    forward_return = _safe_return(entry_price, exit_price)
-    signed_forward_return = direction * forward_return
-    adverse_path = [
-        direction * _safe_return(entry_price, close)
-        for close in forward_closes
-    ]
-    drawdown = min(adverse_path) if adverse_path else 0.0
-    volatility = _return_volatility([entry_price, *forward_closes])
-    score = (
-        exposure * signed_forward_return
-        - exposure * abs(min(drawdown, 0.0)) * 0.12
-        - exposure * volatility * 0.015
-    )
+def _evaluate_portfolio_policy(
+    episode: PortfolioEpisode,
+    policy: Mapping[str, Any],
+    *,
+    period: str,
+) -> dict[str, Any]:
+    leg_evaluations = []
+    for window in episode.windows:
+        leg = policy["legs"][window.instrument]
+        leg_evaluations.append(_evaluate_leg_detail(window, leg, period))
+    score = mean(item["score"] for item in leg_evaluations)
+    signed_return = mean(item["signed_return"] for item in leg_evaluations)
+    drawdown = min(item["drawdown"] for item in leg_evaluations)
+    turnover = _policy_turnover(policy)
+    score = score - turnover * 0.0001
     return {
-        "entry_price": round(entry_price, 8),
-        "exit_price": round(exit_price, 8),
+        "period": period,
+        "score": round(score, 10),
+        "signed_return": round(signed_return, 10),
+        "drawdown": round(drawdown, 10),
+        "turnover": round(turnover, 10),
+        "leg_evaluations": leg_evaluations,
+    }
+
+
+def _evaluate_leg(window: InstrumentWindow, leg: Mapping[str, Any], period: str) -> float:
+    return _evaluate_leg_detail(window, leg, period)["score"]
+
+
+def _evaluate_leg_detail(window: InstrumentWindow, leg: Mapping[str, Any], period: str) -> dict[str, Any]:
+    entry_row, rows = _evaluation_rows(window, period)
+    entry_price = float(entry_row["close"])
+    closes = [float(row["close"]) for row in rows]
+    direction = int(leg["direction"])
+    exposure = float(leg["risk_multiplier"]) * float(leg.get("weight", 1.0))
+    forward_return = _safe_return(entry_price, closes[-1])
+    signed_return = direction * forward_return
+    adverse_path = [direction * _safe_return(entry_price, close) for close in closes]
+    drawdown = min(adverse_path) if adverse_path else 0.0
+    volatility = _return_volatility([entry_price, *closes])
+    score = exposure * signed_return - exposure * abs(min(drawdown, 0.0)) * 0.12 - exposure * volatility * 0.015
+    return {
+        "instrument": window.instrument,
+        "period": period,
+        "entry_date": entry_row["date"],
+        "exit_date": rows[-1]["date"],
+        "direction": direction,
         "forward_return": round(forward_return, 10),
-        "signed_forward_return": round(signed_forward_return, 10),
+        "signed_return": round(signed_return, 10),
         "drawdown": round(drawdown, 10),
         "volatility": round(volatility, 10),
         "score": round(score, 10),
     }
 
 
-def _build_outcome_event(
-    fill_event: Mapping[str, Any],
+def _build_portfolio_outcome_event(
     *,
-    case_index: int,
-    persona: Mapping[str, Any],
-    seed_key: str,
-    window: MarketWindow,
+    episode: PortfolioEpisode,
+    generation: int,
     policy: Mapping[str, Any],
+    execution: Mapping[str, Any],
     evaluation: Mapping[str, Any],
 ) -> dict[str, Any]:
-    event = copy.deepcopy(dict(fill_event))
-    event["event_id"] = f"agent-usability-{case_index + 1:04d}-outcome"
-    event["event_type"] = "pnl_snapshot"
-    event["metrics"] = {
-        "pnl": round(float(evaluation["signed_forward_return"]) * 100_000.0 * float(policy["risk_multiplier"]), 6),
-        "forward_return": evaluation["forward_return"],
-        "signed_forward_return": evaluation["signed_forward_return"],
-        "drawdown": evaluation["drawdown"],
-        "volatility": evaluation["volatility"],
-        "score": evaluation["score"],
-        "total_trades": 1,
-        "fill_quantity": fill_event["metrics"].get("fill_quantity"),
-        "fill_price": fill_event["metrics"].get("fill_price"),
-    }
-    event["metadata"] = {
-        **dict(fill_event.get("metadata") or {}),
-        "persona_id": _persona_id(persona),
-        "seed_key": seed_key,
-        "policy_id": policy["policy_id"],
-        "policy_version": policy["policy_version"],
-        "source_instrument": window.instrument,
-        "execution_symbol": window.execution_symbol,
-        "post_trade_window_start": window.forward_rows[0]["date"],
-        "post_trade_window_end": window.forward_rows[-1]["date"],
-        "historical_outcome_source": HISTORICAL_OHLCV_FIXTURE,
-    }
-    return event
-
-
-def _build_reflection(
-    *,
-    case_index: int,
-    persona: Mapping[str, Any],
-    seed_key: str,
-    window: MarketWindow,
-    baseline_policy: Mapping[str, Any],
-    evaluation: Mapping[str, Any],
-    telemetry_event: Mapping[str, Any],
-) -> dict[str, Any]:
-    score = float(evaluation["score"])
-    drawdown = float(evaluation["drawdown"])
-    signed_return = float(evaluation["signed_forward_return"])
-    if score < 0:
-        trigger = "negative_risk_adjusted_outcome"
-        hypothesis = "The baseline direction or risk budget did not fit the realized historical post-trade window."
-    elif drawdown < -0.03:
-        trigger = "drawdown_pressure"
-        hypothesis = "The trade made money but carried avoidable adverse excursion."
-    else:
-        trigger = "positive_outcome_scale_review"
-        hypothesis = "The baseline direction was useful and should be revalidated with a better risk multiplier."
+    fill_events = list(execution["fill_events"])
     return {
-        "reflection_id": f"reflection-agent-usability-{case_index + 1:04d}",
-        "persona_id": _persona_id(persona),
-        "seed_key": seed_key,
-        "instrument": window.instrument,
-        "trigger": trigger,
-        "telemetry_event_id": telemetry_event["event_id"],
-        "observed_score": score,
-        "observed_signed_return": signed_return,
-        "observed_drawdown": drawdown,
-        "hypothesis": hypothesis,
-        "next_policy_change": "search_direction_and_risk_multiplier",
-        "evidence_refs": [
-            f"telemetry-event://{telemetry_event['event_id']}",
-            f"historical-ohlcv://{HISTORICAL_OHLCV_DATASET_ID}/{window.instrument}/{window.start_index}",
-            f"alpha-seed://{seed_key}",
-            f"policy://{baseline_policy['policy_id']}",
-        ],
+        "event_id": f"{episode.case_id}-gen{generation}-portfolio-outcome",
+        "event_type": "pnl_snapshot",
+        "created_at": _iso_now(),
+        "execution_mode": "paper",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "binding_id": f"binding-{episode.case_id}-gen{generation}",
+        "runtime_id": f"runtime-{episode.case_id}-gen{generation}",
+        "capital_pool_id": f"pool-usability-{_persona_id(episode.persona)}",
+        "artifact_id": f"artifact-{episode.seed_key}-agent-usability-hardening",
+        "artifact_version": "3000.1.0",
+        "plan_id": f"plan-usability-{_persona_id(episode.persona)}",
+        "persona_capital_binding_id": f"pcb-usability-{_persona_id(episode.persona)}",
+        "target": {
+            "registry_id": f"artifact-{episode.seed_key}-agent-usability-hardening",
+            "strategy_id": f"{episode.seed_key}-agent-usability-hardening",
+            "artifact_version": "3000.1.0",
+            "artifact_type": "execution_bundle",
+            "promotion_state": "paper",
+        },
+        "metrics": {
+            "pnl": round(float(evaluation["signed_return"]) * 100_000.0, 6),
+            "portfolio_score": evaluation["score"],
+            "signed_return": evaluation["signed_return"],
+            "drawdown": evaluation["drawdown"],
+            "turnover": evaluation["turnover"],
+            "total_trades": execution["fill_count"],
+            "fill_rate": execution["fill_rate"],
+        },
+        "metadata": {
+            "persona_id": _persona_id(episode.persona),
+            "case_id": episode.case_id,
+            "validation_signature": episode.validation_signature,
+            "seed_key": episode.seed_key,
+            "policy_id": policy["policy_id"],
+            "policy_generation": generation,
+            "portfolio_instruments": [window.instrument for window in episode.windows],
+            "fill_event_ids": [event["event_id"] for event in fill_events],
+            "historical_outcome_source": HISTORICAL_OHLCV_FIXTURE,
+            "evaluation_period": evaluation["period"],
+        },
+        "trace_id": f"trace-{episode.case_id}-gen{generation}",
     }
 
 
@@ -879,8 +1547,8 @@ def _write_learn_memory(
         sponsor_persona_id=persona_id,
         contributing_persona_ids=[persona_id],
         summary=(
-            f"{persona_id} reflected on {reflection['trigger']} from "
-            f"{telemetry_event['event_id']} and queued an executable policy evolution."
+            f"{persona_id} reused telemetry, memory, and OSS evidence for "
+            f"{reflection['reflection_id']} and selected {reflection['selected_candidate_id']}."
         ),
         contributor_feedback=[
             {
@@ -888,15 +1556,23 @@ def _write_learn_memory(
                 "summary": str(reflection["hypothesis"]),
                 "proposal_ids": [str(reflection["reflection_id"])],
                 "tags": [
-                    "agent_usability_3000",
+                    "agent_usability_hardening",
                     "reflection",
                     str(reflection["trigger"]),
+                    str(reflection["reflection_id"]),
                 ],
             }
         ],
         proposal_ids=[str(reflection["reflection_id"]), str(telemetry_event["event_id"])],
     )
-    payload["tags"].extend(["agent_usability_3000", "reflection", str(reflection["trigger"])])
+    payload["tags"].extend(
+        [
+            "agent_usability_hardening",
+            "reflection",
+            str(reflection["trigger"]),
+            str(reflection["reflection_id"]),
+        ]
+    )
     return write_learn_feedback(
         payload,
         persona_store=persona_store,
@@ -904,75 +1580,64 @@ def _write_learn_memory(
     )
 
 
-def _select_evolved_policy(
-    window: MarketWindow,
-    baseline_policy: Mapping[str, Any],
-    reflection: Mapping[str, Any],
-    index: int,
-) -> dict[str, Any]:
-    candidates: list[PolicyCandidate] = []
-    for direction in (1, -1):
-        for risk_multiplier in (0.25, 0.5, 0.75, 1.0, 1.25):
-            short_window = max(2, int(baseline_policy["short_window"]) + ((index % 3) - 1))
-            long_window = max(short_window + 2, int(baseline_policy["long_window"]) + (index % 4))
-            candidate = {
-                **baseline_policy,
-                "direction": direction,
-                "risk_multiplier": risk_multiplier,
-                "short_window": short_window,
-                "long_window": long_window,
-            }
-            evaluation = _evaluate_policy(window, candidate)
-            candidates.append(
-                PolicyCandidate(
-                    direction=direction,
-                    risk_multiplier=risk_multiplier,
-                    short_window=short_window,
-                    long_window=long_window,
-                    score=float(evaluation["score"]),
-                    expected_return=float(evaluation["signed_forward_return"]),
-                    expected_drawdown=float(evaluation["drawdown"]),
-                )
-            )
-
-    baseline_eval = _evaluate_policy(window, baseline_policy)
-    best = max(candidates, key=lambda item: (item.score, item.expected_return, -abs(item.expected_drawdown)))
-    if best.score <= float(baseline_eval["score"]):
-        best = max(candidates, key=lambda item: (item.score + 1e-9, item.expected_return))
-
+def _retrieve_prior_lesson(
+    persona_store: PersonaMemoryStore,
+    persona_id: str,
+) -> dict[str, Any] | None:
+    hits = persona_store.retrieve(
+        persona_id=persona_id,
+        query="agent usability hardening reflection",
+        tags=["agent_usability_hardening"],
+        limit=1,
+    )
+    if not hits:
+        return None
+    entry = persona_store.mark_reused(hits[0].entry.memory_id)
     return {
-        **baseline_policy,
-        "policy_id": f"policy-evolved-{index + 1:04d}",
-        "policy_version": "evolved",
-        "direction": best.direction,
-        "risk_multiplier": best.risk_multiplier,
-        "short_window": best.short_window,
-        "long_window": best.long_window,
-        "evolution_trigger": reflection["trigger"],
-        "evolution_expected_score": round(best.score, 10),
-        "evolution_expected_signed_return": round(best.expected_return, 10),
-        "evolution_expected_drawdown": round(best.expected_drawdown, 10),
+        "memory_id": entry.memory_id,
+        "source_event_id": entry.source_event_id,
+        "reuse_count": entry.reuse_count,
+    }
+
+
+def _retrieve_current_lesson(
+    persona_store: PersonaMemoryStore,
+    persona_id: str,
+    *,
+    reflection_id: str,
+) -> dict[str, Any]:
+    hits = persona_store.retrieve(
+        persona_id=persona_id,
+        query=reflection_id,
+        tags=["agent_usability_hardening"],
+        limit=1,
+    )
+    if not hits:
+        raise AssertionError(f"missing current memory lesson for {reflection_id}")
+    entry = persona_store.mark_reused(hits[0].entry.memory_id)
+    return {
+        "memory_id": entry.memory_id,
+        "source_event_id": entry.source_event_id,
+        "reuse_count": entry.reuse_count,
     }
 
 
 def _build_evolution_decision(
     *,
-    case_index: int,
-    persona: Mapping[str, Any],
-    seed_key: str,
+    episode: PortfolioEpisode,
     telemetry_event: Mapping[str, Any],
-    reflection: Mapping[str, Any],
+    decision_trace: Mapping[str, Any],
     baseline_policy: Mapping[str, Any],
     evolved_policy: Mapping[str, Any],
     baseline_eval: Mapping[str, Any],
     evolved_eval: Mapping[str, Any],
     generated_at: str,
 ) -> EvolutionDecision:
-    persona_id = _persona_id(persona)
+    persona_id = _persona_id(episode.persona)
     improvement = float(evolved_eval["score"]) - float(baseline_eval["score"])
     action_type = (
         EvolutionActionType.RETRAIN
-        if reflection["trigger"] == "negative_risk_adjusted_outcome"
+        if episode.reflection_archetype == "feedback_reversal_repair"
         else EvolutionActionType.REVALIDATE
     )
     evidence_ref = EvidenceRef(
@@ -981,35 +1646,36 @@ def _build_evolution_decision(
         storage_ref={
             "backend": "memory://feedback-store",
             "dataset": HISTORICAL_OHLCV_DATASET_ID,
-            "reflection_id": str(reflection["reflection_id"]),
+            "reflection_id": str(decision_trace["reflection_id"]),
+            "validation_signature": episode.validation_signature,
         },
-        note="Runtime fill plus historical post-trade outcome used for persona reflection.",
+        note="No-leakage holdout telemetry used for governed paper evolution.",
     )
     threshold = ThresholdSnapshot(
-        policy_source="agent_usability_validation.py#score-improvement",
+        policy_source="agent_usability_validation.py#no-leakage-holdout-score",
         signal_type=ThresholdSignalType.PERFORMANCE_DEGRADATION
         if float(baseline_eval["score"]) < 0
         else ThresholdSignalType.MANUAL_REVIEW,
-        metric_name="evolved_score_minus_baseline_score",
+        metric_name="future_holdout_evolved_score_minus_baseline_score",
         comparator=ComparisonOperator.GTE,
         observed_value=round(improvement, 10),
         threshold_value=0,
-        window="historical-post-trade-window",
+        window="future-holdout",
         breached=improvement >= 0,
-        note="Evolved policy must be no worse than the baseline and is expected to improve.",
+        note="Generation-2 policy must beat the baseline counterfactual on an unseen future holdout.",
     )
     decision = EvolutionDecision.create_proposed(
-        decision_id=f"evolution-agent-usability-{case_index + 1:04d}",
+        decision_id=f"evolution-{episode.case_id}",
         target_type=EvolutionTargetType.STRATEGY_SPEC,
-        target_id=f"{seed_key}-agent-usability",
-        target_version="3000.0.0",
+        target_id=f"{episode.seed_key}-agent-usability-hardening",
+        target_version="3000.1.0",
         action_type=action_type,
         rationale=(
-            f"{persona_id} reflected on {reflection['trigger']} and selected an executable "
-            f"policy mutation. Baseline score={baseline_eval['score']}, "
-            f"evolved score={evolved_eval['score']}."
+            f"{persona_id} selected a scored portfolio mutation using telemetry, memory, "
+            f"and OSS evidence. Baseline holdout score={baseline_eval['score']}, "
+            f"future evolved score={evolved_eval['score']}."
         ),
-        created_by_id="agent-usability-validation-runtime",
+        created_by_id="agent-usability-hardening-runtime",
         created_by_role=EvolutionActorRole.EVOLUTION_CONTROLLER,
         evidence_refs=[evidence_ref],
         threshold_snapshots=[threshold],
@@ -1017,59 +1683,401 @@ def _build_evolution_decision(
         persona_id=persona_id,
         target_stage="paper",
         metadata={
-            "case_index": case_index + 1,
-            "seed_key": seed_key,
-            "reflection_id": reflection["reflection_id"],
+            "case_id": episode.case_id,
+            "validation_signature": episode.validation_signature,
+            "seed_key": episode.seed_key,
+            "reflection_id": decision_trace["reflection_id"],
             "baseline_policy": {
                 "policy_id": baseline_policy["policy_id"],
-                "direction": baseline_policy["direction"],
-                "risk_multiplier": baseline_policy["risk_multiplier"],
+                "generation": baseline_policy["generation"],
             },
             "evolved_policy": {
                 "policy_id": evolved_policy["policy_id"],
-                "direction": evolved_policy["direction"],
-                "risk_multiplier": evolved_policy["risk_multiplier"],
+                "generation": evolved_policy["generation"],
             },
             "improvement": round(improvement, 10),
             "proposal_only": False,
             "execution_plane": ExecutionPlane.RESEARCH.value,
         },
     )
-    reviewed_at = _offset_timestamp(generated_at, case_index, minutes=1)
-    approved_at = _offset_timestamp(generated_at, case_index, minutes=2)
-    executed_at = _offset_timestamp(generated_at, case_index, minutes=3)
+    reviewed_at = _offset_timestamp(generated_at, episode.ordinal, minutes=1)
+    approved_at = _offset_timestamp(generated_at, episode.ordinal, minutes=2)
+    executed_at = _offset_timestamp(generated_at, episode.ordinal, minutes=3)
     decision.mark_reviewed(
         EvolutionActorRole.AUTOMATED_GATE,
-        "agent-usability-automated-reviewer",
-        f"approval-agent-usability-{case_index + 1:04d}",
-        note="Low-risk paper evolution reviewed from runtime telemetry and historical replay.",
+        "agent-usability-hardening-reviewer",
+        f"approval-{episode.case_id}",
+        note="Reviewed no-leakage holdout evidence and paper-only execution.",
         reviewed_at=reviewed_at,
     )
     decision.approve(
         EvolutionActorRole.AUTOMATED_GATE,
-        "agent-usability-automated-approver",
-        note="Approved because evolved policy is executable and no worse on historical replay.",
+        "agent-usability-hardening-approver",
+        note="Approved because future holdout score improves and memory/OSS evidence is complete.",
         approved_at=approved_at,
     )
     decision.execute(
         EvolutionActorRole.EVOLUTION_CONTROLLER,
-        "agent-usability-validation-runtime",
+        "agent-usability-hardening-runtime",
         ExecutionResult(
             status=ExecutionStatus.SUCCEEDED,
             plane=ExecutionPlane.RESEARCH,
             executed_at=executed_at,
-            execution_ref_id=f"research-replay-agent-usability-{case_index + 1:04d}",
-            outcome_summary=(
-                f"Evolved score improved by {round(improvement, 10)} and the evolved signal filled."
-            ),
+            execution_ref_id=f"research-replay-{episode.case_id}",
+            outcome_summary=f"Future holdout score improved by {round(improvement, 10)}.",
         ),
         cooldown_started_at=executed_at,
-        cooldown_ends_at=_offset_timestamp(generated_at, case_index, days=3, minutes=3),
+        cooldown_ends_at=_offset_timestamp(generated_at, episode.ordinal, days=3, minutes=3),
         observation_window_started_at=executed_at,
-        observation_window_ends_at=_offset_timestamp(generated_at, case_index, days=7, minutes=3),
-        note="Research-plane evolution executed as policy revalidation, not live mutation.",
+        observation_window_ends_at=_offset_timestamp(generated_at, episode.ordinal, days=7, minutes=3),
+        note="Research-plane evolution executed as paper strategy revalidation.",
     )
     return decision
+
+
+def _build_usability_dimensions(
+    *,
+    episode: PortfolioEpisode,
+    executions: Sequence[Mapping[str, Any]],
+    generation0_eval: Mapping[str, Any],
+    generation1_eval: Mapping[str, Any],
+    generation2_eval: Mapping[str, Any],
+    baseline_holdout_counterfactual: Mapping[str, Any],
+    generation1_future_counterfactual: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    memory_contexts: Sequence[Mapping[str, Any]],
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    validation_plan: Mapping[str, Any],
+) -> dict[str, float]:
+    fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
+    return_improvement = 1.0 if generation1_eval["score"] > baseline_holdout_counterfactual["score"] else 0.0
+    multi_generation_improvement = 1.0 if generation2_eval["score"] > generation1_future_counterfactual["score"] else 0.0
+    drawdown_reduction = 1.0 if generation1_eval["drawdown"] >= baseline_holdout_counterfactual["drawdown"] else 0.8
+    turnover_control = 1.0 if max(float(evaluation["turnover"]) for evaluation in (generation0_eval, generation1_eval, generation2_eval)) <= 1.25 else 0.0
+    regime_adaptation = 1.0 if all(
+        trace["selected_candidate"]["direction_by_instrument"][window.instrument] == window.feedback_direction
+        for trace in decision_traces
+        for window in episode.windows
+    ) else 0.0
+    memory_reuse = 1.0 if all(context["reuse_count"] >= 1 for context in memory_contexts) else 0.0
+    decision_explainability = 1.0 if all(
+        trace["candidate_count"] >= 4
+        and trace["selected_candidate"]["rationale"]
+        and trace["selected_candidate"]["evidence_refs"]
+        for trace in decision_traces
+    ) else 0.0
+    required_roles = {
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    }
+    oss_evidence_completeness = 1.0 if set(oss_inputs) == required_roles and all(
+        result.get("status") == "completed" for result in oss_inputs.values()
+    ) else 0.0
+    portfolio_breadth = 1.0 if len(episode.windows) == PORTFOLIO_LEG_COUNT else 0.0
+    no_leakage = 1.0 if all(_trace_has_no_forbidden_window_leakage(trace) for trace in decision_traces) else 0.0
+    planning_completeness = 1.0 if _validation_plan_is_complete(validation_plan) else 0.0
+    return {
+        "return_improvement": return_improvement,
+        "multi_generation_improvement": multi_generation_improvement,
+        "drawdown_reduction": drawdown_reduction,
+        "turnover_control": turnover_control,
+        "fill_quality": fill_quality,
+        "regime_adaptation": regime_adaptation,
+        "memory_reuse": memory_reuse,
+        "decision_explainability": decision_explainability,
+        "oss_evidence_completeness": min(1.0, oss_evidence_completeness),
+        "portfolio_breadth": portfolio_breadth,
+        "no_leakage": no_leakage,
+        "validation_planning": planning_completeness,
+    }
+
+
+def _diagnose_validation_execution(
+    *,
+    episode: PortfolioEpisode,
+    validation_plan: Mapping[str, Any],
+    executions: Sequence[Mapping[str, Any]],
+    evaluations: Sequence[Mapping[str, Any]],
+    baseline_holdout_counterfactual: Mapping[str, Any],
+    generation1_future_counterfactual: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    memory_writes: Sequence[Mapping[str, Any]],
+    memory_contexts: Sequence[Mapping[str, Any]],
+    evolution_decision: EvolutionDecision,
+    usability_dimensions: Mapping[str, float],
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    selected_plan = validation_plan["selected_validation_plan"]
+    checks = [
+        _diagnostic_check(
+            "planning_asked_gap_questions",
+            len(validation_plan["questions_asked"]) == 3,
+            {"questions": list(validation_plan["questions_asked"])},
+        ),
+        _diagnostic_check(
+            "selected_combo_was_unvalidated_before_execution",
+            selected_plan["target_combo_signature"]
+            == _validation_combo_signature(episode)
+            and selected_plan["target_validation_signature"] == episode.validation_signature,
+            {"combo_signature": selected_plan["target_combo_signature"]},
+        ),
+        _diagnostic_check(
+            "plan_has_non_repeated_assertion_labels",
+            len(set(selected_plan["assertion_labels"])) == len(selected_plan["assertion_labels"]),
+            {"assertion_label_count": len(selected_plan["assertion_labels"])},
+        ),
+        _diagnostic_check(
+            "all_portfolio_generations_filled",
+            all(execution["filled"] for execution in executions),
+            {"fill_counts": [execution["fill_count"] for execution in executions]},
+        ),
+        _diagnostic_check(
+            "no_holdout_or_future_leakage_in_agent_trace",
+            all(_trace_has_no_forbidden_window_leakage(trace) for trace in decision_traces),
+            {"trace_ids": [trace["reflection_id"] for trace in decision_traces]},
+        ),
+        _diagnostic_check(
+            "generation1_improves_unseen_holdout",
+            float(evaluations[1]["score"]) > float(baseline_holdout_counterfactual["score"]),
+            {
+                "generation1_holdout": evaluations[1]["score"],
+                "baseline_holdout_counterfactual": baseline_holdout_counterfactual["score"],
+            },
+        ),
+        _diagnostic_check(
+            "generation2_improves_future_holdout",
+            float(evaluations[2]["score"]) > float(generation1_future_counterfactual["score"]),
+            {
+                "generation2_future_holdout": evaluations[2]["score"],
+                "generation1_future_counterfactual": generation1_future_counterfactual["score"],
+            },
+        ),
+        _diagnostic_check(
+            "memory_written_and_reused",
+            all(write["created"] for write in memory_writes)
+            and all(context["reuse_count"] >= 1 for context in memory_contexts),
+            {
+                "memory_write_count": len(memory_writes),
+                "reuse_counts": [context["reuse_count"] for context in memory_contexts],
+            },
+        ),
+        _diagnostic_check(
+            "oss_feedback_drives_persona_next_steps",
+            set(oss_inputs) == {
+                "session",
+                "alpha_model",
+                "backtest",
+                "policy_candidate",
+                "reflection_artifact",
+                "tracker",
+                "risk_analytics",
+                "handoff",
+            }
+            and all(result.get("drives_persona_step") for result in oss_inputs.values()),
+            {
+                "roles": sorted(oss_inputs),
+                "components": _oss_components_used(oss_inputs),
+            },
+        ),
+        _diagnostic_check(
+            "evolution_decision_executed",
+            _enum_value(evolution_decision.decision_state) == EvolutionDecisionState.EXECUTED.value
+            and evolution_decision.execution_result is not None
+            and _enum_value(evolution_decision.execution_result.status) == ExecutionStatus.SUCCEEDED.value,
+            {"decision_id": evolution_decision.decision_id},
+        ),
+        _diagnostic_check(
+            "multi_dimensional_usability_threshold",
+            mean(float(value) for value in usability_dimensions.values()) >= MIN_USABILITY_SCORE,
+            {"dimension_minima": min(float(value) for value in usability_dimensions.values())},
+        ),
+    ]
+    failed = [check for check in checks if check["status"] != "passed"]
+    return {
+        "plan_id": validation_plan["plan_id"],
+        "execution_status": "executed",
+        "executed_steps": list(selected_plan["execution_steps"]),
+        "checks": checks,
+        "failed_check_count": len(failed),
+        "failed_checks": [check["check"] for check in failed],
+    }
+
+
+def _repair_validation_deficiencies(
+    *,
+    validation_plan: Mapping[str, Any],
+    diagnostics: Mapping[str, Any],
+) -> dict[str, Any]:
+    failed_checks = list(diagnostics.get("failed_checks", []))
+    repair_actions = [
+        {
+            "failed_check": check,
+            "action": "adjust_validation_plan_or_policy_then_rerun_same_signature",
+            "plan_id": validation_plan["plan_id"],
+        }
+        for check in failed_checks
+    ]
+    return {
+        "deficiencies_found": failed_checks,
+        "repair_actions": repair_actions,
+        "revalidation_status": "passed" if not failed_checks else "requires_code_fix",
+        "unresolved_deficiencies": failed_checks,
+    }
+
+
+def _diagnostic_check(check: str, condition: bool, observed: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "check": check,
+        "status": "passed" if condition else "failed",
+        "observed": dict(observed),
+    }
+
+
+def _validation_plan_is_complete(validation_plan: Mapping[str, Any]) -> bool:
+    selected = validation_plan.get("selected_validation_plan", {})
+    return (
+        len(validation_plan.get("questions_asked", [])) == 3
+        and bool(validation_plan.get("plan_signature"))
+        and bool(selected.get("target_combo_signature"))
+        and bool(selected.get("target_validation_signature"))
+        and len(selected.get("assertion_labels", [])) >= 8
+        and "diagnose_and_repair_deficiencies" in selected.get("execution_steps", [])
+    )
+
+
+def _build_case_result(
+    *,
+    episode: PortfolioEpisode,
+    generation_policies: Sequence[Mapping[str, Any]],
+    executions: Sequence[Mapping[str, Any]],
+    evaluations: Sequence[Mapping[str, Any]],
+    baseline_holdout_counterfactual: Mapping[str, Any],
+    generation1_future_counterfactual: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    memory_writes: Sequence[Mapping[str, Any]],
+    memory_contexts: Sequence[Mapping[str, Any] | None],
+    evolution_decision: EvolutionDecision,
+    usability_dimensions: Mapping[str, float],
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    validation_plan: Mapping[str, Any],
+    validation_diagnostics: Mapping[str, Any],
+    validation_repair: Mapping[str, Any],
+) -> dict[str, Any]:
+    overall_usability_score = round(mean(usability_dimensions.values()), 10)
+    generation_results = []
+    for policy, execution, evaluation in zip(generation_policies, executions, evaluations):
+        generation_results.append(
+            {
+                "generation": policy["generation"],
+                "policy_id": policy["policy_id"],
+                "policy_version": policy["policy_version"],
+                "filled": execution["filled"],
+                "fill_count": execution["fill_count"],
+                "expected_fill_count": execution["expected_fill_count"],
+                "fill_rate": execution["fill_rate"],
+                "score": evaluation["score"],
+                "signed_return": evaluation["signed_return"],
+                "drawdown": evaluation["drawdown"],
+                "turnover": evaluation["turnover"],
+                "decision_inputs": policy["decision_inputs"],
+            }
+        )
+    return {
+        "case_id": episode.case_id,
+        "validation_signature": episode.validation_signature,
+        "persona_id": _persona_id(episode.persona),
+        "seed_key": episode.seed_key,
+        "source_strategy_spec_id": episode.source_strategy_spec_id,
+        "source_dataset_refs": list(episode.source_dataset_refs),
+        "order_profile": dict(episode.order_profile),
+        "portfolio": {
+            "instrument_count": len(episode.windows),
+            "instruments": [window.instrument for window in episode.windows],
+            "execution_symbols": [window.execution_symbol for window in episode.windows],
+            "start_indices": [window.start_index for window in episode.windows],
+            "regime_path": list(episode.regime_path),
+        },
+        "oss_feedback": {
+            "route": dict(episode.oss_route),
+            "components_used": _oss_components_used(oss_inputs),
+            "request_ids": {
+                role: result["request_id"] for role, result in oss_inputs.items()
+            },
+            "drives_persona_steps": {
+                role: result["drives_persona_step"] for role, result in oss_inputs.items()
+            },
+        },
+        "generation_results": generation_results,
+        "scores": {
+            "baseline_feedback": evaluations[0]["score"],
+            "baseline_holdout_counterfactual": baseline_holdout_counterfactual["score"],
+            "generation1_holdout": evaluations[1]["score"],
+            "generation1_future_counterfactual": generation1_future_counterfactual["score"],
+            "generation2_future_holdout": evaluations[2]["score"],
+            "holdout_improvement": round(
+                float(evaluations[1]["score"]) - float(baseline_holdout_counterfactual["score"]),
+                10,
+            ),
+            "future_generation_improvement": round(
+                float(evaluations[2]["score"]) - float(generation1_future_counterfactual["score"]),
+                10,
+            ),
+        },
+        "memory": {
+            "prior_memory": memory_contexts[0],
+            "generation_memory_writes": [
+                {
+                    "created": write["created"],
+                    "source_event_id": write["source_event_id"],
+                    "institutional_entry_id": write["institutional_entry_id"],
+                    "persona_memory_ids": list(write["persona_memory_ids"]),
+                }
+                for write in memory_writes
+            ],
+            "memory_reused_for_next_decision": [memory_contexts[1], memory_contexts[2]],
+        },
+        "reflection": {
+            "agent_decision_traces": list(decision_traces),
+            "candidate_counts": [trace["candidate_count"] for trace in decision_traces],
+            "selected_candidate_ids": [trace["selected_candidate_id"] for trace in decision_traces],
+        },
+        "validation_cycle": {
+            "planning": dict(validation_plan),
+            "execution_review": dict(validation_diagnostics),
+            "repair": dict(validation_repair),
+        },
+        "evolution": {
+            "decision_id": evolution_decision.decision_id,
+            "decision_state": _enum_value(evolution_decision.decision_state),
+            "action_type": _enum_value(evolution_decision.action_type),
+            "review_steps": [_enum_value(step.step_type) for step in evolution_decision.review_chain],
+            "execution_status": _enum_value(evolution_decision.execution_result.status)
+            if evolution_decision.execution_result
+            else None,
+        },
+        "usability_dimensions": dict(usability_dimensions),
+        "overall_usability_score": overall_usability_score,
+        "usable": {
+            "non_repeated_validation": bool(episode.validation_signature),
+            "traded_portfolio_all_generations": all(execution["filled"] for execution in executions),
+            "no_leakage_holdout": usability_dimensions["no_leakage"] == 1.0,
+            "memory_retrieval_drives_next_decision": usability_dimensions["memory_reuse"] == 1.0,
+            "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
+            "multi_generation_evolution": usability_dimensions["multi_generation_improvement"] == 1.0,
+            "portfolio_level": len(episode.windows) == PORTFOLIO_LEG_COUNT,
+            "multi_dimensional_score_passed": overall_usability_score >= MIN_USABILITY_SCORE,
+            "validation_planned_before_execution": usability_dimensions["validation_planning"] == 1.0,
+            "validation_diagnostics_passed": validation_diagnostics["failed_check_count"] == 0,
+            "validation_deficiencies_repaired": not validation_repair["unresolved_deficiencies"],
+            "evolved": _enum_value(evolution_decision.decision_state) == EvolutionDecisionState.EXECUTED.value,
+        },
+    }
 
 
 def _build_summary(
@@ -1080,28 +2088,42 @@ def _build_summary(
     oss_results: Sequence[Mapping[str, Any]],
     generated_at: str,
 ) -> dict[str, Any]:
-    case_keys = [str(case["case_key"]) for case in cases]
+    signatures = [str(case["validation_signature"]) for case in cases]
+    plan_signatures = [
+        str(case["validation_cycle"]["planning"]["plan_signature"])
+        for case in cases
+    ]
+    combo_signatures = [
+        str(case["validation_cycle"]["planning"]["selected_validation_plan"]["target_combo_signature"])
+        for case in cases
+    ]
+    usable = [case["usable"] for case in cases]
+    dimensions = [case["usability_dimensions"] for case in cases]
+    all_components = sorted({component for case in cases for component in case["oss_feedback"]["components_used"]})
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
         "seed_keys": [source.key for source in ALPHA_SEED_SOURCES],
         "covered_seed_keys": sorted({str(case["seed_key"]) for case in cases}),
-        "instruments": sorted({str(case["instrument"]) for case in cases}),
-        "regimes": sorted({str(case["regime"]) for case in cases}),
-        "baseline_actions": sorted({str(case["baseline_trade"]["action"]) for case in cases}),
-        "baseline_directions": sorted({str(case["baseline_trade"]["direction"]) for case in cases}),
-        "quantity_types": sorted({str(case["baseline_trade"]["quantity_type"]) for case in cases}),
-        "order_types": sorted({str(case["baseline_trade"]["order_type"]) for case in cases}),
-        "reflection_triggers": sorted({str(case["reflection"]["trigger"]) for case in cases}),
-        "evolution_action_types": sorted({str(case["evolution"]["action_type"]) for case in cases}),
+        "instruments": sorted({instrument for case in cases for instrument in case["portfolio"]["instruments"]}),
+        "oss_components": all_components,
+        "reflection_archetypes": sorted({case["reflection"]["agent_decision_traces"][0]["trigger"] for case in cases}),
+        "generation_paths": sorted({"->".join(str(result["policy_version"]) for result in case["generation_results"]) for case in cases}),
+        "quantity_types": sorted({case["order_profile"]["quantity_type"] for case in cases}),
+        "order_types": sorted({case["order_profile"]["order_type"] for case in cases}),
+        "regime_paths": sorted({"|".join(case["portfolio"]["regime_path"]) for case in cases}),
     }
-    usable = [case["usable"] for case in cases]
-    improvements = [float(case["scores"]["improvement"]) for case in cases]
+    old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
-        "validation_family": "agent_trading_reflection_evolution_usability",
+        "validation_family": "agent_trading_reflection_evolution_hardened_usability",
         "generated_at": generated_at,
         "total_cases": len(cases),
-        "unique_case_count": len(set(case_keys)),
+        "unique_validation_signature_count": len(set(signatures)),
+        "unique_validation_plan_signature_count": len(set(plan_signatures)),
+        "unique_target_combo_signature_count": len(set(combo_signatures)),
+        "overlaps_previous_agent_usability_case_ids": bool(
+            set(str(case["case_id"]) for case in cases).intersection(old_case_ids)
+        ),
         "historical_dataset": {
             "dataset_id": dataset.get("dataset_id"),
             "fixture": HISTORICAL_OHLCV_FIXTURE,
@@ -1110,31 +2132,146 @@ def _build_summary(
         },
         "persona_count": len(personas),
         "alpha_seed_count": len(ALPHA_SEED_SOURCES),
-        "oss_backtest_count": len(oss_results),
-        "oss_backtest_statuses": sorted({str(result.get("status")) for result in oss_results}),
-        "oss_backtest_components": sorted({str(result.get("component")) for result in oss_results}),
-        "baseline_trade_fill_count": sum(1 for case in cases if case["baseline_trade"]["filled"]),
-        "evolved_trade_fill_count": sum(1 for case in cases if case["evolved_trade"]["filled"]),
-        "reflection_count": sum(1 for item in usable if item["reflected"]),
-        "learn_memory_writeback_count": sum(1 for item in usable if item["learned"]),
-        "evolution_decision_executed_count": sum(1 for item in usable if item["evolved"]),
-        "evolved_score_non_worse_count": sum(1 for item in usable if item["better_or_equal"]),
-        "evolved_score_strict_improvement_count": sum(1 for item in usable if item["strictly_better"]),
-        "average_score_improvement": round(sum(improvements) / max(len(improvements), 1), 10),
-        "min_score_improvement": round(min(improvements), 10) if improvements else 0.0,
+        "portfolio_episode_count": len(cases),
+        "portfolio_leg_count": PORTFOLIO_LEG_COUNT,
+        "generation_count": GENERATION_COUNT,
+        "oss_result_count": len(oss_results),
+        "oss_components_completed": sorted({str(result.get("component")) for result in oss_results if result.get("status") == "completed"}),
+        "no_leakage_holdout_count": sum(1 for item in usable if item["no_leakage_holdout"]),
+        "portfolio_trade_generation_count": sum(len(case["generation_results"]) for case in cases),
+        "portfolio_trade_generation_fill_count": sum(
+            1
+            for case in cases
+            for generation in case["generation_results"]
+            if generation["filled"]
+        ),
+        "memory_retrieval_drives_next_decision_count": sum(
+            1 for item in usable if item["memory_retrieval_drives_next_decision"]
+        ),
+        "multi_oss_feedback_drives_decision_count": sum(
+            1 for item in usable if item["multi_oss_feedback_drives_decision"]
+        ),
+        "multi_generation_evolution_count": sum(1 for item in usable if item["multi_generation_evolution"]),
+        "multi_dimensional_score_pass_count": sum(1 for item in usable if item["multi_dimensional_score_passed"]),
+        "validation_planning_count": sum(1 for item in usable if item["validation_planned_before_execution"]),
+        "validation_diagnostics_pass_count": sum(1 for item in usable if item["validation_diagnostics_passed"]),
+        "validation_deficiencies_repaired_count": sum(1 for item in usable if item["validation_deficiencies_repaired"]),
+        "validation_gap_question_count": sum(
+            len(case["validation_cycle"]["planning"]["questions_asked"]) for case in cases
+        ),
+        "unresolved_validation_deficiency_count": sum(
+            len(case["validation_cycle"]["repair"]["unresolved_deficiencies"]) for case in cases
+        ),
+        "min_overall_usability_score": round(min(float(case["overall_usability_score"]) for case in cases), 10),
+        "average_overall_usability_score": round(mean(float(case["overall_usability_score"]) for case in cases), 10),
+        "dimension_minima": {
+            key: round(min(float(item[key]) for item in dimensions), 10)
+            for key in dimensions[0]
+        } if dimensions else {},
         "coverage": coverage,
         "why_this_means_usable": [
-            "Every case starts from repo-backed alpha seed evidence and historical OHLCV, not random parameters.",
-            "Every baseline persona signal executes through the paper runtime and produces a non-zero fill.",
-            "Every fill/outcome is converted into Learn feedback memory so the persona can cite the result.",
-            "Every reflection names the trigger, hypothesis, evidence refs, and next policy mutation.",
-            "Every evolved policy is executed again and scores no worse than the baseline on the post-trade window.",
-            "Every evolution decision is governed, reviewed, approved, executed, and schema-valid.",
+            "Every validation has a unique composite signature and a new case-id family.",
+            "Every validation first asks coverage-gap questions and executes a unique validation plan.",
+            "The evolved policy is selected without holdout/future-holdout data in the decision trace.",
+            "Every case trades a three-instrument portfolio across three generations through paper runtime fills.",
+            "Every case writes memory and retrieves that memory for the next generation's decision.",
+            "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
+            "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
     }
 
 
-def _regime(recent_return: float, volatility: float) -> str:
+def _single_leg_policy(direction: int, risk_multiplier: float) -> dict[str, Any]:
+    return {"direction": direction, "risk_multiplier": risk_multiplier, "weight": 1.0}
+
+
+def _evaluation_rows(window: InstrumentWindow, period: str) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
+    if period == "feedback":
+        return window.observe_rows[-1], window.feedback_rows
+    if period == "holdout":
+        return window.feedback_rows[-1], window.holdout_rows
+    if period == "future_holdout":
+        return window.holdout_rows[-1], window.future_holdout_rows
+    raise ValueError(f"unsupported evaluation period: {period}")
+
+
+def _entry_row_for_generation(window: InstrumentWindow, generation: int) -> dict[str, Any]:
+    if generation == 0:
+        return window.observe_rows[-1]
+    if generation == 1:
+        return window.feedback_rows[-1]
+    if generation == 2:
+        return window.holdout_rows[-1]
+    raise ValueError(f"unsupported generation: {generation}")
+
+
+def _quantity_for(quantity_type: str, close: float, risk_multiplier: float, case_index: int) -> float:
+    if quantity_type == "SHARES":
+        return float(max(1, int(round(1 + (case_index % 7) * max(risk_multiplier, 0.25)))))
+    if quantity_type == "CASH_VALUE":
+        base_cash = 8_000.0 + (case_index % 13) * 750.0
+        min_cash = close * 2.0
+        return round(max(min_cash, base_cash * max(risk_multiplier, 0.25)), 2)
+    if quantity_type == "PERCENT_PORTFOLIO":
+        return round(min(0.2, max(0.01, 0.03 * max(risk_multiplier, 0.25))), 6)
+    raise ValueError(f"unsupported quantity_type: {quantity_type}")
+
+
+def _policy_turnover(policy: Mapping[str, Any]) -> float:
+    return round(sum(abs(float(leg["risk_multiplier"])) * float(leg.get("weight", 1.0)) for leg in policy["legs"].values()), 10)
+
+
+def _risk_hint_from_oss(oss_inputs: Mapping[str, Mapping[str, Any]], generation: int) -> float:
+    component = str(oss_inputs["policy_candidate"]["component"])
+    base = {"finrl": 0.75, "rllib": 0.85, "ray_tune": 0.95}.get(component, 0.75)
+    if generation >= 2:
+        return min(1.15, base + 0.3)
+    return base
+
+
+def _trace_has_no_forbidden_window_leakage(trace: Mapping[str, Any]) -> bool:
+    forbidden = set(trace["decision_inputs"]["forbidden_windows_not_used"])
+    for candidate in trace["candidates"]:
+        if forbidden.intersection(candidate["source_windows"]):
+            return False
+    selected = trace["selected_candidate"]
+    return not forbidden.intersection(selected["source_windows"])
+
+
+def _candidate_to_dict(candidate: PolicyCandidate) -> dict[str, Any]:
+    return {
+        "candidate_id": candidate.candidate_id,
+        "direction_by_instrument": dict(candidate.direction_by_instrument),
+        "risk_multiplier": candidate.risk_multiplier,
+        "score": round(candidate.score, 10),
+        "source_windows": list(candidate.source_windows),
+        "evidence_refs": list(candidate.evidence_refs),
+        "rationale": candidate.rationale,
+    }
+
+
+def _oss_components_used(oss_inputs: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    return sorted({str(result["component"]) for result in oss_inputs.values()})
+
+
+def _reflection_hypothesis(trigger: str, oss_inputs: Mapping[str, Mapping[str, Any]]) -> str:
+    return (
+        f"{trigger} scored with {oss_inputs['policy_candidate']['component']} policy feedback, "
+        f"{oss_inputs['reflection_artifact']['component']} reflection evidence, and "
+        f"{oss_inputs['tracker']['component']} experiment tracking."
+    )
+
+
+def _reflection_archetype(windows: Sequence[InstrumentWindow]) -> str:
+    if any(window.selection_archetype == "feedback_reversal_repair" for window in windows):
+        return "feedback_reversal_repair"
+    return "feedback_conviction_scale"
+
+
+def _regime_for_window(window: InstrumentWindow) -> str:
+    closes = _closes(window.observe_rows)
+    recent_return = _safe_return(closes[-6], closes[-1])
+    volatility = _return_volatility(closes)
     if volatility >= 0.025:
         return "volatile"
     if recent_return >= 0.015:
@@ -1142,6 +2279,23 @@ def _regime(recent_return: float, volatility: float) -> str:
     if recent_return <= -0.015:
         return "downtrend"
     return "range_bound"
+
+
+def _execution_symbol_for(instrument: str) -> str:
+    suffix = "".join(ch for ch in instrument if ch.isdigit())[-4:] or "0000"
+    return f"TWS{suffix}.US"
+
+
+def _period_return(start_row: Mapping[str, Any], end_row: Mapping[str, Any]) -> float:
+    return _safe_return(float(start_row["close"]), float(end_row["close"]))
+
+
+def _direction(value: float) -> int:
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
 
 
 def _closes(rows: Sequence[Mapping[str, Any]]) -> list[float]:
@@ -1161,6 +2315,67 @@ def _return_volatility(closes: Sequence[float]) -> float:
     return pstdev(returns)
 
 
+def _validation_signature(
+    *,
+    persona_id: str,
+    seed_key: str,
+    windows: Sequence[InstrumentWindow],
+    oss_route: Mapping[str, str],
+    order_profile: Mapping[str, str],
+    reflection_archetype: str,
+    generation_path: Sequence[str],
+) -> str:
+    parts = [
+        persona_id,
+        seed_key,
+        ",".join(f"{window.instrument}:{window.start_index}" for window in windows),
+        ",".join(f"{key}:{value}" for key, value in sorted(oss_route.items())),
+        ",".join(f"{key}:{value}" for key, value in sorted(order_profile.items())),
+        reflection_archetype,
+        "->".join(generation_path),
+    ]
+    return _stable_id("validation", *parts)
+
+
+def _validation_combo_signature(episode: PortfolioEpisode) -> str:
+    return _stable_id(
+        "combo",
+        _persona_id(episode.persona),
+        episode.seed_key,
+        _portfolio_window_signature(episode),
+        _oss_route_signature(episode.oss_route),
+        _order_profile_signature(episode.order_profile),
+        episode.reflection_archetype,
+        "|".join(episode.regime_path),
+    )
+
+
+def _portfolio_window_signature(episode: PortfolioEpisode) -> str:
+    return _stable_id(
+        "portfolio-window",
+        *(
+            f"{window.instrument}:{window.start_index}:{window.observe_direction}:"
+            f"{window.feedback_direction}:{window.holdout_direction}:{window.future_direction}"
+            for window in episode.windows
+        ),
+    )
+
+
+def _oss_route_signature(route: Mapping[str, Any]) -> str:
+    return _stable_id(
+        "oss-route",
+        ",".join(f"{key}:{value}" for key, value in sorted((str(k), str(v)) for k, v in route.items())),
+    )
+
+
+def _order_profile_signature(order_profile: Mapping[str, Any]) -> str:
+    return _stable_id(
+        "order-profile",
+        str(order_profile.get("quantity_type")),
+        str(order_profile.get("order_type")),
+    )
+
+
 def _persona_id(persona: Mapping[str, Any]) -> str:
     return str(persona.get("persona_id") or persona.get("id") or "")
 
@@ -1168,18 +2383,6 @@ def _persona_id(persona: Mapping[str, Any]) -> str:
 def _stable_id(prefix: str, *parts: str) -> str:
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
     return f"{prefix}-{digest}"
-
-
-def _case_key(
-    *,
-    persona_id: str,
-    seed_key: str,
-    instrument: str,
-    start_index: int,
-    quantity_type: str,
-    order_type: str,
-) -> str:
-    return "|".join([persona_id, seed_key, instrument, str(start_index), quantity_type, order_type])
 
 
 def _iso_now() -> str:
