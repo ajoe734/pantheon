@@ -24,6 +24,8 @@ from services.persona.agent_usability_validation import (
     PERSONA_CANDIDATE_SCORER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
     PERSONA_MEMORY_INFLUENCE_MODEL_ID,
+    PERSONA_REASONING_EVALUATOR_MODEL_ID,
+    PERSONA_REASONING_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
     SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID,
     OSS_REQUIRED_COMPONENTS,
@@ -74,6 +76,8 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["multi_oss_feedback_drives_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["agent_decision_artifact_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["agent_decision_artifact_replay_count"] == DEFAULT_CASE_COUNT
+    assert summary["persona_reasoning_response_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["persona_reasoning_drives_candidate_generation_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_generation_evolution_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_dimensional_score_pass_count"] == DEFAULT_CASE_COUNT
 
@@ -174,6 +178,15 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert coverage["agent_memory_influence_models"] == [PERSONA_MEMORY_INFLUENCE_MODEL_ID]
     assert coverage["agent_memory_influence_statuses"] == ["applied", "cold_start"]
     assert "feedback-adapt" in coverage["agent_memory_selected_action_hints"]
+    assert coverage["agent_persona_reasoning_models"] == [PERSONA_REASONING_MODEL_ID]
+    assert coverage["agent_persona_reasoning_evaluator_models"] == [PERSONA_REASONING_EVALUATOR_MODEL_ID]
+    assert "feedback-adapt" in coverage["agent_persona_reasoning_preferred_actions"]
+    assert coverage["agent_persona_reasoning_candidate_actions"] == [
+        "contrarian-check",
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    ]
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -343,20 +356,67 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert set(input_context["oss_evidence_refs"]).issubset(set(trace["evidence_refs"]))
         assert input_context["portfolio_instruments"] == case["portfolio"]["instruments"]
 
+        persona_reasoning = artifact["persona_reasoning"]
+        reasoning_request = persona_reasoning["request"]
+        reasoning_response = persona_reasoning["response"]
+        reasoning_evaluator = persona_reasoning["evaluator"]
+        assert reasoning_request["model_id"] == PERSONA_REASONING_MODEL_ID
+        assert reasoning_response["model_id"] == PERSONA_REASONING_MODEL_ID
+        assert reasoning_evaluator["model_id"] == PERSONA_REASONING_EVALUATOR_MODEL_ID
+        assert reasoning_evaluator["status"] == "passed"
+        assert all(check["status"] == "passed" for check in reasoning_evaluator["checks"])
+        assert reasoning_request["allowed_windows"] == trace["decision_inputs"]["allowed_windows"]
+        assert reasoning_request["forbidden_windows_not_used"] == trace["decision_inputs"]["forbidden_windows_not_used"]
+        if memory_ref:
+            assert memory_ref in reasoning_request["input_refs"]
+            assert reasoning_response["memory_usage"]["influence_ref"] == memory_ref
+        else:
+            assert reasoning_response["memory_usage"]["status"] == "cold_start"
+        blueprint_by_action = {
+            blueprint["action"]: blueprint
+            for blueprint in reasoning_response["candidate_blueprints"]
+        }
+        assert set(blueprint_by_action) == {
+            "feedback-adapt",
+            "retain-observe",
+            "risk-off",
+            "contrarian-check",
+        }
+
         candidate_generation = artifact["candidate_generation"]
         assert candidate_generation["model_id"] == PERSONA_CANDIDATE_GENERATOR_MODEL_ID
         response = candidate_generation["response"]
         trace_candidate_ids = [candidate["candidate_id"] for candidate in trace["candidates"]]
         assert response["status"] == "completed"
+        assert response["source_reasoning_response_id"] == reasoning_response["response_id"]
+        assert response["source_reasoning_ref"] == reasoning_response["reasoning_ref"]
+        assert reasoning_response["reasoning_ref"] in candidate_generation["request"]["input_refs"]
         assert response["candidate_ids"] == trace_candidate_ids
         assert response["candidates"] == trace["candidates"]
         if memory_ref:
             assert memory_ref in candidate_generation["request"]["input_refs"]
+        for candidate in trace["candidates"]:
+            candidate_action = _candidate_action_from_id(candidate["candidate_id"])
+            blueprint = blueprint_by_action[candidate_action]
+            assert candidate["source_windows"] == blueprint["source_windows"]
+            assert candidate["rationale"] == blueprint["rationale"]
+            for role in blueprint["evidence_roles"]:
+                expected_ref = (
+                    f"oss://{input_context['oss_components_by_role'][role]}/"
+                    f"{input_context['oss_request_ids_by_role'][role]}"
+                )
+                assert expected_ref in candidate["evidence_refs"]
+            for extra_ref in blueprint["extra_evidence_refs"]:
+                assert extra_ref in candidate["evidence_refs"]
 
         scorer = artifact["scorer"]
         assert scorer["model_id"] == PERSONA_CANDIDATE_SCORER_MODEL_ID
         assert scorer["scoring_inputs"]["memory_influence"]["status"] == memory_influence["status"]
         assert scorer["scoring_inputs"]["memory_score_adjustments"] == memory_influence["candidate_score_adjustments"]
+        assert scorer["scoring_inputs"]["persona_reasoning_ref"] == reasoning_response["reasoning_ref"]
+        assert scorer["scoring_inputs"]["persona_reasoning_preferred_action"] == reasoning_response[
+            "preferred_action_hint"
+        ]
         scorecards = scorer["scorecards"]
         assert set(scorecards) == set(trace_candidate_ids)
         assert all(card["score_replay_match"] is True for card in scorecards.values())
@@ -403,7 +463,15 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         for check in case["validation_cycle"]["execution_review"]["checks"]
     }
     assert check_by_name["persona_decision_artifact_replays_candidate_selection"]["status"] == "passed"
+    assert check_by_name["persona_reasoning_response_drives_candidate_generation"]["status"] == "passed"
     assert check_by_name["retrieved_memory_influences_persona_candidate_scoring"]["status"] == "passed"
+
+
+def _candidate_action_from_id(candidate_id: str) -> str:
+    for action in ("feedback-adapt", "retain-observe", "risk-off", "contrarian-check"):
+        if candidate_id.endswith(f"-{action}"):
+            return action
+    raise AssertionError(f"unknown candidate action in {candidate_id}")
 
 
 def _assert_memory_and_oss_closed_loop(case: dict) -> None:
