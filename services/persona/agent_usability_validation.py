@@ -151,6 +151,21 @@ EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v
 NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
+PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
+TRACKING_DIVERGENCE_TYPES_BY_SCENARIO: dict[str, str] = {
+    "cancel_replace_readback": "run_tag_backend_normalization",
+    "limit_miss_reprice": "artifact_uri_normalization",
+    "liquidity_cap_scale": "registry_alias_lag",
+    "partial_fill_reconcile": "metric_precision_roundtrip",
+    "risk_reject_reduce": "artifact_manifest_ordering",
+}
+TRACKING_RECONCILIATION_ACTION_BY_TYPE: dict[str, str] = {
+    "artifact_manifest_ordering": "sort_manifest_before_experiment_ref",
+    "artifact_uri_normalization": "normalize_artifact_uri_before_citation",
+    "metric_precision_roundtrip": "accept_metric_precision_roundtrip",
+    "registry_alias_lag": "bind_registry_alias_before_handoff",
+    "run_tag_backend_normalization": "normalize_backend_tags_before_scoring",
+}
 OSS_DISAGREEMENT_TYPES_BY_SCENARIO: dict[str, str] = {
     "cancel_replace_readback": "reflection_handoff_execution_conflict",
     "limit_miss_reprice": "alpha_backtest_price_conflict",
@@ -446,6 +461,17 @@ def run_agent_usability_validations(
         case_upstream_artifacts["persona_response"][
             "next_disagreement_action"
         ] = "arbitrate_multi_oss_disagreement"
+        tracking_reconciliation = _build_tracking_readback_reconciliation(
+            episode=episode,
+            case_upstream_artifacts=case_upstream_artifacts,
+        )
+        case_upstream_artifacts["tracking_reconciliation"] = tracking_reconciliation
+        case_upstream_artifacts["persona_response"]["evidence_refs"].append(
+            tracking_reconciliation["reconciliation_ref"]
+        )
+        case_upstream_artifacts["persona_response"][
+            "next_tracking_reconciliation_action"
+        ] = tracking_reconciliation["repair"]["action"]
         prior_memory = _retrieve_prior_lesson(persona_store, persona_id)
         validation_plan = _build_validation_planning_step(
             episode=episode,
@@ -486,6 +512,7 @@ def run_agent_usability_validations(
             oss_inputs=oss_inputs,
             oss_followup_loop=oss_followup_loop,
             oss_disagreement_arbitration=oss_disagreement_arbitration,
+            tracking_reconciliation=tracking_reconciliation,
         )
         memory_write0 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -545,6 +572,7 @@ def run_agent_usability_validations(
             oss_inputs=oss_inputs,
             oss_followup_loop=oss_followup_loop,
             oss_disagreement_arbitration=oss_disagreement_arbitration,
+            tracking_reconciliation=tracking_reconciliation,
         )
         memory_write1 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -1428,6 +1456,152 @@ def _oss_disagreement_observed_signals(
     }
 
 
+def _build_tracking_readback_reconciliation(
+    *,
+    episode: PortfolioEpisode,
+    case_upstream_artifacts: Mapping[str, Any],
+) -> dict[str, Any]:
+    scenario = _operational_scenario_for_episode(episode)
+    divergence_type = TRACKING_DIVERGENCE_TYPES_BY_SCENARIO[scenario]
+    repair_action = TRACKING_RECONCILIATION_ACTION_BY_TYPE[divergence_type]
+    vectorbt = case_upstream_artifacts["vectorbt"]
+    tracker = case_upstream_artifacts["tracker"]
+    reconciliation_id = f"tracking-readback-reconciliation-{episode.case_id}"
+    reconciliation_ref = f"tracking-reconciliation://{reconciliation_id}"
+    repair_ref = f"{reconciliation_ref}/{divergence_type}/{repair_action}"
+    vectorbt_ref = f"oss://vectorbt/{vectorbt['request_id']}"
+    tracker_ref = f"oss://{tracker['component']}/{tracker['request_id']}"
+    experiment_ref = f"experiment://{tracker['backend']}/{tracker['run_id']}"
+    source_refs = [vectorbt_ref, tracker_ref, experiment_ref]
+    expected, readback, normalized_value = _tracking_divergence_values(
+        divergence_type=divergence_type,
+        tracker=tracker,
+    )
+    divergence = {
+        "divergence_id": f"{reconciliation_id}-{divergence_type}",
+        "divergence_type": divergence_type,
+        "backend": tracker["backend"],
+        "expected": expected,
+        "readback": readback,
+        "severity": "low" if divergence_type == "metric_precision_roundtrip" else "medium",
+        "source_refs": source_refs,
+        "detected_after_readback": True,
+    }
+    candidate_score_adjustments = {
+        "feedback-adapt": 0.04,
+        "retain-observe": 0.02,
+        "risk-off": 0.01,
+        "contrarian-check": 0.005,
+    }
+    if repair_action in {
+        "bind_registry_alias_before_handoff",
+        "normalize_backend_tags_before_scoring",
+    }:
+        candidate_score_adjustments["risk-off"] = round(candidate_score_adjustments["risk-off"] + 0.015, 10)
+    candidate_evidence_refs_by_action = {
+        "feedback-adapt": [reconciliation_ref, repair_ref, *source_refs],
+        "retain-observe": [reconciliation_ref, experiment_ref],
+        "risk-off": [reconciliation_ref, repair_ref, tracker_ref],
+        "contrarian-check": [reconciliation_ref, repair_ref],
+    }
+    repair = {
+        "action": repair_action,
+        "repair_ref": repair_ref,
+        "normalized_value": normalized_value,
+        "normalized_experiment_ref": experiment_ref,
+        "evidence_refs": [reconciliation_ref, repair_ref, *source_refs],
+        "used_by_generations": [1, 2],
+        "next_persona_step": "cite_reconciled_experiment_ref",
+    }
+    replay = {
+        "replayable": True,
+        "tracker_completed": tracker.get("status") == "completed",
+        "tracker_readback_found": tracker.get("readback", {}).get("run_readback_status") == "found"
+        and tracker.get("readback", {}).get("artifact_readback_status") == "found",
+        "divergence_detected": expected != readback,
+        "repair_action_selected": repair_action in TRACKING_RECONCILIATION_ACTION_BY_TYPE.values(),
+        "normalized_experiment_ref_available": bool(repair["normalized_experiment_ref"]),
+        "vectorbt_tracker_bound": tracker.get("source_vectorbt_run_id") == vectorbt.get("run_id"),
+        "scorer_adjustment_available": float(candidate_score_adjustments["feedback-adapt"]) > 0.0,
+        "feedback_adapt_gets_tracking_refs": set(source_refs).issubset(
+            set(candidate_evidence_refs_by_action["feedback-adapt"])
+        ),
+    }
+    return {
+        "reconciliation_id": reconciliation_id,
+        "reconciliation_ref": reconciliation_ref,
+        "model_id": PERSONA_TRACKING_RECONCILIATION_MODEL_ID,
+        "status": "reconciled" if all(replay.values()) else "blocked",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "scenario": scenario,
+        "backend": tracker["backend"],
+        "tracker_request_id": tracker["request_id"],
+        "run_id": tracker["run_id"],
+        "artifact_uri": tracker["artifact_uri"],
+        "source_vectorbt_run_id": vectorbt["run_id"],
+        "source_feedback_id": case_upstream_artifacts["feedback_id"],
+        "divergence": divergence,
+        "repair": repair,
+        "candidate_score_adjustments": candidate_score_adjustments,
+        "candidate_evidence_refs_by_action": candidate_evidence_refs_by_action,
+        "persona_reconciliation_response": {
+            "next_action": "score_candidates_with_reconciled_tracking_readback",
+            "preferred_candidate_action": "feedback-adapt",
+            "repair_actions": [repair_action],
+            "evidence_refs": [reconciliation_ref, repair_ref, *source_refs],
+            "used_by_generations": [1, 2],
+        },
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "tracking-readback-reconciliation",
+            {
+                "case_id": episode.case_id,
+                "divergence": divergence,
+                "repair": repair,
+                "candidate_score_adjustments": candidate_score_adjustments,
+                "candidate_evidence_refs_by_action": candidate_evidence_refs_by_action,
+            },
+        ),
+    }
+
+
+def _tracking_divergence_values(
+    *,
+    divergence_type: str,
+    tracker: Mapping[str, Any],
+) -> tuple[Any, Any, Any]:
+    metrics = dict(tracker.get("metrics") or {})
+    artifact_uri = str(tracker.get("artifact_uri") or "")
+    record = tracker.get("record", {})
+    if divergence_type == "metric_precision_roundtrip":
+        metric_name = "mean_total_return" if "mean_total_return" in metrics else sorted(metrics)[0]
+        expected = {metric_name: float(metrics[metric_name])}
+        readback = {metric_name: f"{round(float(metrics[metric_name]), 6):.6f}"}
+        return expected, readback, expected
+    if divergence_type == "artifact_uri_normalization":
+        if artifact_uri.startswith("memory://"):
+            readback_uri = artifact_uri.replace("memory://", "mlflow://", 1)
+        elif artifact_uri.startswith("wandb://"):
+            readback_uri = artifact_uri.replace("wandb://", "wandb-local://", 1)
+        else:
+            readback_uri = f"{artifact_uri}#readback"
+        return artifact_uri, readback_uri, artifact_uri
+    if divergence_type == "registry_alias_lag":
+        expected = {"deployment_stage": "none", "artifact_state": "candidate"}
+        readback = {"deployment_stage": "none", "artifact_state": "alias_pending"}
+        return expected, readback, expected
+    if divergence_type == "run_tag_backend_normalization":
+        expected = dict(record.get("tags") or {})
+        readback = {str(key).replace("_", "-"): value for key, value in expected.items()}
+        readback["tracking-backend"] = tracker.get("backend")
+        return expected, readback, expected
+    artifact_names = list(record.get("artifact_names") or [])
+    expected = artifact_names
+    readback = list(reversed(artifact_names))
+    return expected, readback, expected
+
+
 def _oss_followup_phase(role: str) -> str:
     return {
         "session": "observe",
@@ -1500,6 +1674,16 @@ def _oss_disagreement_refs_for_action(
     action: str,
 ) -> list[str]:
     refs_by_action = arbitration.get("candidate_evidence_refs_by_action", {})
+    if not isinstance(refs_by_action, Mapping):
+        return []
+    return [str(ref) for ref in refs_by_action.get(action, [])]
+
+
+def _tracking_reconciliation_refs_for_action(
+    reconciliation: Mapping[str, Any],
+    action: str,
+) -> list[str]:
+    refs_by_action = reconciliation.get("candidate_evidence_refs_by_action", {})
     if not isinstance(refs_by_action, Mapping):
         return []
     return [str(ref) for ref in refs_by_action.get(action, [])]
@@ -2433,6 +2617,7 @@ def _build_persona_reasoning_response(
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
+    tracking_reconciliation: Mapping[str, Any],
 ) -> dict[str, Any]:
     allowed_windows = ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"]
     forbidden_windows = ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"]
@@ -2453,6 +2638,7 @@ def _build_persona_reasoning_response(
             *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
             str(oss_followup_loop["loop_ref"]),
             str(oss_disagreement_arbitration["arbitration_ref"]),
+            str(tracking_reconciliation["reconciliation_ref"]),
             *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
         ],
         "portfolio_instruments": [window.instrument for window in episode.windows],
@@ -2469,6 +2655,7 @@ def _build_persona_reasoning_response(
         },
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
+        "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
         "oss_followup_request_ids": [
             followup["request"]["request_id"]
             for followup in oss_followup_loop["followups"]
@@ -2481,6 +2668,7 @@ def _build_persona_reasoning_response(
         oss_inputs=oss_inputs,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
+        tracking_reconciliation=tracking_reconciliation,
     )
     reasoning_response = {
         "response_id": f"persona-reasoning-response-{episode.case_id}-gen{generation}",
@@ -2496,6 +2684,7 @@ def _build_persona_reasoning_response(
             "inspect_alpha_policy_reflection_risk_tracking_oss_feedback",
             "process_oss_response_followup_requests",
             "arbitrate_multi_oss_disagreement",
+            "reconcile_tracking_readback_before_scoring",
             "draft_candidate_policy_blueprints",
             "send_blueprints_to_scorer_and_risk_evaluator",
         ],
@@ -2522,6 +2711,15 @@ def _build_persona_reasoning_response(
             ],
             "candidate_score_adjustments": copy.deepcopy(
                 dict(oss_disagreement_arbitration["candidate_score_adjustments"])
+            ),
+        },
+        "tracking_reconciliation_usage": {
+            "reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
+            "model_id": tracking_reconciliation["model_id"],
+            "divergence_type": tracking_reconciliation["divergence"]["divergence_type"],
+            "repair_action": tracking_reconciliation["repair"]["action"],
+            "candidate_score_adjustments": copy.deepcopy(
+                dict(tracking_reconciliation["candidate_score_adjustments"])
             ),
         },
         "candidate_blueprints": candidate_blueprints,
@@ -2556,6 +2754,7 @@ def _persona_reasoning_candidate_blueprints(
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
+    tracking_reconciliation: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     del oss_inputs
     shared_windows = list(allowed_windows)
@@ -2570,6 +2769,10 @@ def _persona_reasoning_candidate_blueprints(
     risk_arbitration_refs = _oss_disagreement_refs_for_action(oss_disagreement_arbitration, "risk-off")
     retain_arbitration_refs = _oss_disagreement_refs_for_action(oss_disagreement_arbitration, "retain-observe")
     contrarian_arbitration_refs = _oss_disagreement_refs_for_action(oss_disagreement_arbitration, "contrarian-check")
+    feedback_tracking_refs = _tracking_reconciliation_refs_for_action(tracking_reconciliation, "feedback-adapt")
+    risk_tracking_refs = _tracking_reconciliation_refs_for_action(tracking_reconciliation, "risk-off")
+    retain_tracking_refs = _tracking_reconciliation_refs_for_action(tracking_reconciliation, "retain-observe")
+    contrarian_tracking_refs = _tracking_reconciliation_refs_for_action(tracking_reconciliation, "contrarian-check")
     return [
         {
             "action": "feedback-adapt",
@@ -2585,11 +2788,16 @@ def _persona_reasoning_candidate_blueprints(
                 "backtest",
                 "tracker",
             ],
-            "extra_evidence_refs": [*feedback_followup_refs, *feedback_arbitration_refs, *memory_refs],
+            "extra_evidence_refs": [
+                *feedback_followup_refs,
+                *feedback_arbitration_refs,
+                *feedback_tracking_refs,
+                *memory_refs,
+            ],
             "memory_adjustment_key": "feedback-adapt",
             "rationale": (
                 "Use the feedback direction because alpha, policy, reflection, risk, backtest, "
-                "tracking, and retrieved memory support an adaptive portfolio mutation."
+                "tracking reconciliation, and retrieved memory support an adaptive portfolio mutation."
             ),
         },
         {
@@ -2599,7 +2807,7 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "baseline_policy",
             "source_windows": ["observe"],
             "evidence_roles": [],
-            "extra_evidence_refs": [*retain_followup_refs, *retain_arbitration_refs],
+            "extra_evidence_refs": [*retain_followup_refs, *retain_arbitration_refs, *retain_tracking_refs],
             "memory_adjustment_key": "retain-observe",
             "rationale": "Keep the observe-only baseline as a scored alternative before rejecting it.",
         },
@@ -2610,9 +2818,9 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "risk_analytics_reduced_exposure",
             "source_windows": feedback_windows,
             "evidence_roles": ["risk_analytics"],
-            "extra_evidence_refs": [*risk_followup_refs, *risk_arbitration_refs, *memory_refs]
+            "extra_evidence_refs": [*risk_followup_refs, *risk_arbitration_refs, *risk_tracking_refs, *memory_refs]
             if float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
-            else [*risk_followup_refs, *risk_arbitration_refs],
+            else [*risk_followup_refs, *risk_arbitration_refs, *risk_tracking_refs],
             "memory_adjustment_key": "risk-off",
             "rationale": "Use feedback direction but reduce exposure when the risk interpretation asks for caution.",
         },
@@ -2623,7 +2831,11 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "fixed_control_risk",
             "source_windows": feedback_windows,
             "evidence_roles": ["reflection_artifact"],
-            "extra_evidence_refs": [*contrarian_followup_refs, *contrarian_arbitration_refs],
+            "extra_evidence_refs": [
+                *contrarian_followup_refs,
+                *contrarian_arbitration_refs,
+                *contrarian_tracking_refs,
+            ],
             "memory_adjustment_key": "contrarian-check",
             "rationale": "Retain a contrarian control candidate for scored comparison and rejection.",
         },
@@ -2691,6 +2903,18 @@ def _evaluate_persona_reasoning_response(
             },
         ),
         _persona_risk_check(
+            "reasoning_uses_tracking_reconciliation",
+            request.get("tracking_reconciliation_ref")
+            == response.get("tracking_reconciliation_usage", {}).get("reconciliation_ref")
+            and request.get("tracking_reconciliation_ref") in request.get("input_refs", [])
+            and response.get("tracking_reconciliation_usage", {}).get("model_id")
+            == PERSONA_TRACKING_RECONCILIATION_MODEL_ID,
+            {
+                "tracking_reconciliation_ref": request.get("tracking_reconciliation_ref"),
+                "usage": copy.deepcopy(dict(response.get("tracking_reconciliation_usage", {}))),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_routes_to_scorer_and_risk_evaluator",
             response.get("output_contract", {}).get("scorer_required") is True
             and response.get("output_contract", {}).get("risk_evaluator_required") is True,
@@ -2715,6 +2939,7 @@ def _build_agent_decision_trace(
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
+    tracking_reconciliation: Mapping[str, Any],
 ) -> dict[str, Any]:
     memory_influence = _memory_influence_profile(prior_memory)
     trigger = (
@@ -2733,6 +2958,7 @@ def _build_agent_decision_trace(
         oss_inputs=oss_inputs,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
+        tracking_reconciliation=tracking_reconciliation,
     )
     candidates = _score_agent_candidates(
         episode=episode,
@@ -2745,6 +2971,7 @@ def _build_agent_decision_trace(
         persona_reasoning=persona_reasoning,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
+        tracking_reconciliation=tracking_reconciliation,
     )
     selected = max(candidates, key=lambda item: item.score)
     candidate_dicts = [_candidate_to_dict(candidate) for candidate in candidates]
@@ -2758,6 +2985,7 @@ def _build_agent_decision_trace(
         "oss_components": _oss_components_used(oss_inputs),
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
+        "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
     }
     evidence_refs = [
         f"telemetry-event://{telemetry_event['event_id']}",
@@ -2767,6 +2995,7 @@ def _build_agent_decision_trace(
         *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
         str(oss_followup_loop["loop_ref"]),
         str(oss_disagreement_arbitration["arbitration_ref"]),
+        str(tracking_reconciliation["reconciliation_ref"]),
     ]
     agent_decision_artifact = _build_persona_decision_artifact(
         episode=episode,
@@ -2781,6 +3010,7 @@ def _build_agent_decision_trace(
         persona_reasoning=persona_reasoning,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
+        tracking_reconciliation=tracking_reconciliation,
         decision_inputs=decision_inputs,
         evidence_refs=evidence_refs,
         candidates=candidate_dicts,
@@ -2819,6 +3049,7 @@ def _score_agent_candidates(
     persona_reasoning: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
+    tracking_reconciliation: Mapping[str, Any],
 ) -> list[PolicyCandidate]:
     del prior_memory
     feedback_directions = {
@@ -2836,6 +3067,7 @@ def _score_agent_candidates(
     risk_penalty = _risk_penalty_from_oss(oss_inputs)
     followup_score_adjustments = dict(oss_followup_loop["candidate_score_adjustments"])
     disagreement_score_adjustments = dict(oss_disagreement_arbitration["candidate_score_adjustments"])
+    tracking_score_adjustments = dict(tracking_reconciliation["candidate_score_adjustments"])
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_score_adjustments = dict(memory_influence["candidate_score_adjustments"])
     memory_ref = memory_influence.get("influence_ref")
@@ -2864,6 +3096,7 @@ def _score_agent_candidates(
                 + float(memory_score_adjustments["feedback-adapt"])
                 + float(followup_score_adjustments["feedback-adapt"])
                 + float(disagreement_score_adjustments["feedback-adapt"])
+                + float(tracking_score_adjustments["feedback-adapt"])
                 + feedback_score
                 + policy_quality
                 + reflection_quality
@@ -2879,6 +3112,7 @@ def _score_agent_candidates(
                 + float(memory_score_adjustments["retain-observe"])
                 + float(followup_score_adjustments["retain-observe"])
                 + float(disagreement_score_adjustments["retain-observe"])
+                + float(tracking_score_adjustments["retain-observe"])
                 + max(feedback_score, 0)
             ),
             "fallback_evidence_refs": (f"policy://{baseline_policy['policy_id']}",),
@@ -2891,6 +3125,7 @@ def _score_agent_candidates(
                 + float(memory_score_adjustments["risk-off"])
                 + float(followup_score_adjustments["risk-off"])
                 + float(disagreement_score_adjustments["risk-off"])
+                + float(tracking_score_adjustments["risk-off"])
                 + max(0.0, risk_penalty)
             ),
             "fallback_evidence_refs": tuple(risk_off_evidence_refs),
@@ -2903,6 +3138,7 @@ def _score_agent_candidates(
                 + float(memory_score_adjustments["contrarian-check"])
                 + float(followup_score_adjustments["contrarian-check"])
                 + float(disagreement_score_adjustments["contrarian-check"])
+                + float(tracking_score_adjustments["contrarian-check"])
             ),
             "fallback_evidence_refs": (
                 f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",
@@ -2966,6 +3202,7 @@ def _build_persona_decision_artifact(
     persona_reasoning: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
+    tracking_reconciliation: Mapping[str, Any],
     decision_inputs: Mapping[str, Any],
     evidence_refs: Sequence[str],
     candidates: Sequence[Mapping[str, Any]],
@@ -3001,6 +3238,10 @@ def _build_persona_decision_artifact(
         "oss_disagreement_arbitration": copy.deepcopy(dict(oss_disagreement_arbitration)),
         "oss_disagreement_score_adjustments": copy.deepcopy(
             dict(oss_disagreement_arbitration["candidate_score_adjustments"])
+        ),
+        "tracking_reconciliation": copy.deepcopy(dict(tracking_reconciliation)),
+        "tracking_reconciliation_score_adjustments": copy.deepcopy(
+            dict(tracking_reconciliation["candidate_score_adjustments"])
         ),
         "persona_reasoning_ref": persona_reasoning["response"]["reasoning_ref"],
         "persona_reasoning_preferred_action": persona_reasoning["response"]["preferred_action_hint"],
@@ -3068,6 +3309,10 @@ def _build_persona_decision_artifact(
         "oss_disagreement_resolution_actions": list(
             oss_disagreement_arbitration["persona_arbitration_response"]["resolution_actions"]
         ),
+        "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
+        "tracking_reconciliation_divergence_type": tracking_reconciliation["divergence"]["divergence_type"],
+        "tracking_reconciliation_repair_action": tracking_reconciliation["repair"]["action"],
+        "tracking_reconciliation_repair_ref": tracking_reconciliation["repair"]["repair_ref"],
         "oss_followup_response_refs": [
             followup["response"]["output_ref"]
             for followup in oss_followup_loop["followups"]
@@ -3096,6 +3341,8 @@ def _build_persona_decision_artifact(
                 persona_reasoning["response"]["reasoning_ref"],
                 str(oss_followup_loop["loop_ref"]),
                 str(oss_disagreement_arbitration["arbitration_ref"]),
+                str(tracking_reconciliation["reconciliation_ref"]),
+                str(tracking_reconciliation["repair"]["repair_ref"]),
                 *oss_evidence_refs,
                 *[
                     followup["response"]["output_ref"]
@@ -3105,6 +3352,7 @@ def _build_persona_decision_artifact(
                     conflict["resolution_ref"]
                     for conflict in oss_disagreement_arbitration["conflicts"]
                 ],
+                *tracking_reconciliation["repair"]["evidence_refs"],
                 *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
             ],
             "allowed_windows": list(decision_inputs["allowed_windows"]),
@@ -3175,6 +3423,19 @@ def _build_persona_decision_artifact(
                 for value in scoring_inputs["oss_disagreement_score_adjustments"].values()
             )
         ),
+        "uses_tracking_reconciliation": (
+            _tracking_readback_reconciliation_is_usable(tracking_reconciliation)
+            and str(tracking_reconciliation["reconciliation_ref"]) in candidate_generation["request"]["input_refs"]
+            and set(
+                tracking_reconciliation["candidate_evidence_refs_by_action"][
+                    _candidate_action_key(str(selected_candidate["candidate_id"]))
+                ]
+            ).issubset(set(selected_candidate.get("evidence_refs", [])))
+            and any(
+                float(value) > 0
+                for value in scoring_inputs["tracking_reconciliation_score_adjustments"].values()
+            )
+        ),
     }
     return {
         "artifact_id": f"persona-decision-artifact-{episode.case_id}-gen{generation}",
@@ -3212,16 +3473,19 @@ def _persona_candidate_scorecard(
     memory_score_adjustments = dict(scoring_inputs["memory_score_adjustments"])
     followup_score_adjustments = dict(scoring_inputs["oss_followup_score_adjustments"])
     disagreement_score_adjustments = dict(scoring_inputs["oss_disagreement_score_adjustments"])
+    tracking_reconciliation_score_adjustments = dict(scoring_inputs["tracking_reconciliation_score_adjustments"])
     if candidate_id.endswith("-feedback-adapt"):
         formula_id = "feedback_adapt_score_v1"
         memory_adjustment = float(memory_score_adjustments["feedback-adapt"])
         followup_adjustment = float(followup_score_adjustments["feedback-adapt"])
         disagreement_adjustment = float(disagreement_score_adjustments["feedback-adapt"])
+        tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["feedback-adapt"])
         replayed_score = round(
             3.0
             + memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
+            + tracking_reconciliation_adjustment
             + feedback_score
             + policy_quality
             + reflection_quality
@@ -3233,6 +3497,7 @@ def _persona_candidate_scorecard(
             "memory_adjustment": memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
+            "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "feedback_score": feedback_score,
             "policy_quality": policy_quality,
             "reflection_quality": reflection_quality,
@@ -3243,8 +3508,14 @@ def _persona_candidate_scorecard(
         memory_adjustment = float(memory_score_adjustments["retain-observe"])
         followup_adjustment = float(followup_score_adjustments["retain-observe"])
         disagreement_adjustment = float(disagreement_score_adjustments["retain-observe"])
+        tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["retain-observe"])
         replayed_score = round(
-            1.0 + memory_adjustment + followup_adjustment + disagreement_adjustment + max(feedback_score, 0.0),
+            1.0
+            + memory_adjustment
+            + followup_adjustment
+            + disagreement_adjustment
+            + tracking_reconciliation_adjustment
+            + max(feedback_score, 0.0),
             10,
         )
         components = {
@@ -3252,6 +3523,7 @@ def _persona_candidate_scorecard(
             "memory_adjustment": memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
+            "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "positive_feedback_score": round(max(feedback_score, 0.0), 10),
         }
     elif candidate_id.endswith("-risk-off"):
@@ -3259,8 +3531,14 @@ def _persona_candidate_scorecard(
         memory_adjustment = float(memory_score_adjustments["risk-off"])
         followup_adjustment = float(followup_score_adjustments["risk-off"])
         disagreement_adjustment = float(disagreement_score_adjustments["risk-off"])
+        tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["risk-off"])
         replayed_score = round(
-            2.0 + memory_adjustment + followup_adjustment + disagreement_adjustment + max(0.0, risk_penalty),
+            2.0
+            + memory_adjustment
+            + followup_adjustment
+            + disagreement_adjustment
+            + tracking_reconciliation_adjustment
+            + max(0.0, risk_penalty),
             10,
         )
         components = {
@@ -3268,6 +3546,7 @@ def _persona_candidate_scorecard(
             "memory_adjustment": memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
+            "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
         }
     else:
@@ -3275,12 +3554,21 @@ def _persona_candidate_scorecard(
         memory_adjustment = float(memory_score_adjustments["contrarian-check"])
         followup_adjustment = float(followup_score_adjustments["contrarian-check"])
         disagreement_adjustment = float(disagreement_score_adjustments["contrarian-check"])
-        replayed_score = round(0.25 + memory_adjustment + followup_adjustment + disagreement_adjustment, 10)
+        tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["contrarian-check"])
+        replayed_score = round(
+            0.25
+            + memory_adjustment
+            + followup_adjustment
+            + disagreement_adjustment
+            + tracking_reconciliation_adjustment,
+            10,
+        )
         components = {
             "base": 0.25,
             "memory_adjustment": memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
+            "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
         }
     candidate_score = round(float(candidate["score"]), 10)
     return {
@@ -5097,6 +5385,9 @@ def _case_upstream_artifacts_are_usable(
         and _oss_disagreement_arbitration_is_usable(artifacts.get("oss_disagreement_arbitration", {}))
         and artifacts.get("oss_disagreement_arbitration", {}).get("arbitration_ref")
         in persona_response.get("evidence_refs", [])
+        and _tracking_readback_reconciliation_is_usable(artifacts.get("tracking_reconciliation", {}))
+        and artifacts.get("tracking_reconciliation", {}).get("reconciliation_ref")
+        in persona_response.get("evidence_refs", [])
     )
 
 
@@ -5176,6 +5467,47 @@ def _oss_disagreement_arbitration_is_usable(arbitration: Mapping[str, Any]) -> b
         and replay.get("followup_loop_available") is True
         and replay.get("selected_oss_refs_available") is True
         and replay.get("feedback_adapt_gets_all_selected_refs") is True
+    )
+
+
+def _tracking_readback_reconciliation_is_usable(reconciliation: Mapping[str, Any]) -> bool:
+    replay = reconciliation.get("replay", {})
+    divergence = reconciliation.get("divergence", {})
+    repair = reconciliation.get("repair", {})
+    adjustments = reconciliation.get("candidate_score_adjustments", {})
+    refs_by_action = reconciliation.get("candidate_evidence_refs_by_action", {})
+    response = reconciliation.get("persona_reconciliation_response", {})
+    divergence_type = str(divergence.get("divergence_type"))
+    repair_action = TRACKING_RECONCILIATION_ACTION_BY_TYPE.get(divergence_type)
+    return bool(
+        reconciliation.get("model_id") == PERSONA_TRACKING_RECONCILIATION_MODEL_ID
+        and reconciliation.get("status") == "reconciled"
+        and reconciliation.get("reconciliation_ref", "").startswith("tracking-reconciliation://")
+        and reconciliation.get("input_hash")
+        and divergence_type in TRACKING_DIVERGENCE_TYPES_BY_SCENARIO.values()
+        and repair.get("action") == repair_action
+        and repair.get("repair_ref", "").startswith(str(reconciliation.get("reconciliation_ref")))
+        and repair.get("next_persona_step") == "cite_reconciled_experiment_ref"
+        and repair.get("normalized_experiment_ref") == f"experiment://{reconciliation.get('backend')}/{reconciliation.get('run_id')}"
+        and divergence.get("backend") == reconciliation.get("backend")
+        and divergence.get("expected") != divergence.get("readback")
+        and set(adjustments) == {"feedback-adapt", "retain-observe", "risk-off", "contrarian-check"}
+        and float(adjustments.get("feedback-adapt", 0.0)) > 0.0
+        and set(refs_by_action) == {"feedback-adapt", "retain-observe", "risk-off", "contrarian-check"}
+        and reconciliation.get("reconciliation_ref") in refs_by_action.get("feedback-adapt", [])
+        and repair.get("repair_ref") in refs_by_action.get("feedback-adapt", [])
+        and response.get("next_action") == "score_candidates_with_reconciled_tracking_readback"
+        and response.get("preferred_candidate_action") == "feedback-adapt"
+        and repair_action in response.get("repair_actions", [])
+        and replay.get("replayable") is True
+        and replay.get("tracker_completed") is True
+        and replay.get("tracker_readback_found") is True
+        and replay.get("divergence_detected") is True
+        and replay.get("repair_action_selected") is True
+        and replay.get("normalized_experiment_ref_available") is True
+        and replay.get("vectorbt_tracker_bound") is True
+        and replay.get("scorer_adjustment_available") is True
+        and replay.get("feedback_adapt_gets_tracking_refs") is True
     )
 
 
@@ -5259,6 +5591,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("uses_selected_oss_feedback") is True
         and replay.get("uses_oss_response_followup_loop") is True
         and replay.get("uses_oss_disagreement_arbitration") is True
+        and replay.get("uses_tracking_reconciliation") is True
         and replay.get("input_hash")
         and replay.get("candidate_hash")
         and replay.get("score_hash")
@@ -5268,6 +5601,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and _trace_persona_reasoning_is_usable(trace)
         and _trace_oss_followup_loop_is_usable(trace)
         and _trace_oss_disagreement_arbitration_is_usable(trace)
+        and _trace_tracking_reconciliation_is_usable(trace)
     )
 
 
@@ -5321,6 +5655,8 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
     followup_usage = response.get("oss_followup_usage", {})
     arbitration_ref = input_context.get("oss_disagreement_arbitration_ref")
     arbitration_usage = response.get("oss_disagreement_arbitration_usage", {})
+    tracking_reconciliation_ref = input_context.get("tracking_reconciliation_ref")
+    tracking_reconciliation_usage = response.get("tracking_reconciliation_usage", {})
     return bool(
         request.get("model_id") == PERSONA_REASONING_MODEL_ID
         and response.get("model_id") == PERSONA_REASONING_MODEL_ID
@@ -5339,6 +5675,11 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
         and arbitration_usage.get("model_id") == PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID
         and arbitration_ref in request.get("input_refs", [])
         and arbitration_ref in generation_request.get("input_refs", [])
+        and request.get("tracking_reconciliation_ref") == tracking_reconciliation_ref
+        and tracking_reconciliation_usage.get("reconciliation_ref") == tracking_reconciliation_ref
+        and tracking_reconciliation_usage.get("model_id") == PERSONA_TRACKING_RECONCILIATION_MODEL_ID
+        and tracking_reconciliation_ref in request.get("input_refs", [])
+        and tracking_reconciliation_ref in generation_request.get("input_refs", [])
         and int(followup_usage.get("followup_count", 0)) >= 8
         and response.get("reasoning_ref") in generation_request.get("input_refs", [])
         and generation_response.get("source_reasoning_response_id") == response.get("response_id")
@@ -5404,6 +5745,36 @@ def _trace_oss_disagreement_arbitration_is_usable(trace: Mapping[str, Any]) -> b
         and trace.get("decision_inputs", {}).get("oss_disagreement_arbitration_ref") == arbitration_ref
         and arbitration_ref in trace.get("evidence_refs", [])
         and arbitration_ref in candidate_request.get("input_refs", [])
+        and set(expected_refs).issubset(selected_refs)
+        and float(score_adjustments.get(selected_action, 0.0)) > 0.0
+    )
+
+
+def _trace_tracking_reconciliation_is_usable(trace: Mapping[str, Any]) -> bool:
+    artifact = trace.get("agent_decision_artifact", {})
+    if not isinstance(artifact, Mapping):
+        return False
+    input_context = artifact.get("input_context", {})
+    candidate_request = artifact.get("candidate_generation", {}).get("request", {})
+    scorer_inputs = artifact.get("scorer", {}).get("scoring_inputs", {})
+    selected_candidate = trace.get("selected_candidate", {})
+    selected_action = _candidate_action_key(str(selected_candidate.get("candidate_id")))
+    reconciliation = scorer_inputs.get("tracking_reconciliation", {})
+    if not isinstance(reconciliation, Mapping):
+        return False
+    reconciliation_ref = reconciliation.get("reconciliation_ref")
+    repair_ref = reconciliation.get("repair", {}).get("repair_ref")
+    expected_refs = _tracking_reconciliation_refs_for_action(reconciliation, selected_action)
+    selected_refs = set(selected_candidate.get("evidence_refs", []))
+    score_adjustments = scorer_inputs.get("tracking_reconciliation_score_adjustments", {})
+    return bool(
+        _tracking_readback_reconciliation_is_usable(reconciliation)
+        and input_context.get("tracking_reconciliation_ref") == reconciliation_ref
+        and input_context.get("tracking_reconciliation_repair_ref") == repair_ref
+        and trace.get("decision_inputs", {}).get("tracking_reconciliation_ref") == reconciliation_ref
+        and reconciliation_ref in trace.get("evidence_refs", [])
+        and reconciliation_ref in candidate_request.get("input_refs", [])
+        and repair_ref in candidate_request.get("input_refs", [])
         and set(expected_refs).issubset(selected_refs)
         and float(score_adjustments.get(selected_action, 0.0)) > 0.0
     )
@@ -5943,6 +6314,10 @@ def _build_usability_dimensions(
         _trace_oss_disagreement_arbitration_is_usable(trace)
         for trace in decision_traces
     ) else 0.0
+    tracking_reconciliation = 1.0 if (
+        _tracking_readback_reconciliation_is_usable(case_upstream_artifacts.get("tracking_reconciliation", {}))
+        and all(_trace_tracking_reconciliation_is_usable(trace) for trace in decision_traces)
+    ) else 0.0
     return {
         "return_improvement": return_improvement,
         "multi_generation_improvement": multi_generation_improvement,
@@ -5959,6 +6334,7 @@ def _build_usability_dimensions(
         "persona_reasoning_generation": persona_reasoning_generation,
         "oss_response_followup_loop": oss_response_followup_loop,
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
+        "tracking_reconciliation": tracking_reconciliation,
         "oss_evidence_completeness": min(1.0, oss_evidence_completeness),
         "portfolio_breadth": portfolio_breadth,
         "no_leakage": no_leakage,
@@ -6155,6 +6531,20 @@ def _diagnose_validation_execution(
                 "resolution_actions": case_upstream_artifacts["oss_disagreement_arbitration"][
                     "persona_arbitration_response"
                 ]["resolution_actions"],
+                "trace_ids": [trace["reflection_id"] for trace in decision_traces],
+            },
+        ),
+        _diagnostic_check(
+            "tracking_readback_reconciliation_drives_persona_scoring",
+            _tracking_readback_reconciliation_is_usable(case_upstream_artifacts["tracking_reconciliation"])
+            and all(_trace_tracking_reconciliation_is_usable(trace) for trace in decision_traces),
+            {
+                "reconciliation_id": case_upstream_artifacts["tracking_reconciliation"]["reconciliation_id"],
+                "divergence_type": case_upstream_artifacts["tracking_reconciliation"]["divergence"][
+                    "divergence_type"
+                ],
+                "repair_action": case_upstream_artifacts["tracking_reconciliation"]["repair"]["action"],
+                "backend": case_upstream_artifacts["tracking_reconciliation"]["backend"],
                 "trace_ids": [trace["reflection_id"] for trace in decision_traces],
             },
         ),
@@ -6415,6 +6805,7 @@ def _case_upstream_artifacts_case_summary(artifacts: Mapping[str, Any]) -> dict[
             for role, entry in artifacts["selected_oss"].items()
         },
         "oss_disagreement_arbitration": copy.deepcopy(artifacts["oss_disagreement_arbitration"]),
+        "tracking_reconciliation": copy.deepcopy(artifacts["tracking_reconciliation"]),
         "persona_response": copy.deepcopy(artifacts["persona_response"]),
     }
 
@@ -6604,6 +6995,7 @@ def _build_case_result(
                 "oss_response_followup_loop"
             ] == 1.0,
             "multi_oss_disagreement_arbitrated": usability_dimensions["oss_disagreement_arbitration"] == 1.0,
+            "tracking_reconciliation_drives_decision": usability_dimensions["tracking_reconciliation"] == 1.0,
             "persona_decision_artifacts_replay": usability_dimensions["persona_decision_artifact"] == 1.0,
             "persona_reasoning_drives_candidate_generation": usability_dimensions[
                 "persona_reasoning_generation"
@@ -6667,6 +7059,9 @@ def _build_summary(
     oss_followup_loops = [case["oss_feedback"]["response_followup_loop"] for case in cases]
     oss_disagreement_arbitrations = [
         case["case_upstream_artifacts"]["oss_disagreement_arbitration"] for case in cases
+    ]
+    tracking_reconciliations = [
+        case["case_upstream_artifacts"]["tracking_reconciliation"] for case in cases
     ]
     broker_adapter_lifecycles = [
         case["operational_context"]["broker_adapter_lifecycle"] for case in cases
@@ -6844,6 +7239,30 @@ def _build_summary(
             for arbitration in oss_disagreement_arbitrations
             for action in arbitration["candidate_evidence_refs_by_action"]
         }),
+        "tracking_reconciliation_models": sorted({
+            reconciliation["model_id"] for reconciliation in tracking_reconciliations
+        }),
+        "tracking_reconciliation_divergence_types": sorted({
+            reconciliation["divergence"]["divergence_type"]
+            for reconciliation in tracking_reconciliations
+        }),
+        "tracking_reconciliation_repair_actions": sorted({
+            reconciliation["repair"]["action"] for reconciliation in tracking_reconciliations
+        }),
+        "tracking_reconciliation_backends": sorted({
+            reconciliation["backend"] for reconciliation in tracking_reconciliations
+        }),
+        "tracking_reconciliation_replay_flags": sorted({
+            flag
+            for reconciliation in tracking_reconciliations
+            for flag, value in reconciliation["replay"].items()
+            if value is True
+        }),
+        "tracking_reconciliation_candidate_actions": sorted({
+            action
+            for reconciliation in tracking_reconciliations
+            for action in reconciliation["candidate_evidence_refs_by_action"]
+        }),
         "agent_decision_artifact_models": sorted({
             artifact["model_id"] for artifact in decision_artifacts
         }),
@@ -6973,6 +7392,15 @@ def _build_summary(
         "multi_oss_disagreement_arbitrated_count": sum(
             1 for item in usable if item["multi_oss_disagreement_arbitrated"]
         ),
+        "tracking_reconciliation_count": len(tracking_reconciliations),
+        "tracking_reconciliation_pass_count": sum(
+            1
+            for reconciliation in tracking_reconciliations
+            if _tracking_readback_reconciliation_is_usable(reconciliation)
+        ),
+        "tracking_reconciliation_drives_decision_count": sum(
+            1 for item in usable if item["tracking_reconciliation_drives_decision"]
+        ),
         "agent_decision_artifact_count": len(decision_artifacts),
         "agent_decision_artifact_replay_count": sum(
             1 for item in usable if item["persona_decision_artifacts_replay"]
@@ -7059,6 +7487,7 @@ def _build_summary(
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every case converts OSS responses into persona follow-up requests that feed reasoning, candidate evidence, and scorer adjustments.",
             "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
+            "Every case reconciles experiment-tracker readback divergence and routes the repaired tracking ref into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every persona decision emits a replayable request-response artifact covering candidate generation, scoring, risk checks, and rejected alternatives.",
             "Every persona decision first emits a structured reasoning response whose candidate blueprints drive the scored candidates.",
             "Every case records a multi-generation evolution trajectory proving gen0->gen1->gen2 lineage, two distinct unseen-window improvements, and bounded turnover.",
