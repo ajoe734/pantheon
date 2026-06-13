@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
+const DEFAULT_AUDIT_DIR = path.join(".lovable", "audits", "current-run");
 
 const argv = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -19,14 +20,14 @@ for (let i = 2; i < process.argv.length; i += 1) {
   }
 }
 
-const AUDIT_DIR = path.resolve(ROOT, argv.get("audit-dir") || process.env.PANTHEON_AUDIT_OUT_DIR || ".lovable/audits");
+const AUDIT_DIR = path.resolve(ROOT, argv.get("audit-dir") || process.env.PANTHEON_AUDIT_OUT_DIR || DEFAULT_AUDIT_DIR);
 const PLAYWRIGHT_REPORT_DIR = path.resolve(ROOT, argv.get("playwright-report") || "playwright-report");
 const TEST_RESULTS_DIR = path.resolve(ROOT, argv.get("test-results") || "test-results");
 const OUT_PATH = path.resolve(ROOT, argv.get("out") || path.join(AUDIT_DIR, "release-gate-summary.md"));
 const JSON_OUT_PATH = path.resolve(ROOT, argv.get("json-out") || path.join(AUDIT_DIR, "release-gate-summary.json"));
 const CHECKLIST_TEMPLATE_ARG = argv.get("checklist") || process.env.PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE || "";
 const CHECKLIST_TEMPLATE_PATH = CHECKLIST_TEMPLATE_ARG ? path.resolve(ROOT, CHECKLIST_TEMPLATE_ARG) : "";
-const CHECKLIST_OUT_PATH = path.resolve(ROOT, argv.get("checklist-out") || process.env.PANTHEON_RELEASE_GATE_CHECKLIST_OUT || path.join(".lovable", "audits", "Release_Gate_Checklist.md"));
+const CHECKLIST_OUT_PATH = path.resolve(ROOT, argv.get("checklist-out") || process.env.PANTHEON_RELEASE_GATE_CHECKLIST_OUT || path.join(DEFAULT_AUDIT_DIR, "Release_Gate_Checklist.md"));
 const RUN_URL = process.env.PANTHEON_RELEASE_GATE_RUN_URL ||
   (process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
     ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
@@ -756,7 +757,7 @@ function buildGate7(previousGates) {
       evidence: exceptionsFile || JSON_OUT_PATH,
       note: failures.length === 0 ? "no exceptions needed" : exceptionsPresent ? "exceptions present" : "exceptions missing",
     }),
-    makeCheck("Evidence written to `.lovable/audits/`.", evidencePresent ? "pass" : "missing", {
+    makeCheck(`Evidence written to \`${rel(AUDIT_DIR)}\`.`, evidencePresent ? "pass" : "missing", {
       owner: evidencePresent ? "" : GATE_OWNERS[7],
       evidence: AUDIT_DIR,
       note: `${auditFiles.length} audit file(s) found`,

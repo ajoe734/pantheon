@@ -517,6 +517,15 @@ def _claim_path_value(claims: Mapping[str, Any], path: str) -> Any:
     return current
 
 
+def _claim_path_exists(claims: Mapping[str, Any], path: str) -> bool:
+    current: Any = claims
+    for part in path.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return False
+        current = current.get(part)
+    return True
+
+
 def _claim_values(value: Any) -> list[str]:
     if value is None:
         return []
@@ -574,7 +583,10 @@ def _claims_to_context(
         or "internal-api-operator"
     ).strip() or "internal-api-operator"
     role_values: list[str] = []
+    role_claim_seen = False
     for claim_path in role_claims:
+        if _claim_path_exists(claims, claim_path):
+            role_claim_seen = True
         role_values.extend(_claim_values(_claim_path_value(claims, claim_path)))
 
     mapping = role_map or {}
@@ -589,7 +601,11 @@ def _claims_to_context(
 
     roles = frozenset(role.strip() for role in mapped_roles if role and str(role).strip())
     if not roles:
-        roles = frozenset() if strict_mapping and role_values else frozenset({default_role})
+        roles = (
+            frozenset()
+            if role_claim_seen or (strict_mapping and role_values)
+            else frozenset({default_role})
+        )
 
     mfa_verified = any(
         _claim_indicates_mfa(_claim_path_value(claims, claim_path), mfa_values)

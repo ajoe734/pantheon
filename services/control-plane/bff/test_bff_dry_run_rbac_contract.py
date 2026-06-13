@@ -86,6 +86,13 @@ def _isolated_bff() -> Iterator[TestClient]:
         }
         try:
             bff_main.read_store = _seed_read_store(Path(td) / "read_surfaces.json")
+            bff_main.read_store.create_agora_signal(
+                signal_id="sig-dry-seed",
+                title="Seed signal",
+                body="Existing signal for feedback dry-run.",
+                actor_id="seed",
+                payload={},
+            )
             bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
             bff_main._STRATEGY_BFF_OVERLAY.clear()
             bff_main._PERSONA_BFF_OVERLAY.clear()
@@ -142,14 +149,28 @@ def _assert_dry_run(response) -> dict[str, Any]:
     return body
 
 
-def _error_code(response) -> str:
+def _error_payload(response) -> dict[str, Any]:
     body = response.json()
     detail = body.get("detail") if isinstance(body, dict) else None
     if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
-        return str(detail["error"].get("code") or "")
+        return detail["error"]
     if isinstance(body, dict) and isinstance(body.get("error"), dict):
-        return str(body["error"].get("code") or "")
-    return ""
+        return body["error"]
+    return {}
+
+
+def _error_code(response) -> str:
+    return str(_error_payload(response).get("code") or "")
+
+
+def _surface_snapshot(surface_name: str) -> str:
+    list_methods = {
+        "agora_signals": bff_main.read_store.list_agora_signals,
+        "personas": bff_main.read_store.list_personas,
+        "ranking_formulas": bff_main.read_store.list_ranking_formulas,
+        "strategy_specs": bff_main.read_store.list_strategy_specs,
+    }
+    return json.dumps(list_methods[surface_name](), sort_keys=True)
 
 
 def test_dry_run_create_routes_do_not_persist_to_read_surfaces_or_caches() -> None:
@@ -267,6 +288,61 @@ def test_dry_run_command_routes_do_not_write_command_store_or_sse() -> None:
         assert all(len(buffer) == 0 for buffer in bff_main._sse_buffers.values())
 
 
+def test_dry_run_validation_failures_return_bff_error_envelope_without_side_effects() -> None:
+    with _isolated_bff() as client:
+        cases = (
+            (
+                "/bff/strategies",
+                "invalid-dry-strategy",
+                {},
+                "strategy_specs",
+                bff_main._STRATEGY_BFF_OVERLAY,
+                bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY,
+            ),
+            (
+                "/bff/personas",
+                "invalid-dry-persona",
+                {},
+                "personas",
+                bff_main._PERSONA_BFF_OVERLAY,
+                bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY,
+            ),
+            (
+                "/bff/ranking-formulas",
+                "invalid-dry-ranking-formula",
+                {},
+                "ranking_formulas",
+                None,
+                bff_main._CAPITAL_BFF_IDEMPOTENCY,
+            ),
+            (
+                "/bff/agora/signals/sig-dry-seed/feedback",
+                "invalid-dry-agora-feedback",
+                {"decision": "disagree", "confidence": 5},
+                "agora_signals",
+                None,
+                bff_main._AGORA_CORE_BFF_IDEMPOTENCY,
+            ),
+        )
+
+        for path, key, payload, surface_name, overlay, cache in cases:
+            before_surface = _surface_snapshot(surface_name)
+            before_overlay = dict(overlay or {})
+            response = client.post(path, headers=_dry_headers(key), json=payload)
+            assert response.status_code == 422, response.text
+            error = _error_payload(response)
+            assert error.get("code") == "VALIDATION_FAILED"
+            assert isinstance(error.get("details"), dict)
+            assert error["details"].get("precondition_failed")
+            assert _surface_snapshot(surface_name) == before_surface
+            if overlay is not None:
+                assert dict(overlay) == before_overlay
+            assert cache == {}
+
+        assert bff_main.command_store._get_all_commands() == []
+        assert all(len(buffer) == 0 for buffer in bff_main._sse_buffers.values())
+
+
 def _make_jwt(*, sub: str, roles: list[str]) -> str:
     now = int(time.time())
     claims = {
@@ -280,7 +356,7 @@ def _make_jwt(*, sub: str, roles: list[str]) -> str:
     return encode_jwt_hs256(claims, secret="test-bff-secret-1234")
 
 
-def test_strict_bearer_jwt_rbac_matrix_viewer_reads_operator_writes() -> None:
+def test_strict_bearer_jwt_full_rbac_matrix_for_management_reads_and_writes() -> None:
     env = {
         "PANTHEON_BFF_AUTH_STUB": "",
         "PANTHEON_BFF_AUTH_MODE": "strict",
@@ -289,42 +365,56 @@ def test_strict_bearer_jwt_rbac_matrix_viewer_reads_operator_writes() -> None:
         "PANTHEON_BFF_JWT_AUDIENCE": "bff-operators",
         "PANTHEON_BFF_MFA_REQUIRED": "false",
     }
-    viewer_headers = {"Authorization": f"Bearer {_make_jwt(sub='viewer-1', roles=['viewer'])}"}
-    operator_headers = {"Authorization": f"Bearer {_make_jwt(sub='operator-1', roles=['operator'])}"}
+
+    read_paths = (
+        "/bff/strategies",
+        "/bff/ranking-formulas",
+        "/bff/agora/signals",
+    )
+    write_cases = (
+        ("/bff/strategies", {"name": "matrix strategy preview"}),
+        ("/bff/ranking-formulas", {"name": "matrix ranking formula preview"}),
+        ("/bff/agora/notes", {"title": "matrix note preview", "body": "preview"}),
+        ("/bff/v5/interventions/int-rbac-matrix/claim", {"reason": "preview"}),
+    )
+    role_cases = (
+        ("viewer", ["viewer"], True, False),
+        ("operator", ["operator"], True, True),
+        ("reviewer", ["reviewer"], True, True),
+        ("approver", ["approver"], True, True),
+        ("admin", ["admin"], True, True),
+        ("empty", [], False, False),
+        ("unknown", ["auditor"], False, False),
+    )
 
     with patch.dict(os.environ, env, clear=False):
         with _isolated_bff() as client:
-            read_resp = client.get("/bff/strategies", headers=viewer_headers)
-            assert read_resp.status_code == 200, read_resp.text
-            formula_read = client.get("/bff/ranking-formulas", headers=viewer_headers)
-            assert formula_read.status_code == 200, formula_read.text
+            for label, roles, can_read, can_write in role_cases:
+                headers = {"Authorization": f"Bearer {_make_jwt(sub=f'{label}-1', roles=roles)}"}
 
-            denied_write = client.post(
-                "/bff/strategies",
-                headers=_dry_headers("viewer-write-denied", auth=viewer_headers),
-                json={"name": "viewer must not write"},
-            )
-            assert denied_write.status_code == 403, denied_write.text
-            assert _error_code(denied_write) == "FORBIDDEN"
+                for path in read_paths:
+                    response = client.get(path, headers=headers)
+                    if can_read:
+                        assert response.status_code == 200, response.text
+                    else:
+                        assert response.status_code == 403, response.text
+                        assert _error_code(response) == "FORBIDDEN"
 
-            allowed_write = _assert_dry_run(client.post(
-                "/bff/strategies",
-                headers=_dry_headers("operator-write-allowed", auth=operator_headers),
-                json={"name": "operator preview"},
-            ))
-            assert allowed_write["data"]["name"] == "operator preview"
+                for index, (path, payload) in enumerate(write_cases):
+                    response = client.post(
+                        path,
+                        headers=_dry_headers(f"{label}-matrix-write-{index}", auth=headers),
+                        json=payload,
+                    )
+                    if can_write:
+                        body = _assert_dry_run(response)
+                        assert body["meta"]["dryRun"] is True
+                    else:
+                        assert response.status_code == 403, response.text
+                        assert _error_code(response) == "FORBIDDEN"
 
-            denied_formula_write = client.post(
-                "/bff/ranking-formulas",
-                headers=_dry_headers("viewer-formula-write-denied", auth=viewer_headers),
-                json={"name": "viewer formula write must not pass"},
-            )
-            assert denied_formula_write.status_code == 403, denied_formula_write.text
-            assert _error_code(denied_formula_write) == "FORBIDDEN"
-
-            allowed_formula_write = _assert_dry_run(client.post(
-                "/bff/ranking-formulas",
-                headers=_dry_headers("operator-formula-write-allowed", auth=operator_headers),
-                json={"name": "operator formula preview"},
-            ))
-            assert allowed_formula_write["data"]["name"] == "operator formula preview"
+            assert bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY == {}
+            assert bff_main._AGORA_CORE_BFF_IDEMPOTENCY == {}
+            assert bff_main._CAPITAL_BFF_IDEMPOTENCY == {}
+            assert bff_main._FINAL_CONTRACT_IDEMPOTENCY == {}
+            assert bff_main.command_store._get_all_commands() == []
