@@ -77,6 +77,16 @@ _BFF_ENV = {
 }
 
 
+def _response_error(resp):
+    body = resp.json()
+    if isinstance(body.get("error"), dict):
+        return body["error"]
+    detail = body.get("detail")
+    if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+        return detail["error"]
+    raise AssertionError(f"response did not contain BFF error envelope: {body}")
+
+
 # ---------------------------------------------------------------------------
 # Unit tests: _extract_identity_jwt
 # ---------------------------------------------------------------------------
@@ -719,8 +729,7 @@ class TestExtractIdentityJwks:
                         bff_main.settings_store = original
 
         assert resp.status_code == 403
-        detail = resp.json()["detail"]
-        assert detail["error"]["details"]["precondition_failed"] == "role_check"
+        assert _response_error(resp)["details"]["precondition_failed"] == "role_check"
 
     # ---- kid matching ----
 
