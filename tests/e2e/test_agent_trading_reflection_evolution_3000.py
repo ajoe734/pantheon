@@ -21,6 +21,9 @@ from services.persona.agent_usability_validation import (
     HISTORICAL_OHLCV_DATASET_ID,
     HOLDOUT_BARS,
     LEAN_ENGINE_REPLAY_MODEL_ID,
+    LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO,
+    LEAN_RUNTIME_FEEDBACK_MODEL_ID,
+    LEAN_RUNTIME_FEEDBACK_OODA_STEP_BY_ACTION,
     LOOKBACK_BARS,
     MARKET_FRICTION_MODEL_ID,
     MIN_USABILITY_SCORE,
@@ -112,6 +115,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["restart_recovery_count"] == DEFAULT_CASE_COUNT
     assert summary["autonomous_scheduler_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_engine_replay_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_runtime_feedback_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_runtime_feedback_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_runtime_feedback_drives_ooda_count"] == DEFAULT_CASE_COUNT
     assert summary["shioaji_sandbox_lifecycle_count"] == DEFAULT_CASE_COUNT
     assert summary["case_specific_vectorbt_backtest_count"] == DEFAULT_CASE_COUNT
     assert summary["case_specific_tracking_roundtrip_count"] == DEFAULT_CASE_COUNT
@@ -209,6 +215,29 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert set(coverage["scheduler_phases"]) == set(AUTONOMOUS_SCHEDULER_PHASES)
     assert coverage["lean_engine_replay_models"] == [LEAN_ENGINE_REPLAY_MODEL_ID]
     assert coverage["lean_engine_algorithm_modules"] == ["pantheon_algo.smoke_loader_test"]
+    assert coverage["lean_runtime_feedback_models"] == [LEAN_RUNTIME_FEEDBACK_MODEL_ID]
+    assert set(coverage["lean_runtime_feedback_actions"]) == set(
+        LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO.values()
+    )
+    assert set(coverage["lean_runtime_feedback_action_families"]) == {
+        "allocation_decision",
+        "execution_quality_orientation",
+        "handoff_action_repair",
+        "risk_decision",
+        "runtime_fill_observation",
+    }
+    assert set(coverage["lean_runtime_feedback_ooda_steps"]) == {"act", "decide", "observe", "orient"}
+    assert set(coverage["lean_runtime_feedback_replay_flags"]) == {
+        "case_runtime_refs_bound",
+        "drives_persona_next_ooda_step",
+        "fills_drive_next_ooda",
+        "handoff_packet_consumed",
+        "next_cycle_scheduled",
+        "object_store_readback_verified",
+        "paper_runtime_guard_retained",
+        "runtime_binding_readback_verified",
+        "runtime_feedback_consumed",
+    }
     assert coverage["shioaji_sandbox_models"] == [SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID]
     assert coverage["shioaji_sandbox_run_modes"] == ["mock_api_replay"]
     assert set(coverage["case_vectorbt_backends"]).issubset({"stub_backtest", "vectorbt_portfolio"})
@@ -1099,6 +1128,59 @@ def _assert_operational_context(case: dict) -> None:
     for entry in case["case_upstream_artifacts"]["selected_oss"].values():
         assert f"oss://{entry['component']}/{entry['request_id']}" in handoff["runtime_bundle_refs"]
     assert handoff["runtime_bundle_refs"]
+
+    runtime_feedback = operational["lean_runtime_feedback"]
+    expected_runtime_action = LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO[operational["scenario"]]
+    assert runtime_feedback["feedback_id"] == f"lean-runtime-feedback-{case['case_id']}"
+    assert runtime_feedback["model_id"] == LEAN_RUNTIME_FEEDBACK_MODEL_ID
+    assert runtime_feedback["status"] == "accepted"
+    assert runtime_feedback["case_id"] == case["case_id"]
+    assert runtime_feedback["persona_id"] == case["persona_id"]
+    assert runtime_feedback["scenario"] == operational["scenario"]
+    assert runtime_feedback["source_runtime_ref"] == f"lean-engine://{replay['replay_id']}"
+    assert runtime_feedback["source_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert runtime_feedback["request_response_flow"] == [
+        "persona_strategy_packet",
+        "lean_runtime_replay_response",
+        "persona_next_ooda_action",
+    ]
+
+    runtime_readback = runtime_feedback["runtime_feedback"]
+    assert runtime_readback["runtime_id"] == replay["runtime_context"]["runtime_id"]
+    assert runtime_readback["runtime_binding_id"] == replay["runtime_context"]["runtime_binding_id"]
+    assert runtime_readback["deployment_plan_id"] == replay["runtime_context"]["deployment_plan_id"]
+    assert runtime_readback["deployment_stage"] == "paper"
+    assert runtime_readback["loaded_metadata_runtime_binding_id"] == replay["loaded_metadata"]["runtime_binding_id"]
+    assert runtime_readback["loaded_metadata_deployment_plan_id"] == replay["loaded_metadata"]["deployment_plan_id"]
+    assert runtime_readback["fill_count"] == replay["fill_count"]
+    assert runtime_readback["executed_on_data_callbacks"] == replay["executed_on_data_callbacks"]
+    assert runtime_readback["object_store_metadata_key"].endswith("/metadata.json")
+    assert runtime_readback["object_store_artifact_key"].endswith("/artifact.bin")
+
+    ooda_followup = runtime_feedback["persona_ooda_followup"]
+    assert ooda_followup["action"] == expected_runtime_action
+    assert ooda_followup["ooda_step"] == LEAN_RUNTIME_FEEDBACK_OODA_STEP_BY_ACTION[expected_runtime_action]
+    assert ooda_followup["next_scheduler_phase"] in {"evolve", "reflect"}
+    assert ooda_followup["required_before_next_cycle"] is True
+    assert ooda_followup["paper_only"] is True
+    assert ooda_followup["rationale"]
+    assert ooda_followup["evidence_refs"] == [
+        runtime_feedback["source_runtime_ref"],
+        runtime_feedback["source_handoff_ref"],
+        f"runtime-binding://{runtime_readback['runtime_binding_id']}",
+        f"object-store://{runtime_readback['object_store_metadata_key']}",
+        f"reflection://{case['reflection']['agent_decision_traces'][-1]['reflection_id']}",
+    ]
+    assert runtime_feedback["state_updates"]["mark_runtime_feedback_seen"] is True
+    assert runtime_feedback["state_updates"]["bind_runtime_context"] == runtime_readback["runtime_binding_id"]
+    assert runtime_feedback["state_updates"]["verify_object_store_metadata"] == runtime_readback["object_store_metadata_key"]
+    assert runtime_feedback["state_updates"]["attach_to_handoff_packet"] == handoff["packet_id"]
+    assert runtime_feedback["state_updates"]["attach_to_decision_trace"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
+    assert runtime_feedback["state_updates"]["schedule_next_cycle_after_feedback"] == schedule["next_cycle_due_at"]
+    assert all(runtime_feedback["replay"].values())
+    assert runtime_feedback["input_hash"]
+    assert case["usability_dimensions"]["lean_runtime_feedback"] == 1.0
+    assert check_by_name["lean_runtime_feedback_drives_persona_ooda"]["status"] == "passed"
 
 
 def _assert_evolution_and_scores(case: dict) -> None:

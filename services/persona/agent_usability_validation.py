@@ -116,9 +116,24 @@ BROKER_ADAPTER_FOLLOWUP_ACTIONS_BY_SCENARIO: dict[str, str] = {
     "partial_fill_reconcile": "reconcile_partial_fill_and_verify_position",
     "risk_reject_reduce": "reduce_risk_and_hold_live_submission_disabled",
 }
+LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO: dict[str, str] = {
+    "cancel_replace_readback": "act_on_handoff_replay_before_resubmission",
+    "limit_miss_reprice": "orient_on_runtime_fill_quality_before_reprice",
+    "liquidity_cap_scale": "decide_reduced_allocation_for_next_cycle",
+    "partial_fill_reconcile": "observe_runtime_fills_before_reflection",
+    "risk_reject_reduce": "decide_risk_reduced_paper_next_cycle",
+}
+LEAN_RUNTIME_FEEDBACK_OODA_STEP_BY_ACTION: dict[str, str] = {
+    "act_on_handoff_replay_before_resubmission": "act",
+    "decide_reduced_allocation_for_next_cycle": "decide",
+    "decide_risk_reduced_paper_next_cycle": "decide",
+    "observe_runtime_fills_before_reflection": "observe",
+    "orient_on_runtime_fill_quality_before_reprice": "orient",
+}
 BROKER_LIFECYCLE_TERMINAL_STATUS = "filled"
 MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
 LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
+LEAN_RUNTIME_FEEDBACK_MODEL_ID = "persona_lean_runtime_feedback_v1"
 SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
 BROKER_ADAPTER_LIFECYCLE_MODEL_ID = "persona_broker_adapter_lifecycle_v1"
 BROKER_ADAPTER_FOLLOWUP_MODEL_ID = "persona_broker_adapter_followup_v1"
@@ -3644,6 +3659,14 @@ def _build_operational_context(
         shioaji_sandbox_lifecycle=shioaji_sandbox_lifecycle,
         case_upstream_artifacts=case_upstream_artifacts,
     )
+    lean_runtime_feedback = _build_lean_runtime_feedback_response(
+        episode=episode,
+        scenario=scenario,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        autonomous_schedule=autonomous_schedule,
+        decision_traces=decision_traces,
+    )
     return {
         "operational_signature": _stable_id(
             "operational",
@@ -3653,6 +3676,7 @@ def _build_operational_context(
             broker_lifecycle["lifecycle_model"],
             autonomous_schedule["schedule_id"],
             broker_adapter_followup["followup_id"],
+            lean_runtime_feedback["feedback_id"],
         ),
         "scenario": scenario,
         "market_friction": market_friction,
@@ -3666,6 +3690,7 @@ def _build_operational_context(
         "lean_engine_replay": lean_engine_replay,
         "case_upstream_artifacts": _case_upstream_artifacts_case_summary(case_upstream_artifacts),
         "lean_handoff": lean_handoff,
+        "lean_runtime_feedback": lean_runtime_feedback,
     }
 
 
@@ -4353,6 +4378,154 @@ def _build_lean_handoff_packet(
     }
 
 
+def _build_lean_runtime_feedback_response(
+    *,
+    episode: PortfolioEpisode,
+    scenario: str,
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    autonomous_schedule: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    action = _lean_runtime_feedback_action_for_scenario(scenario)
+    ooda_step = LEAN_RUNTIME_FEEDBACK_OODA_STEP_BY_ACTION.get(action, "orient")
+    runtime_ref = f"lean-engine://{lean_engine_replay['replay_id']}"
+    handoff_ref = f"lean-handoff://{lean_handoff['packet_id']}"
+    metadata_key = next(
+        (key for key in lean_engine_replay.get("object_store_keys", []) if str(key).endswith("/metadata.json")),
+        "",
+    )
+    artifact_key = next(
+        (key for key in lean_engine_replay.get("object_store_keys", []) if str(key).endswith("/artifact.bin")),
+        "",
+    )
+    runtime_context = lean_engine_replay.get("runtime_context", {})
+    loaded_metadata = lean_engine_replay.get("loaded_metadata", {})
+    binding = lean_engine_replay.get("binding", {})
+    plan = lean_engine_replay.get("plan", {})
+    evidence_refs = [
+        runtime_ref,
+        handoff_ref,
+        f"runtime-binding://{runtime_context.get('runtime_binding_id')}",
+        f"object-store://{metadata_key}",
+        f"reflection://{decision_traces[-1]['reflection_id']}",
+    ]
+    replay = {
+        "runtime_feedback_consumed": lean_engine_replay.get("model_id") == LEAN_ENGINE_REPLAY_MODEL_ID
+        and lean_engine_replay.get("status") == "passed",
+        "handoff_packet_consumed": lean_handoff.get("received_by_lean_handoff") is True
+        and lean_handoff.get("lean_engine_replay_id") == lean_engine_replay.get("replay_id"),
+        "runtime_binding_readback_verified": runtime_context.get("runtime_binding_id") == binding.get("binding_id")
+        and runtime_context.get("runtime_id") == binding.get("runtime_id")
+        and runtime_context.get("deployment_plan_id") == plan.get("plan_id")
+        and loaded_metadata.get("runtime_binding_id") == binding.get("binding_id"),
+        "object_store_readback_verified": bool(metadata_key) and bool(artifact_key),
+        "fills_drive_next_ooda": int(lean_engine_replay.get("fill_count", 0)) >= 1
+        and action == LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO.get(scenario),
+        "paper_runtime_guard_retained": runtime_context.get("deployment_stage") == "paper"
+        and lean_handoff.get("target_stage") == "paper"
+        and lean_handoff.get("broker_live_submitted") is False
+        and lean_engine_replay.get("broker_production_live_enabled") == "false",
+        "case_runtime_refs_bound": bool(lean_handoff.get("case_vectorbt_request_id"))
+        and bool(lean_handoff.get("case_tracking_run_id"))
+        and runtime_ref in lean_handoff.get("runtime_bundle_refs", []),
+        "next_cycle_scheduled": autonomous_schedule.get("phase_order_valid") is True
+        and bool(autonomous_schedule.get("next_cycle_due_at")),
+        "drives_persona_next_ooda_step": True,
+    }
+    return {
+        "feedback_id": f"lean-runtime-feedback-{episode.case_id}",
+        "model_id": LEAN_RUNTIME_FEEDBACK_MODEL_ID,
+        "status": "accepted" if all(replay.values()) else "blocked",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "scenario": scenario,
+        "source_runtime_ref": runtime_ref,
+        "source_handoff_ref": handoff_ref,
+        "runtime_feedback": {
+            "runtime_id": runtime_context.get("runtime_id"),
+            "runtime_binding_id": runtime_context.get("runtime_binding_id"),
+            "deployment_plan_id": runtime_context.get("deployment_plan_id"),
+            "deployment_stage": runtime_context.get("deployment_stage"),
+            "loaded_metadata_runtime_binding_id": loaded_metadata.get("runtime_binding_id"),
+            "loaded_metadata_deployment_plan_id": loaded_metadata.get("deployment_plan_id"),
+            "fill_count": lean_engine_replay.get("fill_count"),
+            "executed_on_data_callbacks": lean_engine_replay.get("executed_on_data_callbacks"),
+            "object_store_metadata_key": metadata_key,
+            "object_store_artifact_key": artifact_key,
+        },
+        "request_response_flow": [
+            "persona_strategy_packet",
+            "lean_runtime_replay_response",
+            "persona_next_ooda_action",
+        ],
+        "persona_ooda_followup": {
+            "action": action,
+            "action_family": _lean_runtime_feedback_action_family(action),
+            "ooda_step": ooda_step,
+            "next_scheduler_phase": "reflect" if ooda_step in {"observe", "orient"} else "evolve",
+            "required_before_next_cycle": True,
+            "paper_only": True,
+            "rationale": _lean_runtime_feedback_rationale(scenario),
+            "evidence_refs": evidence_refs,
+        },
+        "state_updates": {
+            "mark_runtime_feedback_seen": True,
+            "bind_runtime_context": runtime_context.get("runtime_binding_id"),
+            "verify_object_store_metadata": metadata_key,
+            "attach_to_handoff_packet": lean_handoff["packet_id"],
+            "attach_to_decision_trace": decision_traces[-1]["reflection_id"],
+            "schedule_next_cycle_after_feedback": autonomous_schedule["next_cycle_due_at"],
+        },
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "lean-runtime-feedback",
+            {
+                "case_id": episode.case_id,
+                "scenario": scenario,
+                "action": action,
+                "runtime_ref": runtime_ref,
+                "handoff_ref": handoff_ref,
+                "runtime_binding_id": runtime_context.get("runtime_binding_id"),
+                "metadata_key": metadata_key,
+                "fill_count": lean_engine_replay.get("fill_count"),
+            },
+        ),
+    }
+
+
+def _lean_runtime_feedback_action_for_scenario(scenario: str) -> str:
+    return LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO.get(
+        scenario,
+        "orient_on_runtime_feedback_before_next_cycle",
+    )
+
+
+def _lean_runtime_feedback_action_family(action: str) -> str:
+    if action.startswith("act_on_handoff"):
+        return "handoff_action_repair"
+    if action.startswith("decide_reduced_allocation"):
+        return "allocation_decision"
+    if action.startswith("decide_risk"):
+        return "risk_decision"
+    if action.startswith("observe_runtime"):
+        return "runtime_fill_observation"
+    if action.startswith("orient_on_runtime"):
+        return "execution_quality_orientation"
+    return "runtime_feedback_orientation"
+
+
+def _lean_runtime_feedback_rationale(scenario: str) -> str:
+    rationales = {
+        "cancel_replace_readback": "LEAN handoff replay must be acted on before a resubmission is scheduled.",
+        "limit_miss_reprice": "Runtime fill quality must orient the persona before repricing the next paper order.",
+        "liquidity_cap_scale": "Runtime feedback must drive a reduced allocation decision for the next cycle.",
+        "partial_fill_reconcile": "Runtime fills must be observed before reflection trusts the portfolio state.",
+        "risk_reject_reduce": "Runtime feedback must keep the next paper cycle risk-reduced before any live path.",
+    }
+    return rationales.get(scenario, "Runtime feedback must orient the persona before the next paper cycle.")
+
+
 def _market_friction_is_usable(market_friction: Mapping[str, Any]) -> bool:
     return bool(
         market_friction.get("applied")
@@ -4464,6 +4637,44 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
         and packet.get("case_tracking_run_id")
         and packet.get("broker_live_submitted") is False
         and packet.get("runtime_bundle_refs")
+    )
+
+
+def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
+    replay = feedback.get("replay", {})
+    runtime_feedback = feedback.get("runtime_feedback", {})
+    persona_followup = feedback.get("persona_ooda_followup", {})
+    return bool(
+        feedback.get("model_id") == LEAN_RUNTIME_FEEDBACK_MODEL_ID
+        and feedback.get("status") == "accepted"
+        and feedback.get("source_runtime_ref", "").startswith("lean-engine://")
+        and feedback.get("source_handoff_ref", "").startswith("lean-handoff://")
+        and feedback.get("input_hash")
+        and runtime_feedback.get("runtime_binding_id")
+        and runtime_feedback.get("runtime_binding_id")
+        == runtime_feedback.get("loaded_metadata_runtime_binding_id")
+        and runtime_feedback.get("deployment_plan_id")
+        == runtime_feedback.get("loaded_metadata_deployment_plan_id")
+        and runtime_feedback.get("deployment_stage") == "paper"
+        and int(runtime_feedback.get("fill_count", 0)) >= 1
+        and runtime_feedback.get("object_store_metadata_key", "").endswith("/metadata.json")
+        and runtime_feedback.get("object_store_artifact_key", "").endswith("/artifact.bin")
+        and persona_followup.get("action")
+        == LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO.get(str(feedback.get("scenario")))
+        and persona_followup.get("ooda_step")
+        == LEAN_RUNTIME_FEEDBACK_OODA_STEP_BY_ACTION.get(str(persona_followup.get("action")))
+        and persona_followup.get("required_before_next_cycle") is True
+        and persona_followup.get("paper_only") is True
+        and len(persona_followup.get("evidence_refs", [])) >= 5
+        and replay.get("runtime_feedback_consumed") is True
+        and replay.get("handoff_packet_consumed") is True
+        and replay.get("runtime_binding_readback_verified") is True
+        and replay.get("object_store_readback_verified") is True
+        and replay.get("fills_drive_next_ooda") is True
+        and replay.get("paper_runtime_guard_retained") is True
+        and replay.get("case_runtime_refs_bound") is True
+        and replay.get("next_cycle_scheduled") is True
+        and replay.get("drives_persona_next_ooda_step") is True
     )
 
 
@@ -5346,6 +5557,9 @@ def _build_usability_dimensions(
         artifacts=case_upstream_artifacts,
     ) else 0.0
     lean_handoff = 1.0 if _lean_handoff_packet_is_usable(operational_context["lean_handoff"]) else 0.0
+    lean_runtime_feedback = 1.0 if _lean_runtime_feedback_is_usable(
+        operational_context["lean_runtime_feedback"]
+    ) else 0.0
     multi_generation_trajectory = 1.0 if _evolution_trajectory_is_usable(evolution_trajectory) else 0.0
     no_leakage_temporal_protocol = 1.0 if _no_leakage_temporal_protocol_is_usable(
         no_leakage_protocol
@@ -5384,6 +5598,7 @@ def _build_usability_dimensions(
         "shioaji_sandbox_lifecycle": shioaji_sandbox,
         "case_specific_upstream_artifact_feedback": case_upstream_feedback,
         "lean_handoff_packet": lean_handoff,
+        "lean_runtime_feedback": lean_runtime_feedback,
     }
 
 
@@ -5632,6 +5847,18 @@ def _diagnose_validation_execution(
                 "component": operational_context["lean_handoff"]["component"],
                 "case_vectorbt_request_id": operational_context["lean_handoff"].get("case_vectorbt_request_id"),
                 "case_tracking_run_id": operational_context["lean_handoff"].get("case_tracking_run_id"),
+            },
+        ),
+        _diagnostic_check(
+            "lean_runtime_feedback_drives_persona_ooda",
+            _lean_runtime_feedback_is_usable(operational_context["lean_runtime_feedback"]),
+            {
+                "feedback_id": operational_context["lean_runtime_feedback"]["feedback_id"],
+                "action": operational_context["lean_runtime_feedback"]["persona_ooda_followup"]["action"],
+                "ooda_step": operational_context["lean_runtime_feedback"]["persona_ooda_followup"]["ooda_step"],
+                "runtime_binding_id": operational_context["lean_runtime_feedback"]["runtime_feedback"][
+                    "runtime_binding_id"
+                ],
             },
         ),
         _diagnostic_check(
@@ -6002,6 +6229,7 @@ def _build_case_result(
             "restart_recovery_restores_loop": usability_dimensions["restart_recovery"] == 1.0,
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
             "lean_engine_replay_uses_runtime_binding": usability_dimensions["lean_engine_replay"] == 1.0,
+            "lean_runtime_feedback_drives_ooda": usability_dimensions["lean_runtime_feedback"] == 1.0,
             "shioaji_sandbox_lifecycle_reconciled": usability_dimensions["shioaji_sandbox_lifecycle"] == 1.0,
             "case_specific_upstream_artifact_feedback": usability_dimensions[
                 "case_specific_upstream_artifact_feedback"
@@ -6049,6 +6277,9 @@ def _build_summary(
     ]
     broker_adapter_followups = [
         case["operational_context"]["broker_adapter_followup"] for case in cases
+    ]
+    lean_runtime_feedbacks = [
+        case["operational_context"]["lean_runtime_feedback"] for case in cases
     ]
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
@@ -6121,6 +6352,24 @@ def _build_summary(
         }),
         "lean_engine_algorithm_modules": sorted({
             case["operational_context"]["lean_engine_replay"]["algorithm_module"] for case in cases
+        }),
+        "lean_runtime_feedback_models": sorted({
+            feedback["model_id"] for feedback in lean_runtime_feedbacks
+        }),
+        "lean_runtime_feedback_actions": sorted({
+            feedback["persona_ooda_followup"]["action"] for feedback in lean_runtime_feedbacks
+        }),
+        "lean_runtime_feedback_action_families": sorted({
+            feedback["persona_ooda_followup"]["action_family"] for feedback in lean_runtime_feedbacks
+        }),
+        "lean_runtime_feedback_ooda_steps": sorted({
+            feedback["persona_ooda_followup"]["ooda_step"] for feedback in lean_runtime_feedbacks
+        }),
+        "lean_runtime_feedback_replay_flags": sorted({
+            flag
+            for feedback in lean_runtime_feedbacks
+            for flag, value in feedback["replay"].items()
+            if value is True
         }),
         "shioaji_sandbox_models": sorted({
             case["operational_context"]["shioaji_sandbox_lifecycle"]["model_id"] for case in cases
@@ -6334,6 +6583,13 @@ def _build_summary(
         "restart_recovery_count": sum(1 for item in usable if item["restart_recovery_restores_loop"]),
         "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
         "lean_engine_replay_count": sum(1 for item in usable if item["lean_engine_replay_uses_runtime_binding"]),
+        "lean_runtime_feedback_count": len(lean_runtime_feedbacks),
+        "lean_runtime_feedback_pass_count": sum(
+            1 for feedback in lean_runtime_feedbacks if _lean_runtime_feedback_is_usable(feedback)
+        ),
+        "lean_runtime_feedback_drives_ooda_count": sum(
+            1 for item in usable if item["lean_runtime_feedback_drives_ooda"]
+        ),
         "shioaji_sandbox_lifecycle_count": sum(1 for item in usable if item["shioaji_sandbox_lifecycle_reconciled"]),
         "case_specific_vectorbt_backtest_count": sum(
             1 for item in usable if item["case_specific_upstream_artifact_feedback"]
@@ -6382,6 +6638,7 @@ def _build_summary(
             "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",
             "Every case emits a persona-visible broker adapter lifecycle packet tying paper order status paths, Shioaji sandbox place/cancel/readback, live-disabled rejection, and restart recovery into a replayable response.",
             "Every broker adapter response triggers a scenario-specific persona follow-up action before the next autonomous paper cycle.",
+            "Every LEAN runtime response is consumed by the persona and drives a scenario-specific next OODA action with runtime binding, object-store readback, and handoff refs.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
     }
