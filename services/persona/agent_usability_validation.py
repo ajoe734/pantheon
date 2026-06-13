@@ -109,11 +109,19 @@ OPERATIONAL_SCENARIOS = (
     "cancel_replace_readback",
     "risk_reject_reduce",
 )
+BROKER_ADAPTER_FOLLOWUP_ACTIONS_BY_SCENARIO: dict[str, str] = {
+    "cancel_replace_readback": "confirm_cancel_replace_then_resubmit_paper_order",
+    "limit_miss_reprice": "reprice_limit_with_fresh_readback",
+    "liquidity_cap_scale": "scale_to_liquidity_cap_before_next_cycle",
+    "partial_fill_reconcile": "reconcile_partial_fill_and_verify_position",
+    "risk_reject_reduce": "reduce_risk_and_hold_live_submission_disabled",
+}
 BROKER_LIFECYCLE_TERMINAL_STATUS = "filled"
 MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
 LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
 SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
 BROKER_ADAPTER_LIFECYCLE_MODEL_ID = "persona_broker_adapter_lifecycle_v1"
+BROKER_ADAPTER_FOLLOWUP_MODEL_ID = "persona_broker_adapter_followup_v1"
 CASE_UPSTREAM_VECTORBT_MODEL_ID = "case_specific_vectorbt_feedback_v1"
 CASE_UPSTREAM_TRACKING_MODEL_ID = "case_specific_tracking_artifact_roundtrip_v1"
 CASE_SELECTED_OSS_MODEL_ID = "case_specific_selected_oss_feedback_v1"
@@ -3612,6 +3620,14 @@ def _build_operational_context(
         generated_at=generated_at,
         restart_recovery=restart_recovery,
     )
+    broker_adapter_followup = _build_broker_adapter_followup_response(
+        episode=episode,
+        scenario=scenario,
+        broker_adapter_lifecycle=broker_adapter_lifecycle,
+        restart_recovery=restart_recovery,
+        autonomous_schedule=autonomous_schedule,
+        decision_traces=decision_traces,
+    )
     lean_engine_replay = _run_lean_engine_replay(
         episode=episode,
         final_policy=generation_policies[-1],
@@ -3636,11 +3652,13 @@ def _build_operational_context(
             market_friction["model_id"],
             broker_lifecycle["lifecycle_model"],
             autonomous_schedule["schedule_id"],
+            broker_adapter_followup["followup_id"],
         ),
         "scenario": scenario,
         "market_friction": market_friction,
         "broker_lifecycle": broker_lifecycle,
         "broker_adapter_lifecycle": broker_adapter_lifecycle,
+        "broker_adapter_followup": broker_adapter_followup,
         "shioaji_sandbox_lifecycle": shioaji_sandbox_lifecycle,
         "persona_conflict_resolution": persona_conflict,
         "restart_recovery": restart_recovery,
@@ -4012,6 +4030,119 @@ def _required_broker_statuses_for_scenario(scenario: str) -> set[str]:
     return set(_broker_status_path_for(scenario, 0))
 
 
+def _build_broker_adapter_followup_response(
+    *,
+    episode: PortfolioEpisode,
+    scenario: str,
+    broker_adapter_lifecycle: Mapping[str, Any],
+    restart_recovery: Mapping[str, Any],
+    autonomous_schedule: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    action = _broker_adapter_followup_action_for_scenario(scenario)
+    source_packet_ref = f"broker-adapter://{broker_adapter_lifecycle['packet_id']}"
+    latest_trace_ref = decision_traces[-1]["reflection_id"]
+    evidence_refs = [
+        source_packet_ref,
+        f"reflection://{latest_trace_ref}",
+        f"checkpoint://{restart_recovery['checkpoint_id']}",
+        f"schedule://{autonomous_schedule['schedule_id']}",
+    ]
+    replay = {
+        "adapter_response_consumed": broker_adapter_lifecycle.get("model_id") == BROKER_ADAPTER_LIFECYCLE_MODEL_ID
+        and bool(broker_adapter_lifecycle.get("input_hash")),
+        "scenario_action_selected": action == BROKER_ADAPTER_FOLLOWUP_ACTIONS_BY_SCENARIO.get(scenario),
+        "source_refs_bound": all(evidence_refs),
+        "recovery_context_preserved": restart_recovery.get("recovered") is True
+        and restart_recovery.get("duplicate_execution_suppressed") is True,
+        "next_cycle_scheduled": autonomous_schedule.get("phase_order_valid") is True
+        and bool(autonomous_schedule.get("next_cycle_due_at")),
+        "paper_only_guard_retained": broker_adapter_lifecycle.get("adapter_order", {}).get("live_disabled_error_code")
+        == "SHIOAJI_LIVE_DISABLED"
+        and broker_adapter_lifecycle.get("replay", {}).get("no_live_broker_submission") is True,
+        "drives_persona_next_step": True,
+    }
+    return {
+        "followup_id": f"broker-adapter-followup-{episode.case_id}",
+        "model_id": BROKER_ADAPTER_FOLLOWUP_MODEL_ID,
+        "status": "accepted" if all(replay.values()) else "blocked",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "scenario": scenario,
+        "source_packet_ref": source_packet_ref,
+        "source_packet_model": broker_adapter_lifecycle.get("model_id"),
+        "source_packet_hash": broker_adapter_lifecycle.get("input_hash"),
+        "decision_trace_ref": latest_trace_ref,
+        "restart_checkpoint_ref": restart_recovery["checkpoint_id"],
+        "schedule_ref": autonomous_schedule["schedule_id"],
+        "request_response_flow": [
+            "persona_order_intent",
+            "broker_adapter_lifecycle_response",
+            "persona_followup_action",
+        ],
+        "persona_followup": {
+            "action": action,
+            "action_family": _broker_adapter_followup_action_family(action),
+            "next_persona_step": "execution_feedback_review",
+            "required_before_next_cycle": True,
+            "paper_only": True,
+            "rationale": _broker_adapter_followup_rationale(scenario),
+            "evidence_refs": evidence_refs,
+        },
+        "state_updates": {
+            "mark_adapter_response_seen": True,
+            "bind_recovery_checkpoint": restart_recovery["checkpoint_id"],
+            "schedule_next_cycle_after_followup": autonomous_schedule["next_cycle_due_at"],
+            "attach_to_decision_trace": latest_trace_ref,
+        },
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "broker-adapter-followup",
+            {
+                "case_id": episode.case_id,
+                "scenario": scenario,
+                "action": action,
+                "source_packet_ref": source_packet_ref,
+                "decision_trace_ref": latest_trace_ref,
+                "restart_checkpoint_ref": restart_recovery["checkpoint_id"],
+                "schedule_ref": autonomous_schedule["schedule_id"],
+            },
+        ),
+    }
+
+
+def _broker_adapter_followup_action_for_scenario(scenario: str) -> str:
+    return BROKER_ADAPTER_FOLLOWUP_ACTIONS_BY_SCENARIO.get(
+        scenario,
+        "review_adapter_response_before_next_cycle",
+    )
+
+
+def _broker_adapter_followup_action_family(action: str) -> str:
+    if action.startswith("confirm_cancel_replace"):
+        return "cancel_replace_recovery"
+    if action.startswith("reduce_risk"):
+        return "risk_control"
+    if action.startswith("reprice_limit"):
+        return "limit_repricing"
+    if action.startswith("scale_to_liquidity"):
+        return "liquidity_sizing"
+    if action.startswith("reconcile_partial_fill"):
+        return "position_reconciliation"
+    return "adapter_response_review"
+
+
+def _broker_adapter_followup_rationale(scenario: str) -> str:
+    rationales = {
+        "cancel_replace_readback": "Cancel/replace status needs a readback-confirmed paper resubmission before the next cycle.",
+        "limit_miss_reprice": "Limit miss feedback needs a fresh readback and repriced paper order before evaluation continues.",
+        "liquidity_cap_scale": "Liquidity cap feedback needs reduced sizing before the next scheduled paper cycle.",
+        "partial_fill_reconcile": "Partial fill feedback needs position reconciliation before the persona trusts portfolio state.",
+        "risk_reject_reduce": "Risk rejection feedback needs reduced exposure while live submission remains disabled.",
+    }
+    return rationales.get(scenario, "Adapter feedback needs persona review before the next scheduled cycle.")
+
+
 def _build_autonomous_schedule(
     *,
     episode: PortfolioEpisode,
@@ -4261,6 +4392,30 @@ def _broker_adapter_lifecycle_is_usable(lifecycle: Mapping[str, Any]) -> bool:
         and replay.get("all_orders_have_status_paths") is True
         and replay.get("all_orders_end_filled") is True
         and replay.get("no_live_broker_submission") is True
+    )
+
+
+def _broker_adapter_followup_is_usable(followup: Mapping[str, Any]) -> bool:
+    replay = followup.get("replay", {})
+    persona_followup = followup.get("persona_followup", {})
+    return bool(
+        followup.get("model_id") == BROKER_ADAPTER_FOLLOWUP_MODEL_ID
+        and followup.get("status") == "accepted"
+        and followup.get("source_packet_model") == BROKER_ADAPTER_LIFECYCLE_MODEL_ID
+        and followup.get("source_packet_hash")
+        and followup.get("input_hash")
+        and persona_followup.get("action")
+        == BROKER_ADAPTER_FOLLOWUP_ACTIONS_BY_SCENARIO.get(str(followup.get("scenario")))
+        and persona_followup.get("required_before_next_cycle") is True
+        and persona_followup.get("paper_only") is True
+        and len(persona_followup.get("evidence_refs", [])) >= 4
+        and replay.get("adapter_response_consumed") is True
+        and replay.get("scenario_action_selected") is True
+        and replay.get("source_refs_bound") is True
+        and replay.get("recovery_context_preserved") is True
+        and replay.get("next_cycle_scheduled") is True
+        and replay.get("paper_only_guard_retained") is True
+        and replay.get("drives_persona_next_step") is True
     )
 
 
@@ -5176,6 +5331,9 @@ def _build_usability_dimensions(
     broker_adapter_lifecycle = 1.0 if _broker_adapter_lifecycle_is_usable(
         operational_context["broker_adapter_lifecycle"]
     ) else 0.0
+    broker_adapter_followup = 1.0 if _broker_adapter_followup_is_usable(
+        operational_context["broker_adapter_followup"]
+    ) else 0.0
     persona_conflicts = 1.0 if _persona_conflicts_are_resolved(operational_context["persona_conflict_resolution"]) else 0.0
     restart_recovery = 1.0 if _restart_recovery_is_usable(operational_context["restart_recovery"]) else 0.0
     autonomous_scheduler = 1.0 if _autonomous_schedule_is_usable(operational_context["autonomous_schedule"]) else 0.0
@@ -5218,6 +5376,7 @@ def _build_usability_dimensions(
         "market_friction_model": market_friction,
         "broker_lifecycle_reconciliation": broker_lifecycle,
         "broker_adapter_lifecycle": broker_adapter_lifecycle,
+        "broker_adapter_followup": broker_adapter_followup,
         "persona_conflict_resolution": persona_conflicts,
         "restart_recovery": restart_recovery,
         "autonomous_scheduler": autonomous_scheduler,
@@ -5429,6 +5588,16 @@ def _diagnose_validation_execution(
                 "scenario": operational_context["broker_adapter_lifecycle"]["scenario"],
                 "required_statuses": operational_context["broker_adapter_lifecycle"]["required_statuses"],
                 "adapter_order": operational_context["broker_adapter_lifecycle"]["adapter_order"],
+            },
+        ),
+        _diagnostic_check(
+            "broker_adapter_response_drives_persona_followup",
+            _broker_adapter_followup_is_usable(operational_context["broker_adapter_followup"]),
+            {
+                "followup_id": operational_context["broker_adapter_followup"]["followup_id"],
+                "scenario": operational_context["broker_adapter_followup"]["scenario"],
+                "action": operational_context["broker_adapter_followup"]["persona_followup"]["action"],
+                "source_packet_ref": operational_context["broker_adapter_followup"]["source_packet_ref"],
             },
         ),
         _diagnostic_check(
@@ -5828,6 +5997,7 @@ def _build_case_result(
             "market_friction_model_applied": usability_dimensions["market_friction_model"] == 1.0,
             "broker_lifecycle_reconciled": usability_dimensions["broker_lifecycle_reconciliation"] == 1.0,
             "broker_adapter_lifecycle_replayed": usability_dimensions["broker_adapter_lifecycle"] == 1.0,
+            "broker_adapter_response_drives_followup": usability_dimensions["broker_adapter_followup"] == 1.0,
             "persona_conflicts_resolved": usability_dimensions["persona_conflict_resolution"] == 1.0,
             "restart_recovery_restores_loop": usability_dimensions["restart_recovery"] == 1.0,
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
@@ -5877,6 +6047,9 @@ def _build_summary(
     broker_adapter_lifecycles = [
         case["operational_context"]["broker_adapter_lifecycle"] for case in cases
     ]
+    broker_adapter_followups = [
+        case["operational_context"]["broker_adapter_followup"] for case in cases
+    ]
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
@@ -5913,6 +6086,24 @@ def _build_summary(
             flag
             for lifecycle in broker_adapter_lifecycles
             for flag, value in lifecycle["replay"].items()
+            if value is True
+        }),
+        "broker_adapter_followup_models": sorted({
+            followup["model_id"] for followup in broker_adapter_followups
+        }),
+        "broker_adapter_followup_actions": sorted({
+            followup["persona_followup"]["action"] for followup in broker_adapter_followups
+        }),
+        "broker_adapter_followup_action_families": sorted({
+            followup["persona_followup"]["action_family"] for followup in broker_adapter_followups
+        }),
+        "broker_adapter_followup_next_steps": sorted({
+            followup["persona_followup"]["next_persona_step"] for followup in broker_adapter_followups
+        }),
+        "broker_adapter_followup_replay_flags": sorted({
+            flag
+            for followup in broker_adapter_followups
+            for flag, value in followup["replay"].items()
             if value is True
         }),
         "persona_conflict_types": sorted({
@@ -6132,6 +6323,13 @@ def _build_summary(
         "broker_adapter_lifecycle_replayed_count": sum(
             1 for item in usable if item["broker_adapter_lifecycle_replayed"]
         ),
+        "broker_adapter_followup_count": len(broker_adapter_followups),
+        "broker_adapter_followup_pass_count": sum(
+            1 for followup in broker_adapter_followups if _broker_adapter_followup_is_usable(followup)
+        ),
+        "broker_adapter_response_drives_followup_count": sum(
+            1 for item in usable if item["broker_adapter_response_drives_followup"]
+        ),
         "persona_conflict_resolved_count": sum(1 for item in usable if item["persona_conflicts_resolved"]),
         "restart_recovery_count": sum(1 for item in usable if item["restart_recovery_restores_loop"]),
         "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
@@ -6183,6 +6381,7 @@ def _build_summary(
             "Every case runs its selected alpha, policy, reflection, and risk OSS route as case-specific persona feedback and uses those refs in the selected decision trace.",
             "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",
             "Every case emits a persona-visible broker adapter lifecycle packet tying paper order status paths, Shioaji sandbox place/cancel/readback, live-disabled rejection, and restart recovery into a replayable response.",
+            "Every broker adapter response triggers a scenario-specific persona follow-up action before the next autonomous paper cycle.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
     }
