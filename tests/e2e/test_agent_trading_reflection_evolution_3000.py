@@ -13,12 +13,15 @@ from services.persona.agent_usability_validation import (
     DEFAULT_CASE_COUNT,
     EVOLUTION_TRAJECTORY_MODEL_ID,
     FEEDBACK_BARS,
+    FUTURE_HOLDOUT_BARS,
     GENERATION_COUNT,
     HISTORICAL_OHLCV_DATASET_ID,
+    HOLDOUT_BARS,
     LEAN_ENGINE_REPLAY_MODEL_ID,
     LOOKBACK_BARS,
     MARKET_FRICTION_MODEL_ID,
     MIN_USABILITY_SCORE,
+    NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID,
     OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
     PERSONA_CANDIDATE_GENERATOR_MODEL_ID,
@@ -69,6 +72,8 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["oss_result_count"] == len(OSS_REQUIRED_COMPONENTS)
     assert set(summary["oss_components_completed"]) == set(OSS_REQUIRED_COMPONENTS)
     assert summary["no_leakage_holdout_count"] == DEFAULT_CASE_COUNT
+    assert summary["no_leakage_temporal_protocol_count"] == DEFAULT_CASE_COUNT
+    assert summary["no_leakage_temporal_protocol_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["portfolio_trade_generation_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["portfolio_trade_generation_fill_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["memory_retrieval_drives_next_decision_count"] == DEFAULT_CASE_COUNT
@@ -193,6 +198,11 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert coverage["evolution_trajectory_models"] == [EVOLUTION_TRAJECTORY_MODEL_ID]
     assert coverage["evolution_trajectory_statuses"] == ["improving"]
     assert coverage["evolution_trajectory_windows"] == ["holdout->future_holdout"]
+    assert coverage["no_leakage_temporal_protocol_models"] == [NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID]
+    assert coverage["no_leakage_temporal_protocol_paths"] == [
+        "observe_decide->feedback_reflect->holdout_evolve->future_holdout_verify"
+    ]
+    assert coverage["no_leakage_temporal_protocol_stage_windows"] == ["feedback->holdout->future_holdout"]
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -207,6 +217,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         )
         _assert_portfolio_generations(case)
         _assert_agent_decision_traces_are_no_leakage(case)
+        _assert_no_leakage_temporal_protocol(case)
         _assert_memory_and_oss_closed_loop(case)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
@@ -471,6 +482,102 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
     assert check_by_name["persona_decision_artifact_replays_candidate_selection"]["status"] == "passed"
     assert check_by_name["persona_reasoning_response_drives_candidate_generation"]["status"] == "passed"
     assert check_by_name["retrieved_memory_influences_persona_candidate_scoring"]["status"] == "passed"
+
+
+def _assert_no_leakage_temporal_protocol(case: dict) -> None:
+    protocol = case["evolution"]["no_leakage_protocol"]
+    assert protocol["model_id"] == NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID
+    assert protocol["case_id"] == case["case_id"]
+    assert protocol["persona_id"] == case["persona_id"]
+    assert protocol["protocol_path"] == "observe_decide->feedback_reflect->holdout_evolve->future_holdout_verify"
+    assert protocol["input_hash"]
+
+    assert len(protocol["window_boundaries"]) == PORTFOLIO_LEG_COUNT
+    for boundary in protocol["window_boundaries"]:
+        assert boundary["instrument"] in case["portfolio"]["instruments"]
+        assert boundary["start_index"] in case["portfolio"]["start_indices"]
+        periods = boundary["periods"]
+        assert periods["observe"]["bar_count"] == LOOKBACK_BARS
+        assert periods["feedback"]["bar_count"] == FEEDBACK_BARS
+        assert periods["holdout"]["bar_count"] == HOLDOUT_BARS
+        assert periods["future_holdout"]["bar_count"] == FUTURE_HOLDOUT_BARS
+        assert periods["observe"]["end_date"] < periods["feedback"]["start_date"]
+        assert periods["feedback"]["end_date"] < periods["holdout"]["start_date"]
+        assert periods["holdout"]["end_date"] < periods["future_holdout"]["start_date"]
+        assert boundary["ordered"] is True
+        assert boundary["non_overlapping"] is True
+
+    upstream = protocol["case_upstream_data_contract"]
+    expected_pre_holdout_rows = PORTFOLIO_LEG_COUNT * (LOOKBACK_BARS + FEEDBACK_BARS)
+    assert upstream["allowed_windows"] == ["observe", "feedback"]
+    assert upstream["forbidden_windows_not_used"] == ["holdout", "future_holdout"]
+    assert upstream["expected_pre_holdout_rows"] == expected_pre_holdout_rows
+    assert upstream["vectorbt_used_historical_rows"] == expected_pre_holdout_rows
+    assert upstream["vectorbt_dataset_total_bars"] == expected_pre_holdout_rows
+    assert upstream["case_upstream_pre_holdout_only"] is True
+    assert set(upstream["selected_oss_roles"]) == {
+        "alpha_model",
+        "policy_candidate",
+        "reflection_artifact",
+        "risk_analytics",
+    }
+
+    stages = protocol["stage_contracts"]
+    assert [stage["stage_id"] for stage in stages] == [
+        "generation0_observe_decide",
+        "generation1_feedback_reflect_to_holdout",
+        "generation2_holdout_reflect_to_future_holdout",
+    ]
+    assert [stage["generation"] for stage in stages] == [0, 1, 2]
+    assert [stage["policy_id"] for stage in stages] == [
+        result["policy_id"] for result in case["generation_results"]
+    ]
+    assert [stage["evaluation_window"] for stage in stages] == ["feedback", "holdout", "future_holdout"]
+    assert [stage["evaluation_score"] for stage in stages] == [
+        result["score"] for result in case["generation_results"]
+    ]
+
+    assert stages[0]["visible_windows"] == ["observe"]
+    assert set(stages[0]["hidden_windows"]) == {"feedback", "holdout", "future_holdout"}
+    assert stages[0]["decision_trace_ref"] is None
+    assert stages[0]["prior_outcome_window"] is None
+    assert stages[1]["visible_windows"] == ["observe", "feedback"]
+    assert set(stages[1]["hidden_windows"]) == {"holdout", "future_holdout"}
+    assert stages[1]["decision_trace_ref"] == case["reflection"]["agent_decision_traces"][0]["reflection_id"]
+    assert stages[1]["prior_outcome_window"] == "feedback"
+    assert stages[2]["visible_windows"] == ["observe", "feedback", "holdout"]
+    assert stages[2]["hidden_windows"] == ["future_holdout"]
+    assert stages[2]["decision_trace_ref"] == case["reflection"]["agent_decision_traces"][1]["reflection_id"]
+    assert stages[2]["prior_outcome_window"] == "holdout"
+
+    for stage in stages:
+        assert set(stage["decision_source_windows"]).issubset(set(stage["visible_windows"]))
+        assert stage["evaluation_window"] in stage["hidden_windows"]
+        assert stage["evaluation_window"] not in stage["decision_source_windows"]
+        assert "future_holdout" not in stage["decision_source_windows"]
+        assert stage["source_windows_subset_visible"] is True
+        assert stage["evaluation_window_hidden_from_decision"] is True
+        assert stage["evaluation_window_absent_from_sources"] is True
+
+    replay = protocol["replay"]
+    assert replay["replayable"] is True
+    assert replay["window_boundaries_ordered"] is True
+    assert replay["window_boundaries_non_overlapping"] is True
+    assert replay["stage_source_windows_subset_visible"] is True
+    assert replay["stage_evaluation_windows_hidden_from_decisions"] is True
+    assert replay["future_holdout_hidden_until_evaluation"] is True
+    assert replay["holdout_hidden_from_generation1_decision"] is True
+    assert replay["generation2_uses_first_holdout_outcome_only_before_future_holdout"] is True
+    assert replay["case_upstream_pre_holdout_only"] is True
+    assert replay["strict_improvement_on_unseen_holdouts"] is True
+    assert replay["trajectory_unseen_windows_match_protocol"] is True
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["no_leakage_temporal_protocol_replays_window_boundaries"]["status"] == "passed"
+    assert case["usability_dimensions"]["no_leakage_temporal_protocol"] == 1.0
 
 
 def _candidate_action_from_id(candidate_id: str) -> str:

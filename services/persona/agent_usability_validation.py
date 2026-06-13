@@ -124,6 +124,7 @@ PERSONA_MEMORY_INFLUENCE_MODEL_ID = "persona_retrieved_lesson_influence_v1"
 PERSONA_REASONING_MODEL_ID = "persona_structured_reasoning_candidate_generator_v1"
 PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
 EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v1"
+NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1"
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
     "request_oss",
@@ -536,6 +537,16 @@ def run_agent_usability_validations(
             decision_traces=(decision_trace0, decision_trace1),
             evolution_decision=evolution_decision,
         )
+        no_leakage_protocol = _build_no_leakage_temporal_protocol(
+            episode=episode,
+            generation_policies=(generation0_policy, generation1_policy, generation2_policy),
+            evaluations=(generation0_eval, generation1_eval, generation2_eval),
+            baseline_holdout_counterfactual=baseline_holdout_counterfactual,
+            generation1_future_counterfactual=generation1_future_counterfactual,
+            decision_traces=(decision_trace0, decision_trace1),
+            case_upstream_artifacts=case_upstream_artifacts,
+            evolution_trajectory=evolution_trajectory,
+        )
         operational_context = _build_operational_context(
             episode=episode,
             generation_policies=(generation0_policy, generation1_policy, generation2_policy),
@@ -563,6 +574,7 @@ def run_agent_usability_validations(
             validation_plan=validation_plan,
             operational_context=operational_context,
             evolution_trajectory=evolution_trajectory,
+            no_leakage_protocol=no_leakage_protocol,
         )
         validation_diagnostics = _diagnose_validation_execution(
             episode=episode,
@@ -580,6 +592,7 @@ def run_agent_usability_validations(
             case_upstream_artifacts=case_upstream_artifacts,
             operational_context=operational_context,
             evolution_trajectory=evolution_trajectory,
+            no_leakage_protocol=no_leakage_protocol,
         )
         validation_repair = _repair_validation_deficiencies(
             validation_plan=validation_plan,
@@ -598,6 +611,7 @@ def run_agent_usability_validations(
             memory_contexts=(prior_memory, current_memory0, current_memory1),
             evolution_decision=evolution_decision,
             evolution_trajectory=evolution_trajectory,
+            no_leakage_protocol=no_leakage_protocol,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
             case_upstream_artifacts=case_upstream_artifacts,
@@ -4309,6 +4323,243 @@ def _evolution_trajectory_is_usable(trajectory: Mapping[str, Any]) -> bool:
     )
 
 
+def _build_no_leakage_temporal_protocol(
+    *,
+    episode: PortfolioEpisode,
+    generation_policies: Sequence[Mapping[str, Any]],
+    evaluations: Sequence[Mapping[str, Any]],
+    baseline_holdout_counterfactual: Mapping[str, Any],
+    generation1_future_counterfactual: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    evolution_trajectory: Mapping[str, Any],
+) -> dict[str, Any]:
+    window_boundaries = [
+        _instrument_window_boundary_summary(window)
+        for window in episode.windows
+    ]
+    stage_contracts = [
+        _temporal_stage_contract(
+            stage_id="generation0_observe_decide",
+            generation=0,
+            policy=generation_policies[0],
+            decision_trace=None,
+            evaluation_window="feedback",
+            evaluation=evaluations[0],
+            prior_outcome_window=None,
+        ),
+        _temporal_stage_contract(
+            stage_id="generation1_feedback_reflect_to_holdout",
+            generation=1,
+            policy=generation_policies[1],
+            decision_trace=decision_traces[0],
+            evaluation_window="holdout",
+            evaluation=evaluations[1],
+            prior_outcome_window="feedback",
+        ),
+        _temporal_stage_contract(
+            stage_id="generation2_holdout_reflect_to_future_holdout",
+            generation=2,
+            policy=generation_policies[2],
+            decision_trace=decision_traces[1],
+            evaluation_window="future_holdout",
+            evaluation=evaluations[2],
+            prior_outcome_window="holdout",
+        ),
+    ]
+    expected_pre_holdout_rows = PORTFOLIO_LEG_COUNT * (LOOKBACK_BARS + FEEDBACK_BARS)
+    vectorbt = case_upstream_artifacts.get("vectorbt", {})
+    vectorbt_summary = vectorbt.get("dataset_summary", {})
+    upstream_contract = {
+        "allowed_windows": list(case_upstream_artifacts.get("allowed_windows", [])),
+        "forbidden_windows_not_used": list(case_upstream_artifacts.get("forbidden_windows_not_used", [])),
+        "vectorbt_used_historical_rows": vectorbt.get("used_historical_rows"),
+        "vectorbt_dataset_total_bars": vectorbt_summary.get("total_bars"),
+        "expected_pre_holdout_rows": expected_pre_holdout_rows,
+        "tracker_source_vectorbt_run_id": case_upstream_artifacts.get("tracker", {}).get("source_vectorbt_run_id"),
+        "selected_oss_roles": sorted(case_upstream_artifacts.get("selected_oss", {})),
+        "case_upstream_pre_holdout_only": (
+            case_upstream_artifacts.get("allowed_windows") == ["observe", "feedback"]
+            and case_upstream_artifacts.get("forbidden_windows_not_used") == ["holdout", "future_holdout"]
+            and int(vectorbt.get("used_historical_rows", 0)) == expected_pre_holdout_rows
+            and int(vectorbt_summary.get("total_bars", 0)) == expected_pre_holdout_rows
+        ),
+    }
+    replay = {
+        "replayable": True,
+        "window_boundaries_ordered": all(boundary["ordered"] for boundary in window_boundaries),
+        "window_boundaries_non_overlapping": all(boundary["non_overlapping"] for boundary in window_boundaries),
+        "stage_source_windows_subset_visible": all(stage["source_windows_subset_visible"] for stage in stage_contracts),
+        "stage_evaluation_windows_hidden_from_decisions": all(
+            stage["evaluation_window_hidden_from_decision"] for stage in stage_contracts
+        ),
+        "future_holdout_hidden_until_evaluation": all(
+            "future_holdout" in set(stage["hidden_windows"]) for stage in stage_contracts
+        ) and all(
+            "future_holdout" not in set(stage["decision_source_windows"]) for stage in stage_contracts
+        ),
+        "holdout_hidden_from_generation1_decision": (
+            "holdout" in set(stage_contracts[1]["hidden_windows"])
+            and "holdout" not in set(stage_contracts[1]["decision_source_windows"])
+        ),
+        "generation2_uses_first_holdout_outcome_only_before_future_holdout": (
+            stage_contracts[2]["prior_outcome_window"] == "holdout"
+            and "holdout" in set(stage_contracts[2]["visible_windows"])
+            and "future_holdout" in set(stage_contracts[2]["hidden_windows"])
+        ),
+        "case_upstream_pre_holdout_only": upstream_contract["case_upstream_pre_holdout_only"],
+        "strict_improvement_on_unseen_holdouts": (
+            float(evaluations[1]["score"]) > float(baseline_holdout_counterfactual["score"])
+            and float(evaluations[2]["score"]) > float(generation1_future_counterfactual["score"])
+        ),
+        "trajectory_unseen_windows_match_protocol": [
+            comparison["evaluation_window"] for comparison in evolution_trajectory.get("comparisons", [])
+        ] == ["holdout", "future_holdout"]
+        and all(
+            comparison.get("unseen_by_decision_trace") is True
+            for comparison in evolution_trajectory.get("comparisons", [])
+        ),
+    }
+    return {
+        "protocol_id": f"no-leakage-temporal-protocol-{episode.case_id}",
+        "model_id": NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID,
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "protocol_path": "observe_decide->feedback_reflect->holdout_evolve->future_holdout_verify",
+        "window_boundaries": window_boundaries,
+        "stage_contracts": stage_contracts,
+        "case_upstream_data_contract": upstream_contract,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "no-leakage-temporal-protocol",
+            {
+                "case_id": episode.case_id,
+                "stage_contracts": stage_contracts,
+                "case_upstream_data_contract": upstream_contract,
+                "window_boundaries": window_boundaries,
+            },
+        ),
+    }
+
+
+def _instrument_window_boundary_summary(window: InstrumentWindow) -> dict[str, Any]:
+    periods = {
+        "observe": _period_boundary(window.observe_rows),
+        "feedback": _period_boundary(window.feedback_rows),
+        "holdout": _period_boundary(window.holdout_rows),
+        "future_holdout": _period_boundary(window.future_holdout_rows),
+    }
+    period_dates = [
+        {str(row["date"]) for row in rows}
+        for rows in (
+            window.observe_rows,
+            window.feedback_rows,
+            window.holdout_rows,
+            window.future_holdout_rows,
+        )
+    ]
+    return {
+        "instrument": window.instrument,
+        "start_index": window.start_index,
+        "periods": periods,
+        "ordered": (
+            periods["observe"]["end_date"] < periods["feedback"]["start_date"]
+            < periods["holdout"]["start_date"] < periods["future_holdout"]["start_date"]
+        ),
+        "non_overlapping": len(set().union(*period_dates)) == sum(len(dates) for dates in period_dates),
+    }
+
+
+def _period_boundary(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    return {
+        "start_date": str(rows[0]["date"]),
+        "end_date": str(rows[-1]["date"]),
+        "bar_count": len(rows),
+    }
+
+
+def _temporal_stage_contract(
+    *,
+    stage_id: str,
+    generation: int,
+    policy: Mapping[str, Any],
+    decision_trace: Mapping[str, Any] | None,
+    evaluation_window: str,
+    evaluation: Mapping[str, Any],
+    prior_outcome_window: str | None,
+) -> dict[str, Any]:
+    decision_inputs = policy.get("decision_inputs", {})
+    decision_source_windows = (
+        _trace_decision_source_windows(decision_trace)
+        if decision_trace is not None
+        else list(decision_inputs.get("allowed_windows", []))
+    )
+    visible_windows = list(decision_inputs.get("allowed_windows", []))
+    hidden_windows = list(decision_inputs.get("forbidden_windows_not_used", []))
+    return {
+        "stage_id": stage_id,
+        "generation": generation,
+        "policy_id": policy["policy_id"],
+        "policy_version": policy["policy_version"],
+        "decision_trace_ref": decision_trace.get("reflection_id") if decision_trace else None,
+        "prior_outcome_window": prior_outcome_window,
+        "visible_windows": visible_windows,
+        "hidden_windows": hidden_windows,
+        "decision_source_windows": decision_source_windows,
+        "evaluation_window": evaluation_window,
+        "evaluation_score": evaluation["score"],
+        "source_windows_subset_visible": set(decision_source_windows).issubset(set(visible_windows)),
+        "evaluation_window_hidden_from_decision": evaluation_window in set(hidden_windows),
+        "evaluation_window_absent_from_sources": evaluation_window not in set(decision_source_windows),
+    }
+
+
+def _trace_decision_source_windows(trace: Mapping[str, Any]) -> list[str]:
+    windows = {
+        str(window)
+        for candidate in trace.get("candidates", [])
+        for window in candidate.get("source_windows", [])
+    }
+    windows.update(str(window) for window in trace.get("selected_candidate", {}).get("source_windows", []))
+    return sorted(windows, key=("observe", "feedback", "holdout", "future_holdout").index)
+
+
+def _no_leakage_temporal_protocol_is_usable(protocol: Mapping[str, Any]) -> bool:
+    replay = protocol.get("replay", {})
+    stage_contracts = protocol.get("stage_contracts", [])
+    upstream = protocol.get("case_upstream_data_contract", {})
+    return bool(
+        protocol.get("model_id") == NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID
+        and protocol.get("protocol_path") == "observe_decide->feedback_reflect->holdout_evolve->future_holdout_verify"
+        and [stage.get("generation") for stage in stage_contracts] == [0, 1, 2]
+        and [stage.get("evaluation_window") for stage in stage_contracts]
+        == ["feedback", "holdout", "future_holdout"]
+        and all(stage.get("source_windows_subset_visible") is True for stage in stage_contracts)
+        and all(stage.get("evaluation_window_hidden_from_decision") is True for stage in stage_contracts)
+        and all(stage.get("evaluation_window_absent_from_sources") is True for stage in stage_contracts)
+        and upstream.get("allowed_windows") == ["observe", "feedback"]
+        and upstream.get("forbidden_windows_not_used") == ["holdout", "future_holdout"]
+        and int(upstream.get("vectorbt_used_historical_rows", 0)) == int(
+            upstream.get("expected_pre_holdout_rows", -1)
+        )
+        and int(upstream.get("vectorbt_dataset_total_bars", 0)) == int(
+            upstream.get("expected_pre_holdout_rows", -1)
+        )
+        and replay.get("replayable") is True
+        and replay.get("window_boundaries_ordered") is True
+        and replay.get("window_boundaries_non_overlapping") is True
+        and replay.get("stage_source_windows_subset_visible") is True
+        and replay.get("stage_evaluation_windows_hidden_from_decisions") is True
+        and replay.get("future_holdout_hidden_until_evaluation") is True
+        and replay.get("holdout_hidden_from_generation1_decision") is True
+        and replay.get("generation2_uses_first_holdout_outcome_only_before_future_holdout") is True
+        and replay.get("case_upstream_pre_holdout_only") is True
+        and replay.get("strict_improvement_on_unseen_holdouts") is True
+        and replay.get("trajectory_unseen_windows_match_protocol") is True
+        and protocol.get("input_hash")
+    )
+
+
 def _build_usability_dimensions(
     *,
     episode: PortfolioEpisode,
@@ -4325,6 +4576,7 @@ def _build_usability_dimensions(
     validation_plan: Mapping[str, Any],
     operational_context: Mapping[str, Any],
     evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
     return_improvement = 1.0 if generation1_eval["score"] > baseline_holdout_counterfactual["score"] else 0.0
@@ -4386,10 +4638,14 @@ def _build_usability_dimensions(
     ) else 0.0
     lean_handoff = 1.0 if _lean_handoff_packet_is_usable(operational_context["lean_handoff"]) else 0.0
     multi_generation_trajectory = 1.0 if _evolution_trajectory_is_usable(evolution_trajectory) else 0.0
+    no_leakage_temporal_protocol = 1.0 if _no_leakage_temporal_protocol_is_usable(
+        no_leakage_protocol
+    ) else 0.0
     return {
         "return_improvement": return_improvement,
         "multi_generation_improvement": multi_generation_improvement,
         "multi_generation_trajectory": multi_generation_trajectory,
+        "no_leakage_temporal_protocol": no_leakage_temporal_protocol,
         "drawdown_reduction": drawdown_reduction,
         "turnover_control": turnover_control,
         "fill_quality": fill_quality,
@@ -4432,6 +4688,7 @@ def _diagnose_validation_execution(
     case_upstream_artifacts: Mapping[str, Any],
     operational_context: Mapping[str, Any],
     evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
     checks = [
@@ -4511,6 +4768,18 @@ def _diagnose_validation_execution(
                 "trajectory_id": evolution_trajectory["trajectory_id"],
                 "improvement_deltas": evolution_trajectory["trend"]["improvement_deltas"],
                 "convergence_status": evolution_trajectory["trend"]["convergence_status"],
+            },
+        ),
+        _diagnostic_check(
+            "no_leakage_temporal_protocol_replays_window_boundaries",
+            _no_leakage_temporal_protocol_is_usable(no_leakage_protocol),
+            {
+                "protocol_id": no_leakage_protocol["protocol_id"],
+                "protocol_path": no_leakage_protocol["protocol_path"],
+                "stage_evaluation_windows": [
+                    stage["evaluation_window"] for stage in no_leakage_protocol["stage_contracts"]
+                ],
+                "replay": copy.deepcopy(dict(no_leakage_protocol["replay"])),
             },
         ),
         _diagnostic_check(
@@ -4847,6 +5116,7 @@ def _build_case_result(
     memory_contexts: Sequence[Mapping[str, Any] | None],
     evolution_decision: EvolutionDecision,
     evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     case_upstream_artifacts: Mapping[str, Any],
@@ -4949,13 +5219,14 @@ def _build_case_result(
             if evolution_decision.execution_result
             else None,
             "trajectory": copy.deepcopy(dict(evolution_trajectory)),
+            "no_leakage_protocol": copy.deepcopy(dict(no_leakage_protocol)),
         },
         "usability_dimensions": dict(usability_dimensions),
         "overall_usability_score": overall_usability_score,
         "usable": {
             "non_repeated_validation": bool(episode.validation_signature),
             "traded_portfolio_all_generations": all(execution["filled"] for execution in executions),
-            "no_leakage_holdout": usability_dimensions["no_leakage"] == 1.0,
+            "no_leakage_holdout": usability_dimensions["no_leakage_temporal_protocol"] == 1.0,
             "memory_retrieval_drives_next_decision": usability_dimensions["memory_influences_decision"] == 1.0,
             "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
             "persona_decision_artifacts_replay": usability_dimensions["persona_decision_artifact"] == 1.0,
@@ -5014,6 +5285,7 @@ def _build_summary(
         for trace in case["reflection"]["agent_decision_traces"]
     ]
     evolution_trajectories = [case["evolution"]["trajectory"] for case in cases]
+    no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
@@ -5135,6 +5407,16 @@ def _build_summary(
             "->".join(comparison["evaluation_window"] for comparison in trajectory["comparisons"])
             for trajectory in evolution_trajectories
         }),
+        "no_leakage_temporal_protocol_models": sorted({
+            protocol["model_id"] for protocol in no_leakage_protocols
+        }),
+        "no_leakage_temporal_protocol_paths": sorted({
+            protocol["protocol_path"] for protocol in no_leakage_protocols
+        }),
+        "no_leakage_temporal_protocol_stage_windows": sorted({
+            "->".join(stage["evaluation_window"] for stage in protocol["stage_contracts"])
+            for protocol in no_leakage_protocols
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -5161,6 +5443,10 @@ def _build_summary(
         "oss_result_count": len(oss_results),
         "oss_components_completed": sorted({str(result.get("component")) for result in oss_results if result.get("status") == "completed"}),
         "no_leakage_holdout_count": sum(1 for item in usable if item["no_leakage_holdout"]),
+        "no_leakage_temporal_protocol_count": len(no_leakage_protocols),
+        "no_leakage_temporal_protocol_pass_count": sum(
+            1 for protocol in no_leakage_protocols if _no_leakage_temporal_protocol_is_usable(protocol)
+        ),
         "portfolio_trade_generation_count": sum(len(case["generation_results"]) for case in cases),
         "portfolio_trade_generation_fill_count": sum(
             1
@@ -5245,6 +5531,7 @@ def _build_summary(
             "Every validation has a unique composite signature and a new case-id family.",
             "Every validation first asks coverage-gap questions and executes a unique validation plan.",
             "The evolved policy is selected without holdout/future-holdout data in the decision trace.",
+            "Every case records a no-leakage temporal protocol proving observe/feedback/holdout/future-holdout boundaries before scoring evolution.",
             "Every case trades a three-instrument portfolio across three generations through paper runtime fills.",
             "Every case writes memory and proves retrieved lessons influence later candidate scoring and selected evidence refs.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
