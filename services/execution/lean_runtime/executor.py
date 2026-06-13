@@ -38,6 +38,43 @@ _CONFIDENCE_FLOOR = 0.5
 BRACKET_ORDER_STATUS_LOGGED_ONLY = "logged_only"
 BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER = "submitted_to_broker"
 _BRACKET_EXECUTION_STAGES = {"paper", "sim", "simulation"}
+_ORDER_ADAPTER_CONTEXT_KEYS = (
+    "adapter",
+    "broker",
+    "provider",
+    "broker_order_id",
+    "adapter_order_id",
+    "client_order_id",
+    "shioaji_trade_id",
+    "venue",
+    "exchange",
+    "contract_symbol",
+    "sec_type",
+    "currency",
+    "pair",
+    "base_asset",
+    "quote_asset",
+    "side",
+    "price",
+    "tif",
+    "account",
+    "readonly_market_data",
+    "market_data_type",
+    "validate_only",
+    "validation_status",
+    "account_kind",
+    "order_quantity",
+    "submission",
+    "readback_status",
+    "broker_submission_status",
+    "adapter_response_status",
+    "adapter_error_code",
+    "adapter_error_message",
+    "adapter_status_code",
+    "submitted_to_broker",
+    "is_real_order",
+    "is_real_capital",
+)
 _BRACKET_ENTRY_COMBINATIONS = {("BUY", "LONG"), ("SELL", "SHORT")}
 
 
@@ -249,6 +286,10 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
     ):
         value = metadata.get(key)
         if value not in (None, ""):
+            context[key] = value
+    for key in _ORDER_ADAPTER_CONTEXT_KEYS:
+        value = metadata.get(key)
+        if value not in (None, "", [], {}):
             context[key] = value
     market_price = _signal_market_price(signal)
     if market_price is not None:
