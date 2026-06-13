@@ -121,6 +121,8 @@ PERSONA_CANDIDATE_GENERATOR_MODEL_ID = "persona_candidate_generation_from_oss_fe
 PERSONA_CANDIDATE_SCORER_MODEL_ID = "persona_multi_factor_candidate_scorer_v1"
 PERSONA_RISK_EVALUATOR_MODEL_ID = "persona_oss_risk_turnover_evaluator_v1"
 PERSONA_MEMORY_INFLUENCE_MODEL_ID = "persona_retrieved_lesson_influence_v1"
+PERSONA_REASONING_MODEL_ID = "persona_structured_reasoning_candidate_generator_v1"
+PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
     "request_oss",
@@ -1915,6 +1917,224 @@ def _memory_influence_applied_to_selected_candidate(
     )
 
 
+def _build_persona_reasoning_response(
+    *,
+    episode: PortfolioEpisode,
+    generation: int,
+    trigger: str,
+    baseline_policy: Mapping[str, Any],
+    latest_evaluation: Mapping[str, Any],
+    telemetry_event: Mapping[str, Any],
+    memory_influence: Mapping[str, Any],
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    allowed_windows = ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"]
+    forbidden_windows = ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"]
+    reasoning_request = {
+        "request_id": f"persona-reasoning-request-{episode.case_id}-gen{generation}",
+        "model_id": PERSONA_REASONING_MODEL_ID,
+        "persona_id": _persona_id(episode.persona),
+        "case_id": episode.case_id,
+        "generation": generation,
+        "trigger": trigger,
+        "objective": "propose portfolio policy improvements from memory, telemetry, and OSS feedback before scorer selection",
+        "allowed_windows": allowed_windows,
+        "forbidden_windows_not_used": forbidden_windows,
+        "input_refs": [
+            f"telemetry-event://{telemetry_event['event_id']}",
+            f"policy://{baseline_policy['policy_id']}",
+            f"alpha-seed://{episode.seed_key}",
+            *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
+            *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
+        ],
+        "portfolio_instruments": [window.instrument for window in episode.windows],
+        "baseline_risk_multiplier": float(baseline_policy["risk_multiplier"]),
+        "telemetry_summary": {
+            "score": latest_evaluation["score"],
+            "signed_return": latest_evaluation["signed_return"],
+            "drawdown": latest_evaluation["drawdown"],
+            "turnover": latest_evaluation["turnover"],
+        },
+        "memory_influence": copy.deepcopy(dict(memory_influence)),
+        "oss_components_by_role": {
+            role: result["component"] for role, result in sorted(oss_inputs.items())
+        },
+    }
+    candidate_blueprints = _persona_reasoning_candidate_blueprints(
+        generation=generation,
+        allowed_windows=allowed_windows,
+        memory_influence=memory_influence,
+        oss_inputs=oss_inputs,
+    )
+    reasoning_response = {
+        "response_id": f"persona-reasoning-response-{episode.case_id}-gen{generation}",
+        "reasoning_ref": f"reasoning://persona/{episode.case_id}/gen{generation}",
+        "status": "completed",
+        "model_id": PERSONA_REASONING_MODEL_ID,
+        "persona_id": _persona_id(episode.persona),
+        "case_id": episode.case_id,
+        "generation": generation,
+        "reasoning_steps": [
+            "read_telemetry_outcome",
+            "retrieve_or_declare_memory_context",
+            "inspect_alpha_policy_reflection_risk_tracking_oss_feedback",
+            "draft_candidate_policy_blueprints",
+            "send_blueprints_to_scorer_and_risk_evaluator",
+        ],
+        "memory_usage": {
+            "status": memory_influence["status"],
+            "influence_ref": memory_influence["influence_ref"],
+            "selected_action_hint": memory_influence["selected_action_hint"],
+            "score_adjustments": copy.deepcopy(dict(memory_influence["candidate_score_adjustments"])),
+        },
+        "preferred_action_hint": _persona_reasoning_preferred_action(memory_influence),
+        "candidate_blueprints": candidate_blueprints,
+        "forbidden_windows_not_used": forbidden_windows,
+        "output_contract": {
+            "candidate_actions_required": [
+                "feedback-adapt",
+                "retain-observe",
+                "risk-off",
+                "contrarian-check",
+            ],
+            "risk_evaluator_required": True,
+            "scorer_required": True,
+        },
+    }
+    evaluator = _evaluate_persona_reasoning_response(
+        request=reasoning_request,
+        response=reasoning_response,
+    )
+    return {
+        "request": reasoning_request,
+        "response": reasoning_response,
+        "evaluator": evaluator,
+    }
+
+
+def _persona_reasoning_candidate_blueprints(
+    *,
+    generation: int,
+    allowed_windows: Sequence[str],
+    memory_influence: Mapping[str, Any],
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    shared_windows = list(allowed_windows)
+    feedback_windows = ["observe", "feedback"] if generation == 1 else shared_windows
+    memory_ref = memory_influence.get("influence_ref")
+    memory_refs = [str(memory_ref)] if memory_ref else []
+    return [
+        {
+            "action": "feedback-adapt",
+            "candidate_suffix": "feedback-adapt",
+            "direction_source": "feedback_window_direction",
+            "risk_source": "policy_candidate_oss_hint",
+            "source_windows": feedback_windows,
+            "evidence_roles": [
+                "alpha_model",
+                "policy_candidate",
+                "reflection_artifact",
+                "risk_analytics",
+                "backtest",
+                "tracker",
+            ],
+            "extra_evidence_refs": memory_refs,
+            "memory_adjustment_key": "feedback-adapt",
+            "rationale": (
+                "Use the feedback direction because alpha, policy, reflection, risk, backtest, "
+                "tracking, and retrieved memory support an adaptive portfolio mutation."
+            ),
+        },
+        {
+            "action": "retain-observe",
+            "candidate_suffix": "retain-observe",
+            "direction_source": "observe_window_direction",
+            "risk_source": "baseline_policy",
+            "source_windows": ["observe"],
+            "evidence_roles": [],
+            "extra_evidence_refs": [],
+            "memory_adjustment_key": "retain-observe",
+            "rationale": "Keep the observe-only baseline as a scored alternative before rejecting it.",
+        },
+        {
+            "action": "risk-off",
+            "candidate_suffix": "risk-off",
+            "direction_source": "feedback_window_direction",
+            "risk_source": "risk_analytics_reduced_exposure",
+            "source_windows": feedback_windows,
+            "evidence_roles": ["risk_analytics"],
+            "extra_evidence_refs": memory_refs
+            if float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
+            else [],
+            "memory_adjustment_key": "risk-off",
+            "rationale": "Use feedback direction but reduce exposure when the risk interpretation asks for caution.",
+        },
+        {
+            "action": "contrarian-check",
+            "candidate_suffix": "contrarian-check",
+            "direction_source": "inverse_feedback_direction",
+            "risk_source": "fixed_control_risk",
+            "source_windows": feedback_windows,
+            "evidence_roles": ["reflection_artifact"],
+            "extra_evidence_refs": [],
+            "memory_adjustment_key": "contrarian-check",
+            "rationale": "Retain a contrarian control candidate for scored comparison and rejection.",
+        },
+    ]
+
+
+def _persona_reasoning_preferred_action(memory_influence: Mapping[str, Any]) -> str:
+    action = str(memory_influence.get("selected_action_hint") or "feedback-adapt")
+    if action == "none":
+        return "feedback-adapt"
+    return action
+
+
+def _evaluate_persona_reasoning_response(
+    *,
+    request: Mapping[str, Any],
+    response: Mapping[str, Any],
+) -> dict[str, Any]:
+    forbidden = set(request["forbidden_windows_not_used"])
+    blueprints = list(response.get("candidate_blueprints", []))
+    required_actions = set(response.get("output_contract", {}).get("candidate_actions_required", []))
+    observed_actions = {blueprint.get("action") for blueprint in blueprints}
+    checks = [
+        _persona_risk_check(
+            "reasoning_response_completed",
+            response.get("status") == "completed",
+            {"response_id": response.get("response_id")},
+        ),
+        _persona_risk_check(
+            "reasoning_covers_required_candidate_actions",
+            observed_actions == required_actions,
+            {"observed_actions": sorted(str(action) for action in observed_actions)},
+        ),
+        _persona_risk_check(
+            "reasoning_excludes_forbidden_windows",
+            all(not forbidden.intersection(set(blueprint.get("source_windows", []))) for blueprint in blueprints),
+            {"forbidden_windows_not_used": sorted(forbidden)},
+        ),
+        _persona_risk_check(
+            "reasoning_uses_memory_or_declares_cold_start",
+            bool(response.get("memory_usage", {}).get("influence_ref"))
+            or response.get("memory_usage", {}).get("status") == "cold_start",
+            {"memory_usage": copy.deepcopy(dict(response.get("memory_usage", {})))},
+        ),
+        _persona_risk_check(
+            "reasoning_routes_to_scorer_and_risk_evaluator",
+            response.get("output_contract", {}).get("scorer_required") is True
+            and response.get("output_contract", {}).get("risk_evaluator_required") is True,
+            {"output_contract": copy.deepcopy(dict(response.get("output_contract", {})))},
+        ),
+    ]
+    return {
+        "model_id": PERSONA_REASONING_EVALUATOR_MODEL_ID,
+        "status": "passed" if all(check["status"] == "passed" for check in checks) else "failed",
+        "checks": checks,
+    }
+
+
 def _build_agent_decision_trace(
     *,
     episode: PortfolioEpisode,
@@ -1926,6 +2146,21 @@ def _build_agent_decision_trace(
     oss_inputs: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     memory_influence = _memory_influence_profile(prior_memory)
+    trigger = (
+        "holdout_generation_refinement"
+        if generation == 2
+        else episode.reflection_archetype
+    )
+    persona_reasoning = _build_persona_reasoning_response(
+        episode=episode,
+        generation=generation,
+        trigger=trigger,
+        baseline_policy=baseline_policy,
+        latest_evaluation=latest_evaluation,
+        telemetry_event=telemetry_event,
+        memory_influence=memory_influence,
+        oss_inputs=oss_inputs,
+    )
     candidates = _score_agent_candidates(
         episode=episode,
         generation=generation,
@@ -1934,13 +2169,9 @@ def _build_agent_decision_trace(
         prior_memory=prior_memory,
         oss_inputs=oss_inputs,
         memory_influence=memory_influence,
+        persona_reasoning=persona_reasoning,
     )
     selected = max(candidates, key=lambda item: item.score)
-    trigger = (
-        "holdout_generation_refinement"
-        if generation == 2
-        else episode.reflection_archetype
-    )
     candidate_dicts = [_candidate_to_dict(candidate) for candidate in candidates]
     selected_dict = _candidate_to_dict(selected)
     decision_inputs = {
@@ -1968,6 +2199,7 @@ def _build_agent_decision_trace(
         prior_memory=prior_memory,
         oss_inputs=oss_inputs,
         memory_influence=memory_influence,
+        persona_reasoning=persona_reasoning,
         decision_inputs=decision_inputs,
         evidence_refs=evidence_refs,
         candidates=candidate_dicts,
@@ -2003,7 +2235,9 @@ def _score_agent_candidates(
     prior_memory: Mapping[str, Any] | None,
     oss_inputs: Mapping[str, Mapping[str, Any]],
     memory_influence: Mapping[str, Any],
+    persona_reasoning: Mapping[str, Any],
 ) -> list[PolicyCandidate]:
+    del prior_memory
     feedback_directions = {
         window.instrument: window.feedback_direction for window in episode.windows
     }
@@ -2036,12 +2270,11 @@ def _score_agent_candidates(
         feedback_evidence_refs.append(str(memory_ref))
         if float(memory_score_adjustments.get("risk-off", 0.0)) > 0:
             risk_off_evidence_refs.append(str(memory_ref))
-    candidates = [
-        PolicyCandidate(
-            candidate_id=f"{episode.case_id}-gen{generation}-feedback-adapt",
-            direction_by_instrument=feedback_directions,
-            risk_multiplier=policy_hint_risk,
-            score=(
+    action_context = {
+        "feedback-adapt": {
+            "directions": feedback_directions,
+            "risk_multiplier": policy_hint_risk,
+            "score": (
                 3.0
                 + float(memory_score_adjustments["feedback-adapt"])
                 + feedback_score
@@ -2049,39 +2282,70 @@ def _score_agent_candidates(
                 + reflection_quality
                 - risk_penalty * 0.2
             ),
-            source_windows=("observe", "feedback") if generation == 1 else ("observe", "feedback", "holdout"),
-            evidence_refs=tuple(feedback_evidence_refs),
-            rationale="Follow the feedback window direction with case-specific alpha, policy, reflection, risk, backtest, and tracking evidence.",
-        ),
-        PolicyCandidate(
-            candidate_id=f"{episode.case_id}-gen{generation}-retain-observe",
-            direction_by_instrument=observe_directions,
-            risk_multiplier=float(baseline_policy["risk_multiplier"]),
-            score=1.0 + float(memory_score_adjustments["retain-observe"]) + max(feedback_score, 0),
-            source_windows=("observe",),
-            evidence_refs=(f"policy://{baseline_policy['policy_id']}",),
-            rationale="Keep the observe-only baseline direction.",
-        ),
-        PolicyCandidate(
-            candidate_id=f"{episode.case_id}-gen{generation}-risk-off",
-            direction_by_instrument=feedback_directions,
-            risk_multiplier=risk_off,
-            score=2.0 + float(memory_score_adjustments["risk-off"]) + max(0.0, risk_penalty),
-            source_windows=("observe", "feedback") if generation == 1 else ("observe", "feedback", "holdout"),
-            evidence_refs=tuple(risk_off_evidence_refs),
-            rationale="Use feedback direction but reduce exposure after risk analytics.",
-        ),
-        PolicyCandidate(
-            candidate_id=f"{episode.case_id}-gen{generation}-contrarian-check",
-            direction_by_instrument=inverse_feedback,
-            risk_multiplier=0.5,
-            score=0.25,
-            source_windows=("observe", "feedback") if generation == 1 else ("observe", "feedback", "holdout"),
-            evidence_refs=(f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",),
-            rationale="Contrarian candidate retained for scored comparison and rejection.",
-        ),
-    ]
+            "fallback_evidence_refs": tuple(feedback_evidence_refs),
+        },
+        "retain-observe": {
+            "directions": observe_directions,
+            "risk_multiplier": float(baseline_policy["risk_multiplier"]),
+            "score": 1.0 + float(memory_score_adjustments["retain-observe"]) + max(feedback_score, 0),
+            "fallback_evidence_refs": (f"policy://{baseline_policy['policy_id']}",),
+        },
+        "risk-off": {
+            "directions": feedback_directions,
+            "risk_multiplier": risk_off,
+            "score": 2.0 + float(memory_score_adjustments["risk-off"]) + max(0.0, risk_penalty),
+            "fallback_evidence_refs": tuple(risk_off_evidence_refs),
+        },
+        "contrarian-check": {
+            "directions": inverse_feedback,
+            "risk_multiplier": 0.5,
+            "score": 0.25 + float(memory_score_adjustments["contrarian-check"]),
+            "fallback_evidence_refs": (
+                f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",
+            ),
+        },
+    }
+    candidates: list[PolicyCandidate] = []
+    for blueprint in persona_reasoning["response"]["candidate_blueprints"]:
+        action = str(blueprint["action"])
+        context = action_context[action]
+        candidates.append(
+            PolicyCandidate(
+                candidate_id=f"{episode.case_id}-gen{generation}-{blueprint['candidate_suffix']}",
+                direction_by_instrument=dict(context["directions"]),
+                risk_multiplier=float(context["risk_multiplier"]),
+                score=float(context["score"]),
+                source_windows=tuple(str(window) for window in blueprint["source_windows"]),
+                evidence_refs=_candidate_evidence_refs_from_reasoning(
+                    blueprint=blueprint,
+                    baseline_policy=baseline_policy,
+                    oss_inputs=oss_inputs,
+                    fallback_evidence_refs=context["fallback_evidence_refs"],
+                ),
+                rationale=str(blueprint["rationale"]),
+            )
+        )
     return candidates
+
+
+def _candidate_evidence_refs_from_reasoning(
+    *,
+    blueprint: Mapping[str, Any],
+    baseline_policy: Mapping[str, Any],
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    fallback_evidence_refs: Sequence[str],
+) -> tuple[str, ...]:
+    refs: list[str] = []
+    for role in blueprint.get("evidence_roles", []):
+        if role in oss_inputs:
+            result = oss_inputs[str(role)]
+            refs.append(f"oss://{result['component']}/{result['request_id']}")
+    refs.extend(str(ref) for ref in blueprint.get("extra_evidence_refs", []))
+    if not refs:
+        refs.extend(str(ref) for ref in fallback_evidence_refs)
+    if str(blueprint.get("action")) == "retain-observe":
+        refs = [f"policy://{baseline_policy['policy_id']}"]
+    return tuple(dict.fromkeys(refs))
 
 
 def _build_persona_decision_artifact(
@@ -2095,6 +2359,7 @@ def _build_persona_decision_artifact(
     prior_memory: Mapping[str, Any] | None,
     oss_inputs: Mapping[str, Mapping[str, Any]],
     memory_influence: Mapping[str, Any],
+    persona_reasoning: Mapping[str, Any],
     decision_inputs: Mapping[str, Any],
     evidence_refs: Sequence[str],
     candidates: Sequence[Mapping[str, Any]],
@@ -2123,6 +2388,8 @@ def _build_persona_decision_artifact(
         "risk_penalty": _risk_penalty_from_oss(oss_inputs),
         "memory_influence": copy.deepcopy(dict(memory_influence)),
         "memory_score_adjustments": copy.deepcopy(dict(memory_influence["candidate_score_adjustments"])),
+        "persona_reasoning_ref": persona_reasoning["response"]["reasoning_ref"],
+        "persona_reasoning_preferred_action": persona_reasoning["response"]["preferred_action_hint"],
         "baseline_risk_multiplier": float(baseline_policy["risk_multiplier"]),
     }
     scorecards = {
@@ -2196,6 +2463,7 @@ def _build_persona_decision_artifact(
                 f"telemetry-event://{telemetry_event['event_id']}",
                 f"alpha-seed://{episode.seed_key}",
                 f"policy://{baseline_policy['policy_id']}",
+                persona_reasoning["response"]["reasoning_ref"],
                 *oss_evidence_refs,
                 *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
             ],
@@ -2205,6 +2473,8 @@ def _build_persona_decision_artifact(
         "response": {
             "response_id": f"persona-decision-response-{episode.case_id}-gen{generation}",
             "status": "completed",
+            "source_reasoning_response_id": persona_reasoning["response"]["response_id"],
+            "source_reasoning_ref": persona_reasoning["response"]["reasoning_ref"],
             "candidate_ids": [str(candidate["candidate_id"]) for candidate in candidates],
             "candidates": copy.deepcopy([dict(candidate) for candidate in candidates]),
         },
@@ -2235,6 +2505,9 @@ def _build_persona_decision_artifact(
             selected_candidate=selected_candidate,
         )
         or input_context["memory_status"] == "cold_start_declared",
+        "uses_persona_reasoning_response": candidate_generation["response"]["source_reasoning_response_id"]
+        == persona_reasoning["response"]["response_id"]
+        and persona_reasoning["response"]["reasoning_ref"] in candidate_generation["request"]["input_refs"],
         "uses_selected_oss_feedback": set(selected_candidate.get("evidence_refs", [])).issuperset(
             _selected_persona_decision_oss_refs(oss_inputs)
         ),
@@ -2248,6 +2521,7 @@ def _build_persona_decision_artifact(
         "trigger": trigger,
         "input_context": input_context,
         "memory_influence": copy.deepcopy(dict(memory_influence)),
+        "persona_reasoning": copy.deepcopy(dict(persona_reasoning)),
         "candidate_generation": candidate_generation,
         "scorer": {
             "model_id": PERSONA_CANDIDATE_SCORER_MODEL_ID,
@@ -3744,6 +4018,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("no_forbidden_window_sources") is True
         and replay.get("uses_memory_or_declares_cold_start") is True
         and replay.get("uses_memory_in_scoring_or_declares_cold_start") is True
+        and replay.get("uses_persona_reasoning_response") is True
         and replay.get("uses_selected_oss_feedback") is True
         and replay.get("input_hash")
         and replay.get("candidate_hash")
@@ -3751,6 +4026,75 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("selection_hash")
         and _trace_has_no_forbidden_window_leakage(trace)
         and _trace_memory_influence_is_usable(trace)
+        and _trace_persona_reasoning_is_usable(trace)
+    )
+
+
+def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
+    artifact = trace.get("agent_decision_artifact", {})
+    if not isinstance(artifact, Mapping):
+        return False
+    reasoning = artifact.get("persona_reasoning", {})
+    if not isinstance(reasoning, Mapping):
+        return False
+    request = reasoning.get("request", {})
+    response = reasoning.get("response", {})
+    evaluator = reasoning.get("evaluator", {})
+    input_context = artifact.get("input_context", {})
+    candidate_generation = artifact.get("candidate_generation", {})
+    generation_request = candidate_generation.get("request", {})
+    generation_response = candidate_generation.get("response", {})
+    if not all(isinstance(item, Mapping) for item in (request, response, evaluator, generation_request, generation_response)):
+        return False
+    blueprints = list(response.get("candidate_blueprints", []))
+    candidates = list(trace.get("candidates", []))
+    if len(blueprints) != len(candidates):
+        return False
+    blueprint_by_action = {str(blueprint.get("action")): blueprint for blueprint in blueprints}
+    candidate_actions = [_candidate_action_key(str(candidate.get("candidate_id"))) for candidate in candidates]
+    if set(blueprint_by_action) != set(candidate_actions):
+        return False
+    decision_inputs = trace.get("decision_inputs", {})
+    forbidden = set(decision_inputs.get("forbidden_windows_not_used", []))
+    oss_components = input_context.get("oss_components_by_role", {})
+    oss_request_ids = input_context.get("oss_request_ids_by_role", {})
+    for candidate in candidates:
+        action = _candidate_action_key(str(candidate["candidate_id"]))
+        blueprint = blueprint_by_action[action]
+        candidate_refs = set(candidate.get("evidence_refs", []))
+        if list(candidate.get("source_windows", [])) != list(blueprint.get("source_windows", [])):
+            return False
+        if candidate.get("rationale") != blueprint.get("rationale"):
+            return False
+        if forbidden.intersection(set(blueprint.get("source_windows", []))):
+            return False
+        for role in blueprint.get("evidence_roles", []):
+            expected_ref = f"oss://{oss_components[role]}/{oss_request_ids[role]}"
+            if expected_ref not in candidate_refs:
+                return False
+        if not set(blueprint.get("extra_evidence_refs", [])).issubset(candidate_refs):
+            return False
+    memory_ref = decision_inputs.get("memory_ref")
+    memory_usage = response.get("memory_usage", {})
+    return bool(
+        request.get("model_id") == PERSONA_REASONING_MODEL_ID
+        and response.get("model_id") == PERSONA_REASONING_MODEL_ID
+        and evaluator.get("model_id") == PERSONA_REASONING_EVALUATOR_MODEL_ID
+        and evaluator.get("status") == "passed"
+        and all(check.get("status") == "passed" for check in evaluator.get("checks", []))
+        and request.get("allowed_windows") == decision_inputs.get("allowed_windows")
+        and request.get("forbidden_windows_not_used") == decision_inputs.get("forbidden_windows_not_used")
+        and response.get("status") == "completed"
+        and response.get("reasoning_ref") in generation_request.get("input_refs", [])
+        and generation_response.get("source_reasoning_response_id") == response.get("response_id")
+        and generation_response.get("source_reasoning_ref") == response.get("reasoning_ref")
+        and set(response.get("output_contract", {}).get("candidate_actions_required", [])) == set(candidate_actions)
+        and response.get("output_contract", {}).get("scorer_required") is True
+        and response.get("output_contract", {}).get("risk_evaluator_required") is True
+        and (
+            (memory_ref and memory_usage.get("influence_ref") == f"memory://{memory_ref}")
+            or (not memory_ref and memory_usage.get("status") == "cold_start")
+        )
     )
 
 
@@ -3842,6 +4186,10 @@ def _build_usability_dimensions(
         _persona_decision_artifact_is_usable(trace)
         for trace in decision_traces
     ) else 0.0
+    persona_reasoning_generation = 1.0 if all(
+        _trace_persona_reasoning_is_usable(trace)
+        for trace in decision_traces
+    ) else 0.0
     required_roles = {
         "session",
         "alpha_model",
@@ -3883,6 +4231,7 @@ def _build_usability_dimensions(
         "memory_influences_decision": memory_influences_decision,
         "decision_explainability": decision_explainability,
         "persona_decision_artifact": persona_decision_artifact,
+        "persona_reasoning_generation": persona_reasoning_generation,
         "oss_evidence_completeness": min(1.0, oss_evidence_completeness),
         "portfolio_breadth": portfolio_breadth,
         "no_leakage": no_leakage,
@@ -3954,6 +4303,20 @@ def _diagnose_validation_execution(
                 ],
                 "selected_candidate_ids": [
                     trace["selected_candidate_id"] for trace in decision_traces
+                ],
+            },
+        ),
+        _diagnostic_check(
+            "persona_reasoning_response_drives_candidate_generation",
+            all(_trace_persona_reasoning_is_usable(trace) for trace in decision_traces),
+            {
+                "reasoning_response_ids": [
+                    trace["agent_decision_artifact"]["persona_reasoning"]["response"]["response_id"]
+                    for trace in decision_traces
+                ],
+                "candidate_response_reasoning_refs": [
+                    trace["agent_decision_artifact"]["candidate_generation"]["response"]["source_reasoning_ref"]
+                    for trace in decision_traces
                 ],
             },
         ),
@@ -4417,6 +4780,9 @@ def _build_case_result(
             "memory_retrieval_drives_next_decision": usability_dimensions["memory_influences_decision"] == 1.0,
             "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
             "persona_decision_artifacts_replay": usability_dimensions["persona_decision_artifact"] == 1.0,
+            "persona_reasoning_drives_candidate_generation": usability_dimensions[
+                "persona_reasoning_generation"
+            ] == 1.0,
             "multi_generation_evolution": usability_dimensions["multi_generation_improvement"] == 1.0,
             "portfolio_level": len(episode.windows) == PORTFOLIO_LEG_COUNT,
             "multi_dimensional_score_passed": overall_usability_score >= MIN_USABILITY_SCORE,
@@ -4565,6 +4931,20 @@ def _build_summary(
         "agent_memory_selected_action_hints": sorted({
             artifact["memory_influence"]["selected_action_hint"] for artifact in decision_artifacts
         }),
+        "agent_persona_reasoning_models": sorted({
+            artifact["persona_reasoning"]["response"]["model_id"] for artifact in decision_artifacts
+        }),
+        "agent_persona_reasoning_evaluator_models": sorted({
+            artifact["persona_reasoning"]["evaluator"]["model_id"] for artifact in decision_artifacts
+        }),
+        "agent_persona_reasoning_preferred_actions": sorted({
+            artifact["persona_reasoning"]["response"]["preferred_action_hint"] for artifact in decision_artifacts
+        }),
+        "agent_persona_reasoning_candidate_actions": sorted({
+            blueprint["action"]
+            for artifact in decision_artifacts
+            for blueprint in artifact["persona_reasoning"]["response"]["candidate_blueprints"]
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -4620,6 +5000,10 @@ def _build_summary(
         "agent_decision_artifact_replay_count": sum(
             1 for item in usable if item["persona_decision_artifacts_replay"]
         ),
+        "persona_reasoning_response_count": len(decision_artifacts),
+        "persona_reasoning_drives_candidate_generation_count": sum(
+            1 for item in usable if item["persona_reasoning_drives_candidate_generation"]
+        ),
         "multi_generation_evolution_count": sum(1 for item in usable if item["multi_generation_evolution"]),
         "multi_dimensional_score_pass_count": sum(1 for item in usable if item["multi_dimensional_score_passed"]),
         "validation_planning_count": sum(1 for item in usable if item["validation_planned_before_execution"]),
@@ -4671,6 +5055,7 @@ def _build_summary(
             "Every case writes memory and proves retrieved lessons influence later candidate scoring and selected evidence refs.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every persona decision emits a replayable request-response artifact covering candidate generation, scoring, risk checks, and rejected alternatives.",
+            "Every persona decision first emits a structured reasoning response whose candidate blueprints drive the scored candidates.",
             "Every case has a case-specific vectorbt historical backtest artifact and a case-specific experiment tracking readback before persona decisions.",
             "Every case runs its selected alpha, policy, reflection, and risk OSS route as case-specific persona feedback and uses those refs in the selected decision trace.",
             "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",
