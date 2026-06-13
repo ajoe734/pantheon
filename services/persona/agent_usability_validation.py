@@ -113,6 +113,7 @@ BROKER_LIFECYCLE_TERMINAL_STATUS = "filled"
 MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
 LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
 SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
+BROKER_ADAPTER_LIFECYCLE_MODEL_ID = "persona_broker_adapter_lifecycle_v1"
 CASE_UPSTREAM_VECTORBT_MODEL_ID = "case_specific_vectorbt_feedback_v1"
 CASE_UPSTREAM_TRACKING_MODEL_ID = "case_specific_tracking_artifact_roundtrip_v1"
 CASE_SELECTED_OSS_MODEL_ID = "case_specific_selected_oss_feedback_v1"
@@ -3598,6 +3599,14 @@ def _build_operational_context(
         memory_contexts=memory_contexts,
         evolution_decision=evolution_decision,
     )
+    broker_adapter_lifecycle = _build_broker_adapter_lifecycle_packet(
+        episode=episode,
+        scenario=scenario,
+        broker_lifecycle=broker_lifecycle,
+        shioaji_sandbox_lifecycle=shioaji_sandbox_lifecycle,
+        restart_recovery=restart_recovery,
+        decision_traces=decision_traces,
+    )
     autonomous_schedule = _build_autonomous_schedule(
         episode=episode,
         generated_at=generated_at,
@@ -3631,6 +3640,7 @@ def _build_operational_context(
         "scenario": scenario,
         "market_friction": market_friction,
         "broker_lifecycle": broker_lifecycle,
+        "broker_adapter_lifecycle": broker_adapter_lifecycle,
         "shioaji_sandbox_lifecycle": shioaji_sandbox_lifecycle,
         "persona_conflict_resolution": persona_conflict,
         "restart_recovery": restart_recovery,
@@ -3880,6 +3890,128 @@ def _build_restart_recovery_report(
     }
 
 
+def _build_broker_adapter_lifecycle_packet(
+    *,
+    episode: PortfolioEpisode,
+    scenario: str,
+    broker_lifecycle: Mapping[str, Any],
+    shioaji_sandbox_lifecycle: Mapping[str, Any],
+    restart_recovery: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    required_statuses = _required_broker_statuses_for_scenario(scenario)
+    observed_statuses = set(broker_lifecycle.get("lifecycle_statuses", []))
+    orders = list(broker_lifecycle.get("orders", []))
+    adapter_order = {
+        "place_order_id": shioaji_sandbox_lifecycle.get("place_result", {}).get("order_id"),
+        "place_status": shioaji_sandbox_lifecycle.get("place_result", {}).get("status"),
+        "cancel_status": shioaji_sandbox_lifecycle.get("cancel_result", {}).get("status"),
+        "readback_status": shioaji_sandbox_lifecycle.get("readback_result", {}).get("status"),
+        "readback_is_real_order": shioaji_sandbox_lifecycle.get("readback_result", {}).get("is_real_order"),
+        "readback_is_real_capital": shioaji_sandbox_lifecycle.get("readback_result", {}).get("is_real_capital"),
+        "deployment_stage": shioaji_sandbox_lifecycle.get("readback_result", {}).get("deployment_stage"),
+        "live_disabled_error_code": shioaji_sandbox_lifecycle.get("live_disabled_result", {})
+        .get("response", {})
+        .get("error_code"),
+    }
+    scenario_checks = [
+        {
+            "check": "required_statuses_observed",
+            "status": "passed" if required_statuses.issubset(observed_statuses) else "failed",
+            "required_statuses": sorted(required_statuses),
+            "observed_statuses": sorted(observed_statuses),
+        },
+        {
+            "check": "paper_orders_reconciled_to_readback",
+            "status": "passed"
+            if broker_lifecycle.get("reconciled") is True
+            and broker_lifecycle.get("readback_consistent") is True
+            else "failed",
+            "order_count": broker_lifecycle.get("order_count"),
+            "terminal_statuses": list(broker_lifecycle.get("terminal_statuses", [])),
+        },
+        {
+            "check": "sandbox_adapter_place_cancel_readback",
+            "status": "passed"
+            if shioaji_sandbox_lifecycle.get("status") == "passed"
+            and adapter_order["place_status"] == "submitted"
+            and adapter_order["cancel_status"] == "cancelled"
+            and adapter_order["readback_status"] == "cancelled"
+            else "failed",
+            "adapter_order": adapter_order,
+        },
+        {
+            "check": "live_order_rejected_without_capital",
+            "status": "passed"
+            if adapter_order["live_disabled_error_code"] == "SHIOAJI_LIVE_DISABLED"
+            and shioaji_sandbox_lifecycle.get("production_live_enabled") is False
+            and shioaji_sandbox_lifecycle.get("capital_binding_enabled") is False
+            else "failed",
+            "production_live_enabled": shioaji_sandbox_lifecycle.get("production_live_enabled"),
+            "capital_binding_enabled": shioaji_sandbox_lifecycle.get("capital_binding_enabled"),
+            "live_disabled_error_code": adapter_order["live_disabled_error_code"],
+        },
+        {
+            "check": "restart_recovery_preserves_readback_context",
+            "status": "passed"
+            if restart_recovery.get("recovered") is True
+            and restart_recovery.get("duplicate_execution_suppressed") is True
+            and restart_recovery.get("memory_refs_before_restart")
+            == restart_recovery.get("memory_refs_after_recovery")
+            else "failed",
+            "checkpoint_id": restart_recovery.get("checkpoint_id"),
+            "resume_step": restart_recovery.get("resume_step"),
+        },
+    ]
+    replay = {
+        "replayable": True,
+        "scenario_required_statuses_observed": scenario_checks[0]["status"] == "passed",
+        "paper_readback_reconciled": scenario_checks[1]["status"] == "passed",
+        "sandbox_place_cancel_readback_reconciled": scenario_checks[2]["status"] == "passed",
+        "live_order_rejected_without_capital": scenario_checks[3]["status"] == "passed",
+        "restart_recovery_preserves_readback_context": scenario_checks[4]["status"] == "passed",
+        "all_orders_have_status_paths": all(order.get("status_path") for order in orders),
+        "all_orders_end_filled": all(order.get("terminal_status") == BROKER_LIFECYCLE_TERMINAL_STATUS for order in orders),
+        "no_live_broker_submission": broker_lifecycle.get("live_broker_submission_count") == 0,
+    }
+    return {
+        "packet_id": f"broker-adapter-lifecycle-{episode.case_id}",
+        "model_id": BROKER_ADAPTER_LIFECYCLE_MODEL_ID,
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "provider": "Shioaji",
+        "environment": "sandbox",
+        "scenario": scenario,
+        "broker_lifecycle_model": broker_lifecycle["lifecycle_model"],
+        "shioaji_lifecycle_ref": f"broker-sandbox://{shioaji_sandbox_lifecycle['lifecycle_id']}",
+        "restart_checkpoint_ref": restart_recovery["checkpoint_id"],
+        "decision_trace_refs": [trace["reflection_id"] for trace in decision_traces],
+        "required_statuses": sorted(required_statuses),
+        "observed_statuses": sorted(observed_statuses),
+        "adapter_order": adapter_order,
+        "paper_order_count": broker_lifecycle.get("order_count"),
+        "paper_order_refs": [order["order_id"] for order in orders],
+        "scenario_checks": scenario_checks,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "broker-adapter-lifecycle",
+            {
+                "case_id": episode.case_id,
+                "scenario": scenario,
+                "required_statuses": sorted(required_statuses),
+                "observed_statuses": sorted(observed_statuses),
+                "adapter_order": adapter_order,
+                "paper_order_refs": [order["order_id"] for order in orders],
+                "restart_checkpoint_ref": restart_recovery["checkpoint_id"],
+            },
+        ),
+    }
+
+
+def _required_broker_statuses_for_scenario(scenario: str) -> set[str]:
+    return set(_broker_status_path_for(scenario, 0))
+
+
 def _build_autonomous_schedule(
     *,
     episode: PortfolioEpisode,
@@ -4107,6 +4239,28 @@ def _broker_lifecycle_is_reconciled(broker_lifecycle: Mapping[str, Any]) -> bool
         and broker_lifecycle.get("live_broker_submission_count") == 0
         and broker_lifecycle.get("order_count") == GENERATION_COUNT * PORTFOLIO_LEG_COUNT
         and broker_lifecycle.get("terminal_statuses") == [BROKER_LIFECYCLE_TERMINAL_STATUS]
+    )
+
+
+def _broker_adapter_lifecycle_is_usable(lifecycle: Mapping[str, Any]) -> bool:
+    replay = lifecycle.get("replay", {})
+    return bool(
+        lifecycle.get("model_id") == BROKER_ADAPTER_LIFECYCLE_MODEL_ID
+        and lifecycle.get("provider") == "Shioaji"
+        and lifecycle.get("environment") == "sandbox"
+        and lifecycle.get("broker_lifecycle_model") == "submit_ack_partial_cancel_replace_reject_readback_v1"
+        and lifecycle.get("paper_order_count") == GENERATION_COUNT * PORTFOLIO_LEG_COUNT
+        and lifecycle.get("input_hash")
+        and all(check.get("status") == "passed" for check in lifecycle.get("scenario_checks", []))
+        and replay.get("replayable") is True
+        and replay.get("scenario_required_statuses_observed") is True
+        and replay.get("paper_readback_reconciled") is True
+        and replay.get("sandbox_place_cancel_readback_reconciled") is True
+        and replay.get("live_order_rejected_without_capital") is True
+        and replay.get("restart_recovery_preserves_readback_context") is True
+        and replay.get("all_orders_have_status_paths") is True
+        and replay.get("all_orders_end_filled") is True
+        and replay.get("no_live_broker_submission") is True
     )
 
 
@@ -5019,6 +5173,9 @@ def _build_usability_dimensions(
     planning_completeness = 1.0 if _validation_plan_is_complete(validation_plan) else 0.0
     market_friction = 1.0 if _market_friction_is_usable(operational_context["market_friction"]) else 0.0
     broker_lifecycle = 1.0 if _broker_lifecycle_is_reconciled(operational_context["broker_lifecycle"]) else 0.0
+    broker_adapter_lifecycle = 1.0 if _broker_adapter_lifecycle_is_usable(
+        operational_context["broker_adapter_lifecycle"]
+    ) else 0.0
     persona_conflicts = 1.0 if _persona_conflicts_are_resolved(operational_context["persona_conflict_resolution"]) else 0.0
     restart_recovery = 1.0 if _restart_recovery_is_usable(operational_context["restart_recovery"]) else 0.0
     autonomous_scheduler = 1.0 if _autonomous_schedule_is_usable(operational_context["autonomous_schedule"]) else 0.0
@@ -5060,6 +5217,7 @@ def _build_usability_dimensions(
         "validation_planning": planning_completeness,
         "market_friction_model": market_friction,
         "broker_lifecycle_reconciliation": broker_lifecycle,
+        "broker_adapter_lifecycle": broker_adapter_lifecycle,
         "persona_conflict_resolution": persona_conflicts,
         "restart_recovery": restart_recovery,
         "autonomous_scheduler": autonomous_scheduler,
@@ -5261,6 +5419,16 @@ def _diagnose_validation_execution(
             {
                 "order_count": operational_context["broker_lifecycle"]["order_count"],
                 "terminal_statuses": operational_context["broker_lifecycle"]["terminal_statuses"],
+            },
+        ),
+        _diagnostic_check(
+            "broker_adapter_lifecycle_replays_submit_readback_recovery",
+            _broker_adapter_lifecycle_is_usable(operational_context["broker_adapter_lifecycle"]),
+            {
+                "packet_id": operational_context["broker_adapter_lifecycle"]["packet_id"],
+                "scenario": operational_context["broker_adapter_lifecycle"]["scenario"],
+                "required_statuses": operational_context["broker_adapter_lifecycle"]["required_statuses"],
+                "adapter_order": operational_context["broker_adapter_lifecycle"]["adapter_order"],
             },
         ),
         _diagnostic_check(
@@ -5659,6 +5827,7 @@ def _build_case_result(
             "validation_deficiencies_repaired": not validation_repair["unresolved_deficiencies"],
             "market_friction_model_applied": usability_dimensions["market_friction_model"] == 1.0,
             "broker_lifecycle_reconciled": usability_dimensions["broker_lifecycle_reconciliation"] == 1.0,
+            "broker_adapter_lifecycle_replayed": usability_dimensions["broker_adapter_lifecycle"] == 1.0,
             "persona_conflicts_resolved": usability_dimensions["persona_conflict_resolution"] == 1.0,
             "restart_recovery_restores_loop": usability_dimensions["restart_recovery"] == 1.0,
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
@@ -5705,6 +5874,9 @@ def _build_summary(
     evolution_trajectories = [case["evolution"]["trajectory"] for case in cases]
     no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
     oss_followup_loops = [case["oss_feedback"]["response_followup_loop"] for case in cases]
+    broker_adapter_lifecycles = [
+        case["operational_context"]["broker_adapter_lifecycle"] for case in cases
+    ]
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
@@ -5725,6 +5897,23 @@ def _build_summary(
             status
             for case in cases
             for status in case["operational_context"]["broker_lifecycle"]["lifecycle_statuses"]
+        }),
+        "broker_adapter_lifecycle_models": sorted({
+            lifecycle["model_id"] for lifecycle in broker_adapter_lifecycles
+        }),
+        "broker_adapter_lifecycle_scenarios": sorted({
+            lifecycle["scenario"] for lifecycle in broker_adapter_lifecycles
+        }),
+        "broker_adapter_lifecycle_required_statuses": sorted({
+            status
+            for lifecycle in broker_adapter_lifecycles
+            for status in lifecycle["required_statuses"]
+        }),
+        "broker_adapter_lifecycle_replay_flags": sorted({
+            flag
+            for lifecycle in broker_adapter_lifecycles
+            for flag, value in lifecycle["replay"].items()
+            if value is True
         }),
         "persona_conflict_types": sorted({
             conflict_type
@@ -5936,6 +6125,13 @@ def _build_summary(
         "cross_case_memory_retrieval_count": sum(1 for case in cases if case["memory"]["prior_memory"]),
         "market_friction_model_count": sum(1 for item in usable if item["market_friction_model_applied"]),
         "broker_lifecycle_reconciled_count": sum(1 for item in usable if item["broker_lifecycle_reconciled"]),
+        "broker_adapter_lifecycle_packet_count": len(broker_adapter_lifecycles),
+        "broker_adapter_lifecycle_pass_count": sum(
+            1 for lifecycle in broker_adapter_lifecycles if _broker_adapter_lifecycle_is_usable(lifecycle)
+        ),
+        "broker_adapter_lifecycle_replayed_count": sum(
+            1 for item in usable if item["broker_adapter_lifecycle_replayed"]
+        ),
         "persona_conflict_resolved_count": sum(1 for item in usable if item["persona_conflicts_resolved"]),
         "restart_recovery_count": sum(1 for item in usable if item["restart_recovery_restores_loop"]),
         "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
@@ -5986,6 +6182,7 @@ def _build_summary(
             "Every case has a case-specific vectorbt historical backtest artifact and a case-specific experiment tracking readback before persona decisions.",
             "Every case runs its selected alpha, policy, reflection, and risk OSS route as case-specific persona feedback and uses those refs in the selected decision trace.",
             "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",
+            "Every case emits a persona-visible broker adapter lifecycle packet tying paper order status paths, Shioaji sandbox place/cancel/readback, live-disabled rejection, and restart recovery into a replayable response.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
     }
