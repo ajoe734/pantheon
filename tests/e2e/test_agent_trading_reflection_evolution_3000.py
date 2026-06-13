@@ -42,10 +42,13 @@ from services.persona.agent_usability_validation import (
     PERSONA_REASONING_EVALUATOR_MODEL_ID,
     PERSONA_REASONING_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
+    PERSONA_TRACKING_RECONCILIATION_MODEL_ID,
     SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID,
     OSS_REQUIRED_COMPONENTS,
     PORTFOLIO_LEG_COUNT,
     QUANTITY_TYPES,
+    TRACKING_DIVERGENCE_TYPES_BY_SCENARIO,
+    TRACKING_RECONCILIATION_ACTION_BY_TYPE,
     run_agent_usability_validations,
 )
 from services.persona.ooda_cycle_runtime import ALPHA_SEED_SOURCES
@@ -97,6 +100,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["oss_disagreement_arbitration_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_disagreement_arbitration_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_disagreement_arbitrated_count"] == DEFAULT_CASE_COUNT
+    assert summary["tracking_reconciliation_count"] == DEFAULT_CASE_COUNT
+    assert summary["tracking_reconciliation_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["tracking_reconciliation_drives_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["agent_decision_artifact_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["agent_decision_artifact_replay_count"] == DEFAULT_CASE_COUNT
     assert summary["persona_reasoning_response_count"] == DEFAULT_CASE_COUNT * 2
@@ -306,6 +312,33 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE.values()
     )
     assert set(coverage["oss_disagreement_candidate_actions"]) == {
+        "contrarian-check",
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    }
+    assert coverage["tracking_reconciliation_models"] == [
+        PERSONA_TRACKING_RECONCILIATION_MODEL_ID
+    ]
+    assert set(coverage["tracking_reconciliation_divergence_types"]) == set(
+        TRACKING_DIVERGENCE_TYPES_BY_SCENARIO.values()
+    )
+    assert set(coverage["tracking_reconciliation_repair_actions"]) == set(
+        TRACKING_RECONCILIATION_ACTION_BY_TYPE.values()
+    )
+    assert coverage["tracking_reconciliation_backends"] == ["mlflow", "wandb"]
+    assert set(coverage["tracking_reconciliation_replay_flags"]) == {
+        "divergence_detected",
+        "feedback_adapt_gets_tracking_refs",
+        "normalized_experiment_ref_available",
+        "repair_action_selected",
+        "replayable",
+        "scorer_adjustment_available",
+        "tracker_completed",
+        "tracker_readback_found",
+        "vectorbt_tracker_bound",
+    }
+    assert set(coverage["tracking_reconciliation_candidate_actions"]) == {
         "contrarian-check",
         "feedback-adapt",
         "retain-observe",
@@ -843,6 +876,7 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
     tracker = artifacts["tracker"]
     selected_oss = artifacts["selected_oss"]
     arbitration = artifacts["oss_disagreement_arbitration"]
+    reconciliation = artifacts["tracking_reconciliation"]
     persona_response = artifacts["persona_response"]
 
     assert artifacts["vectorbt_model_id"] == CASE_UPSTREAM_VECTORBT_MODEL_ID
@@ -920,9 +954,17 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
     vectorbt_ref = f"oss://vectorbt/{vectorbt['request_id']}"
     tracker_ref = f"oss://{tracker['component']}/{tracker['request_id']}"
     experiment_ref = f"experiment://{tracker['backend']}/{tracker['run_id']}"
+    expected_divergence_type = TRACKING_DIVERGENCE_TYPES_BY_SCENARIO[
+        case["operational_context"]["scenario"]
+    ]
+    expected_repair_action = TRACKING_RECONCILIATION_ACTION_BY_TYPE[
+        expected_divergence_type
+    ]
+    assert persona_response["next_tracking_reconciliation_action"] == expected_repair_action
     assert vectorbt_ref in persona_response["evidence_refs"]
     assert tracker_ref in persona_response["evidence_refs"]
     assert experiment_ref in persona_response["evidence_refs"]
+    assert reconciliation["reconciliation_ref"] in persona_response["evidence_refs"]
     for entry in selected_oss.values():
         assert f"oss://{entry['component']}/{entry['request_id']}" in persona_response["evidence_refs"]
 
@@ -957,23 +999,88 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
     assert all(arbitration["replay"].values())
     assert arbitration["input_hash"]
 
+    assert reconciliation["model_id"] == PERSONA_TRACKING_RECONCILIATION_MODEL_ID
+    assert reconciliation["status"] == "reconciled"
+    assert reconciliation["case_id"] == case["case_id"]
+    assert reconciliation["scenario"] == case["operational_context"]["scenario"]
+    assert reconciliation["backend"] == tracker["backend"]
+    assert reconciliation["tracker_request_id"] == tracker["request_id"]
+    assert reconciliation["run_id"] == tracker["run_id"]
+    assert reconciliation["artifact_uri"] == tracker["artifact_uri"]
+    assert reconciliation["source_vectorbt_run_id"] == vectorbt["run_id"]
+    assert reconciliation["source_feedback_id"] == artifacts["feedback_id"]
+    assert reconciliation["divergence"]["divergence_type"] == expected_divergence_type
+    assert reconciliation["divergence"]["backend"] == tracker["backend"]
+    assert reconciliation["divergence"]["expected"] != reconciliation["divergence"]["readback"]
+    assert set(reconciliation["divergence"]["source_refs"]) == {
+        vectorbt_ref,
+        tracker_ref,
+        experiment_ref,
+    }
+    assert reconciliation["repair"]["action"] == expected_repair_action
+    assert reconciliation["repair"]["repair_ref"].startswith(reconciliation["reconciliation_ref"])
+    assert reconciliation["repair"]["normalized_experiment_ref"] == experiment_ref
+    assert reconciliation["repair"]["next_persona_step"] == "cite_reconciled_experiment_ref"
+    assert reconciliation["candidate_score_adjustments"]["feedback-adapt"] > 0
+    assert reconciliation["candidate_score_adjustments"]["retain-observe"] > 0
+    assert set(reconciliation["candidate_evidence_refs_by_action"]) == {
+        "contrarian-check",
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    }
+    assert set(reconciliation["candidate_evidence_refs_by_action"]["feedback-adapt"]).issuperset(
+        {
+            reconciliation["reconciliation_ref"],
+            reconciliation["repair"]["repair_ref"],
+            vectorbt_ref,
+            tracker_ref,
+            experiment_ref,
+        }
+    )
+    assert (
+        reconciliation["persona_reconciliation_response"]["next_action"]
+        == "score_candidates_with_reconciled_tracking_readback"
+    )
+    assert reconciliation["persona_reconciliation_response"]["preferred_candidate_action"] == "feedback-adapt"
+    assert expected_repair_action in reconciliation["persona_reconciliation_response"]["repair_actions"]
+    assert all(reconciliation["replay"].values())
+    assert reconciliation["input_hash"]
+
     for trace in case["reflection"]["agent_decision_traces"]:
         artifact = trace["agent_decision_artifact"]
         scoring_inputs = artifact["scorer"]["scoring_inputs"]
         assert vectorbt_ref in trace["evidence_refs"]
         assert tracker_ref in trace["evidence_refs"]
         assert arbitration["arbitration_ref"] in trace["evidence_refs"]
+        assert reconciliation["reconciliation_ref"] in trace["evidence_refs"]
         assert trace["decision_inputs"]["oss_disagreement_arbitration_ref"] == arbitration["arbitration_ref"]
+        assert trace["decision_inputs"]["tracking_reconciliation_ref"] == reconciliation["reconciliation_ref"]
         assert artifact["input_context"]["oss_disagreement_arbitration_ref"] == arbitration["arbitration_ref"]
+        assert artifact["input_context"]["tracking_reconciliation_ref"] == reconciliation["reconciliation_ref"]
+        assert artifact["input_context"]["tracking_reconciliation_repair_ref"] == reconciliation["repair"]["repair_ref"]
+        assert artifact["input_context"]["tracking_reconciliation_divergence_type"] == expected_divergence_type
+        assert artifact["input_context"]["tracking_reconciliation_repair_action"] == expected_repair_action
         assert artifact["persona_reasoning"]["response"]["oss_disagreement_arbitration_usage"]["arbitration_ref"] == arbitration["arbitration_ref"]
+        tracking_usage = artifact["persona_reasoning"]["response"]["tracking_reconciliation_usage"]
+        assert tracking_usage["reconciliation_ref"] == reconciliation["reconciliation_ref"]
+        assert tracking_usage["model_id"] == PERSONA_TRACKING_RECONCILIATION_MODEL_ID
+        assert tracking_usage["divergence_type"] == expected_divergence_type
+        assert tracking_usage["repair_action"] == expected_repair_action
         assert scoring_inputs["oss_disagreement_arbitration"]["arbitration_id"] == arbitration["arbitration_id"]
         assert scoring_inputs["oss_disagreement_score_adjustments"][expected_resolution_action] > 0
+        assert scoring_inputs["tracking_reconciliation"]["reconciliation_id"] == reconciliation["reconciliation_id"]
+        assert scoring_inputs["tracking_reconciliation_score_adjustments"]["feedback-adapt"] > 0
         assert artifact["replay"]["uses_oss_disagreement_arbitration"] is True
+        assert artifact["replay"]["uses_tracking_reconciliation"] is True
         selected_refs = trace["selected_candidate"]["evidence_refs"]
         assert vectorbt_ref in selected_refs
         assert tracker_ref in selected_refs
         assert set(
             arbitration["candidate_evidence_refs_by_action"]["feedback-adapt"]
+        ).issubset(set(selected_refs))
+        assert set(
+            reconciliation["candidate_evidence_refs_by_action"]["feedback-adapt"]
         ).issubset(set(selected_refs))
         for entry in selected_oss.values():
             oss_ref = f"oss://{entry['component']}/{entry['request_id']}"
@@ -987,6 +1094,7 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
     assert check_by_name["case_specific_upstream_artifacts_drive_persona_decision"]["status"] == "passed"
     assert check_by_name["case_specific_selected_oss_route_feedback_drives_persona_decision"]["status"] == "passed"
     assert check_by_name["multi_oss_disagreement_arbitration_drives_persona_scoring"]["status"] == "passed"
+    assert check_by_name["tracking_readback_reconciliation_drives_persona_scoring"]["status"] == "passed"
 
 
 def _assert_operational_context(case: dict) -> None:
