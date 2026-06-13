@@ -123,6 +123,7 @@ PERSONA_RISK_EVALUATOR_MODEL_ID = "persona_oss_risk_turnover_evaluator_v1"
 PERSONA_MEMORY_INFLUENCE_MODEL_ID = "persona_retrieved_lesson_influence_v1"
 PERSONA_REASONING_MODEL_ID = "persona_structured_reasoning_candidate_generator_v1"
 PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
+EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v1"
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
     "request_oss",
@@ -526,6 +527,15 @@ def run_agent_usability_validations(
         if decision_errors:
             raise ValueError(f"invalid evolution decision for {episode.case_id}: {decision_errors}")
 
+        evolution_trajectory = _build_evolution_trajectory(
+            episode=episode,
+            generation_policies=(generation0_policy, generation1_policy, generation2_policy),
+            evaluations=(generation0_eval, generation1_eval, generation2_eval),
+            baseline_holdout_counterfactual=baseline_holdout_counterfactual,
+            generation1_future_counterfactual=generation1_future_counterfactual,
+            decision_traces=(decision_trace0, decision_trace1),
+            evolution_decision=evolution_decision,
+        )
         operational_context = _build_operational_context(
             episode=episode,
             generation_policies=(generation0_policy, generation1_policy, generation2_policy),
@@ -552,6 +562,7 @@ def run_agent_usability_validations(
             case_upstream_artifacts=case_upstream_artifacts,
             validation_plan=validation_plan,
             operational_context=operational_context,
+            evolution_trajectory=evolution_trajectory,
         )
         validation_diagnostics = _diagnose_validation_execution(
             episode=episode,
@@ -568,6 +579,7 @@ def run_agent_usability_validations(
             oss_inputs=oss_inputs,
             case_upstream_artifacts=case_upstream_artifacts,
             operational_context=operational_context,
+            evolution_trajectory=evolution_trajectory,
         )
         validation_repair = _repair_validation_deficiencies(
             validation_plan=validation_plan,
@@ -585,6 +597,7 @@ def run_agent_usability_validations(
             memory_writes=(memory_write0, memory_write1),
             memory_contexts=(prior_memory, current_memory0, current_memory1),
             evolution_decision=evolution_decision,
+            evolution_trajectory=evolution_trajectory,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
             case_upstream_artifacts=case_upstream_artifacts,
@@ -4145,6 +4158,157 @@ def _trace_memory_influence_is_usable(trace: Mapping[str, Any]) -> bool:
     )
 
 
+def _build_evolution_trajectory(
+    *,
+    episode: PortfolioEpisode,
+    generation_policies: Sequence[Mapping[str, Any]],
+    evaluations: Sequence[Mapping[str, Any]],
+    baseline_holdout_counterfactual: Mapping[str, Any],
+    generation1_future_counterfactual: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    evolution_decision: EvolutionDecision,
+) -> dict[str, Any]:
+    holdout_improvement = round(
+        float(evaluations[1]["score"]) - float(baseline_holdout_counterfactual["score"]),
+        10,
+    )
+    future_improvement = round(
+        float(evaluations[2]["score"]) - float(generation1_future_counterfactual["score"]),
+        10,
+    )
+    comparisons = [
+        {
+            "comparison_id": f"{episode.case_id}-gen1-vs-gen0-holdout",
+            "previous_generation": 0,
+            "candidate_generation": 1,
+            "evaluation_window": "holdout",
+            "previous_policy_id": generation_policies[0]["policy_id"],
+            "candidate_policy_id": generation_policies[1]["policy_id"],
+            "previous_counterfactual_score": baseline_holdout_counterfactual["score"],
+            "candidate_score": evaluations[1]["score"],
+            "score_improvement": holdout_improvement,
+            "previous_drawdown": baseline_holdout_counterfactual["drawdown"],
+            "candidate_drawdown": evaluations[1]["drawdown"],
+            "previous_turnover": baseline_holdout_counterfactual["turnover"],
+            "candidate_turnover": evaluations[1]["turnover"],
+            "decision_trace_ref": decision_traces[0]["reflection_id"],
+            "trace_forbidden_windows": list(decision_traces[0]["decision_inputs"]["forbidden_windows_not_used"]),
+            "strict_improvement": holdout_improvement > 0,
+            "unseen_by_decision_trace": "holdout" in decision_traces[0]["decision_inputs"]["forbidden_windows_not_used"],
+        },
+        {
+            "comparison_id": f"{episode.case_id}-gen2-vs-gen1-future-holdout",
+            "previous_generation": 1,
+            "candidate_generation": 2,
+            "evaluation_window": "future_holdout",
+            "previous_policy_id": generation_policies[1]["policy_id"],
+            "candidate_policy_id": generation_policies[2]["policy_id"],
+            "previous_counterfactual_score": generation1_future_counterfactual["score"],
+            "candidate_score": evaluations[2]["score"],
+            "score_improvement": future_improvement,
+            "previous_drawdown": generation1_future_counterfactual["drawdown"],
+            "candidate_drawdown": evaluations[2]["drawdown"],
+            "previous_turnover": generation1_future_counterfactual["turnover"],
+            "candidate_turnover": evaluations[2]["turnover"],
+            "decision_trace_ref": decision_traces[1]["reflection_id"],
+            "trace_forbidden_windows": list(decision_traces[1]["decision_inputs"]["forbidden_windows_not_used"]),
+            "strict_improvement": future_improvement > 0,
+            "unseen_by_decision_trace": "future_holdout" in decision_traces[1]["decision_inputs"]["forbidden_windows_not_used"],
+        },
+    ]
+    improvement_deltas = [holdout_improvement, future_improvement]
+    policy_lineage = [
+        {
+            "generation": policy["generation"],
+            "policy_id": policy["policy_id"],
+            "policy_version": policy["policy_version"],
+            "risk_multiplier": policy["risk_multiplier"],
+            "decision_trace_ref": None
+            if int(policy["generation"]) == 0
+            else decision_traces[int(policy["generation"]) - 1]["reflection_id"],
+        }
+        for policy in generation_policies
+    ]
+    trend = {
+        "generation_sequence": [policy["generation"] for policy in generation_policies],
+        "evaluation_windows": [comparison["evaluation_window"] for comparison in comparisons],
+        "improvement_deltas": improvement_deltas,
+        "strict_positive_step_count": sum(1 for delta in improvement_deltas if delta > 0),
+        "regression_count": sum(1 for delta in improvement_deltas if delta <= 0),
+        "cumulative_improvement": round(sum(improvement_deltas), 10),
+        "turnover_sequence": [evaluation["turnover"] for evaluation in evaluations],
+        "max_turnover": max(float(evaluation["turnover"]) for evaluation in evaluations),
+        "drawdown_sequence": [evaluation["drawdown"] for evaluation in evaluations],
+        "convergence_status": "improving" if all(delta > 0 for delta in improvement_deltas) else "regressed",
+    }
+    replay = {
+        "replayable": True,
+        "policy_lineage_complete": [item["generation"] for item in policy_lineage] == [0, 1, 2],
+        "two_distinct_unseen_windows": [comparison["evaluation_window"] for comparison in comparisons]
+        == ["holdout", "future_holdout"],
+        "strict_positive_step_improvements": all(comparison["strict_improvement"] for comparison in comparisons),
+        "decision_traces_do_not_see_evaluation_windows": all(
+            comparison["unseen_by_decision_trace"] for comparison in comparisons
+        ),
+        "turnover_bounded": trend["max_turnover"] <= 1.25,
+        "converges_or_improves": trend["convergence_status"] == "improving",
+    }
+    return {
+        "trajectory_id": f"evolution-trajectory-{episode.case_id}",
+        "model_id": EVOLUTION_TRAJECTORY_MODEL_ID,
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation_count": len(generation_policies),
+        "policy_lineage": policy_lineage,
+        "comparisons": comparisons,
+        "trend": trend,
+        "evidence_refs": [
+            f"policy://{policy['policy_id']}" for policy in generation_policies
+        ] + [
+            f"reflection://{trace['reflection_id']}" for trace in decision_traces
+        ] + [
+            f"evolution://{evolution_decision.decision_id}",
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "evolution-trajectory",
+            {
+                "case_id": episode.case_id,
+                "policy_lineage": policy_lineage,
+                "comparisons": comparisons,
+                "trend": trend,
+            },
+        ),
+    }
+
+
+def _evolution_trajectory_is_usable(trajectory: Mapping[str, Any]) -> bool:
+    replay = trajectory.get("replay", {})
+    comparisons = trajectory.get("comparisons", [])
+    trend = trajectory.get("trend", {})
+    return bool(
+        trajectory.get("model_id") == EVOLUTION_TRAJECTORY_MODEL_ID
+        and int(trajectory.get("generation_count", 0)) == GENERATION_COUNT
+        and [item.get("generation") for item in trajectory.get("policy_lineage", [])] == [0, 1, 2]
+        and [comparison.get("evaluation_window") for comparison in comparisons] == ["holdout", "future_holdout"]
+        and all(float(comparison.get("score_improvement", 0.0)) > 0 for comparison in comparisons)
+        and all(comparison.get("strict_improvement") is True for comparison in comparisons)
+        and all(comparison.get("unseen_by_decision_trace") is True for comparison in comparisons)
+        and trend.get("convergence_status") == "improving"
+        and int(trend.get("strict_positive_step_count", 0)) == 2
+        and int(trend.get("regression_count", 1)) == 0
+        and float(trend.get("cumulative_improvement", 0.0)) > 0
+        and replay.get("replayable") is True
+        and replay.get("policy_lineage_complete") is True
+        and replay.get("two_distinct_unseen_windows") is True
+        and replay.get("strict_positive_step_improvements") is True
+        and replay.get("decision_traces_do_not_see_evaluation_windows") is True
+        and replay.get("turnover_bounded") is True
+        and replay.get("converges_or_improves") is True
+        and trajectory.get("input_hash")
+    )
+
+
 def _build_usability_dimensions(
     *,
     episode: PortfolioEpisode,
@@ -4160,6 +4324,7 @@ def _build_usability_dimensions(
     case_upstream_artifacts: Mapping[str, Any],
     validation_plan: Mapping[str, Any],
     operational_context: Mapping[str, Any],
+    evolution_trajectory: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
     return_improvement = 1.0 if generation1_eval["score"] > baseline_holdout_counterfactual["score"] else 0.0
@@ -4220,9 +4385,11 @@ def _build_usability_dimensions(
         artifacts=case_upstream_artifacts,
     ) else 0.0
     lean_handoff = 1.0 if _lean_handoff_packet_is_usable(operational_context["lean_handoff"]) else 0.0
+    multi_generation_trajectory = 1.0 if _evolution_trajectory_is_usable(evolution_trajectory) else 0.0
     return {
         "return_improvement": return_improvement,
         "multi_generation_improvement": multi_generation_improvement,
+        "multi_generation_trajectory": multi_generation_trajectory,
         "drawdown_reduction": drawdown_reduction,
         "turnover_control": turnover_control,
         "fill_quality": fill_quality,
@@ -4264,6 +4431,7 @@ def _diagnose_validation_execution(
     oss_inputs: Mapping[str, Mapping[str, Any]],
     case_upstream_artifacts: Mapping[str, Any],
     operational_context: Mapping[str, Any],
+    evolution_trajectory: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
     checks = [
@@ -4334,6 +4502,15 @@ def _diagnose_validation_execution(
             {
                 "generation2_future_holdout": evaluations[2]["score"],
                 "generation1_future_counterfactual": generation1_future_counterfactual["score"],
+            },
+        ),
+        _diagnostic_check(
+            "multi_generation_evolution_trajectory_converges",
+            _evolution_trajectory_is_usable(evolution_trajectory),
+            {
+                "trajectory_id": evolution_trajectory["trajectory_id"],
+                "improvement_deltas": evolution_trajectory["trend"]["improvement_deltas"],
+                "convergence_status": evolution_trajectory["trend"]["convergence_status"],
             },
         ),
         _diagnostic_check(
@@ -4669,6 +4846,7 @@ def _build_case_result(
     memory_writes: Sequence[Mapping[str, Any]],
     memory_contexts: Sequence[Mapping[str, Any] | None],
     evolution_decision: EvolutionDecision,
+    evolution_trajectory: Mapping[str, Any],
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     case_upstream_artifacts: Mapping[str, Any],
@@ -4770,6 +4948,7 @@ def _build_case_result(
             "execution_status": _enum_value(evolution_decision.execution_result.status)
             if evolution_decision.execution_result
             else None,
+            "trajectory": copy.deepcopy(dict(evolution_trajectory)),
         },
         "usability_dimensions": dict(usability_dimensions),
         "overall_usability_score": overall_usability_score,
@@ -4783,7 +4962,7 @@ def _build_case_result(
             "persona_reasoning_drives_candidate_generation": usability_dimensions[
                 "persona_reasoning_generation"
             ] == 1.0,
-            "multi_generation_evolution": usability_dimensions["multi_generation_improvement"] == 1.0,
+            "multi_generation_evolution": usability_dimensions["multi_generation_trajectory"] == 1.0,
             "portfolio_level": len(episode.windows) == PORTFOLIO_LEG_COUNT,
             "multi_dimensional_score_passed": overall_usability_score >= MIN_USABILITY_SCORE,
             "validation_planned_before_execution": usability_dimensions["validation_planning"] == 1.0,
@@ -4834,6 +5013,7 @@ def _build_summary(
         for case in cases
         for trace in case["reflection"]["agent_decision_traces"]
     ]
+    evolution_trajectories = [case["evolution"]["trajectory"] for case in cases]
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
@@ -4945,6 +5125,16 @@ def _build_summary(
             for artifact in decision_artifacts
             for blueprint in artifact["persona_reasoning"]["response"]["candidate_blueprints"]
         }),
+        "evolution_trajectory_models": sorted({
+            trajectory["model_id"] for trajectory in evolution_trajectories
+        }),
+        "evolution_trajectory_statuses": sorted({
+            trajectory["trend"]["convergence_status"] for trajectory in evolution_trajectories
+        }),
+        "evolution_trajectory_windows": sorted({
+            "->".join(comparison["evaluation_window"] for comparison in trajectory["comparisons"])
+            for trajectory in evolution_trajectories
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -5005,6 +5195,10 @@ def _build_summary(
             1 for item in usable if item["persona_reasoning_drives_candidate_generation"]
         ),
         "multi_generation_evolution_count": sum(1 for item in usable if item["multi_generation_evolution"]),
+        "evolution_trajectory_count": len(evolution_trajectories),
+        "evolution_trajectory_pass_count": sum(
+            1 for trajectory in evolution_trajectories if _evolution_trajectory_is_usable(trajectory)
+        ),
         "multi_dimensional_score_pass_count": sum(1 for item in usable if item["multi_dimensional_score_passed"]),
         "validation_planning_count": sum(1 for item in usable if item["validation_planned_before_execution"]),
         "validation_diagnostics_pass_count": sum(1 for item in usable if item["validation_diagnostics_passed"]),
@@ -5056,6 +5250,7 @@ def _build_summary(
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every persona decision emits a replayable request-response artifact covering candidate generation, scoring, risk checks, and rejected alternatives.",
             "Every persona decision first emits a structured reasoning response whose candidate blueprints drive the scored candidates.",
+            "Every case records a multi-generation evolution trajectory proving gen0->gen1->gen2 lineage, two distinct unseen-window improvements, and bounded turnover.",
             "Every case has a case-specific vectorbt historical backtest artifact and a case-specific experiment tracking readback before persona decisions.",
             "Every case runs its selected alpha, policy, reflection, and risk OSS route as case-specific persona feedback and uses those refs in the selected decision trace.",
             "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",

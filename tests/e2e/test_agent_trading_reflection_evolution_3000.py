@@ -11,6 +11,7 @@ from services.persona.agent_usability_validation import (
     CASE_UPSTREAM_TRACKING_MODEL_ID,
     CASE_UPSTREAM_VECTORBT_MODEL_ID,
     DEFAULT_CASE_COUNT,
+    EVOLUTION_TRAJECTORY_MODEL_ID,
     FEEDBACK_BARS,
     GENERATION_COUNT,
     HISTORICAL_OHLCV_DATASET_ID,
@@ -79,6 +80,8 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["persona_reasoning_response_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["persona_reasoning_drives_candidate_generation_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_generation_evolution_count"] == DEFAULT_CASE_COUNT
+    assert summary["evolution_trajectory_count"] == DEFAULT_CASE_COUNT
+    assert summary["evolution_trajectory_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_dimensional_score_pass_count"] == DEFAULT_CASE_COUNT
 
     assert summary["validation_planning_count"] == DEFAULT_CASE_COUNT
@@ -187,6 +190,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "retain-observe",
         "risk-off",
     ]
+    assert coverage["evolution_trajectory_models"] == [EVOLUTION_TRAJECTORY_MODEL_ID]
+    assert coverage["evolution_trajectory_statuses"] == ["improving"]
+    assert coverage["evolution_trajectory_windows"] == ["holdout->future_holdout"]
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -751,6 +757,62 @@ def _assert_evolution_and_scores(case: dict) -> None:
     assert case["evolution"]["decision_state"] == "executed"
     assert case["evolution"]["execution_status"] == "succeeded"
     assert case["evolution"]["review_steps"] == ["reviewed", "approved", "executed"]
+    trajectory = case["evolution"]["trajectory"]
+    assert trajectory["model_id"] == EVOLUTION_TRAJECTORY_MODEL_ID
+    assert trajectory["case_id"] == case["case_id"]
+    assert trajectory["generation_count"] == GENERATION_COUNT
+    assert [item["generation"] for item in trajectory["policy_lineage"]] == [0, 1, 2]
+    assert [item["policy_id"] for item in trajectory["policy_lineage"]] == [
+        result["policy_id"] for result in case["generation_results"]
+    ]
+    assert trajectory["policy_lineage"][0]["decision_trace_ref"] is None
+    assert trajectory["policy_lineage"][1]["decision_trace_ref"] == case["reflection"]["agent_decision_traces"][0]["reflection_id"]
+    assert trajectory["policy_lineage"][2]["decision_trace_ref"] == case["reflection"]["agent_decision_traces"][1]["reflection_id"]
+
+    comparisons = trajectory["comparisons"]
+    assert [comparison["evaluation_window"] for comparison in comparisons] == ["holdout", "future_holdout"]
+    assert comparisons[0]["previous_generation"] == 0
+    assert comparisons[0]["candidate_generation"] == 1
+    assert comparisons[0]["score_improvement"] == case["scores"]["holdout_improvement"]
+    assert comparisons[0]["strict_improvement"] is True
+    assert comparisons[0]["unseen_by_decision_trace"] is True
+    assert "holdout" in comparisons[0]["trace_forbidden_windows"]
+    assert comparisons[1]["previous_generation"] == 1
+    assert comparisons[1]["candidate_generation"] == 2
+    assert comparisons[1]["score_improvement"] == case["scores"]["future_generation_improvement"]
+    assert comparisons[1]["strict_improvement"] is True
+    assert comparisons[1]["unseen_by_decision_trace"] is True
+    assert "future_holdout" in comparisons[1]["trace_forbidden_windows"]
+
+    trend = trajectory["trend"]
+    assert trend["generation_sequence"] == [0, 1, 2]
+    assert trend["evaluation_windows"] == ["holdout", "future_holdout"]
+    assert trend["improvement_deltas"] == [
+        case["scores"]["holdout_improvement"],
+        case["scores"]["future_generation_improvement"],
+    ]
+    assert trend["strict_positive_step_count"] == 2
+    assert trend["regression_count"] == 0
+    assert trend["cumulative_improvement"] > 0
+    assert trend["max_turnover"] <= 1.25
+    assert trend["convergence_status"] == "improving"
+
+    replay = trajectory["replay"]
+    assert replay["replayable"] is True
+    assert replay["policy_lineage_complete"] is True
+    assert replay["two_distinct_unseen_windows"] is True
+    assert replay["strict_positive_step_improvements"] is True
+    assert replay["decision_traces_do_not_see_evaluation_windows"] is True
+    assert replay["turnover_bounded"] is True
+    assert replay["converges_or_improves"] is True
+    assert trajectory["input_hash"]
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["multi_generation_evolution_trajectory_converges"]["status"] == "passed"
     assert min(case["usability_dimensions"].values()) >= 0.8
+    assert case["usability_dimensions"]["multi_generation_trajectory"] == 1.0
     assert case["overall_usability_score"] >= MIN_USABILITY_SCORE
     assert HISTORICAL_OHLCV_DATASET_ID in case["source_dataset_refs"]
