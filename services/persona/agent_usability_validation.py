@@ -125,6 +125,7 @@ PERSONA_REASONING_MODEL_ID = "persona_structured_reasoning_candidate_generator_v
 PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
 EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v1"
 NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1"
+OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
     "request_oss",
@@ -381,6 +382,11 @@ def run_agent_usability_validations(
             oss_inputs,
             case_upstream_artifacts,
         )
+        oss_followup_loop = _build_oss_response_followup_loop(
+            episode=episode,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
+        )
         prior_memory = _retrieve_prior_lesson(persona_store, persona_id)
         validation_plan = _build_validation_planning_step(
             episode=episode,
@@ -419,6 +425,7 @@ def run_agent_usability_validations(
             telemetry_event=stored_generation0,
             prior_memory=prior_memory,
             oss_inputs=oss_inputs,
+            oss_followup_loop=oss_followup_loop,
         )
         memory_write0 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -476,6 +483,7 @@ def run_agent_usability_validations(
             telemetry_event=stored_generation1,
             prior_memory=current_memory0,
             oss_inputs=oss_inputs,
+            oss_followup_loop=oss_followup_loop,
         )
         memory_write1 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -575,6 +583,7 @@ def run_agent_usability_validations(
             operational_context=operational_context,
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
+            oss_followup_loop=oss_followup_loop,
         )
         validation_diagnostics = _diagnose_validation_execution(
             episode=episode,
@@ -593,6 +602,7 @@ def run_agent_usability_validations(
             operational_context=operational_context,
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
+            oss_followup_loop=oss_followup_loop,
         )
         validation_repair = _repair_validation_deficiencies(
             validation_plan=validation_plan,
@@ -612,6 +622,7 @@ def run_agent_usability_validations(
             evolution_decision=evolution_decision,
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
+            oss_followup_loop=oss_followup_loop,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
             case_upstream_artifacts=case_upstream_artifacts,
@@ -1063,6 +1074,246 @@ def _case_selected_oss_result_for_role(
     payload["case_specific_oss_model_id"] = CASE_SELECTED_OSS_MODEL_ID
     payload["selected_oss_role"] = result["role"]
     return payload
+
+
+def _build_oss_response_followup_loop(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+) -> dict[str, Any]:
+    required_roles = (
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    )
+    followups: list[dict[str, Any]] = []
+    for role in required_roles:
+        result = oss_inputs[role]
+        component = str(result["component"])
+        request_id = str(result["request_id"])
+        followup = copy.deepcopy(dict(result.get("persona_followup") or {}))
+        source_ref = f"oss://{component}/{request_id}"
+        output_ref = f"followup://persona/{episode.case_id}/{role}/{component}/{request_id}"
+        candidate_action = _oss_followup_candidate_action(role=role, component=component)
+        request = {
+            "request_id": f"persona-followup-request-{episode.case_id}-{role}-{component}",
+            "persona_id": _persona_id(episode.persona),
+            "case_id": episode.case_id,
+            "role": role,
+            "component": component,
+            "source_oss_request_id": request_id,
+            "source_oss_ref": source_ref,
+            "trigger_artifact_family": str(
+                followup.get("trigger_artifact_family") or result.get("artifact_family") or "unknown"
+            ),
+            "trigger_status": result.get("status"),
+            "requested_after_oss_response": True,
+            "input_refs": [
+                source_ref,
+                *[str(ref) for ref in followup.get("evidence_refs", [])],
+            ],
+            "ooda_phase": str(followup.get("ooda_phase") or _oss_followup_phase(role)),
+            "next_action": str(followup.get("next_action") or _oss_followup_next_action(role)),
+            "drives_persona_step": str(result.get("drives_persona_step") or _oss_persona_step(component)),
+        }
+        response = {
+            "response_id": f"persona-followup-response-{episode.case_id}-{role}-{component}",
+            "status": "completed",
+            "accepted_action": request["next_action"],
+            "candidate_action": candidate_action,
+            "output_ref": output_ref,
+            "score_adjustments": _oss_followup_score_adjustment(role=role, component=component),
+            "reasoning_tag": f"{role}:{component}:{request['next_action']}",
+            "used_by_generations": [1, 2],
+        }
+        followups.append(
+            {
+                "role": role,
+                "component": component,
+                "source_oss_ref": source_ref,
+                "request": request,
+                "response": response,
+            }
+        )
+
+    candidate_score_adjustments = {
+        "feedback-adapt": 0.0,
+        "retain-observe": 0.0,
+        "risk-off": 0.0,
+        "contrarian-check": 0.0,
+    }
+    for item in followups:
+        for action, value in item["response"]["score_adjustments"].items():
+            candidate_score_adjustments[action] = round(
+                candidate_score_adjustments[action] + float(value),
+                10,
+            )
+    all_refs = [item["response"]["output_ref"] for item in followups]
+    refs_by_role = {
+        item["role"]: item["response"]["output_ref"]
+        for item in followups
+    }
+    candidate_evidence_refs_by_action = {
+        "feedback-adapt": list(all_refs),
+        "risk-off": [
+            refs_by_role["risk_analytics"],
+            refs_by_role["policy_candidate"],
+        ],
+        "retain-observe": [refs_by_role["session"]],
+        "contrarian-check": [refs_by_role["reflection_artifact"]],
+    }
+    loop = {
+        "loop_id": f"oss-response-followup-loop-{episode.case_id}",
+        "loop_ref": f"followup://persona/{episode.case_id}/oss-response-loop",
+        "model_id": OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID,
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "source_feedback_id": case_upstream_artifacts["feedback_id"],
+        "required_roles": list(required_roles),
+        "followups": followups,
+        "candidate_score_adjustments": candidate_score_adjustments,
+        "candidate_evidence_refs_by_action": candidate_evidence_refs_by_action,
+        "drives_generations": [1, 2],
+        "replay": {
+            "replayable": True,
+            "all_required_roles_followed_up": [item["role"] for item in followups] == list(required_roles),
+            "all_followups_requested_after_oss_response": all(
+                item["request"]["requested_after_oss_response"] is True
+                and item["request"]["source_oss_ref"] == item["source_oss_ref"]
+                for item in followups
+            ),
+            "all_followups_completed": all(item["response"]["status"] == "completed" for item in followups),
+            "responses_drive_candidate_scoring": any(
+                float(value) > 0
+                for value in candidate_score_adjustments.values()
+            ),
+            "feedback_adapt_receives_all_followup_refs": set(
+                candidate_evidence_refs_by_action["feedback-adapt"]
+            ) == set(all_refs),
+            "risk_response_available_to_risk_off": refs_by_role["risk_analytics"]
+            in candidate_evidence_refs_by_action["risk-off"],
+        },
+    }
+    loop["input_hash"] = _stable_payload_hash(
+        "oss-response-followup-loop",
+        {
+            "case_id": episode.case_id,
+            "followups": followups,
+            "candidate_score_adjustments": candidate_score_adjustments,
+            "candidate_evidence_refs_by_action": candidate_evidence_refs_by_action,
+        },
+    )
+    return loop
+
+
+def _oss_followup_phase(role: str) -> str:
+    return {
+        "session": "observe",
+        "alpha_model": "orient",
+        "backtest": "decide",
+        "policy_candidate": "decide",
+        "reflection_artifact": "reflect",
+        "tracker": "observe",
+        "risk_analytics": "orient",
+        "handoff": "handoff",
+    }[role]
+
+
+def _oss_followup_next_action(role: str) -> str:
+    return {
+        "session": "bind_session_context",
+        "alpha_model": "refresh_alpha_seed_candidate",
+        "backtest": "draft_strategy_proposal",
+        "policy_candidate": "score_policy_candidate",
+        "reflection_artifact": "revise_reflection_hypothesis",
+        "tracker": "cite_experiment_ref",
+        "risk_analytics": "apply_risk_interpretation",
+        "handoff": "materialize_evolved_strategy_packet",
+    }[role]
+
+
+def _oss_followup_candidate_action(*, role: str, component: str) -> str:
+    if role in {"alpha_model", "backtest", "policy_candidate", "tracker", "handoff"}:
+        return "feedback-adapt"
+    if role == "risk_analytics":
+        return "risk-off"
+    if role == "reflection_artifact":
+        return "contrarian-check" if component == "imitation" else "feedback-adapt"
+    return "retain-observe"
+
+
+def _oss_followup_score_adjustment(*, role: str, component: str) -> dict[str, float]:
+    del component
+    adjustments = {
+        "feedback-adapt": 0.0,
+        "retain-observe": 0.0,
+        "risk-off": 0.0,
+        "contrarian-check": 0.0,
+    }
+    if role == "session":
+        adjustments["retain-observe"] = 0.01
+    elif role in {"alpha_model", "backtest", "policy_candidate", "tracker", "handoff"}:
+        adjustments["feedback-adapt"] = 0.02
+    elif role == "reflection_artifact":
+        adjustments["feedback-adapt"] = 0.015
+        adjustments["contrarian-check"] = 0.005
+    elif role == "risk_analytics":
+        adjustments["feedback-adapt"] = 0.005
+        adjustments["risk-off"] = 0.025
+    return adjustments
+
+
+def _oss_followup_refs_for_action(
+    loop: Mapping[str, Any],
+    action: str,
+) -> list[str]:
+    refs_by_action = loop.get("candidate_evidence_refs_by_action", {})
+    if not isinstance(refs_by_action, Mapping):
+        return []
+    return [str(ref) for ref in refs_by_action.get(action, [])]
+
+
+def _oss_response_followup_loop_is_usable(loop: Mapping[str, Any]) -> bool:
+    replay = loop.get("replay", {})
+    followups = loop.get("followups", [])
+    required_roles = (
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    )
+    adjustments = loop.get("candidate_score_adjustments", {})
+    refs_by_action = loop.get("candidate_evidence_refs_by_action", {})
+    return bool(
+        loop.get("model_id") == OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID
+        and [item.get("role") for item in followups] == list(required_roles)
+        and all(item.get("request", {}).get("requested_after_oss_response") is True for item in followups)
+        and all(item.get("response", {}).get("status") == "completed" for item in followups)
+        and all(item.get("request", {}).get("source_oss_ref") == item.get("source_oss_ref") for item in followups)
+        and all(item.get("response", {}).get("output_ref") for item in followups)
+        and float(adjustments.get("feedback-adapt", 0.0)) > 0
+        and float(adjustments.get("risk-off", 0.0)) > 0
+        and set(refs_by_action.get("feedback-adapt", []))
+        == {item.get("response", {}).get("output_ref") for item in followups}
+        and replay.get("replayable") is True
+        and replay.get("all_required_roles_followed_up") is True
+        and replay.get("all_followups_requested_after_oss_response") is True
+        and replay.get("all_followups_completed") is True
+        and replay.get("responses_drive_candidate_scoring") is True
+        and replay.get("feedback_adapt_receives_all_followup_refs") is True
+        and replay.get("risk_response_available_to_risk_off") is True
+        and loop.get("input_hash")
+    )
 
 
 def _run_case_selected_oss_feedback(
@@ -1954,6 +2205,7 @@ def _build_persona_reasoning_response(
     telemetry_event: Mapping[str, Any],
     memory_influence: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, Any]:
     allowed_windows = ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"]
     forbidden_windows = ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"]
@@ -1972,6 +2224,7 @@ def _build_persona_reasoning_response(
             f"policy://{baseline_policy['policy_id']}",
             f"alpha-seed://{episode.seed_key}",
             *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
+            str(oss_followup_loop["loop_ref"]),
             *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
         ],
         "portfolio_instruments": [window.instrument for window in episode.windows],
@@ -1986,12 +2239,18 @@ def _build_persona_reasoning_response(
         "oss_components_by_role": {
             role: result["component"] for role, result in sorted(oss_inputs.items())
         },
+        "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
+        "oss_followup_request_ids": [
+            followup["request"]["request_id"]
+            for followup in oss_followup_loop["followups"]
+        ],
     }
     candidate_blueprints = _persona_reasoning_candidate_blueprints(
         generation=generation,
         allowed_windows=allowed_windows,
         memory_influence=memory_influence,
         oss_inputs=oss_inputs,
+        oss_followup_loop=oss_followup_loop,
     )
     reasoning_response = {
         "response_id": f"persona-reasoning-response-{episode.case_id}-gen{generation}",
@@ -2005,6 +2264,7 @@ def _build_persona_reasoning_response(
             "read_telemetry_outcome",
             "retrieve_or_declare_memory_context",
             "inspect_alpha_policy_reflection_risk_tracking_oss_feedback",
+            "process_oss_response_followup_requests",
             "draft_candidate_policy_blueprints",
             "send_blueprints_to_scorer_and_risk_evaluator",
         ],
@@ -2015,6 +2275,14 @@ def _build_persona_reasoning_response(
             "score_adjustments": copy.deepcopy(dict(memory_influence["candidate_score_adjustments"])),
         },
         "preferred_action_hint": _persona_reasoning_preferred_action(memory_influence),
+        "oss_followup_usage": {
+            "loop_ref": oss_followup_loop["loop_ref"],
+            "model_id": oss_followup_loop["model_id"],
+            "followup_count": len(oss_followup_loop["followups"]),
+            "candidate_score_adjustments": copy.deepcopy(
+                dict(oss_followup_loop["candidate_score_adjustments"])
+            ),
+        },
         "candidate_blueprints": candidate_blueprints,
         "forbidden_windows_not_used": forbidden_windows,
         "output_contract": {
@@ -2045,11 +2313,17 @@ def _persona_reasoning_candidate_blueprints(
     allowed_windows: Sequence[str],
     memory_influence: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    oss_followup_loop: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
+    del oss_inputs
     shared_windows = list(allowed_windows)
     feedback_windows = ["observe", "feedback"] if generation == 1 else shared_windows
     memory_ref = memory_influence.get("influence_ref")
     memory_refs = [str(memory_ref)] if memory_ref else []
+    feedback_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "feedback-adapt")
+    risk_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "risk-off")
+    retain_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "retain-observe")
+    contrarian_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "contrarian-check")
     return [
         {
             "action": "feedback-adapt",
@@ -2065,7 +2339,7 @@ def _persona_reasoning_candidate_blueprints(
                 "backtest",
                 "tracker",
             ],
-            "extra_evidence_refs": memory_refs,
+            "extra_evidence_refs": [*feedback_followup_refs, *memory_refs],
             "memory_adjustment_key": "feedback-adapt",
             "rationale": (
                 "Use the feedback direction because alpha, policy, reflection, risk, backtest, "
@@ -2079,7 +2353,7 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "baseline_policy",
             "source_windows": ["observe"],
             "evidence_roles": [],
-            "extra_evidence_refs": [],
+            "extra_evidence_refs": retain_followup_refs,
             "memory_adjustment_key": "retain-observe",
             "rationale": "Keep the observe-only baseline as a scored alternative before rejecting it.",
         },
@@ -2090,9 +2364,9 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "risk_analytics_reduced_exposure",
             "source_windows": feedback_windows,
             "evidence_roles": ["risk_analytics"],
-            "extra_evidence_refs": memory_refs
+            "extra_evidence_refs": [*risk_followup_refs, *memory_refs]
             if float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
-            else [],
+            else risk_followup_refs,
             "memory_adjustment_key": "risk-off",
             "rationale": "Use feedback direction but reduce exposure when the risk interpretation asks for caution.",
         },
@@ -2103,7 +2377,7 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "fixed_control_risk",
             "source_windows": feedback_windows,
             "evidence_roles": ["reflection_artifact"],
-            "extra_evidence_refs": [],
+            "extra_evidence_refs": contrarian_followup_refs,
             "memory_adjustment_key": "contrarian-check",
             "rationale": "Retain a contrarian control candidate for scored comparison and rejection.",
         },
@@ -2149,6 +2423,16 @@ def _evaluate_persona_reasoning_response(
             {"memory_usage": copy.deepcopy(dict(response.get("memory_usage", {})))},
         ),
         _persona_risk_check(
+            "reasoning_uses_oss_followup_loop",
+            request.get("oss_followup_loop_ref") == response.get("oss_followup_usage", {}).get("loop_ref")
+            and request.get("oss_followup_loop_ref") in request.get("input_refs", [])
+            and int(response.get("oss_followup_usage", {}).get("followup_count", 0)) >= 8,
+            {
+                "oss_followup_loop_ref": request.get("oss_followup_loop_ref"),
+                "followup_count": response.get("oss_followup_usage", {}).get("followup_count"),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_routes_to_scorer_and_risk_evaluator",
             response.get("output_contract", {}).get("scorer_required") is True
             and response.get("output_contract", {}).get("risk_evaluator_required") is True,
@@ -2171,6 +2455,7 @@ def _build_agent_decision_trace(
     telemetry_event: Mapping[str, Any],
     prior_memory: Mapping[str, Any] | None,
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, Any]:
     memory_influence = _memory_influence_profile(prior_memory)
     trigger = (
@@ -2187,6 +2472,7 @@ def _build_agent_decision_trace(
         telemetry_event=telemetry_event,
         memory_influence=memory_influence,
         oss_inputs=oss_inputs,
+        oss_followup_loop=oss_followup_loop,
     )
     candidates = _score_agent_candidates(
         episode=episode,
@@ -2197,6 +2483,7 @@ def _build_agent_decision_trace(
         oss_inputs=oss_inputs,
         memory_influence=memory_influence,
         persona_reasoning=persona_reasoning,
+        oss_followup_loop=oss_followup_loop,
     )
     selected = max(candidates, key=lambda item: item.score)
     candidate_dicts = [_candidate_to_dict(candidate) for candidate in candidates]
@@ -2208,6 +2495,7 @@ def _build_agent_decision_trace(
         "memory_ref": prior_memory.get("memory_id") if prior_memory else None,
         "memory_influence_ref": memory_influence["influence_ref"],
         "oss_components": _oss_components_used(oss_inputs),
+        "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
     }
     evidence_refs = [
         f"telemetry-event://{telemetry_event['event_id']}",
@@ -2215,6 +2503,7 @@ def _build_agent_decision_trace(
         f"alpha-seed://{episode.seed_key}",
         f"policy://{baseline_policy['policy_id']}",
         *[f"oss://{result['component']}/{result['request_id']}" for result in oss_inputs.values()],
+        str(oss_followup_loop["loop_ref"]),
     ]
     agent_decision_artifact = _build_persona_decision_artifact(
         episode=episode,
@@ -2227,6 +2516,7 @@ def _build_agent_decision_trace(
         oss_inputs=oss_inputs,
         memory_influence=memory_influence,
         persona_reasoning=persona_reasoning,
+        oss_followup_loop=oss_followup_loop,
         decision_inputs=decision_inputs,
         evidence_refs=evidence_refs,
         candidates=candidate_dicts,
@@ -2263,6 +2553,7 @@ def _score_agent_candidates(
     oss_inputs: Mapping[str, Mapping[str, Any]],
     memory_influence: Mapping[str, Any],
     persona_reasoning: Mapping[str, Any],
+    oss_followup_loop: Mapping[str, Any],
 ) -> list[PolicyCandidate]:
     del prior_memory
     feedback_directions = {
@@ -2278,6 +2569,7 @@ def _score_agent_candidates(
     policy_quality = _policy_quality_from_oss(oss_inputs)
     reflection_quality = _reflection_quality_from_oss(oss_inputs)
     risk_penalty = _risk_penalty_from_oss(oss_inputs)
+    followup_score_adjustments = dict(oss_followup_loop["candidate_score_adjustments"])
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_score_adjustments = dict(memory_influence["candidate_score_adjustments"])
     memory_ref = memory_influence.get("influence_ref")
@@ -2304,6 +2596,7 @@ def _score_agent_candidates(
             "score": (
                 3.0
                 + float(memory_score_adjustments["feedback-adapt"])
+                + float(followup_score_adjustments["feedback-adapt"])
                 + feedback_score
                 + policy_quality
                 + reflection_quality
@@ -2314,19 +2607,33 @@ def _score_agent_candidates(
         "retain-observe": {
             "directions": observe_directions,
             "risk_multiplier": float(baseline_policy["risk_multiplier"]),
-            "score": 1.0 + float(memory_score_adjustments["retain-observe"]) + max(feedback_score, 0),
+            "score": (
+                1.0
+                + float(memory_score_adjustments["retain-observe"])
+                + float(followup_score_adjustments["retain-observe"])
+                + max(feedback_score, 0)
+            ),
             "fallback_evidence_refs": (f"policy://{baseline_policy['policy_id']}",),
         },
         "risk-off": {
             "directions": feedback_directions,
             "risk_multiplier": risk_off,
-            "score": 2.0 + float(memory_score_adjustments["risk-off"]) + max(0.0, risk_penalty),
+            "score": (
+                2.0
+                + float(memory_score_adjustments["risk-off"])
+                + float(followup_score_adjustments["risk-off"])
+                + max(0.0, risk_penalty)
+            ),
             "fallback_evidence_refs": tuple(risk_off_evidence_refs),
         },
         "contrarian-check": {
             "directions": inverse_feedback,
             "risk_multiplier": 0.5,
-            "score": 0.25 + float(memory_score_adjustments["contrarian-check"]),
+            "score": (
+                0.25
+                + float(memory_score_adjustments["contrarian-check"])
+                + float(followup_score_adjustments["contrarian-check"])
+            ),
             "fallback_evidence_refs": (
                 f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",
             ),
@@ -2371,7 +2678,7 @@ def _candidate_evidence_refs_from_reasoning(
     if not refs:
         refs.extend(str(ref) for ref in fallback_evidence_refs)
     if str(blueprint.get("action")) == "retain-observe":
-        refs = [f"policy://{baseline_policy['policy_id']}"]
+        refs = [f"policy://{baseline_policy['policy_id']}", *refs]
     return tuple(dict.fromkeys(refs))
 
 
@@ -2387,6 +2694,7 @@ def _build_persona_decision_artifact(
     oss_inputs: Mapping[str, Mapping[str, Any]],
     memory_influence: Mapping[str, Any],
     persona_reasoning: Mapping[str, Any],
+    oss_followup_loop: Mapping[str, Any],
     decision_inputs: Mapping[str, Any],
     evidence_refs: Sequence[str],
     candidates: Sequence[Mapping[str, Any]],
@@ -2415,6 +2723,10 @@ def _build_persona_decision_artifact(
         "risk_penalty": _risk_penalty_from_oss(oss_inputs),
         "memory_influence": copy.deepcopy(dict(memory_influence)),
         "memory_score_adjustments": copy.deepcopy(dict(memory_influence["candidate_score_adjustments"])),
+        "oss_followup_loop": copy.deepcopy(dict(oss_followup_loop)),
+        "oss_followup_score_adjustments": copy.deepcopy(
+            dict(oss_followup_loop["candidate_score_adjustments"])
+        ),
         "persona_reasoning_ref": persona_reasoning["response"]["reasoning_ref"],
         "persona_reasoning_preferred_action": persona_reasoning["response"]["preferred_action_hint"],
         "baseline_risk_multiplier": float(baseline_policy["risk_multiplier"]),
@@ -2473,6 +2785,15 @@ def _build_persona_decision_artifact(
             role: result.get("status") for role, result in sorted(oss_inputs.items())
         },
         "oss_evidence_refs": oss_evidence_refs,
+        "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
+        "oss_followup_response_refs": [
+            followup["response"]["output_ref"]
+            for followup in oss_followup_loop["followups"]
+        ],
+        "oss_followup_request_ids_by_role": {
+            followup["role"]: followup["request"]["request_id"]
+            for followup in oss_followup_loop["followups"]
+        },
         "allowed_windows": list(decision_inputs["allowed_windows"]),
         "forbidden_windows_not_used": list(decision_inputs["forbidden_windows_not_used"]),
         "portfolio_instruments": [window.instrument for window in episode.windows],
@@ -2491,7 +2812,12 @@ def _build_persona_decision_artifact(
                 f"alpha-seed://{episode.seed_key}",
                 f"policy://{baseline_policy['policy_id']}",
                 persona_reasoning["response"]["reasoning_ref"],
+                str(oss_followup_loop["loop_ref"]),
                 *oss_evidence_refs,
+                *[
+                    followup["response"]["output_ref"]
+                    for followup in oss_followup_loop["followups"]
+                ],
                 *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
             ],
             "allowed_windows": list(decision_inputs["allowed_windows"]),
@@ -2538,6 +2864,17 @@ def _build_persona_decision_artifact(
         "uses_selected_oss_feedback": set(selected_candidate.get("evidence_refs", [])).issuperset(
             _selected_persona_decision_oss_refs(oss_inputs)
         ),
+        "uses_oss_response_followup_loop": (
+            _oss_response_followup_loop_is_usable(oss_followup_loop)
+            and str(oss_followup_loop["loop_ref"]) in candidate_generation["request"]["input_refs"]
+            and set(oss_followup_loop["candidate_evidence_refs_by_action"]["feedback-adapt"]).issubset(
+                set(selected_candidate.get("evidence_refs", []))
+            )
+            and any(
+                float(value) > 0
+                for value in scoring_inputs["oss_followup_score_adjustments"].values()
+            )
+        ),
     }
     return {
         "artifact_id": f"persona-decision-artifact-{episode.case_id}-gen{generation}",
@@ -2573,16 +2910,25 @@ def _persona_candidate_scorecard(
     reflection_quality = float(scoring_inputs["reflection_quality"])
     risk_penalty = float(scoring_inputs["risk_penalty"])
     memory_score_adjustments = dict(scoring_inputs["memory_score_adjustments"])
+    followup_score_adjustments = dict(scoring_inputs["oss_followup_score_adjustments"])
     if candidate_id.endswith("-feedback-adapt"):
         formula_id = "feedback_adapt_score_v1"
         memory_adjustment = float(memory_score_adjustments["feedback-adapt"])
+        followup_adjustment = float(followup_score_adjustments["feedback-adapt"])
         replayed_score = round(
-            3.0 + memory_adjustment + feedback_score + policy_quality + reflection_quality - risk_penalty * 0.2,
+            3.0
+            + memory_adjustment
+            + followup_adjustment
+            + feedback_score
+            + policy_quality
+            + reflection_quality
+            - risk_penalty * 0.2,
             10,
         )
         components = {
             "base": 3.0,
             "memory_adjustment": memory_adjustment,
+            "oss_followup_adjustment": followup_adjustment,
             "feedback_score": feedback_score,
             "policy_quality": policy_quality,
             "reflection_quality": reflection_quality,
@@ -2591,26 +2937,35 @@ def _persona_candidate_scorecard(
     elif candidate_id.endswith("-retain-observe"):
         formula_id = "retain_observe_score_v1"
         memory_adjustment = float(memory_score_adjustments["retain-observe"])
-        replayed_score = round(1.0 + memory_adjustment + max(feedback_score, 0.0), 10)
+        followup_adjustment = float(followup_score_adjustments["retain-observe"])
+        replayed_score = round(1.0 + memory_adjustment + followup_adjustment + max(feedback_score, 0.0), 10)
         components = {
             "base": 1.0,
             "memory_adjustment": memory_adjustment,
+            "oss_followup_adjustment": followup_adjustment,
             "positive_feedback_score": round(max(feedback_score, 0.0), 10),
         }
     elif candidate_id.endswith("-risk-off"):
         formula_id = "risk_off_score_v1"
         memory_adjustment = float(memory_score_adjustments["risk-off"])
-        replayed_score = round(2.0 + memory_adjustment + max(0.0, risk_penalty), 10)
+        followup_adjustment = float(followup_score_adjustments["risk-off"])
+        replayed_score = round(2.0 + memory_adjustment + followup_adjustment + max(0.0, risk_penalty), 10)
         components = {
             "base": 2.0,
             "memory_adjustment": memory_adjustment,
+            "oss_followup_adjustment": followup_adjustment,
             "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
         }
     else:
         formula_id = "contrarian_control_score_v1"
         memory_adjustment = float(memory_score_adjustments["contrarian-check"])
-        replayed_score = round(0.25 + memory_adjustment, 10)
-        components = {"base": 0.25, "memory_adjustment": memory_adjustment}
+        followup_adjustment = float(followup_score_adjustments["contrarian-check"])
+        replayed_score = round(0.25 + memory_adjustment + followup_adjustment, 10)
+        components = {
+            "base": 0.25,
+            "memory_adjustment": memory_adjustment,
+            "oss_followup_adjustment": followup_adjustment,
+        }
     candidate_score = round(float(candidate["score"]), 10)
     return {
         "candidate_id": candidate_id,
@@ -4047,6 +4402,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("uses_memory_in_scoring_or_declares_cold_start") is True
         and replay.get("uses_persona_reasoning_response") is True
         and replay.get("uses_selected_oss_feedback") is True
+        and replay.get("uses_oss_response_followup_loop") is True
         and replay.get("input_hash")
         and replay.get("candidate_hash")
         and replay.get("score_hash")
@@ -4054,6 +4410,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and _trace_has_no_forbidden_window_leakage(trace)
         and _trace_memory_influence_is_usable(trace)
         and _trace_persona_reasoning_is_usable(trace)
+        and _trace_oss_followup_loop_is_usable(trace)
     )
 
 
@@ -4103,6 +4460,8 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
             return False
     memory_ref = decision_inputs.get("memory_ref")
     memory_usage = response.get("memory_usage", {})
+    followup_ref = input_context.get("oss_followup_loop_ref")
+    followup_usage = response.get("oss_followup_usage", {})
     return bool(
         request.get("model_id") == PERSONA_REASONING_MODEL_ID
         and response.get("model_id") == PERSONA_REASONING_MODEL_ID
@@ -4112,6 +4471,11 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
         and request.get("allowed_windows") == decision_inputs.get("allowed_windows")
         and request.get("forbidden_windows_not_used") == decision_inputs.get("forbidden_windows_not_used")
         and response.get("status") == "completed"
+        and request.get("oss_followup_loop_ref") == followup_ref
+        and followup_usage.get("loop_ref") == followup_ref
+        and followup_ref in request.get("input_refs", [])
+        and followup_ref in generation_request.get("input_refs", [])
+        and int(followup_usage.get("followup_count", 0)) >= 8
         and response.get("reasoning_ref") in generation_request.get("input_refs", [])
         and generation_response.get("source_reasoning_response_id") == response.get("response_id")
         and generation_response.get("source_reasoning_ref") == response.get("reasoning_ref")
@@ -4122,6 +4486,35 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
             (memory_ref and memory_usage.get("influence_ref") == f"memory://{memory_ref}")
             or (not memory_ref and memory_usage.get("status") == "cold_start")
         )
+    )
+
+
+def _trace_oss_followup_loop_is_usable(trace: Mapping[str, Any]) -> bool:
+    artifact = trace.get("agent_decision_artifact", {})
+    if not isinstance(artifact, Mapping):
+        return False
+    input_context = artifact.get("input_context", {})
+    candidate_request = artifact.get("candidate_generation", {}).get("request", {})
+    scorer_inputs = artifact.get("scorer", {}).get("scoring_inputs", {})
+    selected_candidate = trace.get("selected_candidate", {})
+    selected_action = _candidate_action_key(str(selected_candidate.get("candidate_id")))
+    loop = scorer_inputs.get("oss_followup_loop", {})
+    if not isinstance(loop, Mapping):
+        return False
+    expected_refs = _oss_followup_refs_for_action(loop, selected_action)
+    selected_refs = set(selected_candidate.get("evidence_refs", []))
+    score_adjustments = scorer_inputs.get("oss_followup_score_adjustments", {})
+    return bool(
+        _oss_response_followup_loop_is_usable(loop)
+        and input_context.get("oss_followup_loop_ref") == loop.get("loop_ref")
+        and trace.get("decision_inputs", {}).get("oss_followup_loop_ref") == loop.get("loop_ref")
+        and loop.get("loop_ref") in trace.get("evidence_refs", [])
+        and loop.get("loop_ref") in candidate_request.get("input_refs", [])
+        and set(input_context.get("oss_followup_response_refs", [])).issubset(
+            set(candidate_request.get("input_refs", []))
+        )
+        and set(expected_refs).issubset(selected_refs)
+        and float(score_adjustments.get(selected_action, 0.0)) > 0.0
     )
 
 
@@ -4577,6 +4970,7 @@ def _build_usability_dimensions(
     operational_context: Mapping[str, Any],
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
+    oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
     return_improvement = 1.0 if generation1_eval["score"] > baseline_holdout_counterfactual["score"] else 0.0
@@ -4641,6 +5035,10 @@ def _build_usability_dimensions(
     no_leakage_temporal_protocol = 1.0 if _no_leakage_temporal_protocol_is_usable(
         no_leakage_protocol
     ) else 0.0
+    oss_response_followup_loop = 1.0 if (
+        _oss_response_followup_loop_is_usable(oss_followup_loop)
+        and all(_trace_oss_followup_loop_is_usable(trace) for trace in decision_traces)
+    ) else 0.0
     return {
         "return_improvement": return_improvement,
         "multi_generation_improvement": multi_generation_improvement,
@@ -4655,6 +5053,7 @@ def _build_usability_dimensions(
         "decision_explainability": decision_explainability,
         "persona_decision_artifact": persona_decision_artifact,
         "persona_reasoning_generation": persona_reasoning_generation,
+        "oss_response_followup_loop": oss_response_followup_loop,
         "oss_evidence_completeness": min(1.0, oss_evidence_completeness),
         "portfolio_breadth": portfolio_breadth,
         "no_leakage": no_leakage,
@@ -4689,6 +5088,7 @@ def _diagnose_validation_execution(
     operational_context: Mapping[str, Any],
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
+    oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
     checks = [
@@ -4820,6 +5220,19 @@ def _diagnose_validation_execution(
             {
                 "roles": sorted(oss_inputs),
                 "components": _oss_components_used(oss_inputs),
+            },
+        ),
+        _diagnostic_check(
+            "oss_response_followup_loop_drives_persona_scoring",
+            _oss_response_followup_loop_is_usable(oss_followup_loop)
+            and all(_trace_oss_followup_loop_is_usable(trace) for trace in decision_traces),
+            {
+                "loop_id": oss_followup_loop["loop_id"],
+                "followup_count": len(oss_followup_loop["followups"]),
+                "candidate_score_adjustments": copy.deepcopy(
+                    dict(oss_followup_loop["candidate_score_adjustments"])
+                ),
+                "trace_ids": [trace["reflection_id"] for trace in decision_traces],
             },
         ),
         _diagnostic_check(
@@ -5117,6 +5530,7 @@ def _build_case_result(
     evolution_decision: EvolutionDecision,
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
+    oss_followup_loop: Mapping[str, Any],
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     case_upstream_artifacts: Mapping[str, Any],
@@ -5168,6 +5582,7 @@ def _build_case_result(
             "drives_persona_steps": {
                 role: result["drives_persona_step"] for role, result in oss_inputs.items()
             },
+            "response_followup_loop": copy.deepcopy(dict(oss_followup_loop)),
         },
         "case_upstream_artifacts": _case_upstream_artifacts_case_summary(case_upstream_artifacts),
         "generation_results": generation_results,
@@ -5229,6 +5644,9 @@ def _build_case_result(
             "no_leakage_holdout": usability_dimensions["no_leakage_temporal_protocol"] == 1.0,
             "memory_retrieval_drives_next_decision": usability_dimensions["memory_influences_decision"] == 1.0,
             "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
+            "oss_response_followup_loop_drives_decision": usability_dimensions[
+                "oss_response_followup_loop"
+            ] == 1.0,
             "persona_decision_artifacts_replay": usability_dimensions["persona_decision_artifact"] == 1.0,
             "persona_reasoning_drives_candidate_generation": usability_dimensions[
                 "persona_reasoning_generation"
@@ -5286,6 +5704,7 @@ def _build_summary(
     ]
     evolution_trajectories = [case["evolution"]["trajectory"] for case in cases]
     no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
+    oss_followup_loops = [case["oss_feedback"]["response_followup_loop"] for case in cases]
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
@@ -5358,6 +5777,24 @@ def _build_summary(
             entry["artifact_family"]
             for case in cases
             for entry in case["case_upstream_artifacts"]["selected_oss"].values()
+        }),
+        "oss_response_followup_loop_models": sorted({
+            loop["model_id"] for loop in oss_followup_loops
+        }),
+        "oss_response_followup_roles": sorted({
+            followup["role"]
+            for loop in oss_followup_loops
+            for followup in loop["followups"]
+        }),
+        "oss_response_followup_components": sorted({
+            followup["component"]
+            for loop in oss_followup_loops
+            for followup in loop["followups"]
+        }),
+        "oss_response_followup_candidate_actions": sorted({
+            followup["response"]["candidate_action"]
+            for loop in oss_followup_loops
+            for followup in loop["followups"]
         }),
         "agent_decision_artifact_models": sorted({
             artifact["model_id"] for artifact in decision_artifacts
@@ -5472,6 +5909,13 @@ def _build_summary(
         "multi_oss_feedback_drives_decision_count": sum(
             1 for item in usable if item["multi_oss_feedback_drives_decision"]
         ),
+        "oss_response_followup_loop_count": len(oss_followup_loops),
+        "oss_response_followup_loop_pass_count": sum(
+            1 for loop in oss_followup_loops if _oss_response_followup_loop_is_usable(loop)
+        ),
+        "oss_response_followup_loop_drives_decision_count": sum(
+            1 for item in usable if item["oss_response_followup_loop_drives_decision"]
+        ),
         "agent_decision_artifact_count": len(decision_artifacts),
         "agent_decision_artifact_replay_count": sum(
             1 for item in usable if item["persona_decision_artifacts_replay"]
@@ -5535,6 +5979,7 @@ def _build_summary(
             "Every case trades a three-instrument portfolio across three generations through paper runtime fills.",
             "Every case writes memory and proves retrieved lessons influence later candidate scoring and selected evidence refs.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
+            "Every case converts OSS responses into persona follow-up requests that feed reasoning, candidate evidence, and scorer adjustments.",
             "Every persona decision emits a replayable request-response artifact covering candidate generation, scoring, risk checks, and rejected alternatives.",
             "Every persona decision first emits a structured reasoning response whose candidate blueprints drive the scored candidates.",
             "Every case records a multi-generation evolution trajectory proving gen0->gen1->gen2 lineage, two distinct unseen-window improvements, and bounded turnover.",
