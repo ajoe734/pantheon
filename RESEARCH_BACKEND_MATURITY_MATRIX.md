@@ -38,6 +38,7 @@ Each backend is assessed against the integration status codes established in `OS
 | `adapter-started` | Local adapter and governance boundary in progress |
 | `criteria-defined` | Deferred framework with explicit activation gate documented |
 | `smoke-tested` | Dependency pinned + adapter + governed I/O + smoke test passes |
+| `activation-gated` | Adapter/backend path exists and is tested in bounded form, but explicit runtime, network, credential, or operator gate remains closed |
 | `governed` | Full integration with governance artifacts complete |
 
 For production-path classification, three tiers apply:
@@ -64,10 +65,10 @@ runtime paths, canonical writes, and networked backend operation remain gated.
 | **OpenClaw** | Experiment orchestration / runtime coordination; upstream runtime wrapping local workflows | `governed` | **Activation-Ready** | Codex | All research families (orchestration layer) | Fail-closed repo-authoritative runtime-adoption scaffold is landed; broker sessions, paper/canary/live routes, and capital binding remain closed while live smoke evidence stays refreshed when the pin changes |
 | **Qlib** | Supervised alpha research; cross-sectional feature engineering, LightGBM/LSTM alpha signal discovery | `smoke-tested` | **Activation-Ready** | Qwen | Cross-sectional equity alpha | Activation packet is prepared; RS-003 candidate + governed dataset gates (>=50 instruments, 2+ years data) + target StrategySpec binding must clear before the first promotion-ready LightGBM alpha run |
 | **TRL** | Preference learning; DPO/RLHF training from governed feedback preference pairs | `smoke-tested` | **Activation-Ready** | Qwen | Persona preference alignment | >=200 FB-002 events, >=100 valid preference pairs, approved LP-002 artifacts, and one downstream consumer must exist before the first governed production DPO run |
-| **FinRL** | Simplified single-agent RL portfolio management; pre-configured trading environments | `criteria-defined` | **Activation-Ready** | Copilot | Single-agent RL trading | Dormant adapter, worker, and explicit-gate smoke path exist under `services/research/finrl`; active RL lane reopens only after Qlib alpha is approved and stable for **3 months**, then proves the first governed single-agent production path |
-| **RLlib** | Multi-agent / scalable RL policy training; PPO/SAC via Ray | `version-pinned` | **Activation-Ready** | Copilot | Multi-agent portfolio optimization | Dormant train/eval adapter, worker, and explicit-gate smoke path exist under `services/research/rllib`; governed train/eval activation stays behind the RL gate and the FinRL first-lane proof |
-| **Ray Tune** | Hyperparameter search over RL/learning experiments; PBT/grid/Bayesian search | `version-pinned` | **Activation-Ready** | Copilot | RL hyperparameter optimization | Dormant search-output adapter, worker, and explicit-gate smoke path exist under `services/research/rllib`; governed activation remains coupled to the RLlib follow-on lane after the FinRL first-lane proof |
-| **W&B** | Optional alternative experiment registry backend to MLflow; SaaS metrics visualization | `criteria-defined` | **Activation-Ready** | Qwen | All research families (optional) | Offline/prep-only adapter scaffold is fail-closed and canonical-state aligned; SDK-backed or networked backend activation still requires MLflow ≥30-day history (earliest 2026-05-15), documented operator preference, SDK pin, and infrastructure readiness |
+| **FinRL** | Simplified single-agent RL portfolio management; pre-configured trading environments | `smoke-tested` | **Activation-Ready** | Copilot | Single-agent RL trading | Bounded activation-ready smoke evidence exists under `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/`; production RL remains closed until the RL approval gate reopens and FinRL proves the first governed single-agent production path |
+| **RLlib** | Multi-agent / scalable RL policy training; PPO/SAC via Ray | `smoke-tested` | **Activation-Ready** | Copilot | Multi-agent portfolio optimization | Bounded activation-ready smoke evidence exists under `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/`; governed train/eval activation stays behind the RL gate and the FinRL first-lane proof |
+| **Ray Tune** | Hyperparameter search over RL/learning experiments; PBT/grid/Bayesian search | `smoke-tested` | **Activation-Ready** | Copilot | RL hyperparameter optimization | Bounded activation-ready smoke evidence exists under `support/evidence/P2-RL-UPSTREAM-RUNTIME-SMOKE-001/`; governed activation remains coupled to the RLlib follow-on lane after the FinRL first-lane proof |
+| **W&B** | Optional alternative experiment registry backend to MLflow; SaaS metrics visualization | `activation-gated` | **Activation-Ready** | Qwen | All research families (optional) | Offline local-store and SDK-backed online-sync paths are fail-closed; credentialed W&B project/API-key rerun remains required before networked activation |
 | **vectorbt** | Backtesting and portfolio optimization prototyping; fast vectorized backtest engine | `governed` | **Production Research Path** | Codex2 | Rapid strategy prototyping | Keep stub smoke, worker entrypoint, and governance evidence refreshed when the pin or adapter changes |
 | **statsmodels** | Econometrics and regime analysis; cointegration, VAR, ARIMA, regime-switching models | `governed` | **Production Research Path** | Codex2 | Regime inference / macro research | Keep smoke evidence, worker entrypoint, and governance docs refreshed when the pin or adapter changes |
 | **QuantLib** | Derivatives pricing and risk; options pricing, fixed income analytics, Greeks | `governed` | **Production Research Path** | Codex | Derivatives strategy research | Keep smoke, worker entrypoint, and evidence pack refreshed when the pin or backend changes |
@@ -147,17 +148,19 @@ Runnable baselines and scaffolds that are **not yet** active production lanes:
 - `OpenClaw`: `governed` baseline, live gateway smoke, and fail-closed repo-authoritative runtime-adoption scaffold are landed, but broker sessions, paper/canary/live routes, and capital binding remain denied
 - `Qlib`: `smoke-tested` LightGBM baseline and activation packet are landed, but supervised-alpha activation still depends on RS-003 candidate readiness, governed market-data proof, and target StrategySpec binding
 - `TRL`: `smoke-tested` DPO baseline is landed, but production use still depends on runtime feedback volume, approved imitation artifacts, and one downstream consumer
+- `FinRL`, `RLlib`, and `Ray Tune`: `smoke-tested` activation-ready RL evidence is landed, but the RL production gate remains closed and all outputs stay research-only / draft / non-ordering
+- `W&B`: `activation-gated` experiment backend path is landed, but online sync requires explicit credentialed activation and remains non-ordering
 
 ### Next Activation Order
 
-The ordered activation queue (from `OSS_INTEGRATION_CHECKLIST.md` §Immediate Priorities, updated to the 2026-04-24 remaining-activation truth):
+The ordered activation queue (from `OSS_INTEGRATION_CHECKLIST.md` §Immediate Priorities, updated to the 2026-05-01 remaining-activation truth):
 
 ```
 1. OpenClaw    — governed gateway baseline and fail-closed runtime-adoption scaffold are ready; keep production/broker/live/capital activation closed until a future explicit activation gate opens it
 2. Qlib        — smoke-tested baseline is ready; clear data gates and run the first governed alpha activation
 3. TRL         — smoke-tested baseline is ready; clear runtime-data gates and run the first governed production DPO activation
-4. FinRL first, then RLlib/Ray Tune — remain deferred until Qlib plateaus for **3 months** and the RL gate is reopened
-5. W&B         — optional backend path after the MLflow-history and adapter-generalization gates
+4. FinRL, RLlib, Ray Tune — all three are smoke-tested but still RL-gated; FinRL is the first future production RL lane after explicit re-entry approval
+5. W&B         — activation-gated optional backend path; credentialed online sync still requires explicit test project/API-key evidence
 ```
 
 ### Research Problem Type → Primary Backend Mapping
@@ -223,7 +226,7 @@ offline-only, non-writing, draft/none, and not production activation evidence.
 
 ### Current Status
 
-Research Plane has six governed backends on the production path (DSPy, imitation, MLflow, vectorbt, statsmodels, QuantLib), plus one governed activation-gated runtime substrate (OpenClaw), two smoke-tested but activation-gated learning baselines (Qlib, TRL), and dormant explicit-gate FinRL/RLlib/Ray Tune scaffolds. The remaining research gap is no longer missing runnable baselines for OpenClaw/Qlib/TRL/FinRL/RLlib/Tune; it is the lack of production activation for Qlib/TRL, the still-closed production/broker/live/capital activation path for OpenClaw, the FinRL first active-lane proof after RL approval, and the broader deferred RL/W&B activation paths.
+Research Plane has six governed backends on the production path (DSPy, imitation, MLflow, vectorbt, statsmodels, QuantLib), plus one governed activation-gated runtime substrate (OpenClaw), two smoke-tested but activation-gated learning baselines (Qlib, TRL), smoke-tested explicit-gate FinRL/RLlib/Ray Tune baselines, and one activation-gated W&B experiment backend. The remaining research gap is no longer missing runnable baselines for OpenClaw/Qlib/TRL/FinRL/RLlib/Tune; it is the lack of production activation for Qlib/TRL, the still-closed production/broker/live/capital activation path for OpenClaw, the FinRL first active-lane proof after RL approval, and the broader gated RL/W&B activation paths.
 
 The research service boundary now exposes a fail-closed dormant capability inventory for OpenClaw, Qlib, TRL, FinRL, RLlib, Ray Tune, and W&B from the research-worker gateway, research orchestrator, policy-learning, and BFF aggregate surfaces. That inventory is read-only operator metadata (`gate_state=fail_closed`, `allowed_scope=capability_metadata_read_only`) and does not authorize training dispatch, paper/canary/live execution, registry writes, governance writes, broker sessions, or capital binding.
 
@@ -266,7 +269,7 @@ The research service boundary now exposes a fail-closed dormant capability inven
 
 ### Why It Is a Real Gap
 
-The gap is real but scoped: the platform has a valid production research path for behavior cloning, persona optimization, rapid strategy backtesting, econometrics/regime analysis, and derivatives pricing/risk, and it now has runnable governed/smoke-tested baselines for OpenClaw, Qlib, and TRL. However, it still has no production-activated path for supervised alpha discovery (Qlib), preference learning (TRL), or sequential RL. This directly limits the Research Plane's coverage of the complete Blueprint's research problem types.
+The gap is real but scoped: the platform has a valid production research path for behavior cloning, persona optimization, rapid strategy backtesting, econometrics/regime analysis, and derivatives pricing/risk, and it now has runnable governed/smoke-tested/activation-gated baselines for OpenClaw, Qlib, TRL, FinRL, RLlib, Ray Tune, and W&B. However, it still has no production-activated path for supervised alpha discovery (Qlib), preference learning (TRL), or sequential RL. This directly limits the Research Plane's coverage of the complete Blueprint's research problem types.
 
 ### Proposed Owner
 

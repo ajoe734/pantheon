@@ -37,7 +37,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from .executor import execute, ExecutionError
+from .executor import execute, ExecutionError, _signal_context_metadata, _signal_market_price
 from .symbol_parser import SymbolParseError
 
 try:
@@ -95,10 +95,30 @@ class SignalConsumer:
             if signal is None:
                 continue
             if self._is_duplicate(signal):
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "duplicate_signal_id",
+                    extra_metadata={
+                        "duplicate_signal_id": signal["signal_id"],
+                        "idempotent_replay": True,
+                    },
+                )
                 continue
-            if self._is_stale(signal, algo):
+            staleness_reason = self._staleness_reason(signal, algo)
+            if staleness_reason:
+                self._record_filtered_signal_noop(signal, algo, staleness_reason)
                 continue
             if self._is_wrong_binding(signal):
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "binding_mismatch",
+                    extra_metadata={
+                        "expected_binding_id": self._binding_id,
+                        "signal_binding_id": str(signal.get("binding_id") or "").strip(),
+                    },
+                )
                 continue
             if signal.get("run_id"):
                 self._buffer_rebalance(signal)
@@ -106,7 +126,7 @@ class SignalConsumer:
                 singles.append(signal)
 
         # Execute individual signals (conflict-resolved per symbol)
-        resolved = self._resolve_conflicts(singles)
+        resolved = self._resolve_conflicts(singles, algo=algo)
         for signal in resolved:
             self._execute_one(signal, algo)
 
@@ -163,6 +183,9 @@ class SignalConsumer:
         return False
 
     def _is_stale(self, signal: dict, algo: Any | None = None) -> bool:
+        return self._staleness_reason(signal, algo) is not None
+
+    def _staleness_reason(self, signal: dict, algo: Any | None = None) -> str | None:
         """
         Staleness check. Uses algo.Time if available (real-time or backtest time),
         falling back to current UTC time.
@@ -183,7 +206,7 @@ class SignalConsumer:
 
         ts = _parse_dt(signal["timestamp"])
         if not ts:
-            return False
+            return None
             
         # Normalize both to naive datetimes for comparison (strip timezone info)
         # This handles the case where algo.Time is naive but represents exchange time
@@ -198,15 +221,53 @@ class SignalConsumer:
         if diff_seconds > 86400:
             log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale", 
                         sid, now.isoformat(), ts.isoformat())
-            return True
+            return "stale_signal"
             
         # Reject signals >1h in future (anomaly check for clock drift)
         if diff_seconds < -3600:
              log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous", 
                          sid, now.isoformat(), ts.isoformat())
-             return True
+             return "future_signal_anomaly"
 
-        return False
+        return None
+
+    def _record_filtered_signal_noop(
+        self,
+        signal: dict,
+        algo: Any | None,
+        noop_reason: str,
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        sid = signal["signal_id"]
+        if algo is None:
+            self._processed_signal_ids.add(sid)
+            return
+        recorder = getattr(algo, "RecordSignalNoop", None)
+        if not callable(recorder):
+            self._processed_signal_ids.add(sid)
+            return
+        metadata = _signal_context_metadata(signal)
+        metadata["filter_reason"] = noop_reason
+        if extra_metadata:
+            metadata.update(
+                {key: value for key, value in extra_metadata.items() if value not in (None, "")}
+            )
+        price = _signal_market_price(signal)
+        kwargs = {
+            "signal_id": sid,
+            "noop_reason": noop_reason,
+            "requested_quantity": float(signal.get("quantity") or 0.0),
+            "computed_quantity": 0.0,
+            "quantity_type": signal.get("quantity_type", "UNKNOWN"),
+            "order_type": signal.get("order_type", "MARKET"),
+            "broker_submission_status": "not_submitted_signal_filtered",
+            "submitted_to_broker": False,
+            "metadata": metadata,
+        }
+        if price is not None:
+            kwargs["price"] = price
+        recorder(signal["symbol"], **kwargs)
+        self._processed_signal_ids.add(sid)
 
     def _is_wrong_binding(self, signal: dict) -> bool:
         """Defense-in-depth: discard signals routed to a different binding.
@@ -232,7 +293,7 @@ class SignalConsumer:
     # Conflict resolution (same symbol, different signals)
     # ------------------------------------------------------------------
 
-    def _resolve_conflicts(self, signals: list[dict]) -> list[dict]:
+    def _resolve_conflicts(self, signals: list[dict], algo: Any | None = None) -> list[dict]:
         """
         Last-write-wins by timestamp.  Tie-break by confidence_score (higher wins).
         Returns one signal per symbol.
@@ -249,8 +310,28 @@ class SignalConsumer:
                         "[%s] Conflict on %s: replaced by newer/higher-confidence signal [%s]",
                         existing["signal_id"], sym, sig["signal_id"],
                     )
+                    self._record_conflict_loser_noop(existing, winner=sig, algo=algo)
                     by_symbol[sym] = sig
+                else:
+                    log.info(
+                        "[%s] Conflict on %s: retained newer/higher-confidence signal [%s]",
+                        sig["signal_id"], sym, existing["signal_id"],
+                    )
+                    self._record_conflict_loser_noop(sig, winner=existing, algo=algo)
         return list(by_symbol.values())
+
+    def _record_conflict_loser_noop(self, loser: dict, *, winner: dict, algo: Any | None) -> None:
+        self._record_filtered_signal_noop(
+            loser,
+            algo,
+            "signal_conflict_loser",
+            extra_metadata={
+                "conflict_winner_signal_id": winner.get("signal_id"),
+                "conflict_loser_signal_id": loser.get("signal_id"),
+                "conflict_symbol": loser.get("symbol"),
+                "conflict_resolution_rule": "last_write_wins_timestamp_then_confidence",
+            },
+        )
 
     # ------------------------------------------------------------------
     # FinRL rebalance batching
@@ -271,7 +352,7 @@ class SignalConsumer:
                     "executing partial batch",
                     run_id, self._rebalance_timeout, n,
                 )
-                for sig in self._resolve_conflicts(batch["signals"]):
+                for sig in self._resolve_conflicts(batch["signals"], algo=algo):
                     self._execute_one(sig, algo)
                 completed.append(run_id)
 
@@ -285,7 +366,7 @@ class SignalConsumer:
         """
         batch = self._rebalance_buffer.pop(run_id, None)
         if batch:
-            for sig in self._resolve_conflicts(batch["signals"]):
+            for sig in self._resolve_conflicts(batch["signals"], algo=algo):
                 self._execute_one(sig, algo)
 
     # ------------------------------------------------------------------
@@ -305,9 +386,26 @@ class SignalConsumer:
             self._processed_signal_ids.add(signal["signal_id"])
         except (ExecutionError, SymbolParseError) as exc:
             log.error("[%s] Execution failed: %s", signal["signal_id"], exc)
+            self._record_execution_error_noop(signal, algo, exc)
         except Exception as exc:
             log.exception("Unexpected execution error for signal %s: %s",
                           signal.get("signal_id"), exc)
+
+    def _record_execution_error_noop(self, signal: dict, algo: Any | None, exc: Exception) -> None:
+        reason = _execution_error_reason(exc)
+        self._record_filtered_signal_noop(
+            signal,
+            algo,
+            reason,
+            extra_metadata={
+                "execution_error_type": type(exc).__name__,
+                "execution_error_message": str(exc),
+                "execution_error_stage": "execute_signal",
+                "execution_error_symbol": signal.get("symbol"),
+                "signal_action": signal.get("action"),
+                "signal_direction": signal.get("direction"),
+            },
+        )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -351,3 +449,21 @@ def _signal_wins(candidate: dict, incumbent: dict) -> bool:
             i_conf = (incumbent.get("metadata") or {}).get("confidence_score", 0)
             return c_conf > i_conf
     return False
+
+
+def _is_symbol_parse_error(exc: Exception) -> bool:
+    if isinstance(exc, SymbolParseError):
+        return True
+    return isinstance(getattr(exc, "__cause__", None), SymbolParseError)
+
+
+def _execution_error_reason(exc: Exception) -> str:
+    if _is_symbol_parse_error(exc):
+        return "symbol_parse_error"
+    if "Unhandled action/direction combination" in str(exc):
+        return "unsupported_action_direction"
+    if "limit_price is required" in str(exc):
+        return "limit_price_required"
+    if "PERCENT_PORTFOLIO quantity_type is not supported" in str(exc):
+        return "limit_percent_portfolio_unsupported"
+    return "execution_error"

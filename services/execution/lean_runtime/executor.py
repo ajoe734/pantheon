@@ -21,13 +21,12 @@ SELL     LONG       PERCENT_PORTFOLIO  algo.SetHoldings(sym,  0)   # close long
 SELL     LONG       SHARES             algo.Liquidate(sym)          # close long
 SELL     LONG       CASH_VALUE         algo.Liquidate(sym)          # close long
 EXIT     LONG       *                  algo.Liquidate(sym) if long, else no-op
-EXIT     SHORT      *                  algo.MarketOrder(round abs holdings) if short, else no-op
-HOLD     *          *                  no-op (logged only)
+EXIT     SHORT      *                  algo.MarketOrder(abs holdings) if short, else no-op
+HOLD     *          *                  paper_order_simulated no-op telemetry
 """
 from __future__ import annotations
 
 import logging
-import math
 from typing import Any
 
 from .symbol_parser import ParsedSymbol, SymbolParseError, parse as parse_symbol
@@ -64,6 +63,7 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
         For unrecoverable signal errors that should be logged and skipped.
     """
     signal_id = signal.get("signal_id", "<unknown>")
+    signal_context = _signal_context_metadata(signal)
     action = signal["action"]           # BUY | SELL | HOLD | EXIT
     direction = signal["direction"]     # LONG | SHORT
     quantity = float(signal["quantity"])
@@ -74,11 +74,6 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
         (signal.get("metadata") or {}).get("confidence_score", 1.0)
     )
 
-    # --- HOLD: informational only, no execution ---
-    if action == "HOLD":
-        log.info("[%s] HOLD signal — no order placed (symbol=%s)", signal_id, signal["symbol"])
-        return
-
     # --- Parse symbol ---
     try:
         parsed: ParsedSymbol = parse_symbol(signal["symbol"])
@@ -87,7 +82,27 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
 
     # Build LEAN Symbol object by calling algo helper
     lean_symbol = _resolve_symbol(algo, parsed)
+    _seed_signal_market_price(algo, lean_symbol, signal)
     holdings_before = _get_holdings_quantity(algo, lean_symbol)
+
+    # --- HOLD: informational decision, no broker submission ---
+    if action == "HOLD":
+        _set_signal_context(algo, signal_context)
+        try:
+            _record_signal_noop(
+                algo,
+                lean_symbol,
+                signal_id,
+                noop_reason="hold_signal",
+                requested_quantity=quantity,
+                quantity_type=quantity_type,
+                order_type=order_type,
+                price=_get_price(algo, lean_symbol),
+            )
+        finally:
+            _clear_signal_context(algo)
+        log.info("[%s] HOLD signal — no order placed (symbol=%s)", signal_id, signal["symbol"])
+        return
 
     # --- Confidence floor: avoid near-zero orders ---
     effective_confidence = max(confidence, _CONFIDENCE_FLOOR)
@@ -100,70 +115,188 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
                 signal_id, confidence, _CONFIDENCE_FLOOR, quantity,
             )
 
-    # --- Dispatch ---
-    if action == "BUY" and direction == "LONG":
-        _place_order(algo, lean_symbol, quantity, quantity_type,
-                     order_type, limit_price, sign=+1, signal_id=signal_id)
+    _set_signal_context(algo, signal_context)
+    try:
+        # --- Dispatch ---
+        if action == "BUY" and direction == "LONG":
+            _place_order(algo, lean_symbol, quantity, quantity_type,
+                         order_type, limit_price, sign=+1, signal_id=signal_id)
 
-    elif action == "SELL" and direction == "SHORT":
-        _place_order(algo, lean_symbol, quantity, quantity_type,
-                     order_type, limit_price, sign=-1, signal_id=signal_id)
+        elif action == "SELL" and direction == "SHORT":
+            _place_order(algo, lean_symbol, quantity, quantity_type,
+                         order_type, limit_price, sign=-1, signal_id=signal_id)
 
-    elif action == "SELL" and direction == "LONG":
-        # Close existing long position
-        if quantity_type == "PERCENT_PORTFOLIO":
-            # SetHoldings to 0 for portfolio-relative closes
-            log.info("[%s] SELL+LONG → SetHoldings %s → 0", signal_id, parsed.raw)
-            algo.SetHoldings(lean_symbol, 0)
+        elif action == "SELL" and direction == "LONG":
+            # Close existing long position
+            if order_type == "LIMIT":
+                _place_limit_close_long(
+                    algo,
+                    lean_symbol,
+                    quantity,
+                    quantity_type,
+                    limit_price,
+                    signal_id=signal_id,
+                )
+            elif quantity_type == "PERCENT_PORTFOLIO":
+                # SetHoldings to 0 for portfolio-relative closes
+                log.info("[%s] SELL+LONG → SetHoldings %s → 0", signal_id, parsed.raw)
+                algo.SetHoldings(lean_symbol, 0)
+            else:
+                # Liquidate for absolute quantity closes (more robust)
+                log.info("[%s] SELL+LONG → Liquidate long on %s", signal_id, parsed.raw)
+                algo.Liquidate(lean_symbol)
+
+        elif action == "EXIT" and direction == "LONG":
+            # Close long leg only: check actual position direction
+            holdings = _get_holdings_quantity(algo, lean_symbol)
+            if holdings > 0:
+                # Only close if actually long
+                log.info("[%s] EXIT+LONG → Liquidate long on %s", signal_id, parsed.raw)
+                algo.Liquidate(lean_symbol)
+            else:
+                log.warning(
+                    "[%s] EXIT+LONG but no long position on %s (holdings=%.1f) — no-op",
+                    signal_id, parsed.raw, holdings,
+                )
+                _record_signal_noop(
+                    algo,
+                    lean_symbol,
+                    signal_id,
+                    noop_reason="exit_long_without_position",
+                    requested_quantity=quantity,
+                    computed_quantity=0.0,
+                    quantity_type=quantity_type,
+                    order_type=order_type,
+                    price=_get_price(algo, lean_symbol),
+                    metadata={"position_quantity": holdings, "exit_direction": "LONG"},
+                )
+
+        elif action == "EXIT" and direction == "SHORT":
+            # Close short leg: set holdings to 0 if short, else no-op
+            log.info("[%s] EXIT+SHORT → close short on %s", signal_id, parsed.raw)
+            holdings = _get_holdings_quantity(algo, lean_symbol)
+            if holdings < 0:
+                shares_to_buy = abs(holdings)
+                algo.MarketOrder(lean_symbol, shares_to_buy)
+            else:
+                log.warning(
+                    "[%s] EXIT+SHORT but no short position found on %s (holdings=%.1f) — no-op",
+                    signal_id, parsed.raw, holdings,
+                )
+                _record_signal_noop(
+                    algo,
+                    lean_symbol,
+                    signal_id,
+                    noop_reason="exit_short_without_position",
+                    requested_quantity=quantity,
+                    computed_quantity=0.0,
+                    quantity_type=quantity_type,
+                    order_type=order_type,
+                    price=_get_price(algo, lean_symbol),
+                    metadata={"position_quantity": holdings, "exit_direction": "SHORT"},
+                )
         else:
-            # Liquidate for absolute quantity closes (more robust)
-            log.info("[%s] SELL+LONG → Liquidate long on %s", signal_id, parsed.raw)
-            algo.Liquidate(lean_symbol)
-
-    elif action == "EXIT" and direction == "LONG":
-        # Close long leg only: check actual position direction
-        holdings = _get_holdings_quantity(algo, lean_symbol)
-        if holdings > 0:
-            # Only close if actually long
-            log.info("[%s] EXIT+LONG → Liquidate long on %s", signal_id, parsed.raw)
-            algo.Liquidate(lean_symbol)
-        else:
-            log.warning(
-                "[%s] EXIT+LONG but no long position on %s (holdings=%.1f) — no-op",
-                signal_id, parsed.raw, holdings,
+            raise ExecutionError(
+                f"[{signal_id}] Unhandled action/direction combination: "
+                f"action={action} direction={direction}"
             )
 
-    elif action == "EXIT" and direction == "SHORT":
-        # Close short leg: set holdings to 0 if short, else no-op
-        log.info("[%s] EXIT+SHORT → close short on %s", signal_id, parsed.raw)
-        holdings = _get_holdings_quantity(algo, lean_symbol)
-        if holdings < 0:
-            # Use ceil to ensure we fully cover fractional short positions (e.g., crypto)
-            shares_to_buy = math.ceil(abs(holdings))
-            algo.MarketOrder(lean_symbol, shares_to_buy)
-        else:
-            log.warning(
-                "[%s] EXIT+SHORT but no short position found on %s (holdings=%.1f) — no-op",
-                signal_id, parsed.raw, holdings,
+        # --- Risk: stop-loss / take-profit bracket ---
+        risk = (signal.get("metadata") or {}).get("risk_parameters") or {}
+        if risk.get("stop_loss_pct") or risk.get("take_profit_pct"):
+            _handle_bracket_order(
+                algo=algo,
+                lean_symbol=lean_symbol,
+                signal_id=signal_id,
+                risk=risk,
+                action=action,
+                direction=direction,
+                holdings_before=holdings_before,
             )
-    else:
-        raise ExecutionError(
-            f"[{signal_id}] Unhandled action/direction combination: "
-            f"action={action} direction={direction}"
-        )
+    finally:
+        _clear_signal_context(algo)
 
-    # --- Risk: stop-loss / take-profit bracket ---
-    risk = (signal.get("metadata") or {}).get("risk_parameters") or {}
-    if risk.get("stop_loss_pct") or risk.get("take_profit_pct"):
-        _handle_bracket_order(
-            algo=algo,
-            lean_symbol=lean_symbol,
-            signal_id=signal_id,
-            risk=risk,
-            action=action,
-            direction=direction,
-            holdings_before=holdings_before,
-        )
+
+def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
+    metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
+    context: dict[str, Any] = {}
+    for key in ("signal_id", "strategy_id", "source_worker", "run_id", "binding_id"):
+        value = signal.get(key)
+        if value not in (None, ""):
+            context[key] = value
+    for key in ("quantity_type", "limit_price"):
+        value = signal.get(key)
+        if value not in (None, ""):
+            context[key] = value
+    context["order_type"] = signal.get("order_type") or "MARKET"
+    for key in (
+        "alpha_source",
+        "confidence_score",
+        "model_id",
+        "prompt_bundle_id",
+        "llm_prompt_id",
+        "llm_response_id",
+        "llm_decision_id",
+        "research_note_ref",
+        "llm_note_ref",
+        "market_data_ref",
+        "research_data_ref",
+        "news_data_ref",
+        "normalized_data_ref",
+        "source_dataset_ref",
+        "source_evidence_refs",
+        "ingest_run_id",
+    ):
+        value = metadata.get(key)
+        if value not in (None, ""):
+            context[key] = value
+    market_price = _signal_market_price(signal)
+    if market_price is not None:
+        context["market_price"] = market_price
+    if "quantity" in signal:
+        try:
+            context["requested_quantity"] = float(signal["quantity"])
+        except (TypeError, ValueError):
+            pass
+    return context
+
+
+def _set_signal_context(algo: Any, metadata: dict[str, Any]) -> None:
+    setter = getattr(algo, "SetCurrentSignalContext", None)
+    if callable(setter):
+        setter(metadata)
+
+
+def _clear_signal_context(algo: Any) -> None:
+    clearer = getattr(algo, "ClearCurrentSignalContext", None)
+    if callable(clearer):
+        clearer()
+
+
+def _seed_signal_market_price(algo: Any, lean_symbol: Any, signal: dict[str, Any]) -> None:
+    price = _signal_market_price(signal)
+    if price is None:
+        return
+    setter = getattr(algo, "SetSecurityPrice", None)
+    if callable(setter):
+        setter(lean_symbol, price)
+
+
+def _signal_market_price(signal: dict[str, Any]) -> float | None:
+    metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
+    market_data = metadata.get("market_data") if isinstance(metadata.get("market_data"), dict) else {}
+    for source in (metadata, market_data):
+        for key in ("last_price", "market_price", "close", "price"):
+            value = source.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                price = float(value)
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                return price
+    return None
 
 
 def _handle_bracket_order(
@@ -495,6 +628,132 @@ def _record_bracket_order_logged(
         recorder(lean_symbol, **kwargs)
 
 
+def _record_order_rejection(
+    algo: Any,
+    lean_symbol: Any,
+    signal_id: str,
+    *,
+    reject_reason: str,
+    requested_quantity: float,
+    computed_quantity: float,
+    quantity_type: str,
+    order_type: str,
+    price: float | None = None,
+) -> None:
+    recorder = getattr(algo, "RecordOrderRejected", None)
+    if not callable(recorder):
+        return
+    kwargs = {
+        "signal_id": signal_id,
+        "reject_reason": reject_reason,
+        "requested_quantity": float(requested_quantity),
+        "computed_quantity": float(computed_quantity),
+        "quantity_type": quantity_type,
+        "order_type": order_type,
+        "broker_submission_status": "rejected_before_broker",
+        "submitted_to_broker": False,
+    }
+    if price is not None:
+        kwargs["price"] = float(price)
+    recorder(lean_symbol, **kwargs)
+
+
+def _record_signal_noop(
+    algo: Any,
+    lean_symbol: Any,
+    signal_id: str,
+    *,
+    noop_reason: str,
+    requested_quantity: float,
+    quantity_type: str,
+    order_type: str,
+    computed_quantity: float | None = None,
+    price: float | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    recorder = getattr(algo, "RecordSignalNoop", None)
+    if not callable(recorder):
+        return
+    kwargs = {
+        "signal_id": signal_id,
+        "noop_reason": noop_reason,
+        "requested_quantity": float(requested_quantity),
+        "quantity_type": quantity_type,
+        "order_type": order_type,
+        "broker_submission_status": "not_submitted_signal_noop",
+        "submitted_to_broker": False,
+    }
+    if computed_quantity is not None:
+        kwargs["computed_quantity"] = float(computed_quantity)
+    if price is not None and price > 0:
+        kwargs["price"] = float(price)
+    if metadata:
+        kwargs["metadata"] = dict(metadata)
+    recorder(lean_symbol, **kwargs)
+
+
+def _place_limit_close_long(
+    algo: Any,
+    lean_symbol: Any,
+    quantity: float,
+    quantity_type: str,
+    limit_price: float | None,
+    *,
+    signal_id: str,
+) -> None:
+    if limit_price is None:
+        raise ExecutionError(f"[{signal_id}] LIMIT close failed: limit_price is required")
+    if quantity_type == "PERCENT_PORTFOLIO":
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT close failed: PERCENT_PORTFOLIO quantity_type "
+            "is not supported for limit orders"
+        )
+
+    holdings = _get_holdings_quantity(algo, lean_symbol)
+    if holdings <= 0:
+        _record_signal_noop(
+            algo,
+            lean_symbol,
+            signal_id,
+            noop_reason="sell_long_limit_without_position",
+            requested_quantity=quantity,
+            computed_quantity=0.0,
+            quantity_type=quantity_type,
+            order_type="LIMIT",
+            price=float(limit_price),
+            metadata={"position_quantity": holdings, "exit_direction": "LONG"},
+        )
+        return
+
+    if quantity_type == "SHARES":
+        requested_shares = int(round(quantity))
+    elif quantity_type == "CASH_VALUE":
+        requested_shares = int(round(quantity / float(limit_price)))
+    else:
+        raise ExecutionError(f"[{signal_id}] Unsupported quantity_type: {quantity_type}")
+
+    close_quantity = min(abs(float(holdings)), abs(float(requested_shares)))
+    if close_quantity <= 0:
+        _record_order_rejection(
+            algo,
+            lean_symbol,
+            signal_id,
+            reject_reason="limit_close_resolved_to_zero_shares",
+            requested_quantity=quantity,
+            computed_quantity=0.0,
+            quantity_type=quantity_type,
+            order_type="LIMIT",
+            price=float(limit_price),
+        )
+        return
+
+    limit_order = getattr(algo, "LimitOrder", None)
+    if not callable(limit_order):
+        raise ExecutionError(f"[{signal_id}] LIMIT close failed: missing LimitOrder")
+    log.info("[%s] SELL+LONG LimitOrder %s -%.4f @ %.4f", signal_id, lean_symbol, close_quantity, limit_price)
+    limit_order(lean_symbol, -close_quantity, float(limit_price))
+
+
 def _place_order(
     algo: Any,
     lean_symbol: Any,
@@ -509,6 +768,14 @@ def _place_order(
     Place a directional order.  sign=+1 for long, -1 for short.
     Logs lossy float→int conversion for SHARES and CASH_VALUE.
     """
+    if order_type == "LIMIT" and limit_price is None:
+        raise ExecutionError(f"[{signal_id}] LIMIT order failed: limit_price is required")
+    if order_type == "LIMIT" and quantity_type == "PERCENT_PORTFOLIO":
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT order failed: PERCENT_PORTFOLIO quantity_type "
+            "is not supported for limit orders"
+        )
+
     if quantity_type == "PERCENT_PORTFOLIO":
         pct = sign * quantity
         log.info("[%s] SetHoldings %s → %.4f", signal_id, lean_symbol, pct)
@@ -520,6 +787,16 @@ def _place_order(
             log.warning(
                 "[%s] SHARES quantity %.4f rounded to 0 — order not placed",
                 signal_id, quantity,
+            )
+            _record_order_rejection(
+                algo,
+                lean_symbol,
+                signal_id,
+                reject_reason="shares_quantity_rounded_to_zero",
+                requested_quantity=quantity,
+                computed_quantity=shares,
+                quantity_type=quantity_type,
+                order_type=order_type,
             )
             return
         if abs(round(quantity) - quantity) > 0.01:
@@ -540,18 +817,38 @@ def _place_order(
             raise ExecutionError(
                 f"[{signal_id}] CASH_VALUE order failed: cannot get price for {lean_symbol}"
             )
-        shares = sign * int(round(quantity / price))
+        execution_price = float(limit_price) if order_type == "LIMIT" and limit_price is not None else price
+        if execution_price <= 0:
+            raise ExecutionError(
+                f"[{signal_id}] CASH_VALUE order failed: cannot get execution price for {lean_symbol}"
+            )
+        shares = sign * int(round(quantity / execution_price))
         if shares == 0:
             log.warning(
                 "[%s] CASH_VALUE %.2f / price %.4f = 0 shares — order not placed",
-                signal_id, quantity, price,
+                signal_id, quantity, execution_price,
+            )
+            _record_order_rejection(
+                algo,
+                lean_symbol,
+                signal_id,
+                reject_reason="cash_value_resolved_to_zero_shares",
+                requested_quantity=quantity,
+                computed_quantity=shares,
+                quantity_type=quantity_type,
+                order_type=order_type,
+                price=execution_price,
             )
             return
         log.info(
             "[%s] CASH_VALUE %.2f → %d shares @ ~%.4f (audit)",
-            signal_id, quantity, shares, price,
+            signal_id, quantity, shares, execution_price,
         )
-        algo.MarketOrder(lean_symbol, shares)
+        if order_type == "LIMIT":
+            log.info("[%s] LimitOrder %s %d @ %.4f", signal_id, lean_symbol, shares, limit_price)
+            algo.LimitOrder(lean_symbol, shares, limit_price)
+        else:
+            algo.MarketOrder(lean_symbol, shares)
 
     else:
         raise ExecutionError(f"[{signal_id}] Unknown quantity_type: {quantity_type}")
@@ -616,4 +913,12 @@ def _get_price(algo: Any, lean_symbol: Any) -> float:
     try:
         return float(algo.Securities[lean_symbol].Price)
     except Exception:
-        return 0.0
+        pass
+
+    ensure_security = getattr(algo, "EnsureSecurity", None)
+    if callable(ensure_security):
+        try:
+            return float(ensure_security(lean_symbol).Price)
+        except Exception:
+            return 0.0
+    return 0.0

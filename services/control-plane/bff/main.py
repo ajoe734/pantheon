@@ -30961,7 +30961,13 @@ async def bff_management_persona_fleet(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: compose the Management Persona Fleet aggregate from read surfaces."""
-    return await bff_management_fleet(authorization=authorization)
+    return await bff_management_fleet(
+        state=state,
+        health=health,
+        page_token=page_token,
+        page_size=page_size,
+        authorization=authorization,
+    )
 
 
 # ---------------- /bff/management/nl (BFF-B6-001) ----------------
@@ -48530,6 +48536,10 @@ async def bff_persona_league_detail(
 @app.get("/bff/management/fleet")
 @app.get("/bff/management/persona-fleet")
 async def bff_management_fleet(
+    state: Optional[str] = None,
+    health: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
     identity = _extract_identity(authorization)
@@ -48538,10 +48548,37 @@ async def bff_management_fleet(
     pools = read_store.list_capital_pools(include_market_persona_defaults=True)
     runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
     league = read_store.list_persona_league(include_market_persona_defaults=True)
-    health = _build_persona_health_items(
+    health_filter = health
+    health_items = _build_persona_health_items(
         snapshot_at,
         include_market_persona_defaults=True,
     )
+    if state:
+        requested_states = {token.strip().lower() for token in state.split(",") if token.strip()}
+        health_items = [
+            item for item in health_items
+            if str(item.get("state") or item.get("status") or "").strip().lower() in requested_states
+        ]
+    if health_filter:
+        requested_health = {token.strip().lower() for token in health_filter.split(",") if token.strip()}
+        health_items = [
+            item for item in health_items
+            if str(item.get("health") or item.get("status") or "").strip().lower() in requested_health
+        ]
+    total_personas = len(health_items)
+    page_items, next_page_token = _page_slice(health_items, page_token, page_size)
+    summary = {
+        "total_personas": total_personas,
+        "returned_personas": len(page_items),
+        "critical_personas": len([item for item in health_items if item.get("health") == "critical"]),
+        "degraded_personas": len([item for item in health_items if item.get("health") == "degraded"]),
+        "healthy_personas": len([item for item in health_items if item.get("health") == "healthy"]),
+    }
+    page_info = {
+        "next_page_token": next_page_token,
+        "total": total_personas,
+        "page_size": page_size,
+    }
     pending_human_gate = [
         item
         for item in league
@@ -48551,8 +48588,8 @@ async def bff_management_fleet(
     ooda_card = _build_ooda_control_room_status_card(snapshot_at)
     return {
         "data": {
-            "items": health,
-            "persona_fleet": health,
+            "items": page_items,
+            "persona_fleet": page_items,
             "persona_league": league,
             "capital_pools": pools,
             "capital_totals": _capital_pool_totals(pools),
@@ -48567,11 +48604,21 @@ async def bff_management_fleet(
                 "live_capital_side_effects": False,
                 "human_gate_required_for_capital_changes": True,
             },
+            "summary": summary,
+            "page_info": page_info,
         },
-        "items": health,
+        "items": page_items,
+        "summary": summary,
+        "page_info": page_info,
         "meta": {
             "snapshot_at": snapshot_at,
             "surfaces": {
+                "persona_fleet": _composed_dataset_surface_status(
+                    "persona_fleet",
+                    page_items,
+                    snapshot_at=snapshot_at,
+                    source="bff_composed",
+                ),
                 "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
                 "persona_league": _composed_dataset_surface_status(
                     "persona_league",

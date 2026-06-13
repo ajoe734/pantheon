@@ -31,6 +31,9 @@ TELEMETRY_EVENT_TYPES = {
     "drawdown_snapshot",
     "slippage_observation",
     "fill_observation",
+    "paper_order_simulated",
+    "paper_fill_simulated",
+    "bracket_order_logged",
     "fill_received",
     "order_submitted",
     "order_accepted",
@@ -74,6 +77,181 @@ LINEAGE_TARGET_FIELDS = {
     "trace": "trace_id",
     "artifact": "artifact_ref",
 }
+
+ALPHA_LINEAGE_METADATA_FIELDS = (
+    "signal_id",
+    "strategy_id",
+    "source_worker",
+    "run_id",
+    "binding_id",
+    "alpha_source",
+    "confidence_score",
+    "model_id",
+    "prompt_bundle_id",
+    "llm_prompt_id",
+    "llm_response_id",
+    "llm_decision_id",
+    "research_note_ref",
+    "llm_note_ref",
+    "market_data_ref",
+    "research_data_ref",
+    "news_data_ref",
+    "normalized_data_ref",
+    "source_dataset_ref",
+    "source_evidence_refs",
+    "ingest_run_id",
+    "market_price",
+)
+
+ORDER_ADAPTER_METADATA_FIELDS = (
+    "adapter",
+    "broker",
+    "provider",
+    "order_id",
+    "broker_order_id",
+    "adapter_order_id",
+    "client_order_id",
+    "shioaji_trade_id",
+    "venue",
+    "exchange",
+    "primary_exchange",
+    "contract_symbol",
+    "sec_type",
+    "currency",
+    "pair",
+    "base_asset",
+    "quote_asset",
+    "order_type",
+    "side",
+    "price",
+    "market_price",
+    "limit_price",
+    "tif",
+    "outside_rth",
+    "account",
+    "readonly_market_data",
+    "market_data_type",
+    "volume",
+    "validate_only",
+    "validation_status",
+    "account_kind",
+    "order_quantity",
+    "requested_quantity",
+    "computed_quantity",
+    "quantity_type",
+    "bracket_order_id",
+    "bracket_leg_count",
+    "leg_count",
+    "legs",
+    "submitted_legs",
+    "submission",
+    "stop_loss_pct",
+    "take_profit_pct",
+    "entry_price",
+    "entry_quantity",
+    "guard_stage",
+    "guard_reason",
+    "reason",
+    "noop_reason",
+    "decision_status",
+    "filter_reason",
+    "expected_binding_id",
+    "signal_binding_id",
+    "duplicate_signal_id",
+    "idempotent_replay",
+    "conflict_winner_signal_id",
+    "conflict_loser_signal_id",
+    "conflict_symbol",
+    "conflict_resolution_rule",
+    "execution_error_type",
+    "execution_error_message",
+    "execution_error_stage",
+    "execution_error_symbol",
+    "signal_action",
+    "signal_direction",
+    "position_quantity",
+    "target_quantity",
+    "target_percent",
+    "exit_direction",
+    "order_status",
+    "readback_status",
+    "cancel_status",
+    "cancel_reason",
+    "cancel_requested_by",
+    "cancel_request_id",
+    "cancel_ack_status",
+    "cancelled_quantity",
+    "canceled_quantity",
+    "unfilled_quantity",
+    "cancel_latency_ms",
+    "fill_status",
+    "fill_quantity",
+    "fill_price",
+    "filled_quantity",
+    "filled_qty",
+    "remaining_quantity",
+    "remaining_qty",
+    "cumulative_fill_quantity",
+    "cumulative_fill_qty",
+    "partial_fill_ratio",
+    "noop_count",
+    "last_fill_quantity",
+    "last_fill_price",
+    "avg_fill_price",
+    "broker_submission_status",
+    "submitted_to_broker",
+    "adapter_response_status",
+    "adapter_error_code",
+    "adapter_error_message",
+    "adapter_status_code",
+    "reject_reason",
+    "rejection_status",
+    "requested_execution_mode",
+    "blocked_execution_mode",
+    "shioaji_order_status_id",
+    "shioaji_order_status",
+    "shioaji_order_status_code",
+    "shioaji_order_status_message",
+    "is_real_order",
+    "is_real_capital",
+    "deployment_stage",
+    "production_live_enabled",
+    "capital_binding_enabled",
+    "human_gate_required",
+    "proof_boundary",
+)
+
+ORDER_ADAPTER_METRIC_FIELDS = (
+    "order_quantity",
+    "requested_quantity",
+    "computed_quantity",
+    "fill_quantity",
+    "fill_price",
+    "filled_quantity",
+    "filled_qty",
+    "remaining_quantity",
+    "remaining_qty",
+    "unfilled_quantity",
+    "cancelled_quantity",
+    "canceled_quantity",
+    "cancel_latency_ms",
+    "cumulative_fill_quantity",
+    "cumulative_fill_qty",
+    "partial_fill_ratio",
+    "noop_count",
+    "last_fill_quantity",
+    "last_fill_price",
+    "avg_fill_price",
+    "processed_signal_count",
+    "execution_event_count",
+    "fill_event_count",
+    "fill_rate",
+    "open_position_count",
+    "open_bracket_order_count",
+    "avg_slippage_bps",
+    "pnl",
+    "total_trades",
+)
 
 
 class FeedbackStoreAdapter:
@@ -242,6 +420,46 @@ class FeedbackStoreAdapter:
         return artifact_id
 
     @staticmethod
+    def _alpha_lineage_context(event: dict[str, Any]) -> dict[str, Any]:
+        metadata = event.get("metadata")
+        if not isinstance(metadata, dict):
+            return {}
+        context: dict[str, Any] = {}
+        for field in ALPHA_LINEAGE_METADATA_FIELDS:
+            value = metadata.get(field)
+            if value not in (None, "", [], {}):
+                context[field] = value
+        return context
+
+    @staticmethod
+    def _order_adapter_context(event: dict[str, Any]) -> dict[str, Any]:
+        metadata = event.get("metadata")
+        context: dict[str, Any] = {}
+        if isinstance(metadata, dict):
+            for field in ORDER_ADAPTER_METADATA_FIELDS:
+                value = metadata.get(field)
+                if value not in (None, "", [], {}):
+                    context[field] = value
+            submission = metadata.get("submission")
+            if isinstance(submission, dict):
+                bracket_order_id = submission.get("bracket_order_id")
+                if "bracket_order_id" not in context and bracket_order_id not in (None, "", [], {}):
+                    context["bracket_order_id"] = bracket_order_id
+                leg_count = submission.get("leg_count")
+                if "bracket_leg_count" not in context and leg_count not in (None, "", [], {}):
+                    context["bracket_leg_count"] = leg_count
+                submitted_legs = submission.get("legs")
+                if "submitted_legs" not in context and submitted_legs not in (None, "", [], {}):
+                    context["submitted_legs"] = submitted_legs
+        metrics = event.get("metrics")
+        if isinstance(metrics, dict):
+            for field in ORDER_ADAPTER_METRIC_FIELDS:
+                value = metrics.get(field)
+                if field not in context and value not in (None, "", [], {}):
+                    context[field] = value
+        return context
+
+    @staticmethod
     def _request_id(event: dict[str, Any]) -> Optional[str]:
         if event.get("request_id"):
             return event.get("request_id")
@@ -312,7 +530,9 @@ class FeedbackStoreAdapter:
         meaning from ambiguous raw names.
         """
         target = telemetry_event.get("target", {})
-        return {
+        alpha_context = self._alpha_lineage_context(telemetry_event)
+        order_context = self._order_adapter_context(telemetry_event)
+        record = {
             "record_type": "telemetry_event",
             "record_id": telemetry_event.get("event_id"),
             "derived_only": True,
@@ -335,6 +555,14 @@ class FeedbackStoreAdapter:
             "lineage_ref": target.get("lineage_ref"),
             "conflict_markers": self._lineage_conflict_markers(telemetry_event),
         }
+        if alpha_context:
+            record["alpha_context"] = alpha_context
+            for field in ("signal_id", "source_worker", "alpha_source", "model_id"):
+                if field in alpha_context:
+                    record[field] = alpha_context[field]
+        if order_context:
+            record["order_context"] = order_context
+        return record
 
     def build_learn_feedback_writeback_payload(
         self,

@@ -198,12 +198,27 @@ class PaperExecutionAlgorithm:
         self.Portfolio: dict[str, _Holding] = {}
         self.Securities: dict[str, _Security] = {}
         self._open_bracket_orders: list[dict[str, Any]] = []
+        self._current_signal_metadata: dict[str, Any] = {}
 
     def _holding(self, symbol: str) -> _Holding:
         return self.Portfolio.setdefault(symbol, _Holding())
 
     def _security(self, symbol: str) -> _Security:
         return self.Securities.setdefault(symbol, _Security(price=self._default_price))
+
+    def EnsureSecurity(self, symbol: str) -> _Security:  # noqa: N802
+        """Expose deterministic paper pricing for executor price lookups."""
+        return self._security(str(symbol))
+
+    def SetSecurityPrice(self, symbol: str, price: float) -> None:  # noqa: N802
+        security = self._security(str(symbol))
+        security.Price = float(price)
+
+    def SetCurrentSignalContext(self, metadata: dict[str, Any] | None) -> None:  # noqa: N802
+        self._current_signal_metadata = dict(metadata or {})
+
+    def ClearCurrentSignalContext(self) -> None:  # noqa: N802
+        self._current_signal_metadata = {}
 
     def _publish(
         self,
@@ -219,6 +234,9 @@ class PaperExecutionAlgorithm:
         if self._event_sink is None:
             return
         security = self._security(symbol)
+        event_metadata = dict(self._current_signal_metadata)
+        if metadata:
+            event_metadata.update(metadata)
         self._event_sink(
             OrderEvent(
                 event_type=event_type,
@@ -228,15 +246,42 @@ class PaperExecutionAlgorithm:
                 action=action,
                 submitted_to_broker=submitted_to_broker,
                 broker_submission_status=broker_submission_status,
-                metadata=metadata or {},
+                metadata=event_metadata,
             )
         )
 
     def SetHoldings(self, symbol: str, target_percent: float) -> None:  # noqa: N802
         security = self._security(symbol)
         target_quantity = (self._initial_cash * float(target_percent)) / max(float(security.Price), 0.01)
-        delta = target_quantity - self._holding(symbol).Quantity
-        self._holding(symbol).Quantity = target_quantity
+        holding = self._holding(symbol)
+        current_quantity = holding.Quantity
+        delta = target_quantity - current_quantity
+        if abs(delta) <= 1e-12:
+            metadata: dict[str, Any] = {
+                "noop_reason": "set_holdings_no_delta",
+                "decision_status": "no_order",
+                "order_status": "not_submitted",
+                "computed_quantity": 0.0,
+                "position_quantity": float(current_quantity),
+                "target_quantity": float(target_quantity),
+                "target_percent": float(target_percent),
+                "price": float(security.Price),
+            }
+            for field in ("signal_id", "requested_quantity", "quantity_type", "order_type"):
+                value = self._current_signal_metadata.get(field)
+                if value not in (None, "", [], {}):
+                    metadata[field] = value
+            self._publish(
+                "paper_order_simulated",
+                symbol,
+                0.0,
+                "set_holdings_no_delta_noop",
+                broker_submission_status="not_submitted_signal_noop",
+                submitted_to_broker=False,
+                metadata=metadata,
+            )
+            return
+        holding.Quantity = target_quantity
         self._cash -= delta * float(security.Price)
         self._publish("paper_fill_simulated", symbol, delta, "set_holdings")
 
@@ -256,6 +301,29 @@ class PaperExecutionAlgorithm:
     def Liquidate(self, symbol: str) -> None:  # noqa: N802
         security = self._security(symbol)
         quantity = self._holding(symbol).Quantity
+        if quantity == 0:
+            metadata: dict[str, Any] = {
+                "noop_reason": "liquidate_without_position",
+                "decision_status": "no_order",
+                "order_status": "not_submitted",
+                "computed_quantity": 0.0,
+                "position_quantity": 0.0,
+                "price": float(security.Price),
+            }
+            for field in ("signal_id", "requested_quantity", "quantity_type", "order_type"):
+                value = self._current_signal_metadata.get(field)
+                if value not in (None, "", [], {}):
+                    metadata[field] = value
+            self._publish(
+                "paper_order_simulated",
+                symbol,
+                0.0,
+                "liquidate_without_position_noop",
+                broker_submission_status="not_submitted_signal_noop",
+                submitted_to_broker=False,
+                metadata=metadata,
+            )
+            return
         self._holding(symbol).Quantity = 0.0
         self._cash += quantity * float(security.Price)
         self._publish("paper_fill_simulated", symbol, -quantity, "liquidate")
@@ -317,6 +385,82 @@ class PaperExecutionAlgorithm:
             str(symbol),
             0.0,
             "bracket_submitted_to_broker" if submitted_to_broker else "bracket_logged_only",
+            broker_submission_status=broker_submission_status,
+            submitted_to_broker=submitted_to_broker,
+            metadata=event_metadata,
+        )
+
+    def RecordOrderRejected(  # noqa: N802
+        self,
+        symbol: str,
+        *,
+        signal_id: str,
+        reject_reason: str,
+        requested_quantity: float,
+        computed_quantity: float,
+        quantity_type: str,
+        order_type: str,
+        broker_submission_status: str,
+        submitted_to_broker: bool,
+        price: float | None = None,
+    ) -> None:
+        event_metadata = {
+            "signal_id": signal_id,
+            "reject_reason": reject_reason,
+            "rejection_status": "rejected",
+            "order_status": "rejected",
+            "requested_quantity": float(requested_quantity),
+            "computed_quantity": float(computed_quantity),
+            "quantity_type": quantity_type,
+            "order_type": order_type,
+        }
+        if price is not None:
+            event_metadata["price"] = float(price)
+        self._publish(
+            "order_rejection",
+            str(symbol),
+            0.0,
+            "order_rejected",
+            broker_submission_status=broker_submission_status,
+            submitted_to_broker=submitted_to_broker,
+            metadata=event_metadata,
+        )
+
+    def RecordSignalNoop(  # noqa: N802
+        self,
+        symbol: str,
+        *,
+        signal_id: str,
+        noop_reason: str,
+        requested_quantity: float,
+        quantity_type: str,
+        order_type: str,
+        broker_submission_status: str,
+        submitted_to_broker: bool,
+        computed_quantity: float | None = None,
+        price: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        event_metadata = {
+            "signal_id": signal_id,
+            "noop_reason": noop_reason,
+            "decision_status": "no_order",
+            "order_status": "not_submitted",
+            "requested_quantity": float(requested_quantity),
+            "quantity_type": quantity_type,
+            "order_type": order_type,
+        }
+        if computed_quantity is not None:
+            event_metadata["computed_quantity"] = float(computed_quantity)
+        if price is not None:
+            event_metadata["price"] = float(price)
+        if metadata:
+            event_metadata.update(metadata)
+        self._publish(
+            "paper_order_simulated",
+            str(symbol),
+            0.0,
+            f"{noop_reason}_noop",
             broker_submission_status=broker_submission_status,
             submitted_to_broker=submitted_to_broker,
             metadata=event_metadata,
@@ -580,8 +724,16 @@ class RuntimeTelemetryEmitter:
     def emit_heartbeat(self, metadata: dict[str, Any] | None = None) -> bool:
         return self.emit("heartbeat", {"heartbeat": 1}, metadata=metadata)
 
-    def emit_pnl_snapshot(self, pnl: float, metadata: dict[str, Any] | None = None) -> bool:
-        return self.emit("pnl_snapshot", {"pnl": float(pnl)}, metadata=metadata)
+    def emit_pnl_snapshot(
+        self,
+        pnl: float,
+        metadata: dict[str, Any] | None = None,
+        extra_metrics: dict[str, Any] | None = None,
+    ) -> bool:
+        metrics: dict[str, Any] = {"pnl": float(pnl)}
+        if extra_metrics:
+            metrics.update(extra_metrics)
+        return self.emit("pnl_snapshot", metrics, metadata=metadata)
 
     def _base_metadata(self, binding: dict[str, Any]) -> dict[str, Any]:
         metadata: dict[str, Any] = {
@@ -710,6 +862,7 @@ class PaperRuntimeService:
         self._poll_count = 0
         self._processed_signal_count = 0
         self._execution_event_count = 0
+        self._fill_event_count = 0
         self._recent_order_events: list[dict[str, Any]] = []
 
     def start(self) -> None:
@@ -809,6 +962,8 @@ class PaperRuntimeService:
     def _handle_order_event(self, event: OrderEvent) -> None:
         event_payload = event.to_dict()
         self._execution_event_count += 1
+        if event.event_type == "paper_fill_simulated":
+            self._fill_event_count += 1
         self._recent_order_events.append(event_payload)
         self._recent_order_events = self._recent_order_events[-20:]
         telemetry_metadata = {
@@ -832,6 +987,28 @@ class PaperRuntimeService:
                 ),
                 "submitted_to_broker": event.submitted_to_broker,
             }
+        elif event.event_type == "order_rejection":
+            metrics = {
+                "rejected_order_count": 1,
+                "fill_quantity": 0.0,
+                "fill_rate": 0.0,
+                "action": event.action,
+                "submitted_to_broker": event.submitted_to_broker,
+            }
+            for field in ("requested_quantity", "computed_quantity"):
+                if field in event.metadata:
+                    metrics[field] = event.metadata[field]
+        elif event.event_type == "paper_order_simulated":
+            metrics = {
+                "noop_count": 1,
+                "fill_quantity": 0.0,
+                "fill_rate": 0.0,
+                "action": event.action,
+                "submitted_to_broker": event.submitted_to_broker,
+            }
+            for field in ("requested_quantity", "computed_quantity"):
+                if field in event.metadata:
+                    metrics[field] = event.metadata[field]
         else:
             metrics = {
                 "fill_quantity": event.quantity,
@@ -872,7 +1049,21 @@ class PaperRuntimeService:
                 "is_real_capital": False,
                 "capital_scale_pct": 0,
             },
+            extra_metrics=self._performance_snapshot_metrics(),
         )
+
+    def _performance_snapshot_metrics(self) -> dict[str, Any]:
+        processed = int(self._processed_signal_count)
+        fill_rate = (float(self._fill_event_count) / processed) if processed > 0 else 0.0
+        return {
+            "processed_signal_count": processed,
+            "execution_event_count": int(self._execution_event_count),
+            "fill_event_count": int(self._fill_event_count),
+            "fill_rate": round(fill_rate, 6),
+            "open_position_count": len(self._algo.positions()),
+            "open_bracket_order_count": len(self._algo.open_bracket_orders()),
+            "avg_slippage_bps": 0.0,
+        }
 
     def _emit_deploy_started(self) -> None:
         if self._telemetry.enabled:
