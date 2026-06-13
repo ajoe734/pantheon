@@ -41,6 +41,13 @@ async def _wait_until(predicate: Callable[[], bool], *, timeout_seconds: float =
         await asyncio.sleep(0)
 
 
+def _event_id_from_chunk(chunk: str) -> str:
+    for line in chunk.splitlines():
+        if line.startswith("id: "):
+            return line.removeprefix("id: ").strip()
+    raise AssertionError(f"SSE chunk did not contain an event id: {chunk!r}")
+
+
 def test_slow_consumer_queue_is_bounded_drops_newest_and_cleans_up_on_disconnect() -> None:
     async def scenario() -> dict[str, int | str]:
         channel = "approval"
@@ -156,3 +163,82 @@ def test_replay_headers_publish_window_policy_for_clients() -> None:
     assert headers["X-SSE-Buffer-Size"] == str(bff_main._MAX_EVENTS)
     assert headers["X-SSE-Replay-Store"] == "in-memory"
     assert headers["X-SSE-Resync-Routes"] == "/bff/approvals,/bff/v5/interventions"
+
+
+def test_long_running_reconnect_heartbeat_and_duplicate_replay_contract(monkeypatch) -> None:
+    async def scenario() -> dict[str, int | list[str] | str]:
+        channel = "approval"
+        buffer = bff_main._sse_buffers[channel]
+        subscribers = bff_main._sse_subscribers[channel]
+        original_wait_for = asyncio.wait_for
+
+        first_id = bff_main._publish_event(
+            buffer,
+            subscribers,
+            "approval.reconnect",
+            {"approval_id": "appr-long-001", "sequence_no": 1},
+        )
+        initial_stream = bff_main._sse_stream(buffer, subscribers)
+        first_chunk = await original_wait_for(anext(initial_stream), timeout=1.0)
+        assert _event_id_from_chunk(first_chunk) == first_id
+        await initial_stream.aclose()
+        await _wait_until(lambda: len(subscribers) == 0)
+
+        replay_ids = [
+            bff_main._publish_event(
+                buffer,
+                subscribers,
+                "approval.reconnect",
+                {"approval_id": "appr-long-001", "sequence_no": sequence_no},
+            )
+            for sequence_no in (2, 3)
+        ]
+        reconnect_stream = bff_main._sse_stream(buffer, subscribers, last_event_id=first_id)
+        replay_chunks = [
+            await original_wait_for(anext(reconnect_stream), timeout=1.0),
+            await original_wait_for(anext(reconnect_stream), timeout=1.0),
+        ]
+        replayed_ids = [_event_id_from_chunk(chunk) for chunk in replay_chunks]
+        assert replayed_ids == replay_ids
+        assert first_id not in replayed_ids
+        assert len(replayed_ids) == len(set(replayed_ids))
+
+        heartbeat_count = 0
+
+        async def force_one_heartbeat(awaitable, timeout):
+            nonlocal heartbeat_count
+            if heartbeat_count == 0:
+                heartbeat_count += 1
+                close = getattr(awaitable, "close", None)
+                if close is not None:
+                    close()
+                raise asyncio.TimeoutError
+            return await original_wait_for(awaitable, timeout=timeout)
+
+        monkeypatch.setattr(bff_main.asyncio, "wait_for", force_one_heartbeat)
+        heartbeat_chunk = await original_wait_for(anext(reconnect_stream), timeout=1.0)
+        assert heartbeat_chunk == ": heartbeat\n\n"
+        await reconnect_stream.aclose()
+        await _wait_until(lambda: len(subscribers) == 0)
+
+        second_reconnect_stream = bff_main._sse_stream(buffer, subscribers, last_event_id=first_id)
+        second_replay_chunks = [
+            await original_wait_for(anext(second_reconnect_stream), timeout=1.0),
+            await original_wait_for(anext(second_reconnect_stream), timeout=1.0),
+        ]
+        await second_reconnect_stream.aclose()
+        await _wait_until(lambda: len(subscribers) == 0)
+
+        return {
+            "first_event_id": first_id,
+            "first_reconnect_ids": replayed_ids,
+            "second_reconnect_ids": [_event_id_from_chunk(chunk) for chunk in second_replay_chunks],
+            "heartbeat_count": heartbeat_count,
+            "subscriber_count_after_disconnect": len(subscribers),
+        }
+
+    measurements = asyncio.run(scenario())
+
+    assert measurements["first_reconnect_ids"] == measurements["second_reconnect_ids"]
+    assert measurements["heartbeat_count"] == 1
+    assert measurements["subscriber_count_after_disconnect"] == 0

@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -287,6 +288,78 @@ def test_two_man_signature_must_have_distinct_signers_and_binding() -> None:
         )
         assert wrong_target.status_code == 409
         assert _error_reason(wrong_target) == "TWO_MAN_SIGNATURE_BINDING_MISMATCH"
+
+
+def test_concurrent_two_man_signatures_are_operator_scoped_and_remain_usable() -> None:
+    with _isolated_security_client() as client:
+        def sign(args: tuple[dict[str, str], str]) -> dict:
+            headers, signature_id = args
+            local_client = TestClient(bff_main.app)
+            response = local_client.post(
+                "/bff/v5/interventions/int-sec-001/two-man-sign",
+                headers={**headers, "Idempotency-Key": "shared-concurrent-tms-key"},
+                json={
+                    "twoManSignatureId": signature_id,
+                    "command": "RemediateSentinelIntervention",
+                    "target": {"type": "SentinelIntervention", "id": "int-sec-001"},
+                    "signerOperatorIds": ["op-primary", "op-secondary"],
+                    "reason": "concurrent two-man authorization for the same guarded target",
+                },
+            )
+            assert response.status_code == 202, response.text
+            return response.json()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            primary, secondary = list(pool.map(
+                sign,
+                (
+                    (PRIMARY_HEADERS, "tms-race-primary"),
+                    (SECONDARY_HEADERS, "tms-race-secondary"),
+                ),
+            ))
+
+        command_ids = {
+            primary["data"]["command_id"],
+            secondary["data"]["command_id"],
+        }
+        assert len(command_ids) == 2
+        assert primary["meta"]["idempotency"]["replayed"] is False
+        assert secondary["meta"]["idempotency"]["replayed"] is False
+        for command_id in command_ids:
+            bff_main.command_store.update_status(command_id, CommandStatus.EXECUTED)
+
+        sign_records = [
+            record
+            for record in bff_main.command_store._get_all_commands()
+            if record["type"] == "V5InterventionAction"
+        ]
+        assert len(sign_records) == 2
+        assert {record["audit"]["operator_id"] for record in sign_records} == {
+            "op-primary",
+            "op-secondary",
+        }
+        assert {
+            record["params"]["twoManSignatureId"]
+            for record in sign_records
+        } == {"tms-race-primary", "tms-race-secondary"}
+
+        _seed_approval_decision("approval-race-001")
+        _create_bound_confirm_token(client, "ct-race-001")
+        accepted = client.post(
+            "/bff/v1/commands",
+            headers={
+                **PRIMARY_HEADERS,
+                "Idempotency-Key": "idem-race-final-command",
+                "X-Confirm-Token": "ct-race-001",
+            },
+            json=_remediate_payload(
+                approval_id="approval-race-001",
+                signature_id="tms-race-primary",
+            ),
+        )
+
+        assert accepted.status_code == 202, accepted.text
+        assert accepted.json()["data"]["command_id"] not in command_ids
 
 
 def test_idempotency_replay_is_scoped_by_operator_id() -> None:

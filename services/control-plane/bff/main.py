@@ -46265,6 +46265,7 @@ def _sem_command_response(
         payload,
         {
             "actor": identity.operator_id,
+            "operator_id": identity.operator_id,
             "reason": reason,
             "live_capital_side_effects": False,
             "receipt_dual_write": receipt_dual_write,
