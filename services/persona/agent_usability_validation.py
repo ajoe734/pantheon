@@ -115,6 +115,7 @@ LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
 SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
 CASE_UPSTREAM_VECTORBT_MODEL_ID = "case_specific_vectorbt_feedback_v1"
 CASE_UPSTREAM_TRACKING_MODEL_ID = "case_specific_tracking_artifact_roundtrip_v1"
+CASE_SELECTED_OSS_MODEL_ID = "case_specific_selected_oss_feedback_v1"
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
     "request_oss",
@@ -896,10 +897,16 @@ def _build_case_upstream_artifact_feedback(
         vectorbt_feedback=vectorbt_feedback,
         tracker_component=str(oss_inputs["tracker"]["component"]),
     )
+    selected_oss_feedback = _run_case_selected_oss_feedback(
+        episode=episode,
+        oss_inputs=oss_inputs,
+        vectorbt_feedback=vectorbt_feedback,
+    )
     return {
         "feedback_id": f"case-upstream-artifacts-{episode.case_id}",
         "vectorbt_model_id": CASE_UPSTREAM_VECTORBT_MODEL_ID,
         "tracking_model_id": CASE_UPSTREAM_TRACKING_MODEL_ID,
+        "selected_oss_model_id": CASE_SELECTED_OSS_MODEL_ID,
         "persona_id": _persona_id(episode.persona),
         "seed_key": episode.seed_key,
         "allowed_windows": ["observe", "feedback"],
@@ -908,14 +915,19 @@ def _build_case_upstream_artifact_feedback(
         "source_dataset_refs": list(episode.source_dataset_refs),
         "vectorbt": vectorbt_feedback,
         "tracker": tracker_feedback,
+        "selected_oss": selected_oss_feedback,
         "persona_response": {
-            "ooda_sequence": ["decide", "observe"],
+            "ooda_sequence": ["decide", "learn", "orient", "observe"],
             "next_decision_action": "score_case_specific_backtest_candidate",
             "next_tracking_action": "cite_case_specific_experiment_ref",
             "evidence_refs": [
                 f"oss://vectorbt/{vectorbt_feedback['request_id']}",
                 f"oss://{tracker_feedback['component']}/{tracker_feedback['request_id']}",
                 f"experiment://{tracker_feedback['backend']}/{tracker_feedback['run_id']}",
+                *[
+                    f"oss://{entry['component']}/{entry['request_id']}"
+                    for entry in selected_oss_feedback.values()
+                ],
             ],
             "used_before_generation1_decision": True,
             "used_before_generation2_decision": True,
@@ -933,6 +945,7 @@ def _apply_case_upstream_artifacts_to_oss_inputs(
     }
     vectorbt_feedback = case_upstream_artifacts["vectorbt"]
     tracker_feedback = case_upstream_artifacts["tracker"]
+    selected_oss_feedback = case_upstream_artifacts["selected_oss"]
     updated["backtest"] = {
         "component": "vectorbt",
         "persona_id": case_upstream_artifacts["persona_id"],
@@ -997,12 +1010,314 @@ def _apply_case_upstream_artifacts_to_oss_inputs(
         "seed_key": case_upstream_artifacts["seed_key"],
         "drives_persona_step": "experiment_tracking",
     }
+    for role, result in selected_oss_feedback.items():
+        updated[role] = _case_selected_oss_result_for_role(
+            result,
+            seed_key=str(case_upstream_artifacts["seed_key"]),
+        )
     return updated
+
+
+def _case_selected_oss_result_for_role(
+    result: Mapping[str, Any],
+    *,
+    seed_key: str,
+) -> dict[str, Any]:
+    payload = copy.deepcopy(dict(result["persona_result"]))
+    payload["seed_key"] = seed_key
+    payload["drives_persona_step"] = result["drives_persona_step"]
+    payload["case_specific_oss_model_id"] = CASE_SELECTED_OSS_MODEL_ID
+    payload["selected_oss_role"] = result["role"]
+    return payload
+
+
+def _run_case_selected_oss_feedback(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    vectorbt_feedback: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    selected: dict[str, dict[str, Any]] = {}
+    selected_components = {
+        "alpha_model": str(oss_inputs["alpha_model"]["component"]),
+        "policy_candidate": str(oss_inputs["policy_candidate"]["component"]),
+        "reflection_artifact": str(oss_inputs["reflection_artifact"]["component"]),
+        "risk_analytics": str(oss_inputs["risk_analytics"]["component"]),
+    }
+    for role, component in selected_components.items():
+        if role == "alpha_model" and component == "vectorbt":
+            selected[role] = _case_vectorbt_selected_oss_feedback(
+                episode=episode,
+                role=role,
+                vectorbt_feedback=vectorbt_feedback,
+            )
+            continue
+        selected[role] = _run_case_selected_persona_oss_request(
+            episode=episode,
+            role=role,
+            component=component,
+        )
+    return selected
+
+
+def _case_vectorbt_selected_oss_feedback(
+    *,
+    episode: PortfolioEpisode,
+    role: str,
+    vectorbt_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    request_id = str(vectorbt_feedback["request_id"])
+    persona_result = {
+        "component": "vectorbt",
+        "persona_id": _persona_id(episode.persona),
+        "session_id": str(vectorbt_feedback["session_id"]),
+        "request_id": request_id,
+        "status": "completed",
+        "artifact_family": "vectorbt_backtest",
+        "primary_output": {
+            "backend": vectorbt_feedback["backend"],
+            "run_id": vectorbt_feedback["run_id"],
+            "aggregate_metrics": copy.deepcopy(vectorbt_feedback["aggregate_metrics"]),
+        },
+        "metrics": copy.deepcopy(vectorbt_feedback["aggregate_metrics"]),
+        "registry_entry": copy.deepcopy(vectorbt_feedback["registry_entry"]),
+        "artifact_bundle": copy.deepcopy(vectorbt_feedback["artifact_bundle"]),
+        "refs": {
+            "registry_id": vectorbt_feedback["registry_id"],
+            "source_dataset_refs": list(vectorbt_feedback["dataset_summary"]["source_dataset_refs"]),
+        },
+        "persona_followup": {
+            "persona_id": _persona_id(episode.persona),
+            "session_id": str(vectorbt_feedback["session_id"]),
+            "trigger_component": "vectorbt",
+            "trigger_request_id": request_id,
+            "trigger_artifact_family": "vectorbt_backtest",
+            "ooda_phase": "decide",
+            "next_action": "draft_strategy_proposal",
+            "evidence_refs": [request_id, str(vectorbt_feedback["registry_id"])],
+        },
+    }
+    return _case_selected_oss_summary(
+        episode=episode,
+        role=role,
+        component="vectorbt",
+        result=persona_result,
+    )
+
+
+def _run_case_selected_persona_oss_request(
+    *,
+    episode: PortfolioEpisode,
+    role: str,
+    component: str,
+) -> dict[str, Any]:
+    payload = _case_selected_oss_payload(
+        episode=episode,
+        role=role,
+        component=component,
+    )
+    request = PersonaOSSRequest(
+        persona_id=_persona_id(episode.persona),
+        session_id=f"session-{episode.case_id}-{role}-{component}",
+        component=component,
+        intent=f"case_specific_{role}_{component}_feedback",
+        payload=payload,
+        request_id=f"req-{episode.case_id}-{role}-{component}",
+    )
+    result = run_persona_oss_request(request).to_dict()
+    return _case_selected_oss_summary(
+        episode=episode,
+        role=role,
+        component=component,
+        result=result,
+    )
+
+
+def _case_selected_oss_payload(
+    *,
+    episode: PortfolioEpisode,
+    role: str,
+    component: str,
+) -> dict[str, Any]:
+    payload = _oss_payload_for_component(component, episode.seed_key, episode.ordinal)
+    payload.update(
+        {
+            "dataset_id": HISTORICAL_OHLCV_DATASET_ID,
+            "strategy_id": f"{episode.seed_key}-{episode.case_id}-{role}-{component}",
+            "source_strategy_spec_id": episode.source_strategy_spec_id,
+            "source_dataset_refs": list(episode.source_dataset_refs),
+            "version": f"3000.{episode.ordinal}.{_selected_oss_version_slot(role)}",
+        }
+    )
+    metadata = copy.deepcopy(dict(payload.get("metadata", {})))
+    metadata.update(
+        {
+            "case_id": episode.case_id,
+            "validation_signature": episode.validation_signature,
+            "selected_oss_role": role,
+            "selected_oss_component": component,
+            "alpha_seed_key": episode.seed_key,
+            "source_strategy_spec_id": episode.source_strategy_spec_id,
+            "portfolio_instruments": [window.instrument for window in episode.windows],
+            "historical_window_start_indices": [window.start_index for window in episode.windows],
+            "allowed_windows": ["observe", "feedback"],
+            "forbidden_windows_not_used": ["holdout", "future_holdout"],
+        }
+    )
+    payload["metadata"] = metadata
+
+    if component == "qlib":
+        payload.update(
+            {
+                "seed": 1_000 + episode.ordinal,
+                "n_estimators": 10 + (episode.ordinal % 5),
+                "num_leaves": 7 + (episode.ordinal % 3) * 2,
+                "max_depth": 3 + (episode.ordinal % 2),
+                "learning_rate": round(0.035 + (episode.ordinal % 5) * 0.004, 4),
+            }
+        )
+    elif component == "finrl":
+        payload.update(
+            {
+                "seed": 2_000 + episode.ordinal,
+                "lookback_window": 3 + (episode.ordinal % 2),
+                "learning_rate": 0.0002 + (episode.ordinal % 7) * 0.00002,
+                "gamma": round(0.97 + (episode.ordinal % 8) * 0.002, 4),
+                "reward_scale": round(0.9 + (episode.ordinal % 5) * 0.04, 4),
+                "risk_aversion": round(0.15 + (episode.ordinal % 6) * 0.02, 4),
+            }
+        )
+    elif component == "rllib":
+        payload.update(
+            {
+                "seed": 3_000 + episode.ordinal,
+                "lookback_window": 3 + (episode.ordinal % 2),
+                "learning_rate": 0.00025 + (episode.ordinal % 7) * 0.00002,
+                "gamma": round(0.975 + (episode.ordinal % 8) * 0.002, 4),
+                "gae_lambda": round(0.92 + (episode.ordinal % 5) * 0.005, 4),
+                "entropy_coeff": round(0.001 + (episode.ordinal % 4) * 0.0005, 5),
+                "clip_param": round(0.15 + (episode.ordinal % 5) * 0.01, 4),
+                "num_trials": 6 + (episode.ordinal % 5),
+                "search_strategy": ("pbt", "grid", "bayesian")[episode.ordinal % 3],
+            }
+        )
+    elif component == "ray_tune":
+        payload.update(
+            {
+                "optimizer_id": f"ray-tune-{episode.case_id}",
+                "search_strategy": ("pbt", "grid", "bayesian")[episode.ordinal % 3],
+                "num_trials": 6 + (episode.ordinal % 5),
+                "top_k": 2 + (episode.ordinal % 3),
+                "seed": 4_000 + episode.ordinal,
+                "training_seed": 5_000 + episode.ordinal,
+                "trigger": ("manual", "scheduled", "drift_detected", "evaluation_recommendation")[
+                    episode.ordinal % 4
+                ],
+                "max_iterations": 8 + (episode.ordinal % 7),
+            }
+        )
+    elif component == "dspy":
+        payload.update({"base_bundle_ref": episode.source_strategy_spec_id, "lifecycle_state": "draft"})
+    elif component == "trl":
+        payload.update(
+            {
+                "strategy_family": episode.seed_key,
+                "operator_id": f"operator-{episode.case_id}",
+                "feedback_event_prefix": f"fb-{episode.case_id}",
+                "beta": round(0.05 + (episode.ordinal % 5) * 0.01, 4),
+                "learning_rate": 0.000005 + (episode.ordinal % 7) * 0.000001,
+                "batch_size": 8 + (episode.ordinal % 8),
+                "num_epochs": 2 + (episode.ordinal % 3),
+                "seed": 6_000 + episode.ordinal,
+            }
+        )
+    elif component == "imitation":
+        payload.update(
+            {
+                "epochs": 1 + (episode.ordinal % 3),
+                "seed": 7_000 + episode.ordinal,
+                "lifecycle_state": "draft",
+            }
+        )
+    elif component == "statsmodels":
+        payload.update(
+            {
+                "series_suffix": f"_{episode.case_id.replace('-', '_')}",
+                "price_multiplier": round(1.0 + episode.ordinal / 10_000.0, 6),
+                "factor_multiplier": round(1.0 + (episode.ordinal % 17) / 100.0, 6),
+                "data_frequency": "daily",
+            }
+        )
+    elif component == "quantlib":
+        payload.update(
+            {
+                "instrument_suffix": f"-{episode.case_id}",
+                "valuation_date": f"2026-05-{10 + (episode.ordinal % 10):02d}",
+                "spot_shift": round(0.25 + (episode.ordinal % 11) * 0.1, 4),
+                "strike_shift": round((episode.ordinal % 7) * 0.05, 4),
+                "volatility_shift": round((episode.ordinal % 4) * 0.0025, 4),
+                "quantity_multiplier": 1 + (episode.ordinal % 3),
+                "market_rate_shift": round((episode.ordinal % 8) * 0.00025, 5),
+            }
+        )
+    return payload
+
+
+def _case_selected_oss_summary(
+    *,
+    episode: PortfolioEpisode,
+    role: str,
+    component: str,
+    result: Mapping[str, Any],
+) -> dict[str, Any]:
+    registry_entry = result.get("registry_entry") or {}
+    persona_followup = result.get("persona_followup") or {}
+    return {
+        "role": role,
+        "component": component,
+        "model_id": CASE_SELECTED_OSS_MODEL_ID,
+        "case_specific": True,
+        "persona_id": result.get("persona_id"),
+        "session_id": result.get("session_id"),
+        "request_id": result.get("request_id"),
+        "status": result.get("status"),
+        "artifact_family": result.get("artifact_family"),
+        "metrics": copy.deepcopy(dict(result.get("metrics") or {})),
+        "primary_output": copy.deepcopy(dict(result.get("primary_output") or {})),
+        "registry_id": registry_entry.get("registry_id"),
+        "registry_artifact_type": registry_entry.get("artifact_type"),
+        "producer_run_id": registry_entry.get("producer_run_id"),
+        "drives_persona_step": _oss_persona_step(component),
+        "persona_followup": copy.deepcopy(dict(persona_followup)),
+        "persona_result": copy.deepcopy(dict(result)),
+        "expected_component": _expected_component_for_selected_oss_role(episode, role),
+    }
+
+
+def _selected_oss_version_slot(role: str) -> int:
+    return {
+        "alpha_model": 10,
+        "policy_candidate": 20,
+        "reflection_artifact": 30,
+        "risk_analytics": 40,
+    }[role]
+
+
+def _expected_component_for_selected_oss_role(episode: PortfolioEpisode, role: str) -> str:
+    if role == "alpha_model":
+        return episode.oss_route["alpha_model"]
+    if role == "policy_candidate":
+        return episode.oss_route["policy_candidate"]
+    if role == "reflection_artifact":
+        return episode.oss_route["reflection_artifact"]
+    if role == "risk_analytics":
+        return episode.oss_route["risk_analytics"]
+    raise ValueError(f"unsupported selected OSS role: {role}")
 
 
 def _run_case_vectorbt_feedback(episode: PortfolioEpisode) -> dict[str, Any]:
     strategy_id = f"{episode.seed_key}-{episode.case_id}-case-vectorbt"
-    version = f"3000.case.{episode.ordinal}"
+    version = f"3000.2.{episode.ordinal}"
     dataset = {
         "dataset_id": HISTORICAL_OHLCV_DATASET_ID,
         "strategy_id": strategy_id,
@@ -1580,6 +1895,9 @@ def _score_agent_candidates(
         instrument: -direction for instrument, direction in feedback_directions.items()
     }
     policy_hint_risk = _risk_hint_from_oss(oss_inputs, generation)
+    policy_quality = _policy_quality_from_oss(oss_inputs)
+    reflection_quality = _reflection_quality_from_oss(oss_inputs)
+    risk_penalty = _risk_penalty_from_oss(oss_inputs)
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_bonus = 0.2 if prior_memory else 0.0
     feedback_score = float(latest_evaluation["signed_return"]) - abs(float(latest_evaluation["drawdown"])) * 0.1
@@ -1588,14 +1906,17 @@ def _score_agent_candidates(
             candidate_id=f"{episode.case_id}-gen{generation}-feedback-adapt",
             direction_by_instrument=feedback_directions,
             risk_multiplier=policy_hint_risk,
-            score=3.0 + memory_bonus + feedback_score,
+            score=3.0 + memory_bonus + feedback_score + policy_quality + reflection_quality - risk_penalty * 0.2,
             source_windows=("observe", "feedback") if generation == 1 else ("observe", "feedback", "holdout"),
             evidence_refs=(
+                f"oss://{oss_inputs['alpha_model']['component']}/{oss_inputs['alpha_model']['request_id']}",
                 f"oss://{oss_inputs['policy_candidate']['component']}/{oss_inputs['policy_candidate']['request_id']}",
+                f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",
+                f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}",
                 f"oss://{oss_inputs['backtest']['component']}/{oss_inputs['backtest']['request_id']}",
                 f"oss://{oss_inputs['tracker']['component']}/{oss_inputs['tracker']['request_id']}",
             ),
-            rationale="Follow the feedback window direction with case-specific backtest and tracking evidence.",
+            rationale="Follow the feedback window direction with case-specific alpha, policy, reflection, risk, backtest, and tracking evidence.",
         ),
         PolicyCandidate(
             candidate_id=f"{episode.case_id}-gen{generation}-retain-observe",
@@ -1610,7 +1931,7 @@ def _score_agent_candidates(
             candidate_id=f"{episode.case_id}-gen{generation}-risk-off",
             direction_by_instrument=feedback_directions,
             risk_multiplier=risk_off,
-            score=2.0 + memory_bonus,
+            score=2.0 + memory_bonus + max(0.0, risk_penalty),
             source_windows=("observe", "feedback") if generation == 1 else ("observe", "feedback", "holdout"),
             evidence_refs=(f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}",),
             rationale="Use feedback direction but reduce exposure after risk analytics.",
@@ -2612,6 +2933,10 @@ def _build_lean_handoff_packet(
     handoff = oss_inputs["handoff"]
     vectorbt = case_upstream_artifacts["vectorbt"]
     tracker = case_upstream_artifacts["tracker"]
+    selected_oss_refs = [
+        f"oss://{entry['component']}/{entry['request_id']}"
+        for entry in case_upstream_artifacts["selected_oss"].values()
+    ]
     return {
         "packet_id": f"lean-packet-{episode.case_id}",
         "component": handoff["component"],
@@ -2640,6 +2965,7 @@ def _build_lean_handoff_packet(
             f"oss://{handoff['component']}/{handoff['request_id']}",
             f"oss://vectorbt/{vectorbt['request_id']}",
             f"experiment://{tracker['backend']}/{tracker['run_id']}",
+            *selected_oss_refs,
             f"lean-engine://{lean_engine_replay['replay_id']}",
             f"broker-sandbox://{shioaji_sandbox_lifecycle['lifecycle_id']}",
         ],
@@ -2815,6 +3141,7 @@ def _case_upstream_artifacts_are_usable(
     return bool(
         artifacts.get("vectorbt_model_id") == CASE_UPSTREAM_VECTORBT_MODEL_ID
         and artifacts.get("tracking_model_id") == CASE_UPSTREAM_TRACKING_MODEL_ID
+        and artifacts.get("selected_oss_model_id") == CASE_SELECTED_OSS_MODEL_ID
         and artifacts.get("allowed_windows") == ["observe", "feedback"]
         and artifacts.get("forbidden_windows_not_used") == ["holdout", "future_holdout"]
         and vectorbt.get("status") == "completed"
@@ -2838,7 +3165,47 @@ def _case_upstream_artifacts_are_usable(
         and persona_response.get("used_before_generation2_decision") is True
         and f"oss://vectorbt/{vectorbt.get('request_id')}" in persona_response.get("evidence_refs", [])
         and f"experiment://{tracker.get('backend')}/{tracker.get('run_id')}" in persona_response.get("evidence_refs", [])
+        and _case_selected_oss_feedback_is_usable(episode=episode, artifacts=artifacts)
     )
+
+
+def _case_selected_oss_feedback_is_usable(
+    *,
+    episode: PortfolioEpisode,
+    artifacts: Mapping[str, Any],
+) -> bool:
+    selected_oss = artifacts.get("selected_oss", {})
+    required_roles = {"alpha_model", "policy_candidate", "reflection_artifact", "risk_analytics"}
+    if set(selected_oss) != required_roles:
+        return False
+    for role in required_roles:
+        entry = selected_oss.get(role, {})
+        component = entry.get("component")
+        expected_component = _expected_component_for_selected_oss_role(episode, role)
+        if component != expected_component:
+            return False
+        if entry.get("expected_component") != expected_component:
+            return False
+        if entry.get("model_id") != CASE_SELECTED_OSS_MODEL_ID:
+            return False
+        if entry.get("case_specific") is not True:
+            return False
+        if entry.get("status") != "completed":
+            return False
+        if entry.get("drives_persona_step") != _oss_persona_step(str(component)):
+            return False
+        if entry.get("request_id") != f"req-{episode.case_id}-{role}-{component}" and not (
+            role == "alpha_model" and component == "vectorbt" and entry.get("request_id") == f"req-{episode.case_id}-vectorbt-upstream"
+        ):
+            return False
+        followup = entry.get("persona_followup", {})
+        if followup.get("trigger_component") != component:
+            return False
+        if followup.get("trigger_request_id") != entry.get("request_id"):
+            return False
+        if not (entry.get("primary_output") or entry.get("metrics")):
+            return False
+    return True
 
 
 def _build_usability_dimensions(
@@ -3102,6 +3469,31 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "case_specific_selected_oss_route_feedback_drives_persona_decision",
+            _case_selected_oss_feedback_is_usable(
+                episode=episode,
+                artifacts=case_upstream_artifacts,
+            )
+            and all(
+                all(
+                    f"oss://{entry['component']}/{entry['request_id']}" in trace["evidence_refs"]
+                    for entry in case_upstream_artifacts["selected_oss"].values()
+                )
+                and all(
+                    f"oss://{entry['component']}/{entry['request_id']}" in trace["selected_candidate"]["evidence_refs"]
+                    for entry in case_upstream_artifacts["selected_oss"].values()
+                )
+                for trace in decision_traces
+            ),
+            {
+                "selected_roles": sorted(case_upstream_artifacts["selected_oss"]),
+                "selected_components": {
+                    role: entry["component"]
+                    for role, entry in case_upstream_artifacts["selected_oss"].items()
+                },
+            },
+        ),
+        _diagnostic_check(
             "lean_engine_replay_uses_case_runtime_binding",
             _lean_engine_replay_is_usable(operational_context["lean_engine_replay"]),
             {
@@ -3180,6 +3572,7 @@ def _case_upstream_artifacts_case_summary(artifacts: Mapping[str, Any]) -> dict[
         "feedback_id": artifacts["feedback_id"],
         "vectorbt_model_id": artifacts["vectorbt_model_id"],
         "tracking_model_id": artifacts["tracking_model_id"],
+        "selected_oss_model_id": artifacts["selected_oss_model_id"],
         "allowed_windows": list(artifacts["allowed_windows"]),
         "forbidden_windows_not_used": list(artifacts["forbidden_windows_not_used"]),
         "vectorbt": {
@@ -3212,8 +3605,65 @@ def _case_upstream_artifacts_case_summary(artifacts: Mapping[str, Any]) -> dict[
             "readback": copy.deepcopy(tracker["readback"]),
             "record": copy.deepcopy(tracker["record"]),
         },
+        "selected_oss": {
+            role: _case_selected_oss_case_summary(entry)
+            for role, entry in artifacts["selected_oss"].items()
+        },
         "persona_response": copy.deepcopy(artifacts["persona_response"]),
     }
+
+
+def _case_selected_oss_case_summary(entry: Mapping[str, Any]) -> dict[str, Any]:
+    primary_output = entry.get("primary_output", {})
+    primary_output_keys = sorted(primary_output) if isinstance(primary_output, Mapping) else []
+    return {
+        "role": entry["role"],
+        "component": entry["component"],
+        "model_id": entry["model_id"],
+        "case_specific": entry["case_specific"],
+        "session_id": entry["session_id"],
+        "request_id": entry["request_id"],
+        "status": entry["status"],
+        "artifact_family": entry["artifact_family"],
+        "metrics": copy.deepcopy(dict(entry.get("metrics") or {})),
+        "primary_output_keys": primary_output_keys,
+        "registry_id": entry.get("registry_id"),
+        "registry_artifact_type": entry.get("registry_artifact_type"),
+        "producer_run_id": entry.get("producer_run_id"),
+        "drives_persona_step": entry["drives_persona_step"],
+        "persona_followup": copy.deepcopy(dict(entry.get("persona_followup") or {})),
+        "expected_component": entry["expected_component"],
+    }
+
+
+def _case_selected_oss_case_feedback_is_usable(case: Mapping[str, Any]) -> bool:
+    selected_oss = case.get("case_upstream_artifacts", {}).get("selected_oss", {})
+    route = case.get("oss_feedback", {}).get("route", {})
+    expected = {
+        "alpha_model": route.get("alpha_model"),
+        "policy_candidate": route.get("policy_candidate"),
+        "reflection_artifact": route.get("reflection_artifact"),
+        "risk_analytics": route.get("risk_analytics"),
+    }
+    if set(selected_oss) != set(expected):
+        return False
+    for role, component in expected.items():
+        entry = selected_oss.get(role, {})
+        if not component or entry.get("component") != component:
+            return False
+        if entry.get("expected_component") != component:
+            return False
+        if entry.get("model_id") != CASE_SELECTED_OSS_MODEL_ID:
+            return False
+        if entry.get("case_specific") is not True:
+            return False
+        if entry.get("status") != "completed":
+            return False
+        if entry.get("drives_persona_step") != _oss_persona_step(str(component)):
+            return False
+        if not (entry.get("metrics") or entry.get("primary_output_keys")):
+            return False
+    return True
 
 
 def _build_case_result(
@@ -3354,6 +3804,10 @@ def _build_case_result(
             "case_specific_upstream_artifact_feedback": usability_dimensions[
                 "case_specific_upstream_artifact_feedback"
             ] == 1.0,
+            "case_specific_selected_oss_feedback": _case_selected_oss_feedback_is_usable(
+                episode=episode,
+                artifacts=case_upstream_artifacts,
+            ),
             "lean_handoff_packet_materialized": usability_dimensions["lean_handoff_packet"] == 1.0,
             "evolved": _enum_value(evolution_decision.decision_state) == EvolutionDecisionState.EXECUTED.value,
         },
@@ -3435,6 +3889,24 @@ def _build_summary(
         "case_upstream_allowed_windows": sorted({
             "+".join(case["case_upstream_artifacts"]["allowed_windows"]) for case in cases
         }),
+        "case_selected_oss_roles": sorted({
+            role
+            for case in cases
+            for role in case["case_upstream_artifacts"]["selected_oss"]
+        }),
+        "case_selected_oss_components_by_role": {
+            role: sorted({
+                case["case_upstream_artifacts"]["selected_oss"][role]["component"]
+                for case in cases
+                if role in case["case_upstream_artifacts"]["selected_oss"]
+            })
+            for role in ("alpha_model", "policy_candidate", "reflection_artifact", "risk_analytics")
+        },
+        "case_selected_oss_artifact_families": sorted({
+            entry["artifact_family"]
+            for case in cases
+            for entry in case["case_upstream_artifacts"]["selected_oss"].values()
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -3498,6 +3970,11 @@ def _build_summary(
             for case in cases
             if case["case_upstream_artifacts"]["vectorbt"]["backend"] == "vectorbt_portfolio"
         ),
+        "case_specific_selected_oss_feedback_count": sum(
+            1
+            for case in cases
+            if _case_selected_oss_case_feedback_is_usable(case)
+        ),
         "lean_handoff_packet_count": sum(1 for item in usable if item["lean_handoff_packet_materialized"]),
         "validation_gap_question_count": sum(
             len(case["validation_cycle"]["planning"]["questions_asked"]) for case in cases
@@ -3520,6 +3997,7 @@ def _build_summary(
             "Every case writes memory and retrieves that memory for the next generation's decision.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every case has a case-specific vectorbt historical backtest artifact and a case-specific experiment tracking readback before persona decisions.",
+            "Every case runs its selected alpha, policy, reflection, and risk OSS route as case-specific persona feedback and uses those refs in the selected decision trace.",
             "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
@@ -3569,6 +4047,16 @@ def _policy_turnover(policy: Mapping[str, Any]) -> float:
 def _risk_hint_from_oss(oss_inputs: Mapping[str, Mapping[str, Any]], generation: int) -> float:
     component = str(oss_inputs["policy_candidate"]["component"])
     base = {"finrl": 0.75, "rllib": 0.85, "ray_tune": 0.95}.get(component, 0.75)
+    policy_metrics = oss_inputs.get("policy_candidate", {}).get("metrics", {})
+    if isinstance(policy_metrics, Mapping):
+        policy_signal = max(
+            _finite_float(policy_metrics.get("sharpe"), 0.0) / 100,
+            _finite_float(policy_metrics.get("validation_sharpe_proxy"), 0.0) / 20,
+            _finite_float(policy_metrics.get("best_trial_score"), 0.0) / 20,
+            _finite_float(policy_metrics.get("mean_reward_proxy"), 0.0),
+            _finite_float(policy_metrics.get("eval_reward_mean"), 0.0),
+        )
+        base += min(0.08, max(0.0, policy_signal))
     backtest_metrics = oss_inputs.get("backtest", {}).get("metrics", {})
     if isinstance(backtest_metrics, Mapping):
         mean_return = _finite_float(backtest_metrics.get("mean_total_return"), 0.0)
@@ -3583,6 +4071,55 @@ def _risk_hint_from_oss(oss_inputs: Mapping[str, Mapping[str, Any]], generation:
     if generation >= 2:
         return round(min(1.15, max(0.35, base + 0.3)), 4)
     return round(min(1.15, max(0.35, base)), 4)
+
+
+def _policy_quality_from_oss(oss_inputs: Mapping[str, Mapping[str, Any]]) -> float:
+    metrics = oss_inputs.get("policy_candidate", {}).get("metrics", {})
+    if not isinstance(metrics, Mapping):
+        return 0.0
+    return round(
+        min(
+            0.35,
+            max(
+                0.0,
+                _finite_float(metrics.get("sharpe"), 0.0) / 100,
+                _finite_float(metrics.get("validation_sharpe_proxy"), 0.0) / 20,
+                _finite_float(metrics.get("best_trial_score"), 0.0) / 20,
+                _finite_float(metrics.get("mean_reward_proxy"), 0.0),
+                _finite_float(metrics.get("eval_reward_mean"), 0.0),
+            ),
+        ),
+        6,
+    )
+
+
+def _reflection_quality_from_oss(oss_inputs: Mapping[str, Mapping[str, Any]]) -> float:
+    metrics = oss_inputs.get("reflection_artifact", {}).get("metrics", {})
+    if not isinstance(metrics, Mapping):
+        return 0.0
+    return round(
+        min(
+            0.25,
+            max(
+                0.0,
+                _finite_float(metrics.get("intent_accuracy"), 0.0) * 0.08,
+                _finite_float(metrics.get("accuracy"), 0.0) * 0.08,
+                _finite_float(metrics.get("training_accuracy"), 0.0) * 0.08,
+                _finite_float(metrics.get("action_coverage_ratio"), 0.0) * 0.05,
+            ),
+        ),
+        6,
+    )
+
+
+def _risk_penalty_from_oss(oss_inputs: Mapping[str, Mapping[str, Any]]) -> float:
+    metrics = oss_inputs.get("risk_analytics", {}).get("metrics", {})
+    if not isinstance(metrics, Mapping):
+        return 0.0
+    complexity = _finite_float(metrics.get("result_count"), 0.0) / 20
+    option_count = _finite_float(metrics.get("option_count"), 0.0) / 40
+    price_series_count = _finite_float(metrics.get("price_series_count"), 0.0) / 40
+    return round(min(0.25, max(0.0, complexity + option_count + price_series_count)), 6)
 
 
 def _finite_float(value: Any, default: float) -> float:

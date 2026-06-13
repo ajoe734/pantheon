@@ -7,6 +7,7 @@ import importlib.util
 from services.persona.agent_usability_validation import (
     AUTONOMOUS_SCHEDULER_PHASES,
     BROKER_LIFECYCLE_TERMINAL_STATUS,
+    CASE_SELECTED_OSS_MODEL_ID,
     CASE_UPSTREAM_TRACKING_MODEL_ID,
     CASE_UPSTREAM_VECTORBT_MODEL_ID,
     DEFAULT_CASE_COUNT,
@@ -80,6 +81,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["shioaji_sandbox_lifecycle_count"] == DEFAULT_CASE_COUNT
     assert summary["case_specific_vectorbt_backtest_count"] == DEFAULT_CASE_COUNT
     assert summary["case_specific_tracking_roundtrip_count"] == DEFAULT_CASE_COUNT
+    assert summary["case_specific_selected_oss_feedback_count"] == DEFAULT_CASE_COUNT
     if importlib.util.find_spec("vectorbt") is not None:
         assert summary["case_vectorbt_real_backend_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_handoff_packet_count"] == DEFAULT_CASE_COUNT
@@ -132,6 +134,29 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert coverage["case_tracking_components"] == ["mlflow", "wandb"]
     assert coverage["case_tracking_backends"] == ["mlflow", "wandb"]
     assert coverage["case_upstream_allowed_windows"] == ["observe+feedback"]
+    assert coverage["case_selected_oss_roles"] == [
+        "alpha_model",
+        "policy_candidate",
+        "reflection_artifact",
+        "risk_analytics",
+    ]
+    assert coverage["case_selected_oss_components_by_role"] == {
+        "alpha_model": ["qlib", "vectorbt"],
+        "policy_candidate": ["finrl", "ray_tune", "rllib"],
+        "reflection_artifact": ["dspy", "imitation", "trl"],
+        "risk_analytics": ["quantlib", "statsmodels"],
+    }
+    assert set(coverage["case_selected_oss_artifact_families"]) == {
+        "imitation_policy",
+        "model_artifact",
+        "optimizer_result",
+        "pricing_report",
+        "prompt_bundle",
+        "qlib_alpha",
+        "regime_report",
+        "rl_policy",
+        "vectorbt_backtest",
+    }
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -293,10 +318,12 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
     artifacts = case["case_upstream_artifacts"]
     vectorbt = artifacts["vectorbt"]
     tracker = artifacts["tracker"]
+    selected_oss = artifacts["selected_oss"]
     persona_response = artifacts["persona_response"]
 
     assert artifacts["vectorbt_model_id"] == CASE_UPSTREAM_VECTORBT_MODEL_ID
     assert artifacts["tracking_model_id"] == CASE_UPSTREAM_TRACKING_MODEL_ID
+    assert artifacts["selected_oss_model_id"] == CASE_SELECTED_OSS_MODEL_ID
     assert artifacts["allowed_windows"] == ["observe", "feedback"]
     assert artifacts["forbidden_windows_not_used"] == ["holdout", "future_holdout"]
 
@@ -338,6 +365,31 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
         "registry_entry.json",
     ]
 
+    expected_selected_components = {
+        "alpha_model": case["oss_feedback"]["route"]["alpha_model"],
+        "policy_candidate": case["oss_feedback"]["route"]["policy_candidate"],
+        "reflection_artifact": case["oss_feedback"]["route"]["reflection_artifact"],
+        "risk_analytics": case["oss_feedback"]["route"]["risk_analytics"],
+    }
+    assert set(selected_oss) == set(expected_selected_components)
+    for role, component in expected_selected_components.items():
+        entry = selected_oss[role]
+        assert entry["model_id"] == CASE_SELECTED_OSS_MODEL_ID
+        assert entry["case_specific"] is True
+        assert entry["component"] == component
+        assert entry["expected_component"] == component
+        assert entry["status"] == "completed"
+        assert entry["artifact_family"]
+        assert entry["request_id"] == case["oss_feedback"]["request_ids"][role]
+        if not (role == "alpha_model" and component == "vectorbt"):
+            assert entry["request_id"] == f"req-{case['case_id']}-{role}-{component}"
+        else:
+            assert entry["request_id"] == vectorbt["request_id"]
+        assert entry["persona_followup"]["trigger_component"] == component
+        assert entry["persona_followup"]["trigger_request_id"] == entry["request_id"]
+        assert entry["drives_persona_step"] == case["oss_feedback"]["drives_persona_steps"][role]
+        assert entry["metrics"] or entry["primary_output_keys"]
+
     assert persona_response["used_before_generation1_decision"] is True
     assert persona_response["used_before_generation2_decision"] is True
     vectorbt_ref = f"oss://vectorbt/{vectorbt['request_id']}"
@@ -346,6 +398,8 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
     assert vectorbt_ref in persona_response["evidence_refs"]
     assert tracker_ref in persona_response["evidence_refs"]
     assert experiment_ref in persona_response["evidence_refs"]
+    for entry in selected_oss.values():
+        assert f"oss://{entry['component']}/{entry['request_id']}" in persona_response["evidence_refs"]
 
     for trace in case["reflection"]["agent_decision_traces"]:
         assert vectorbt_ref in trace["evidence_refs"]
@@ -353,12 +407,17 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
         selected_refs = trace["selected_candidate"]["evidence_refs"]
         assert vectorbt_ref in selected_refs
         assert tracker_ref in selected_refs
+        for entry in selected_oss.values():
+            oss_ref = f"oss://{entry['component']}/{entry['request_id']}"
+            assert oss_ref in trace["evidence_refs"]
+            assert oss_ref in selected_refs
 
     check_by_name = {
         check["check"]: check
         for check in case["validation_cycle"]["execution_review"]["checks"]
     }
     assert check_by_name["case_specific_upstream_artifacts_drive_persona_decision"]["status"] == "passed"
+    assert check_by_name["case_specific_selected_oss_route_feedback_drives_persona_decision"]["status"] == "passed"
 
 
 def _assert_operational_context(case: dict) -> None:
@@ -482,6 +541,8 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["target_stage"] == "paper"
     assert handoff["broker_live_submitted"] is False
     assert set(handoff["portfolio_instruments"]) == set(case["portfolio"]["instruments"])
+    for entry in case["case_upstream_artifacts"]["selected_oss"].values():
+        assert f"oss://{entry['component']}/{entry['request_id']}" in handoff["runtime_bundle_refs"]
     assert handoff["runtime_bundle_refs"]
 
 
