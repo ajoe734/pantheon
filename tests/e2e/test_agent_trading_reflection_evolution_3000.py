@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 from services.persona.agent_usability_validation import (
     AUTONOMOUS_SCHEDULER_PHASES,
     BROKER_LIFECYCLE_TERMINAL_STATUS,
+    CASE_UPSTREAM_TRACKING_MODEL_ID,
+    CASE_UPSTREAM_VECTORBT_MODEL_ID,
     DEFAULT_CASE_COUNT,
+    FEEDBACK_BARS,
     GENERATION_COUNT,
     HISTORICAL_OHLCV_DATASET_ID,
     LEAN_ENGINE_REPLAY_MODEL_ID,
+    LOOKBACK_BARS,
     MARKET_FRICTION_MODEL_ID,
     MIN_USABILITY_SCORE,
     OPERATIONAL_SCENARIOS,
@@ -72,6 +78,10 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["autonomous_scheduler_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_engine_replay_count"] == DEFAULT_CASE_COUNT
     assert summary["shioaji_sandbox_lifecycle_count"] == DEFAULT_CASE_COUNT
+    assert summary["case_specific_vectorbt_backtest_count"] == DEFAULT_CASE_COUNT
+    assert summary["case_specific_tracking_roundtrip_count"] == DEFAULT_CASE_COUNT
+    if importlib.util.find_spec("vectorbt") is not None:
+        assert summary["case_vectorbt_real_backend_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_handoff_packet_count"] == DEFAULT_CASE_COUNT
     assert summary["validation_gap_question_count"] == DEFAULT_CASE_COUNT * len(EXPECTED_GAP_QUESTIONS)
     assert summary["unresolved_validation_deficiency_count"] == 0
@@ -116,6 +126,12 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert coverage["lean_engine_algorithm_modules"] == ["pantheon_algo.smoke_loader_test"]
     assert coverage["shioaji_sandbox_models"] == [SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID]
     assert coverage["shioaji_sandbox_run_modes"] == ["mock_api_replay"]
+    assert set(coverage["case_vectorbt_backends"]).issubset({"stub_backtest", "vectorbt_portfolio"})
+    if importlib.util.find_spec("vectorbt") is not None:
+        assert coverage["case_vectorbt_backends"] == ["vectorbt_portfolio"]
+    assert coverage["case_tracking_components"] == ["mlflow", "wandb"]
+    assert coverage["case_tracking_backends"] == ["mlflow", "wandb"]
+    assert coverage["case_upstream_allowed_windows"] == ["observe+feedback"]
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -131,6 +147,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_portfolio_generations(case)
         _assert_agent_decision_traces_are_no_leakage(case)
         _assert_memory_and_oss_closed_loop(case)
+        _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
         _assert_evolution_and_scores(case)
         assert all(case["usable"].values())
@@ -167,6 +184,7 @@ def _assert_unique_planned_validation_cycle(
         for label in selected_plan["assertion_labels"]
     )
     assert "apply_market_friction_model" in selected_plan["execution_steps"]
+    assert "request_case_specific_upstream_artifacts" in selected_plan["execution_steps"]
     assert "reconcile_paper_broker_lifecycle" in selected_plan["execution_steps"]
     assert "resolve_multi_persona_conflicts" in selected_plan["execution_steps"]
     assert "recover_after_midloop_restart" in selected_plan["execution_steps"]
@@ -271,6 +289,78 @@ def _assert_memory_and_oss_closed_loop(case: dict) -> None:
     assert oss_feedback["drives_persona_steps"]["handoff"] == "evolved_strategy_handoff"
 
 
+def _assert_case_specific_upstream_artifacts(case: dict) -> None:
+    artifacts = case["case_upstream_artifacts"]
+    vectorbt = artifacts["vectorbt"]
+    tracker = artifacts["tracker"]
+    persona_response = artifacts["persona_response"]
+
+    assert artifacts["vectorbt_model_id"] == CASE_UPSTREAM_VECTORBT_MODEL_ID
+    assert artifacts["tracking_model_id"] == CASE_UPSTREAM_TRACKING_MODEL_ID
+    assert artifacts["allowed_windows"] == ["observe", "feedback"]
+    assert artifacts["forbidden_windows_not_used"] == ["holdout", "future_holdout"]
+
+    assert vectorbt["request_id"] == case["oss_feedback"]["request_ids"]["backtest"]
+    assert vectorbt["request_id"] == f"req-{case['case_id']}-vectorbt-upstream"
+    assert vectorbt["backend"] in {"stub_backtest", "vectorbt_portfolio"}
+    if importlib.util.find_spec("vectorbt") is not None:
+        assert vectorbt["backend"] == "vectorbt_portfolio"
+        assert vectorbt["real_package_available"] is True
+    assert vectorbt["run_id"]
+    assert vectorbt["registry_id"]
+    assert vectorbt["producer_run_id"] == vectorbt["run_id"]
+    assert vectorbt["checksum"].startswith("sha256:")
+
+    dataset_summary = vectorbt["dataset_summary"]
+    assert dataset_summary["dataset_id"] == HISTORICAL_OHLCV_DATASET_ID
+    assert dataset_summary["num_instruments"] == PORTFOLIO_LEG_COUNT
+    assert dataset_summary["total_bars"] == PORTFOLIO_LEG_COUNT * (LOOKBACK_BARS + FEEDBACK_BARS)
+    assert set(dataset_summary["instruments"]) == set(case["portfolio"]["instruments"])
+    assert set(case["source_dataset_refs"]).issubset(set(dataset_summary["source_dataset_refs"]))
+    assert vectorbt["portfolio_instruments"] == case["portfolio"]["instruments"]
+    assert vectorbt["historical_window_start_indices"] == case["portfolio"]["start_indices"]
+    assert vectorbt["aggregate_metrics"]["num_instruments"] == PORTFOLIO_LEG_COUNT
+    assert "total_trades" in vectorbt["aggregate_metrics"]
+    assert vectorbt["backtest_config"]["strategy_params"]["short_window"] >= 3
+    assert vectorbt["backtest_config"]["strategy_params"]["long_window"] > vectorbt["backtest_config"]["strategy_params"]["short_window"]
+
+    assert tracker["request_id"] == case["oss_feedback"]["request_ids"]["tracker"]
+    assert tracker["component"] == case["oss_feedback"]["route"]["tracker"]
+    assert tracker["backend"] == tracker["component"]
+    assert tracker["run_id"]
+    assert tracker["registry_id"] == vectorbt["registry_id"]
+    assert tracker["source_vectorbt_run_id"] == vectorbt["run_id"]
+    assert tracker["readback"]["run_readback_status"] == "found"
+    assert tracker["readback"]["artifact_readback_status"] == "found"
+    assert tracker["record"]["artifact_names"] == [
+        "artifact_handoff.json",
+        "evaluation_summary.json",
+        "registry_entry.json",
+    ]
+
+    assert persona_response["used_before_generation1_decision"] is True
+    assert persona_response["used_before_generation2_decision"] is True
+    vectorbt_ref = f"oss://vectorbt/{vectorbt['request_id']}"
+    tracker_ref = f"oss://{tracker['component']}/{tracker['request_id']}"
+    experiment_ref = f"experiment://{tracker['backend']}/{tracker['run_id']}"
+    assert vectorbt_ref in persona_response["evidence_refs"]
+    assert tracker_ref in persona_response["evidence_refs"]
+    assert experiment_ref in persona_response["evidence_refs"]
+
+    for trace in case["reflection"]["agent_decision_traces"]:
+        assert vectorbt_ref in trace["evidence_refs"]
+        assert tracker_ref in trace["evidence_refs"]
+        selected_refs = trace["selected_candidate"]["evidence_refs"]
+        assert vectorbt_ref in selected_refs
+        assert tracker_ref in selected_refs
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["case_specific_upstream_artifacts_drive_persona_decision"]["status"] == "passed"
+
+
 def _assert_operational_context(case: dict) -> None:
     operational = case["operational_context"]
     assert operational["operational_signature"]
@@ -370,6 +460,11 @@ def _assert_operational_context(case: dict) -> None:
     assert sandbox["live_disabled_result"]["response"]["error_code"] == "SHIOAJI_LIVE_DISABLED"
     assert sandbox["error"] is None
 
+    operational_artifacts = operational["case_upstream_artifacts"]
+    assert operational_artifacts["feedback_id"] == case["case_upstream_artifacts"]["feedback_id"]
+    assert operational_artifacts["vectorbt"]["request_id"] == case["case_upstream_artifacts"]["vectorbt"]["request_id"]
+    assert operational_artifacts["tracker"]["run_id"] == case["case_upstream_artifacts"]["tracker"]["run_id"]
+
     handoff = operational["lean_handoff"]
     assert handoff["component"] == "lean_handoff"
     assert handoff["strategy_packet_materialized"] is True
@@ -378,6 +473,12 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["lean_engine_replay_status"] == "passed"
     assert handoff["shioaji_sandbox_lifecycle_id"] == sandbox["lifecycle_id"]
     assert handoff["shioaji_sandbox_lifecycle_status"] == "passed"
+    assert handoff["case_vectorbt_request_id"] == case["case_upstream_artifacts"]["vectorbt"]["request_id"]
+    assert handoff["case_vectorbt_backend"] == case["case_upstream_artifacts"]["vectorbt"]["backend"]
+    assert handoff["case_vectorbt_registry_id"] == case["case_upstream_artifacts"]["vectorbt"]["registry_id"]
+    assert handoff["case_tracking_request_id"] == case["case_upstream_artifacts"]["tracker"]["request_id"]
+    assert handoff["case_tracking_backend"] == case["case_upstream_artifacts"]["tracker"]["backend"]
+    assert handoff["case_tracking_run_id"] == case["case_upstream_artifacts"]["tracker"]["run_id"]
     assert handoff["target_stage"] == "paper"
     assert handoff["broker_live_submitted"] is False
     assert set(handoff["portfolio_instruments"]) == set(case["portfolio"]["instruments"])

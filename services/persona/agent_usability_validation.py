@@ -16,8 +16,12 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.util
 import json
+import math
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -49,7 +53,13 @@ from services.persona.oss_runtime import (
     PersonaOSSRequest,
     run_persona_oss_request,
 )
+from services.registry.experiments.adapter import (
+    InMemoryMlflowBackend,
+    OfflineWandbLocalBackend,
+    RegistryExperimentAdapter,
+)
 from services.telemetry.feedback_adapter import FeedbackStoreAdapter
+from services.research.vectorbt.adapter import BacktestConfig, VectorbtBackend, run_vectorbt_workflow
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -103,6 +113,8 @@ BROKER_LIFECYCLE_TERMINAL_STATUS = "filled"
 MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
 LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
 SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
+CASE_UPSTREAM_VECTORBT_MODEL_ID = "case_specific_vectorbt_feedback_v1"
+CASE_UPSTREAM_TRACKING_MODEL_ID = "case_specific_tracking_artifact_roundtrip_v1"
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
     "request_oss",
@@ -351,6 +363,14 @@ def run_agent_usability_validations(
     for index, episode in enumerate(episodes):
         persona_id = _persona_id(episode.persona)
         oss_inputs = _oss_inputs_for_episode(episode, oss_by_component)
+        case_upstream_artifacts = _build_case_upstream_artifact_feedback(
+            episode=episode,
+            oss_inputs=oss_inputs,
+        )
+        oss_inputs = _apply_case_upstream_artifacts_to_oss_inputs(
+            oss_inputs,
+            case_upstream_artifacts,
+        )
         prior_memory = _retrieve_prior_lesson(persona_store, persona_id)
         validation_plan = _build_validation_planning_step(
             episode=episode,
@@ -507,6 +527,7 @@ def run_agent_usability_validations(
             memory_contexts=(current_memory0, current_memory1),
             evolution_decision=evolution_decision,
             oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
             generated_at=generated_at,
         )
         usability_dimensions = _build_usability_dimensions(
@@ -520,6 +541,7 @@ def run_agent_usability_validations(
             decision_traces=(decision_trace0, decision_trace1),
             memory_contexts=(current_memory0, current_memory1),
             oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
             validation_plan=validation_plan,
             operational_context=operational_context,
         )
@@ -536,6 +558,7 @@ def run_agent_usability_validations(
             evolution_decision=evolution_decision,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
             operational_context=operational_context,
         )
         validation_repair = _repair_validation_deficiencies(
@@ -556,6 +579,7 @@ def run_agent_usability_validations(
             evolution_decision=evolution_decision,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
             operational_context=operational_context,
             validation_plan=validation_plan,
             validation_diagnostics=validation_diagnostics,
@@ -861,6 +885,302 @@ def _oss_inputs_for_episode(
     }
 
 
+def _build_case_upstream_artifact_feedback(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    vectorbt_feedback = _run_case_vectorbt_feedback(episode)
+    tracker_feedback = _run_case_tracking_feedback(
+        episode=episode,
+        vectorbt_feedback=vectorbt_feedback,
+        tracker_component=str(oss_inputs["tracker"]["component"]),
+    )
+    return {
+        "feedback_id": f"case-upstream-artifacts-{episode.case_id}",
+        "vectorbt_model_id": CASE_UPSTREAM_VECTORBT_MODEL_ID,
+        "tracking_model_id": CASE_UPSTREAM_TRACKING_MODEL_ID,
+        "persona_id": _persona_id(episode.persona),
+        "seed_key": episode.seed_key,
+        "allowed_windows": ["observe", "feedback"],
+        "forbidden_windows_not_used": ["holdout", "future_holdout"],
+        "source_strategy_spec_id": episode.source_strategy_spec_id,
+        "source_dataset_refs": list(episode.source_dataset_refs),
+        "vectorbt": vectorbt_feedback,
+        "tracker": tracker_feedback,
+        "persona_response": {
+            "ooda_sequence": ["decide", "observe"],
+            "next_decision_action": "score_case_specific_backtest_candidate",
+            "next_tracking_action": "cite_case_specific_experiment_ref",
+            "evidence_refs": [
+                f"oss://vectorbt/{vectorbt_feedback['request_id']}",
+                f"oss://{tracker_feedback['component']}/{tracker_feedback['request_id']}",
+                f"experiment://{tracker_feedback['backend']}/{tracker_feedback['run_id']}",
+            ],
+            "used_before_generation1_decision": True,
+            "used_before_generation2_decision": True,
+        },
+    }
+
+
+def _apply_case_upstream_artifacts_to_oss_inputs(
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    updated = {
+        role: copy.deepcopy(dict(result))
+        for role, result in oss_inputs.items()
+    }
+    vectorbt_feedback = case_upstream_artifacts["vectorbt"]
+    tracker_feedback = case_upstream_artifacts["tracker"]
+    updated["backtest"] = {
+        "component": "vectorbt",
+        "persona_id": case_upstream_artifacts["persona_id"],
+        "session_id": vectorbt_feedback["session_id"],
+        "request_id": vectorbt_feedback["request_id"],
+        "status": "completed",
+        "artifact_family": "vectorbt_backtest",
+        "primary_output": {
+            "backend": vectorbt_feedback["backend"],
+            "run_id": vectorbt_feedback["run_id"],
+            "aggregate_metrics": copy.deepcopy(vectorbt_feedback["aggregate_metrics"]),
+            "per_instrument_metrics": copy.deepcopy(vectorbt_feedback["per_instrument_metrics"]),
+        },
+        "metrics": copy.deepcopy(vectorbt_feedback["aggregate_metrics"]),
+        "registry_entry": copy.deepcopy(vectorbt_feedback["registry_entry"]),
+        "artifact_bundle": copy.deepcopy(vectorbt_feedback["artifact_bundle"]),
+        "refs": {
+            "source_dataset_refs": list(vectorbt_feedback["dataset_summary"]["source_dataset_refs"]),
+            "registry_id": vectorbt_feedback["registry_id"],
+        },
+        "persona_followup": {
+            "persona_id": case_upstream_artifacts["persona_id"],
+            "session_id": vectorbt_feedback["session_id"],
+            "trigger_component": "vectorbt",
+            "trigger_request_id": vectorbt_feedback["request_id"],
+            "trigger_artifact_family": "vectorbt_backtest",
+            "ooda_phase": "decide",
+            "next_action": "draft_strategy_proposal",
+            "evidence_refs": [vectorbt_feedback["run_id"], vectorbt_feedback["registry_id"]],
+        },
+        "seed_key": case_upstream_artifacts["seed_key"],
+        "drives_persona_step": "alpha_seed_update",
+    }
+    updated["tracker"] = {
+        "component": tracker_feedback["component"],
+        "persona_id": case_upstream_artifacts["persona_id"],
+        "session_id": tracker_feedback["session_id"],
+        "request_id": tracker_feedback["request_id"],
+        "status": "completed",
+        "artifact_family": "experiment_run",
+        "primary_output": copy.deepcopy(tracker_feedback["experiment_ref"]),
+        "metrics": copy.deepcopy(tracker_feedback["metrics"]),
+        "registry_entry": copy.deepcopy(vectorbt_feedback["registry_entry"]),
+        "artifact_bundle": {
+            "record": copy.deepcopy(tracker_feedback["record"]),
+            "readback": copy.deepcopy(tracker_feedback["readback"]),
+        },
+        "refs": {
+            "run_id": tracker_feedback["run_id"],
+            "artifact_uri": tracker_feedback["artifact_uri"],
+        },
+        "persona_followup": {
+            "persona_id": case_upstream_artifacts["persona_id"],
+            "session_id": tracker_feedback["session_id"],
+            "trigger_component": tracker_feedback["component"],
+            "trigger_request_id": tracker_feedback["request_id"],
+            "trigger_artifact_family": "experiment_run",
+            "ooda_phase": "observe",
+            "next_action": "cite_experiment_ref",
+            "evidence_refs": [tracker_feedback["run_id"]],
+        },
+        "seed_key": case_upstream_artifacts["seed_key"],
+        "drives_persona_step": "experiment_tracking",
+    }
+    return updated
+
+
+def _run_case_vectorbt_feedback(episode: PortfolioEpisode) -> dict[str, Any]:
+    strategy_id = f"{episode.seed_key}-{episode.case_id}-case-vectorbt"
+    version = f"3000.case.{episode.ordinal}"
+    dataset = {
+        "dataset_id": HISTORICAL_OHLCV_DATASET_ID,
+        "strategy_id": strategy_id,
+        "source_strategy_spec_id": episode.source_strategy_spec_id,
+        "source_dataset_refs": list(episode.source_dataset_refs),
+        "data_frequency": "daily",
+        "records": _case_vectorbt_records(episode),
+        "metadata": {
+            "case_id": episode.case_id,
+            "validation_signature": episode.validation_signature,
+            "alpha_seed_key": episode.seed_key,
+            "allowed_windows": ["observe", "feedback"],
+            "forbidden_windows_not_used": ["holdout", "future_holdout"],
+        },
+    }
+    backend, real_package_available = _case_vectorbt_backend()
+    previous_backend = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+    if backend is not None:
+        os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+    try:
+        result = run_vectorbt_workflow(
+            dataset,
+            backend=backend,
+            config=BacktestConfig(
+                version=version,
+                requested_by=_persona_id(episode.persona),
+                strategy_params={
+                    "short_window": 3 + (episode.ordinal % 5),
+                    "long_window": 10 + (episode.ordinal % 7),
+                },
+                init_cash=100_000.0 + episode.ordinal * 25.0,
+                fees=0.0005 + (episode.ordinal % 5) * 0.00005,
+                storage_backend="object_store",
+            ),
+        )
+    finally:
+        if previous_backend is None:
+            os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+        else:
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = previous_backend
+
+    artifact_bundle = copy.deepcopy(result.artifact_bundle)
+    registry_entry = copy.deepcopy(result.registry_entry)
+    aggregate_metrics = copy.deepcopy(result.backtest_result.aggregate_metrics)
+    per_instrument_metrics = copy.deepcopy(result.backtest_result.per_instrument_metrics)
+    return {
+        "request_id": f"req-{episode.case_id}-vectorbt-upstream",
+        "session_id": f"session-{episode.case_id}-vectorbt-upstream",
+        "model_id": CASE_UPSTREAM_VECTORBT_MODEL_ID,
+        "status": "completed",
+        "backend": result.backtest_result.backend,
+        "real_package_available": real_package_available,
+        "run_id": result.backtest_result.run_id,
+        "registry_id": registry_entry["registry_id"],
+        "producer_run_id": registry_entry["producer_run_id"],
+        "checksum": registry_entry["checksum"],
+        "strategy_id": strategy_id,
+        "version": version,
+        "dataset_summary": artifact_bundle["dataset_summary"],
+        "backtest_config": artifact_bundle["backtest_config"],
+        "aggregate_metrics": aggregate_metrics,
+        "per_instrument_metrics": per_instrument_metrics,
+        "registry_entry": registry_entry,
+        "artifact_bundle": artifact_bundle,
+        "used_historical_rows": sum(
+            len(window.observe_rows) + len(window.feedback_rows)
+            for window in episode.windows
+        ),
+        "portfolio_instruments": [window.instrument for window in episode.windows],
+        "historical_window_start_indices": [window.start_index for window in episode.windows],
+    }
+
+
+def _case_vectorbt_records(episode: PortfolioEpisode) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for window in episode.windows:
+        for row in (*window.observe_rows, *window.feedback_rows):
+            records.append(
+                {
+                    "instrument": window.instrument,
+                    "date": str(row["date"]),
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": float(row["volume"]),
+                }
+            )
+    return records
+
+
+def _case_vectorbt_backend() -> tuple[Any | None, bool]:
+    mode = os.environ.get("PANTHEON_AGENT_USABILITY_VECTORBT_BACKEND", "auto").strip().lower()
+    if mode in {"stub", "false", "0"}:
+        return None, False
+    real_available = importlib.util.find_spec("vectorbt") is not None
+    if mode == "real" and not real_available:
+        raise RuntimeError("PANTHEON_AGENT_USABILITY_VECTORBT_BACKEND=real but vectorbt is not installed")
+    if real_available:
+        return VectorbtBackend(), True
+    return None, False
+
+
+def _run_case_tracking_feedback(
+    *,
+    episode: PortfolioEpisode,
+    vectorbt_feedback: Mapping[str, Any],
+    tracker_component: str,
+) -> dict[str, Any]:
+    component = tracker_component.strip().lower()
+    if component not in {"mlflow", "wandb"}:
+        raise ValueError(f"unsupported case tracking component: {tracker_component!r}")
+    entry = copy.deepcopy(dict(vectorbt_feedback["registry_entry"]))
+    entry["artifact_state"] = "candidate"
+    entry["deployment_stage"] = "none"
+    entry["evaluation_summary"] = copy.deepcopy(dict(vectorbt_feedback["aggregate_metrics"]))
+    entry.setdefault("metadata", {})
+    if isinstance(entry["metadata"], Mapping):
+        entry["metadata"] = {
+            **dict(entry["metadata"]),
+            "case_id": episode.case_id,
+            "validation_signature": episode.validation_signature,
+            "alpha_seed_key": episode.seed_key,
+            "case_specific_upstream_feedback": True,
+        }
+    if component == "wandb":
+        store_dir = tempfile.mkdtemp(prefix=f"pantheon-wandb-{episode.case_id}-")
+        backend = OfflineWandbLocalBackend(store_dir=store_dir)
+        sync = RegistryExperimentAdapter(backend=backend).sync_registry_entry(entry)
+        run_payload = backend.get_run(sync.experiment_ref.run_id)
+        artifact_readback = backend.get_artifact(sync.experiment_ref.run_id, "artifact_handoff.json")
+        readback = {
+            "run_readback_status": "found" if run_payload else "missing",
+            "artifact_readback_status": "found" if artifact_readback else "missing",
+            "local_store_dir": store_dir,
+            "sync_status": sync.experiment_ref.sync_status,
+        }
+    else:
+        backend = InMemoryMlflowBackend(
+            tracking_uri=f"memory://agent-usability/{episode.case_id}/mlflow"
+        )
+        sync = RegistryExperimentAdapter(backend=backend).sync_registry_entry(entry)
+        run_payload = backend.runs.get(sync.experiment_ref.run_id)
+        artifact_readback = (run_payload or {}).get("artifacts", {}).get("artifact_handoff.json")
+        readback = {
+            "run_readback_status": "found" if run_payload else "missing",
+            "artifact_readback_status": "found" if artifact_readback else "missing",
+            "tracking_uri": backend.tracking_uri,
+            "sync_status": sync.experiment_ref.sync_status,
+        }
+    metrics = copy.deepcopy(dict(sync.record.metrics))
+    return {
+        "request_id": f"req-{episode.case_id}-{component}-tracking",
+        "session_id": f"session-{episode.case_id}-{component}-tracking",
+        "model_id": CASE_UPSTREAM_TRACKING_MODEL_ID,
+        "component": component,
+        "backend": sync.experiment_ref.backend,
+        "tracking_version": getattr(backend, "tracking_version", ""),
+        "status": "completed",
+        "run_id": sync.experiment_ref.run_id,
+        "run_uri": sync.experiment_ref.run_uri,
+        "artifact_uri": sync.experiment_ref.artifact_uri,
+        "artifact_refs": copy.deepcopy(sync.experiment_ref.artifact_refs),
+        "experiment_ref": sync.experiment_ref.to_metadata_ref(),
+        "record": {
+            "experiment_name": sync.record.experiment_name,
+            "run_name": sync.record.run_name,
+            "tags": sync.record.tags,
+            "params": sync.record.params,
+            "artifact_names": sorted(sync.record.artifacts),
+        },
+        "metrics": metrics,
+        "readback": readback,
+        "registry_id": entry["registry_id"],
+        "source_vectorbt_run_id": vectorbt_feedback["run_id"],
+    }
+
+
 def _oss_route_for_index(index: int) -> dict[str, str]:
     return {
         "alpha_model": "qlib" if index % 2 == 0 else "vectorbt",
@@ -971,6 +1291,7 @@ def _build_validation_planning_step(
             "assertion_labels": assertion_labels,
             "execution_steps": [
                 "request_oss_feedback",
+                "request_case_specific_upstream_artifacts",
                 "execute_generation0_observe_policy_on_feedback",
                 "reflect_with_telemetry_memory_and_oss_feedback",
                 "execute_generation1_policy_on_unseen_holdout",
@@ -1146,6 +1467,7 @@ def _assertion_labels_for_episode(
         f"generation_path:{'->'.join(episode.generation_path)}",
         f"regime_path:{'|'.join(episode.regime_path)}",
         f"operational_scenario:{operational_scenario}",
+        "case_upstream_artifacts:vectorbt_tracking",
     ]
 
 
@@ -1268,8 +1590,12 @@ def _score_agent_candidates(
             risk_multiplier=policy_hint_risk,
             score=3.0 + memory_bonus + feedback_score,
             source_windows=("observe", "feedback") if generation == 1 else ("observe", "feedback", "holdout"),
-            evidence_refs=(f"oss://{oss_inputs['policy_candidate']['component']}/{oss_inputs['policy_candidate']['request_id']}",),
-            rationale="Follow the feedback window direction with OSS-proposed risk sizing.",
+            evidence_refs=(
+                f"oss://{oss_inputs['policy_candidate']['component']}/{oss_inputs['policy_candidate']['request_id']}",
+                f"oss://{oss_inputs['backtest']['component']}/{oss_inputs['backtest']['request_id']}",
+                f"oss://{oss_inputs['tracker']['component']}/{oss_inputs['tracker']['request_id']}",
+            ),
+            rationale="Follow the feedback window direction with case-specific backtest and tracking evidence.",
         ),
         PolicyCandidate(
             candidate_id=f"{episode.case_id}-gen{generation}-retain-observe",
@@ -1802,6 +2128,7 @@ def _build_operational_context(
     memory_contexts: Sequence[Mapping[str, Any]],
     evolution_decision: EvolutionDecision,
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
     generated_at: str,
 ) -> dict[str, Any]:
     scenario = _operational_scenario_for_episode(episode)
@@ -1853,6 +2180,7 @@ def _build_operational_context(
         broker_lifecycle=broker_lifecycle,
         lean_engine_replay=lean_engine_replay,
         shioaji_sandbox_lifecycle=shioaji_sandbox_lifecycle,
+        case_upstream_artifacts=case_upstream_artifacts,
     )
     return {
         "operational_signature": _stable_id(
@@ -1871,6 +2199,7 @@ def _build_operational_context(
         "restart_recovery": restart_recovery,
         "autonomous_schedule": autonomous_schedule,
         "lean_engine_replay": lean_engine_replay,
+        "case_upstream_artifacts": _case_upstream_artifacts_case_summary(case_upstream_artifacts),
         "lean_handoff": lean_handoff,
     }
 
@@ -2278,8 +2607,11 @@ def _build_lean_handoff_packet(
     broker_lifecycle: Mapping[str, Any],
     lean_engine_replay: Mapping[str, Any],
     shioaji_sandbox_lifecycle: Mapping[str, Any],
+    case_upstream_artifacts: Mapping[str, Any],
 ) -> dict[str, Any]:
     handoff = oss_inputs["handoff"]
+    vectorbt = case_upstream_artifacts["vectorbt"]
+    tracker = case_upstream_artifacts["tracker"]
     return {
         "packet_id": f"lean-packet-{episode.case_id}",
         "component": handoff["component"],
@@ -2296,10 +2628,18 @@ def _build_lean_handoff_packet(
         "lean_engine_replay_status": lean_engine_replay["status"],
         "shioaji_sandbox_lifecycle_id": shioaji_sandbox_lifecycle["lifecycle_id"],
         "shioaji_sandbox_lifecycle_status": shioaji_sandbox_lifecycle["status"],
+        "case_vectorbt_request_id": vectorbt["request_id"],
+        "case_vectorbt_backend": vectorbt["backend"],
+        "case_vectorbt_registry_id": vectorbt["registry_id"],
+        "case_tracking_request_id": tracker["request_id"],
+        "case_tracking_backend": tracker["backend"],
+        "case_tracking_run_id": tracker["run_id"],
         "runtime_bundle_refs": [
             f"strategy://{episode.seed_key}-agent-usability-hardening/{final_policy['policy_id']}",
             f"evolution://{evolution_decision.decision_id}",
             f"oss://{handoff['component']}/{handoff['request_id']}",
+            f"oss://vectorbt/{vectorbt['request_id']}",
+            f"experiment://{tracker['backend']}/{tracker['run_id']}",
             f"lean-engine://{lean_engine_replay['replay_id']}",
             f"broker-sandbox://{shioaji_sandbox_lifecycle['lifecycle_id']}",
         ],
@@ -2369,6 +2709,8 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
         and packet.get("target_stage") == "paper"
         and packet.get("lean_engine_replay_status") == "passed"
         and packet.get("shioaji_sandbox_lifecycle_status") == "passed"
+        and packet.get("case_vectorbt_request_id")
+        and packet.get("case_tracking_run_id")
         and packet.get("broker_live_submitted") is False
         and packet.get("runtime_bundle_refs")
     )
@@ -2460,6 +2802,45 @@ def _shioaji_sandbox_lifecycle_is_usable(lifecycle: Mapping[str, Any]) -> bool:
     )
 
 
+def _case_upstream_artifacts_are_usable(
+    *,
+    episode: PortfolioEpisode,
+    artifacts: Mapping[str, Any],
+) -> bool:
+    vectorbt = artifacts.get("vectorbt", {})
+    tracker = artifacts.get("tracker", {})
+    dataset_summary = vectorbt.get("dataset_summary", {})
+    readback = tracker.get("readback", {})
+    persona_response = artifacts.get("persona_response", {})
+    return bool(
+        artifacts.get("vectorbt_model_id") == CASE_UPSTREAM_VECTORBT_MODEL_ID
+        and artifacts.get("tracking_model_id") == CASE_UPSTREAM_TRACKING_MODEL_ID
+        and artifacts.get("allowed_windows") == ["observe", "feedback"]
+        and artifacts.get("forbidden_windows_not_used") == ["holdout", "future_holdout"]
+        and vectorbt.get("status") == "completed"
+        and vectorbt.get("backend") in {"vectorbt_portfolio", "stub_backtest"}
+        and vectorbt.get("request_id") == f"req-{episode.case_id}-vectorbt-upstream"
+        and dataset_summary.get("dataset_id") == HISTORICAL_OHLCV_DATASET_ID
+        and set(dataset_summary.get("instruments", [])) == {window.instrument for window in episode.windows}
+        and int(dataset_summary.get("num_instruments", 0)) == PORTFOLIO_LEG_COUNT
+        and int(dataset_summary.get("total_bars", 0)) == PORTFOLIO_LEG_COUNT * (LOOKBACK_BARS + FEEDBACK_BARS)
+        and set(episode.source_dataset_refs).issubset(set(dataset_summary.get("source_dataset_refs", [])))
+        and vectorbt.get("registry_id")
+        and vectorbt.get("run_id")
+        and tracker.get("status") == "completed"
+        and tracker.get("component") in {"mlflow", "wandb"}
+        and tracker.get("backend") == tracker.get("component")
+        and tracker.get("source_vectorbt_run_id") == vectorbt.get("run_id")
+        and tracker.get("registry_id") == vectorbt.get("registry_id")
+        and readback.get("run_readback_status") == "found"
+        and readback.get("artifact_readback_status") == "found"
+        and persona_response.get("used_before_generation1_decision") is True
+        and persona_response.get("used_before_generation2_decision") is True
+        and f"oss://vectorbt/{vectorbt.get('request_id')}" in persona_response.get("evidence_refs", [])
+        and f"experiment://{tracker.get('backend')}/{tracker.get('run_id')}" in persona_response.get("evidence_refs", [])
+    )
+
+
 def _build_usability_dimensions(
     *,
     episode: PortfolioEpisode,
@@ -2472,6 +2853,7 @@ def _build_usability_dimensions(
     decision_traces: Sequence[Mapping[str, Any]],
     memory_contexts: Sequence[Mapping[str, Any]],
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
     validation_plan: Mapping[str, Any],
     operational_context: Mapping[str, Any],
 ) -> dict[str, float]:
@@ -2517,6 +2899,10 @@ def _build_usability_dimensions(
     shioaji_sandbox = 1.0 if _shioaji_sandbox_lifecycle_is_usable(
         operational_context["shioaji_sandbox_lifecycle"]
     ) else 0.0
+    case_upstream_feedback = 1.0 if _case_upstream_artifacts_are_usable(
+        episode=episode,
+        artifacts=case_upstream_artifacts,
+    ) else 0.0
     lean_handoff = 1.0 if _lean_handoff_packet_is_usable(operational_context["lean_handoff"]) else 0.0
     return {
         "return_improvement": return_improvement,
@@ -2538,6 +2924,7 @@ def _build_usability_dimensions(
         "autonomous_scheduler": autonomous_scheduler,
         "lean_engine_replay": lean_engine_replay,
         "shioaji_sandbox_lifecycle": shioaji_sandbox,
+        "case_specific_upstream_artifact_feedback": case_upstream_feedback,
         "lean_handoff_packet": lean_handoff,
     }
 
@@ -2556,6 +2943,7 @@ def _diagnose_validation_execution(
     evolution_decision: EvolutionDecision,
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
     operational_context: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
@@ -2688,6 +3076,29 @@ def _diagnose_validation_execution(
             {
                 "packet_id": operational_context["lean_handoff"]["packet_id"],
                 "component": operational_context["lean_handoff"]["component"],
+                "case_vectorbt_request_id": operational_context["lean_handoff"].get("case_vectorbt_request_id"),
+                "case_tracking_run_id": operational_context["lean_handoff"].get("case_tracking_run_id"),
+            },
+        ),
+        _diagnostic_check(
+            "case_specific_upstream_artifacts_drive_persona_decision",
+            _case_upstream_artifacts_are_usable(
+                episode=episode,
+                artifacts=case_upstream_artifacts,
+            )
+            and all(
+                f"oss://vectorbt/{case_upstream_artifacts['vectorbt']['request_id']}" in trace["evidence_refs"]
+                and any(
+                    f"oss://vectorbt/{case_upstream_artifacts['vectorbt']['request_id']}" in candidate["evidence_refs"]
+                    for candidate in trace["candidates"]
+                )
+                for trace in decision_traces
+            ),
+            {
+                "vectorbt_request_id": case_upstream_artifacts["vectorbt"]["request_id"],
+                "vectorbt_backend": case_upstream_artifacts["vectorbt"]["backend"],
+                "tracking_backend": case_upstream_artifacts["tracker"]["backend"],
+                "tracking_run_id": case_upstream_artifacts["tracker"]["run_id"],
             },
         ),
         _diagnostic_check(
@@ -2762,6 +3173,49 @@ def _validation_plan_is_complete(validation_plan: Mapping[str, Any]) -> bool:
     )
 
 
+def _case_upstream_artifacts_case_summary(artifacts: Mapping[str, Any]) -> dict[str, Any]:
+    vectorbt = artifacts["vectorbt"]
+    tracker = artifacts["tracker"]
+    return {
+        "feedback_id": artifacts["feedback_id"],
+        "vectorbt_model_id": artifacts["vectorbt_model_id"],
+        "tracking_model_id": artifacts["tracking_model_id"],
+        "allowed_windows": list(artifacts["allowed_windows"]),
+        "forbidden_windows_not_used": list(artifacts["forbidden_windows_not_used"]),
+        "vectorbt": {
+            "request_id": vectorbt["request_id"],
+            "session_id": vectorbt["session_id"],
+            "backend": vectorbt["backend"],
+            "real_package_available": vectorbt["real_package_available"],
+            "run_id": vectorbt["run_id"],
+            "registry_id": vectorbt["registry_id"],
+            "producer_run_id": vectorbt["producer_run_id"],
+            "checksum": vectorbt["checksum"],
+            "dataset_summary": copy.deepcopy(vectorbt["dataset_summary"]),
+            "backtest_config": copy.deepcopy(vectorbt["backtest_config"]),
+            "aggregate_metrics": copy.deepcopy(vectorbt["aggregate_metrics"]),
+            "portfolio_instruments": list(vectorbt["portfolio_instruments"]),
+            "historical_window_start_indices": list(vectorbt["historical_window_start_indices"]),
+        },
+        "tracker": {
+            "request_id": tracker["request_id"],
+            "session_id": tracker["session_id"],
+            "component": tracker["component"],
+            "backend": tracker["backend"],
+            "tracking_version": tracker["tracking_version"],
+            "run_id": tracker["run_id"],
+            "run_uri": tracker["run_uri"],
+            "artifact_uri": tracker["artifact_uri"],
+            "registry_id": tracker["registry_id"],
+            "source_vectorbt_run_id": tracker["source_vectorbt_run_id"],
+            "metrics": copy.deepcopy(tracker["metrics"]),
+            "readback": copy.deepcopy(tracker["readback"]),
+            "record": copy.deepcopy(tracker["record"]),
+        },
+        "persona_response": copy.deepcopy(artifacts["persona_response"]),
+    }
+
+
 def _build_case_result(
     *,
     episode: PortfolioEpisode,
@@ -2776,6 +3230,7 @@ def _build_case_result(
     evolution_decision: EvolutionDecision,
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
     operational_context: Mapping[str, Any],
     validation_plan: Mapping[str, Any],
     validation_diagnostics: Mapping[str, Any],
@@ -2825,6 +3280,7 @@ def _build_case_result(
                 role: result["drives_persona_step"] for role, result in oss_inputs.items()
             },
         },
+        "case_upstream_artifacts": _case_upstream_artifacts_case_summary(case_upstream_artifacts),
         "generation_results": generation_results,
         "scores": {
             "baseline_feedback": evaluations[0]["score"],
@@ -2895,6 +3351,9 @@ def _build_case_result(
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
             "lean_engine_replay_uses_runtime_binding": usability_dimensions["lean_engine_replay"] == 1.0,
             "shioaji_sandbox_lifecycle_reconciled": usability_dimensions["shioaji_sandbox_lifecycle"] == 1.0,
+            "case_specific_upstream_artifact_feedback": usability_dimensions[
+                "case_specific_upstream_artifact_feedback"
+            ] == 1.0,
             "lean_handoff_packet_materialized": usability_dimensions["lean_handoff_packet"] == 1.0,
             "evolved": _enum_value(evolution_decision.decision_state) == EvolutionDecisionState.EXECUTED.value,
         },
@@ -2964,6 +3423,18 @@ def _build_summary(
         "shioaji_sandbox_run_modes": sorted({
             case["operational_context"]["shioaji_sandbox_lifecycle"]["run_mode"] for case in cases
         }),
+        "case_vectorbt_backends": sorted({
+            case["case_upstream_artifacts"]["vectorbt"]["backend"] for case in cases
+        }),
+        "case_tracking_components": sorted({
+            case["case_upstream_artifacts"]["tracker"]["component"] for case in cases
+        }),
+        "case_tracking_backends": sorted({
+            case["case_upstream_artifacts"]["tracker"]["backend"] for case in cases
+        }),
+        "case_upstream_allowed_windows": sorted({
+            "+".join(case["case_upstream_artifacts"]["allowed_windows"]) for case in cases
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -3016,6 +3487,17 @@ def _build_summary(
         "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
         "lean_engine_replay_count": sum(1 for item in usable if item["lean_engine_replay_uses_runtime_binding"]),
         "shioaji_sandbox_lifecycle_count": sum(1 for item in usable if item["shioaji_sandbox_lifecycle_reconciled"]),
+        "case_specific_vectorbt_backtest_count": sum(
+            1 for item in usable if item["case_specific_upstream_artifact_feedback"]
+        ),
+        "case_specific_tracking_roundtrip_count": sum(
+            1 for item in usable if item["case_specific_upstream_artifact_feedback"]
+        ),
+        "case_vectorbt_real_backend_count": sum(
+            1
+            for case in cases
+            if case["case_upstream_artifacts"]["vectorbt"]["backend"] == "vectorbt_portfolio"
+        ),
         "lean_handoff_packet_count": sum(1 for item in usable if item["lean_handoff_packet_materialized"]),
         "validation_gap_question_count": sum(
             len(case["validation_cycle"]["planning"]["questions_asked"]) for case in cases
@@ -3037,6 +3519,7 @@ def _build_summary(
             "Every case trades a three-instrument portfolio across three generations through paper runtime fills.",
             "Every case writes memory and retrieves that memory for the next generation's decision.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
+            "Every case has a case-specific vectorbt historical backtest artifact and a case-specific experiment tracking readback before persona decisions.",
             "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
@@ -3086,9 +3569,28 @@ def _policy_turnover(policy: Mapping[str, Any]) -> float:
 def _risk_hint_from_oss(oss_inputs: Mapping[str, Mapping[str, Any]], generation: int) -> float:
     component = str(oss_inputs["policy_candidate"]["component"])
     base = {"finrl": 0.75, "rllib": 0.85, "ray_tune": 0.95}.get(component, 0.75)
+    backtest_metrics = oss_inputs.get("backtest", {}).get("metrics", {})
+    if isinstance(backtest_metrics, Mapping):
+        mean_return = _finite_float(backtest_metrics.get("mean_total_return"), 0.0)
+        mean_drawdown = abs(_finite_float(backtest_metrics.get("mean_max_drawdown"), 0.0))
+        total_trades = int(_finite_float(backtest_metrics.get("total_trades"), 0.0))
+        if mean_return > 0:
+            base += min(0.08, mean_return)
+        if mean_drawdown > 0.15:
+            base -= 0.05
+        if total_trades <= 0:
+            base -= 0.03
     if generation >= 2:
-        return min(1.15, base + 0.3)
-    return base
+        return round(min(1.15, max(0.35, base + 0.3)), 4)
+    return round(min(1.15, max(0.35, base)), 4)
+
+
+def _finite_float(value: Any, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
 
 
 def _trace_has_no_forbidden_window_leakage(trace: Mapping[str, Any]) -> bool:
