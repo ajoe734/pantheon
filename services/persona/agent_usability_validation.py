@@ -152,6 +152,11 @@ NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
 PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
+PERSONA_ALPHA_SEED_REVISION_MODEL_ID = "persona_alpha_seed_revision_from_oss_v1"
+ALPHA_SEED_REVISION_ACTION_BY_COMPONENT: dict[str, str] = {
+    "qlib": "apply_qlib_alpha_seed_update",
+    "vectorbt": "apply_vectorbt_alpha_backtest_seed_update",
+}
 TRACKING_DIVERGENCE_TYPES_BY_SCENARIO: dict[str, str] = {
     "cancel_replace_readback": "run_tag_backend_normalization",
     "limit_miss_reprice": "artifact_uri_normalization",
@@ -513,6 +518,7 @@ def run_agent_usability_validations(
             oss_followup_loop=oss_followup_loop,
             oss_disagreement_arbitration=oss_disagreement_arbitration,
             tracking_reconciliation=tracking_reconciliation,
+            alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
         )
         memory_write0 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -573,6 +579,7 @@ def run_agent_usability_validations(
             oss_followup_loop=oss_followup_loop,
             oss_disagreement_arbitration=oss_disagreement_arbitration,
             tracking_reconciliation=tracking_reconciliation,
+            alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
         )
         memory_write1 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -1036,6 +1043,12 @@ def _build_case_upstream_artifact_feedback(
         oss_inputs=oss_inputs,
         vectorbt_feedback=vectorbt_feedback,
     )
+    alpha_seed_revision = _build_alpha_seed_revision_from_oss(
+        episode=episode,
+        vectorbt_feedback=vectorbt_feedback,
+        tracker_feedback=tracker_feedback,
+        selected_oss_feedback=selected_oss_feedback,
+    )
     return {
         "feedback_id": f"case-upstream-artifacts-{episode.case_id}",
         "vectorbt_model_id": CASE_UPSTREAM_VECTORBT_MODEL_ID,
@@ -1050,14 +1063,17 @@ def _build_case_upstream_artifact_feedback(
         "vectorbt": vectorbt_feedback,
         "tracker": tracker_feedback,
         "selected_oss": selected_oss_feedback,
+        "alpha_seed_revision": alpha_seed_revision,
         "persona_response": {
             "ooda_sequence": ["decide", "learn", "orient", "observe"],
             "next_decision_action": "score_case_specific_backtest_candidate",
             "next_tracking_action": "cite_case_specific_experiment_ref",
+            "next_alpha_seed_action": alpha_seed_revision["revision"]["action"],
             "evidence_refs": [
                 f"oss://vectorbt/{vectorbt_feedback['request_id']}",
                 f"oss://{tracker_feedback['component']}/{tracker_feedback['request_id']}",
                 f"experiment://{tracker_feedback['backend']}/{tracker_feedback['run_id']}",
+                alpha_seed_revision["revision_ref"],
                 *[
                     f"oss://{entry['component']}/{entry['request_id']}"
                     for entry in selected_oss_feedback.values()
@@ -1080,6 +1096,7 @@ def _apply_case_upstream_artifacts_to_oss_inputs(
     vectorbt_feedback = case_upstream_artifacts["vectorbt"]
     tracker_feedback = case_upstream_artifacts["tracker"]
     selected_oss_feedback = case_upstream_artifacts["selected_oss"]
+    alpha_seed_revision = case_upstream_artifacts["alpha_seed_revision"]
     updated["backtest"] = {
         "component": "vectorbt",
         "persona_id": case_upstream_artifacts["persona_id"],
@@ -1099,6 +1116,8 @@ def _apply_case_upstream_artifacts_to_oss_inputs(
         "refs": {
             "source_dataset_refs": list(vectorbt_feedback["dataset_summary"]["source_dataset_refs"]),
             "registry_id": vectorbt_feedback["registry_id"],
+            "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
+            "alpha_seed_revision_key": alpha_seed_revision["revision"]["revision_key"],
         },
         "persona_followup": {
             "persona_id": case_upstream_artifacts["persona_id"],
@@ -1108,7 +1127,11 @@ def _apply_case_upstream_artifacts_to_oss_inputs(
             "trigger_artifact_family": "vectorbt_backtest",
             "ooda_phase": "decide",
             "next_action": "draft_strategy_proposal",
-            "evidence_refs": [vectorbt_feedback["run_id"], vectorbt_feedback["registry_id"]],
+            "evidence_refs": [
+                vectorbt_feedback["run_id"],
+                vectorbt_feedback["registry_id"],
+                alpha_seed_revision["revision_ref"],
+            ],
         },
         "seed_key": case_upstream_artifacts["seed_key"],
         "drives_persona_step": "alpha_seed_update",
@@ -1149,6 +1172,13 @@ def _apply_case_upstream_artifacts_to_oss_inputs(
             result,
             seed_key=str(case_upstream_artifacts["seed_key"]),
         )
+    updated["alpha_model"]["alpha_seed_revision"] = copy.deepcopy(dict(alpha_seed_revision))
+    updated["alpha_model"].setdefault("refs", {})["alpha_seed_revision_ref"] = alpha_seed_revision[
+        "revision_ref"
+    ]
+    updated["alpha_model"]["persona_followup"].setdefault("evidence_refs", []).append(
+        alpha_seed_revision["revision_ref"]
+    )
     return updated
 
 
@@ -1456,6 +1486,132 @@ def _oss_disagreement_observed_signals(
     }
 
 
+def _build_alpha_seed_revision_from_oss(
+    *,
+    episode: PortfolioEpisode,
+    vectorbt_feedback: Mapping[str, Any],
+    tracker_feedback: Mapping[str, Any],
+    selected_oss_feedback: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    alpha_feedback = selected_oss_feedback["alpha_model"]
+    policy_feedback = selected_oss_feedback["policy_candidate"]
+    reflection_feedback = selected_oss_feedback["reflection_artifact"]
+    risk_feedback = selected_oss_feedback["risk_analytics"]
+    alpha_component = str(alpha_feedback["component"])
+    revision_action = ALPHA_SEED_REVISION_ACTION_BY_COMPONENT[alpha_component]
+    revision_id = f"alpha-seed-revision-{episode.case_id}"
+    revision_ref = f"alpha-seed-revision://{revision_id}"
+    repair_ref = f"{revision_ref}/{alpha_component}/{revision_action}"
+    alpha_ref = f"oss://{alpha_component}/{alpha_feedback['request_id']}"
+    vectorbt_ref = f"oss://vectorbt/{vectorbt_feedback['request_id']}"
+    tracker_ref = f"oss://{tracker_feedback['component']}/{tracker_feedback['request_id']}"
+    experiment_ref = f"experiment://{tracker_feedback['backend']}/{tracker_feedback['run_id']}"
+    policy_ref = f"oss://{policy_feedback['component']}/{policy_feedback['request_id']}"
+    reflection_ref = f"oss://{reflection_feedback['component']}/{reflection_feedback['request_id']}"
+    risk_ref = f"oss://{risk_feedback['component']}/{risk_feedback['request_id']}"
+    source_refs = [
+        f"alpha-seed://{episode.seed_key}",
+        alpha_ref,
+        vectorbt_ref,
+        tracker_ref,
+        experiment_ref,
+    ]
+    revision = {
+        "action": revision_action,
+        "revision_key": f"{episode.seed_key}:{alpha_component}:{episode.case_id}",
+        "base_seed_key": episode.seed_key,
+        "base_seed_ref": f"alpha-seed://{episode.seed_key}",
+        "source_strategy_spec_id": episode.source_strategy_spec_id,
+        "source_alpha_component": alpha_component,
+        "source_alpha_request_id": alpha_feedback["request_id"],
+        "source_alpha_artifact_family": alpha_feedback["artifact_family"],
+        "source_alpha_registry_id": alpha_feedback.get("registry_id"),
+        "source_alpha_producer_run_id": alpha_feedback.get("producer_run_id"),
+        "source_alpha_metrics_hash": _stable_payload_hash(
+            "alpha-seed-revision-source-metrics",
+            {
+                "component": alpha_component,
+                "metrics": alpha_feedback.get("metrics", {}),
+                "primary_output": alpha_feedback.get("primary_output", {}),
+            },
+        ),
+        "downstream_vectorbt_request_id": vectorbt_feedback["request_id"],
+        "downstream_tracker_run_id": tracker_feedback["run_id"],
+        "downstream_policy_candidate_request_id": policy_feedback["request_id"],
+        "portfolio_instruments": [window.instrument for window in episode.windows],
+        "historical_window_start_indices": [window.start_index for window in episode.windows],
+        "allowed_windows": ["observe", "feedback"],
+        "forbidden_windows_not_used": ["holdout", "future_holdout"],
+    }
+    candidate_score_adjustments = {
+        "feedback-adapt": 0.055 if alpha_component == "qlib" else 0.045,
+        "retain-observe": 0.01,
+        "risk-off": 0.015,
+        "contrarian-check": 0.005,
+    }
+    candidate_evidence_refs_by_action = {
+        "feedback-adapt": [
+            revision_ref,
+            repair_ref,
+            f"alpha-seed://{episode.seed_key}",
+            alpha_ref,
+            vectorbt_ref,
+            tracker_ref,
+            experiment_ref,
+            policy_ref,
+        ],
+        "retain-observe": [revision_ref, f"alpha-seed://{episode.seed_key}"],
+        "risk-off": [revision_ref, repair_ref, alpha_ref, risk_ref],
+        "contrarian-check": [revision_ref, repair_ref, reflection_ref],
+    }
+    replay = {
+        "replayable": True,
+        "source_alpha_completed": alpha_feedback.get("status") == "completed",
+        "alpha_revision_generated": bool(revision["revision_key"]),
+        "downstream_backtest_bound": revision["downstream_vectorbt_request_id"] == vectorbt_feedback["request_id"],
+        "downstream_tracker_bound": tracker_feedback.get("source_vectorbt_run_id") == vectorbt_feedback.get("run_id"),
+        "policy_candidate_bound": revision["downstream_policy_candidate_request_id"] == policy_feedback["request_id"],
+        "no_forbidden_window_sources": revision["allowed_windows"] == ["observe", "feedback"]
+        and revision["forbidden_windows_not_used"] == ["holdout", "future_holdout"],
+        "scorer_adjustment_available": float(candidate_score_adjustments["feedback-adapt"]) > 0.0,
+        "feedback_adapt_gets_alpha_backtest_tracker_refs": set(source_refs).issubset(
+            set(candidate_evidence_refs_by_action["feedback-adapt"])
+        ),
+    }
+    return {
+        "revision_id": revision_id,
+        "revision_ref": revision_ref,
+        "model_id": PERSONA_ALPHA_SEED_REVISION_MODEL_ID,
+        "status": "applied" if all(replay.values()) else "blocked",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "alpha_component": alpha_component,
+        "source_feedback_id": f"case-upstream-artifacts-{episode.case_id}",
+        "source_refs": source_refs,
+        "revision": revision,
+        "candidate_score_adjustments": candidate_score_adjustments,
+        "candidate_evidence_refs_by_action": candidate_evidence_refs_by_action,
+        "persona_alpha_response": {
+            "next_action": "score_candidates_with_alpha_seed_revision",
+            "preferred_candidate_action": "feedback-adapt",
+            "revision_actions": [revision_action],
+            "evidence_refs": [revision_ref, repair_ref, *source_refs, policy_ref],
+            "used_by_generations": [1, 2],
+        },
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "alpha-seed-revision-from-oss",
+            {
+                "case_id": episode.case_id,
+                "alpha_component": alpha_component,
+                "revision": revision,
+                "candidate_score_adjustments": candidate_score_adjustments,
+                "candidate_evidence_refs_by_action": candidate_evidence_refs_by_action,
+            },
+        ),
+    }
+
+
 def _build_tracking_readback_reconciliation(
     *,
     episode: PortfolioEpisode,
@@ -1684,6 +1840,16 @@ def _tracking_reconciliation_refs_for_action(
     action: str,
 ) -> list[str]:
     refs_by_action = reconciliation.get("candidate_evidence_refs_by_action", {})
+    if not isinstance(refs_by_action, Mapping):
+        return []
+    return [str(ref) for ref in refs_by_action.get(action, [])]
+
+
+def _alpha_seed_revision_refs_for_action(
+    alpha_seed_revision: Mapping[str, Any],
+    action: str,
+) -> list[str]:
+    refs_by_action = alpha_seed_revision.get("candidate_evidence_refs_by_action", {})
     if not isinstance(refs_by_action, Mapping):
         return []
     return [str(ref) for ref in refs_by_action.get(action, [])]
@@ -2618,6 +2784,7 @@ def _build_persona_reasoning_response(
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
+    alpha_seed_revision: Mapping[str, Any],
 ) -> dict[str, Any]:
     allowed_windows = ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"]
     forbidden_windows = ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"]
@@ -2639,6 +2806,7 @@ def _build_persona_reasoning_response(
             str(oss_followup_loop["loop_ref"]),
             str(oss_disagreement_arbitration["arbitration_ref"]),
             str(tracking_reconciliation["reconciliation_ref"]),
+            str(alpha_seed_revision["revision_ref"]),
             *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
         ],
         "portfolio_instruments": [window.instrument for window in episode.windows],
@@ -2656,6 +2824,7 @@ def _build_persona_reasoning_response(
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
         "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
+        "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
         "oss_followup_request_ids": [
             followup["request"]["request_id"]
             for followup in oss_followup_loop["followups"]
@@ -2669,6 +2838,7 @@ def _build_persona_reasoning_response(
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
+        alpha_seed_revision=alpha_seed_revision,
     )
     reasoning_response = {
         "response_id": f"persona-reasoning-response-{episode.case_id}-gen{generation}",
@@ -2682,6 +2852,7 @@ def _build_persona_reasoning_response(
             "read_telemetry_outcome",
             "retrieve_or_declare_memory_context",
             "inspect_alpha_policy_reflection_risk_tracking_oss_feedback",
+            "bind_alpha_seed_revision_from_selected_oss",
             "process_oss_response_followup_requests",
             "arbitrate_multi_oss_disagreement",
             "reconcile_tracking_readback_before_scoring",
@@ -2722,6 +2893,15 @@ def _build_persona_reasoning_response(
                 dict(tracking_reconciliation["candidate_score_adjustments"])
             ),
         },
+        "alpha_seed_revision_usage": {
+            "revision_ref": alpha_seed_revision["revision_ref"],
+            "model_id": alpha_seed_revision["model_id"],
+            "alpha_component": alpha_seed_revision["alpha_component"],
+            "revision_action": alpha_seed_revision["revision"]["action"],
+            "candidate_score_adjustments": copy.deepcopy(
+                dict(alpha_seed_revision["candidate_score_adjustments"])
+            ),
+        },
         "candidate_blueprints": candidate_blueprints,
         "forbidden_windows_not_used": forbidden_windows,
         "output_contract": {
@@ -2755,6 +2935,7 @@ def _persona_reasoning_candidate_blueprints(
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
+    alpha_seed_revision: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     del oss_inputs
     shared_windows = list(allowed_windows)
@@ -2773,6 +2954,10 @@ def _persona_reasoning_candidate_blueprints(
     risk_tracking_refs = _tracking_reconciliation_refs_for_action(tracking_reconciliation, "risk-off")
     retain_tracking_refs = _tracking_reconciliation_refs_for_action(tracking_reconciliation, "retain-observe")
     contrarian_tracking_refs = _tracking_reconciliation_refs_for_action(tracking_reconciliation, "contrarian-check")
+    feedback_alpha_refs = _alpha_seed_revision_refs_for_action(alpha_seed_revision, "feedback-adapt")
+    risk_alpha_refs = _alpha_seed_revision_refs_for_action(alpha_seed_revision, "risk-off")
+    retain_alpha_refs = _alpha_seed_revision_refs_for_action(alpha_seed_revision, "retain-observe")
+    contrarian_alpha_refs = _alpha_seed_revision_refs_for_action(alpha_seed_revision, "contrarian-check")
     return [
         {
             "action": "feedback-adapt",
@@ -2792,12 +2977,13 @@ def _persona_reasoning_candidate_blueprints(
                 *feedback_followup_refs,
                 *feedback_arbitration_refs,
                 *feedback_tracking_refs,
+                *feedback_alpha_refs,
                 *memory_refs,
             ],
             "memory_adjustment_key": "feedback-adapt",
             "rationale": (
                 "Use the feedback direction because alpha, policy, reflection, risk, backtest, "
-                "tracking reconciliation, and retrieved memory support an adaptive portfolio mutation."
+                "alpha seed revision, tracking reconciliation, and retrieved memory support an adaptive portfolio mutation."
             ),
         },
         {
@@ -2807,7 +2993,12 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "baseline_policy",
             "source_windows": ["observe"],
             "evidence_roles": [],
-            "extra_evidence_refs": [*retain_followup_refs, *retain_arbitration_refs, *retain_tracking_refs],
+            "extra_evidence_refs": [
+                *retain_followup_refs,
+                *retain_arbitration_refs,
+                *retain_tracking_refs,
+                *retain_alpha_refs,
+            ],
             "memory_adjustment_key": "retain-observe",
             "rationale": "Keep the observe-only baseline as a scored alternative before rejecting it.",
         },
@@ -2818,9 +3009,15 @@ def _persona_reasoning_candidate_blueprints(
             "risk_source": "risk_analytics_reduced_exposure",
             "source_windows": feedback_windows,
             "evidence_roles": ["risk_analytics"],
-            "extra_evidence_refs": [*risk_followup_refs, *risk_arbitration_refs, *risk_tracking_refs, *memory_refs]
+            "extra_evidence_refs": [
+                *risk_followup_refs,
+                *risk_arbitration_refs,
+                *risk_tracking_refs,
+                *risk_alpha_refs,
+                *memory_refs,
+            ]
             if float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
-            else [*risk_followup_refs, *risk_arbitration_refs, *risk_tracking_refs],
+            else [*risk_followup_refs, *risk_arbitration_refs, *risk_tracking_refs, *risk_alpha_refs],
             "memory_adjustment_key": "risk-off",
             "rationale": "Use feedback direction but reduce exposure when the risk interpretation asks for caution.",
         },
@@ -2835,6 +3032,7 @@ def _persona_reasoning_candidate_blueprints(
                 *contrarian_followup_refs,
                 *contrarian_arbitration_refs,
                 *contrarian_tracking_refs,
+                *contrarian_alpha_refs,
             ],
             "memory_adjustment_key": "contrarian-check",
             "rationale": "Retain a contrarian control candidate for scored comparison and rejection.",
@@ -2915,6 +3113,18 @@ def _evaluate_persona_reasoning_response(
             },
         ),
         _persona_risk_check(
+            "reasoning_uses_alpha_seed_revision",
+            request.get("alpha_seed_revision_ref")
+            == response.get("alpha_seed_revision_usage", {}).get("revision_ref")
+            and request.get("alpha_seed_revision_ref") in request.get("input_refs", [])
+            and response.get("alpha_seed_revision_usage", {}).get("model_id")
+            == PERSONA_ALPHA_SEED_REVISION_MODEL_ID,
+            {
+                "alpha_seed_revision_ref": request.get("alpha_seed_revision_ref"),
+                "usage": copy.deepcopy(dict(response.get("alpha_seed_revision_usage", {}))),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_routes_to_scorer_and_risk_evaluator",
             response.get("output_contract", {}).get("scorer_required") is True
             and response.get("output_contract", {}).get("risk_evaluator_required") is True,
@@ -2940,6 +3150,7 @@ def _build_agent_decision_trace(
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
+    alpha_seed_revision: Mapping[str, Any],
 ) -> dict[str, Any]:
     memory_influence = _memory_influence_profile(prior_memory)
     trigger = (
@@ -2959,6 +3170,7 @@ def _build_agent_decision_trace(
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
+        alpha_seed_revision=alpha_seed_revision,
     )
     candidates = _score_agent_candidates(
         episode=episode,
@@ -2972,6 +3184,7 @@ def _build_agent_decision_trace(
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
+        alpha_seed_revision=alpha_seed_revision,
     )
     selected = max(candidates, key=lambda item: item.score)
     candidate_dicts = [_candidate_to_dict(candidate) for candidate in candidates]
@@ -2986,6 +3199,7 @@ def _build_agent_decision_trace(
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
         "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
+        "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
     }
     evidence_refs = [
         f"telemetry-event://{telemetry_event['event_id']}",
@@ -2996,6 +3210,7 @@ def _build_agent_decision_trace(
         str(oss_followup_loop["loop_ref"]),
         str(oss_disagreement_arbitration["arbitration_ref"]),
         str(tracking_reconciliation["reconciliation_ref"]),
+        str(alpha_seed_revision["revision_ref"]),
     ]
     agent_decision_artifact = _build_persona_decision_artifact(
         episode=episode,
@@ -3011,6 +3226,7 @@ def _build_agent_decision_trace(
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
+        alpha_seed_revision=alpha_seed_revision,
         decision_inputs=decision_inputs,
         evidence_refs=evidence_refs,
         candidates=candidate_dicts,
@@ -3050,6 +3266,7 @@ def _score_agent_candidates(
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
+    alpha_seed_revision: Mapping[str, Any],
 ) -> list[PolicyCandidate]:
     del prior_memory
     feedback_directions = {
@@ -3068,6 +3285,7 @@ def _score_agent_candidates(
     followup_score_adjustments = dict(oss_followup_loop["candidate_score_adjustments"])
     disagreement_score_adjustments = dict(oss_disagreement_arbitration["candidate_score_adjustments"])
     tracking_score_adjustments = dict(tracking_reconciliation["candidate_score_adjustments"])
+    alpha_seed_score_adjustments = dict(alpha_seed_revision["candidate_score_adjustments"])
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_score_adjustments = dict(memory_influence["candidate_score_adjustments"])
     memory_ref = memory_influence.get("influence_ref")
@@ -3097,6 +3315,7 @@ def _score_agent_candidates(
                 + float(followup_score_adjustments["feedback-adapt"])
                 + float(disagreement_score_adjustments["feedback-adapt"])
                 + float(tracking_score_adjustments["feedback-adapt"])
+                + float(alpha_seed_score_adjustments["feedback-adapt"])
                 + feedback_score
                 + policy_quality
                 + reflection_quality
@@ -3113,6 +3332,7 @@ def _score_agent_candidates(
                 + float(followup_score_adjustments["retain-observe"])
                 + float(disagreement_score_adjustments["retain-observe"])
                 + float(tracking_score_adjustments["retain-observe"])
+                + float(alpha_seed_score_adjustments["retain-observe"])
                 + max(feedback_score, 0)
             ),
             "fallback_evidence_refs": (f"policy://{baseline_policy['policy_id']}",),
@@ -3126,6 +3346,7 @@ def _score_agent_candidates(
                 + float(followup_score_adjustments["risk-off"])
                 + float(disagreement_score_adjustments["risk-off"])
                 + float(tracking_score_adjustments["risk-off"])
+                + float(alpha_seed_score_adjustments["risk-off"])
                 + max(0.0, risk_penalty)
             ),
             "fallback_evidence_refs": tuple(risk_off_evidence_refs),
@@ -3139,6 +3360,7 @@ def _score_agent_candidates(
                 + float(followup_score_adjustments["contrarian-check"])
                 + float(disagreement_score_adjustments["contrarian-check"])
                 + float(tracking_score_adjustments["contrarian-check"])
+                + float(alpha_seed_score_adjustments["contrarian-check"])
             ),
             "fallback_evidence_refs": (
                 f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",
@@ -3203,6 +3425,7 @@ def _build_persona_decision_artifact(
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
+    alpha_seed_revision: Mapping[str, Any],
     decision_inputs: Mapping[str, Any],
     evidence_refs: Sequence[str],
     candidates: Sequence[Mapping[str, Any]],
@@ -3242,6 +3465,10 @@ def _build_persona_decision_artifact(
         "tracking_reconciliation": copy.deepcopy(dict(tracking_reconciliation)),
         "tracking_reconciliation_score_adjustments": copy.deepcopy(
             dict(tracking_reconciliation["candidate_score_adjustments"])
+        ),
+        "alpha_seed_revision": copy.deepcopy(dict(alpha_seed_revision)),
+        "alpha_seed_revision_score_adjustments": copy.deepcopy(
+            dict(alpha_seed_revision["candidate_score_adjustments"])
         ),
         "persona_reasoning_ref": persona_reasoning["response"]["reasoning_ref"],
         "persona_reasoning_preferred_action": persona_reasoning["response"]["preferred_action_hint"],
@@ -3313,6 +3540,10 @@ def _build_persona_decision_artifact(
         "tracking_reconciliation_divergence_type": tracking_reconciliation["divergence"]["divergence_type"],
         "tracking_reconciliation_repair_action": tracking_reconciliation["repair"]["action"],
         "tracking_reconciliation_repair_ref": tracking_reconciliation["repair"]["repair_ref"],
+        "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
+        "alpha_seed_revision_action": alpha_seed_revision["revision"]["action"],
+        "alpha_seed_revision_component": alpha_seed_revision["alpha_component"],
+        "alpha_seed_revision_key": alpha_seed_revision["revision"]["revision_key"],
         "oss_followup_response_refs": [
             followup["response"]["output_ref"]
             for followup in oss_followup_loop["followups"]
@@ -3343,6 +3574,7 @@ def _build_persona_decision_artifact(
                 str(oss_disagreement_arbitration["arbitration_ref"]),
                 str(tracking_reconciliation["reconciliation_ref"]),
                 str(tracking_reconciliation["repair"]["repair_ref"]),
+                str(alpha_seed_revision["revision_ref"]),
                 *oss_evidence_refs,
                 *[
                     followup["response"]["output_ref"]
@@ -3353,6 +3585,7 @@ def _build_persona_decision_artifact(
                     for conflict in oss_disagreement_arbitration["conflicts"]
                 ],
                 *tracking_reconciliation["repair"]["evidence_refs"],
+                *alpha_seed_revision["persona_alpha_response"]["evidence_refs"],
                 *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
             ],
             "allowed_windows": list(decision_inputs["allowed_windows"]),
@@ -3436,6 +3669,19 @@ def _build_persona_decision_artifact(
                 for value in scoring_inputs["tracking_reconciliation_score_adjustments"].values()
             )
         ),
+        "uses_alpha_seed_revision": (
+            _alpha_seed_revision_is_usable(alpha_seed_revision)
+            and str(alpha_seed_revision["revision_ref"]) in candidate_generation["request"]["input_refs"]
+            and set(
+                alpha_seed_revision["candidate_evidence_refs_by_action"][
+                    _candidate_action_key(str(selected_candidate["candidate_id"]))
+                ]
+            ).issubset(set(selected_candidate.get("evidence_refs", [])))
+            and any(
+                float(value) > 0
+                for value in scoring_inputs["alpha_seed_revision_score_adjustments"].values()
+            )
+        ),
     }
     return {
         "artifact_id": f"persona-decision-artifact-{episode.case_id}-gen{generation}",
@@ -3474,18 +3720,21 @@ def _persona_candidate_scorecard(
     followup_score_adjustments = dict(scoring_inputs["oss_followup_score_adjustments"])
     disagreement_score_adjustments = dict(scoring_inputs["oss_disagreement_score_adjustments"])
     tracking_reconciliation_score_adjustments = dict(scoring_inputs["tracking_reconciliation_score_adjustments"])
+    alpha_seed_revision_score_adjustments = dict(scoring_inputs["alpha_seed_revision_score_adjustments"])
     if candidate_id.endswith("-feedback-adapt"):
         formula_id = "feedback_adapt_score_v1"
         memory_adjustment = float(memory_score_adjustments["feedback-adapt"])
         followup_adjustment = float(followup_score_adjustments["feedback-adapt"])
         disagreement_adjustment = float(disagreement_score_adjustments["feedback-adapt"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["feedback-adapt"])
+        alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["feedback-adapt"])
         replayed_score = round(
             3.0
             + memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
+            + alpha_seed_revision_adjustment
             + feedback_score
             + policy_quality
             + reflection_quality
@@ -3498,6 +3747,7 @@ def _persona_candidate_scorecard(
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
+            "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
             "feedback_score": feedback_score,
             "policy_quality": policy_quality,
             "reflection_quality": reflection_quality,
@@ -3509,12 +3759,14 @@ def _persona_candidate_scorecard(
         followup_adjustment = float(followup_score_adjustments["retain-observe"])
         disagreement_adjustment = float(disagreement_score_adjustments["retain-observe"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["retain-observe"])
+        alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["retain-observe"])
         replayed_score = round(
             1.0
             + memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
+            + alpha_seed_revision_adjustment
             + max(feedback_score, 0.0),
             10,
         )
@@ -3524,6 +3776,7 @@ def _persona_candidate_scorecard(
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
+            "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
             "positive_feedback_score": round(max(feedback_score, 0.0), 10),
         }
     elif candidate_id.endswith("-risk-off"):
@@ -3532,12 +3785,14 @@ def _persona_candidate_scorecard(
         followup_adjustment = float(followup_score_adjustments["risk-off"])
         disagreement_adjustment = float(disagreement_score_adjustments["risk-off"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["risk-off"])
+        alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["risk-off"])
         replayed_score = round(
             2.0
             + memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
+            + alpha_seed_revision_adjustment
             + max(0.0, risk_penalty),
             10,
         )
@@ -3547,6 +3802,7 @@ def _persona_candidate_scorecard(
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
+            "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
             "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
         }
     else:
@@ -3555,12 +3811,14 @@ def _persona_candidate_scorecard(
         followup_adjustment = float(followup_score_adjustments["contrarian-check"])
         disagreement_adjustment = float(disagreement_score_adjustments["contrarian-check"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["contrarian-check"])
+        alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["contrarian-check"])
         replayed_score = round(
             0.25
             + memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
-            + tracking_reconciliation_adjustment,
+            + tracking_reconciliation_adjustment
+            + alpha_seed_revision_adjustment,
             10,
         )
         components = {
@@ -3569,6 +3827,7 @@ def _persona_candidate_scorecard(
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
+            "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
         }
     candidate_score = round(float(candidate["score"]), 10)
     return {
@@ -5388,6 +5647,9 @@ def _case_upstream_artifacts_are_usable(
         and _tracking_readback_reconciliation_is_usable(artifacts.get("tracking_reconciliation", {}))
         and artifacts.get("tracking_reconciliation", {}).get("reconciliation_ref")
         in persona_response.get("evidence_refs", [])
+        and _alpha_seed_revision_is_usable(artifacts.get("alpha_seed_revision", {}))
+        and artifacts.get("alpha_seed_revision", {}).get("revision_ref")
+        in persona_response.get("evidence_refs", [])
     )
 
 
@@ -5511,6 +5773,50 @@ def _tracking_readback_reconciliation_is_usable(reconciliation: Mapping[str, Any
     )
 
 
+def _alpha_seed_revision_is_usable(alpha_seed_revision: Mapping[str, Any]) -> bool:
+    replay = alpha_seed_revision.get("replay", {})
+    revision = alpha_seed_revision.get("revision", {})
+    adjustments = alpha_seed_revision.get("candidate_score_adjustments", {})
+    refs_by_action = alpha_seed_revision.get("candidate_evidence_refs_by_action", {})
+    response = alpha_seed_revision.get("persona_alpha_response", {})
+    alpha_component = str(alpha_seed_revision.get("alpha_component"))
+    revision_action = ALPHA_SEED_REVISION_ACTION_BY_COMPONENT.get(alpha_component)
+    source_refs = set(alpha_seed_revision.get("source_refs", []))
+    return bool(
+        alpha_seed_revision.get("model_id") == PERSONA_ALPHA_SEED_REVISION_MODEL_ID
+        and alpha_seed_revision.get("status") == "applied"
+        and alpha_seed_revision.get("revision_ref", "").startswith("alpha-seed-revision://")
+        and alpha_seed_revision.get("input_hash")
+        and alpha_component in ALPHA_SEED_REVISION_ACTION_BY_COMPONENT
+        and revision.get("action") == revision_action
+        and revision.get("base_seed_key")
+        and revision.get("base_seed_ref", "").startswith("alpha-seed://")
+        and revision.get("source_alpha_component") == alpha_component
+        and revision.get("source_alpha_request_id")
+        and revision.get("downstream_vectorbt_request_id")
+        and revision.get("downstream_tracker_run_id")
+        and revision.get("downstream_policy_candidate_request_id")
+        and revision.get("allowed_windows") == ["observe", "feedback"]
+        and revision.get("forbidden_windows_not_used") == ["holdout", "future_holdout"]
+        and set(adjustments) == {"feedback-adapt", "retain-observe", "risk-off", "contrarian-check"}
+        and float(adjustments.get("feedback-adapt", 0.0)) > 0.0
+        and set(refs_by_action) == {"feedback-adapt", "retain-observe", "risk-off", "contrarian-check"}
+        and source_refs.issubset(set(refs_by_action.get("feedback-adapt", [])))
+        and response.get("next_action") == "score_candidates_with_alpha_seed_revision"
+        and response.get("preferred_candidate_action") == "feedback-adapt"
+        and revision_action in response.get("revision_actions", [])
+        and replay.get("replayable") is True
+        and replay.get("source_alpha_completed") is True
+        and replay.get("alpha_revision_generated") is True
+        and replay.get("downstream_backtest_bound") is True
+        and replay.get("downstream_tracker_bound") is True
+        and replay.get("policy_candidate_bound") is True
+        and replay.get("no_forbidden_window_sources") is True
+        and replay.get("scorer_adjustment_available") is True
+        and replay.get("feedback_adapt_gets_alpha_backtest_tracker_refs") is True
+    )
+
+
 def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
     artifact = trace.get("agent_decision_artifact", {})
     if not isinstance(artifact, Mapping):
@@ -5592,6 +5898,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("uses_oss_response_followup_loop") is True
         and replay.get("uses_oss_disagreement_arbitration") is True
         and replay.get("uses_tracking_reconciliation") is True
+        and replay.get("uses_alpha_seed_revision") is True
         and replay.get("input_hash")
         and replay.get("candidate_hash")
         and replay.get("score_hash")
@@ -5602,6 +5909,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and _trace_oss_followup_loop_is_usable(trace)
         and _trace_oss_disagreement_arbitration_is_usable(trace)
         and _trace_tracking_reconciliation_is_usable(trace)
+        and _trace_alpha_seed_revision_is_usable(trace)
     )
 
 
@@ -5657,6 +5965,8 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
     arbitration_usage = response.get("oss_disagreement_arbitration_usage", {})
     tracking_reconciliation_ref = input_context.get("tracking_reconciliation_ref")
     tracking_reconciliation_usage = response.get("tracking_reconciliation_usage", {})
+    alpha_seed_revision_ref = input_context.get("alpha_seed_revision_ref")
+    alpha_seed_revision_usage = response.get("alpha_seed_revision_usage", {})
     return bool(
         request.get("model_id") == PERSONA_REASONING_MODEL_ID
         and response.get("model_id") == PERSONA_REASONING_MODEL_ID
@@ -5680,6 +5990,11 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
         and tracking_reconciliation_usage.get("model_id") == PERSONA_TRACKING_RECONCILIATION_MODEL_ID
         and tracking_reconciliation_ref in request.get("input_refs", [])
         and tracking_reconciliation_ref in generation_request.get("input_refs", [])
+        and request.get("alpha_seed_revision_ref") == alpha_seed_revision_ref
+        and alpha_seed_revision_usage.get("revision_ref") == alpha_seed_revision_ref
+        and alpha_seed_revision_usage.get("model_id") == PERSONA_ALPHA_SEED_REVISION_MODEL_ID
+        and alpha_seed_revision_ref in request.get("input_refs", [])
+        and alpha_seed_revision_ref in generation_request.get("input_refs", [])
         and int(followup_usage.get("followup_count", 0)) >= 8
         and response.get("reasoning_ref") in generation_request.get("input_refs", [])
         and generation_response.get("source_reasoning_response_id") == response.get("response_id")
@@ -5775,6 +6090,34 @@ def _trace_tracking_reconciliation_is_usable(trace: Mapping[str, Any]) -> bool:
         and reconciliation_ref in trace.get("evidence_refs", [])
         and reconciliation_ref in candidate_request.get("input_refs", [])
         and repair_ref in candidate_request.get("input_refs", [])
+        and set(expected_refs).issubset(selected_refs)
+        and float(score_adjustments.get(selected_action, 0.0)) > 0.0
+    )
+
+
+def _trace_alpha_seed_revision_is_usable(trace: Mapping[str, Any]) -> bool:
+    artifact = trace.get("agent_decision_artifact", {})
+    if not isinstance(artifact, Mapping):
+        return False
+    input_context = artifact.get("input_context", {})
+    candidate_request = artifact.get("candidate_generation", {}).get("request", {})
+    scorer_inputs = artifact.get("scorer", {}).get("scoring_inputs", {})
+    selected_candidate = trace.get("selected_candidate", {})
+    selected_action = _candidate_action_key(str(selected_candidate.get("candidate_id")))
+    alpha_seed_revision = scorer_inputs.get("alpha_seed_revision", {})
+    if not isinstance(alpha_seed_revision, Mapping):
+        return False
+    revision_ref = alpha_seed_revision.get("revision_ref")
+    expected_refs = _alpha_seed_revision_refs_for_action(alpha_seed_revision, selected_action)
+    selected_refs = set(selected_candidate.get("evidence_refs", []))
+    score_adjustments = scorer_inputs.get("alpha_seed_revision_score_adjustments", {})
+    return bool(
+        _alpha_seed_revision_is_usable(alpha_seed_revision)
+        and input_context.get("alpha_seed_revision_ref") == revision_ref
+        and input_context.get("alpha_seed_revision_action") == alpha_seed_revision.get("revision", {}).get("action")
+        and trace.get("decision_inputs", {}).get("alpha_seed_revision_ref") == revision_ref
+        and revision_ref in trace.get("evidence_refs", [])
+        and revision_ref in candidate_request.get("input_refs", [])
         and set(expected_refs).issubset(selected_refs)
         and float(score_adjustments.get(selected_action, 0.0)) > 0.0
     )
@@ -6318,6 +6661,10 @@ def _build_usability_dimensions(
         _tracking_readback_reconciliation_is_usable(case_upstream_artifacts.get("tracking_reconciliation", {}))
         and all(_trace_tracking_reconciliation_is_usable(trace) for trace in decision_traces)
     ) else 0.0
+    alpha_seed_revision = 1.0 if (
+        _alpha_seed_revision_is_usable(case_upstream_artifacts.get("alpha_seed_revision", {}))
+        and all(_trace_alpha_seed_revision_is_usable(trace) for trace in decision_traces)
+    ) else 0.0
     return {
         "return_improvement": return_improvement,
         "multi_generation_improvement": multi_generation_improvement,
@@ -6335,6 +6682,7 @@ def _build_usability_dimensions(
         "oss_response_followup_loop": oss_response_followup_loop,
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
         "tracking_reconciliation": tracking_reconciliation,
+        "alpha_seed_revision": alpha_seed_revision,
         "oss_evidence_completeness": min(1.0, oss_evidence_completeness),
         "portfolio_breadth": portfolio_breadth,
         "no_leakage": no_leakage,
@@ -6545,6 +6893,18 @@ def _diagnose_validation_execution(
                 ],
                 "repair_action": case_upstream_artifacts["tracking_reconciliation"]["repair"]["action"],
                 "backend": case_upstream_artifacts["tracking_reconciliation"]["backend"],
+                "trace_ids": [trace["reflection_id"] for trace in decision_traces],
+            },
+        ),
+        _diagnostic_check(
+            "alpha_seed_revision_drives_persona_scoring",
+            _alpha_seed_revision_is_usable(case_upstream_artifacts["alpha_seed_revision"])
+            and all(_trace_alpha_seed_revision_is_usable(trace) for trace in decision_traces),
+            {
+                "revision_id": case_upstream_artifacts["alpha_seed_revision"]["revision_id"],
+                "alpha_component": case_upstream_artifacts["alpha_seed_revision"]["alpha_component"],
+                "revision_action": case_upstream_artifacts["alpha_seed_revision"]["revision"]["action"],
+                "revision_ref": case_upstream_artifacts["alpha_seed_revision"]["revision_ref"],
                 "trace_ids": [trace["reflection_id"] for trace in decision_traces],
             },
         ),
@@ -6804,6 +7164,7 @@ def _case_upstream_artifacts_case_summary(artifacts: Mapping[str, Any]) -> dict[
             role: _case_selected_oss_case_summary(entry)
             for role, entry in artifacts["selected_oss"].items()
         },
+        "alpha_seed_revision": copy.deepcopy(artifacts["alpha_seed_revision"]),
         "oss_disagreement_arbitration": copy.deepcopy(artifacts["oss_disagreement_arbitration"]),
         "tracking_reconciliation": copy.deepcopy(artifacts["tracking_reconciliation"]),
         "persona_response": copy.deepcopy(artifacts["persona_response"]),
@@ -6996,6 +7357,7 @@ def _build_case_result(
             ] == 1.0,
             "multi_oss_disagreement_arbitrated": usability_dimensions["oss_disagreement_arbitration"] == 1.0,
             "tracking_reconciliation_drives_decision": usability_dimensions["tracking_reconciliation"] == 1.0,
+            "alpha_seed_revision_drives_decision": usability_dimensions["alpha_seed_revision"] == 1.0,
             "persona_decision_artifacts_replay": usability_dimensions["persona_decision_artifact"] == 1.0,
             "persona_reasoning_drives_candidate_generation": usability_dimensions[
                 "persona_reasoning_generation"
@@ -7062,6 +7424,9 @@ def _build_summary(
     ]
     tracking_reconciliations = [
         case["case_upstream_artifacts"]["tracking_reconciliation"] for case in cases
+    ]
+    alpha_seed_revisions = [
+        case["case_upstream_artifacts"]["alpha_seed_revision"] for case in cases
     ]
     broker_adapter_lifecycles = [
         case["operational_context"]["broker_adapter_lifecycle"] for case in cases
@@ -7263,6 +7628,26 @@ def _build_summary(
             for reconciliation in tracking_reconciliations
             for action in reconciliation["candidate_evidence_refs_by_action"]
         }),
+        "alpha_seed_revision_models": sorted({
+            revision["model_id"] for revision in alpha_seed_revisions
+        }),
+        "alpha_seed_revision_components": sorted({
+            revision["alpha_component"] for revision in alpha_seed_revisions
+        }),
+        "alpha_seed_revision_actions": sorted({
+            revision["revision"]["action"] for revision in alpha_seed_revisions
+        }),
+        "alpha_seed_revision_replay_flags": sorted({
+            flag
+            for revision in alpha_seed_revisions
+            for flag, value in revision["replay"].items()
+            if value is True
+        }),
+        "alpha_seed_revision_candidate_actions": sorted({
+            action
+            for revision in alpha_seed_revisions
+            for action in revision["candidate_evidence_refs_by_action"]
+        }),
         "agent_decision_artifact_models": sorted({
             artifact["model_id"] for artifact in decision_artifacts
         }),
@@ -7401,6 +7786,15 @@ def _build_summary(
         "tracking_reconciliation_drives_decision_count": sum(
             1 for item in usable if item["tracking_reconciliation_drives_decision"]
         ),
+        "alpha_seed_revision_count": len(alpha_seed_revisions),
+        "alpha_seed_revision_pass_count": sum(
+            1
+            for revision in alpha_seed_revisions
+            if _alpha_seed_revision_is_usable(revision)
+        ),
+        "alpha_seed_revision_drives_decision_count": sum(
+            1 for item in usable if item["alpha_seed_revision_drives_decision"]
+        ),
         "agent_decision_artifact_count": len(decision_artifacts),
         "agent_decision_artifact_replay_count": sum(
             1 for item in usable if item["persona_decision_artifacts_replay"]
@@ -7486,6 +7880,7 @@ def _build_summary(
             "Every case writes memory and proves retrieved lessons influence later candidate scoring and selected evidence refs.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every case converts OSS responses into persona follow-up requests that feed reasoning, candidate evidence, and scorer adjustments.",
+            "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
             "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case reconciles experiment-tracker readback divergence and routes the repaired tracking ref into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every persona decision emits a replayable request-response artifact covering candidate generation, scoring, risk checks, and rejected alternatives.",
