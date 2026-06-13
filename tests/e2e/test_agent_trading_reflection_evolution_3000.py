@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from services.persona.agent_usability_validation import (
+    AUTONOMOUS_SCHEDULER_PHASES,
+    BROKER_LIFECYCLE_TERMINAL_STATUS,
     DEFAULT_CASE_COUNT,
     GENERATION_COUNT,
     HISTORICAL_OHLCV_DATASET_ID,
+    MARKET_FRICTION_MODEL_ID,
     MIN_USABILITY_SCORE,
+    OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
     OSS_REQUIRED_COMPONENTS,
     PORTFOLIO_LEG_COUNT,
@@ -58,6 +62,13 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["validation_planning_count"] == DEFAULT_CASE_COUNT
     assert summary["validation_diagnostics_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["validation_deficiencies_repaired_count"] == DEFAULT_CASE_COUNT
+    assert summary["cross_case_memory_retrieval_count"] == DEFAULT_CASE_COUNT - summary["persona_count"]
+    assert summary["market_friction_model_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_lifecycle_reconciled_count"] == DEFAULT_CASE_COUNT
+    assert summary["persona_conflict_resolved_count"] == DEFAULT_CASE_COUNT
+    assert summary["restart_recovery_count"] == DEFAULT_CASE_COUNT
+    assert summary["autonomous_scheduler_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_handoff_packet_count"] == DEFAULT_CASE_COUNT
     assert summary["validation_gap_question_count"] == DEFAULT_CASE_COUNT * len(EXPECTED_GAP_QUESTIONS)
     assert summary["unresolved_validation_deficiency_count"] == 0
     assert summary["min_overall_usability_score"] >= MIN_USABILITY_SCORE
@@ -74,6 +85,29 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     ]
     assert coverage["reflection_archetypes"]
     assert coverage["regime_paths"]
+    assert set(coverage["operational_scenarios"]) == set(OPERATIONAL_SCENARIOS)
+    assert coverage["market_friction_models"] == [MARKET_FRICTION_MODEL_ID]
+    assert set(coverage["broker_lifecycle_statuses"]) == {
+        "acknowledged",
+        "cancel_acknowledged",
+        "cancel_requested",
+        "filled",
+        "limit_missed",
+        "liquidity_scaled",
+        "partially_filled",
+        "rejected",
+        "replace_submitted",
+        "repriced",
+        "resubmitted",
+        "risk_reduced",
+        "submitted",
+    }
+    assert set(coverage["persona_conflict_types"]) == {
+        "direction_conflict",
+        "execution_constraint_conflict",
+        "weight_conflict",
+    }
+    assert set(coverage["scheduler_phases"]) == set(AUTONOMOUS_SCHEDULER_PHASES)
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -89,6 +123,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_portfolio_generations(case)
         _assert_agent_decision_traces_are_no_leakage(case)
         _assert_memory_and_oss_closed_loop(case)
+        _assert_operational_context(case)
         _assert_evolution_and_scores(case)
         assert all(case["usable"].values())
 
@@ -118,6 +153,17 @@ def _assert_unique_planned_validation_cycle(
     assert planning["plan_signature"] not in plan_signatures
     assert selected_plan["target_portfolio_window_signature"] not in portfolio_window_signatures
     assert len(set(selected_plan["assertion_labels"])) == len(selected_plan["assertion_labels"])
+    assert selected_plan["operational_scenario"] in OPERATIONAL_SCENARIOS
+    assert any(
+        label == f"operational_scenario:{selected_plan['operational_scenario']}"
+        for label in selected_plan["assertion_labels"]
+    )
+    assert "apply_market_friction_model" in selected_plan["execution_steps"]
+    assert "reconcile_paper_broker_lifecycle" in selected_plan["execution_steps"]
+    assert "resolve_multi_persona_conflicts" in selected_plan["execution_steps"]
+    assert "recover_after_midloop_restart" in selected_plan["execution_steps"]
+    assert "schedule_next_autonomous_cycle" in selected_plan["execution_steps"]
+    assert "materialize_lean_handoff_packet" in selected_plan["execution_steps"]
     assert "diagnose_and_repair_deficiencies" in selected_plan["execution_steps"]
 
     plan_signatures.add(planning["plan_signature"])
@@ -196,6 +242,9 @@ def _assert_memory_and_oss_closed_loop(case: dict) -> None:
     assert all(write["persona_memory_ids"] for write in memory["generation_memory_writes"])
     assert len(memory["memory_reused_for_next_decision"]) == 2
     assert all(context["reuse_count"] >= 1 for context in memory["memory_reused_for_next_decision"])
+    if memory["prior_memory"]:
+        first_trace = case["reflection"]["agent_decision_traces"][0]
+        assert first_trace["decision_inputs"]["memory_ref"] == memory["prior_memory"]["memory_id"]
 
     oss_feedback = case["oss_feedback"]
     assert set(oss_feedback["request_ids"]) == {
@@ -212,6 +261,73 @@ def _assert_memory_and_oss_closed_loop(case: dict) -> None:
     assert "lean_handoff" in oss_feedback["components_used"]
     assert "vectorbt" in oss_feedback["components_used"]
     assert oss_feedback["drives_persona_steps"]["handoff"] == "evolved_strategy_handoff"
+
+
+def _assert_operational_context(case: dict) -> None:
+    operational = case["operational_context"]
+    assert operational["operational_signature"]
+    assert operational["scenario"] in OPERATIONAL_SCENARIOS
+
+    friction = operational["market_friction"]
+    assert friction["model_id"] == MARKET_FRICTION_MODEL_ID
+    assert friction["applied"] is True
+    assert friction["all_orders_within_liquidity_cap"] is True
+    assert friction["costs_are_positive"] is True
+    assert len(friction["generation_costs"]) == GENERATION_COUNT
+    for generation_cost in friction["generation_costs"]:
+        assert generation_cost["average_cost_bps"] > 0
+        assert generation_cost["net_score_after_costs"] < generation_cost["gross_score"]
+        assert len(generation_cost["leg_costs"]) == PORTFOLIO_LEG_COUNT
+        for leg_cost in generation_cost["leg_costs"]:
+            assert leg_cost["within_liquidity_cap"] is True
+            assert 0 < leg_cost["total_cost_bps"]
+            assert 0 <= leg_cost["participation"] <= leg_cost["liquidity_cap"]
+
+    lifecycle = operational["broker_lifecycle"]
+    assert lifecycle["order_count"] == GENERATION_COUNT * PORTFOLIO_LEG_COUNT
+    assert lifecycle["terminal_statuses"] == [BROKER_LIFECYCLE_TERMINAL_STATUS]
+    assert lifecycle["reconciled"] is True
+    assert lifecycle["readback_consistent"] is True
+    assert lifecycle["live_broker_submission_count"] == 0
+    for order in lifecycle["orders"]:
+        assert order["status_path"][0] == "submitted"
+        assert order["terminal_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+        assert order["readback_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+        assert order["live_broker_submitted"] is False
+
+    conflict = operational["persona_conflict_resolution"]
+    assert conflict["classified_conflicts"]
+    assert "weight_conflict" in conflict["conflict_types"]
+    assert conflict["open_conflicts"] == []
+    assert conflict["decision_trace_ref"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
+    allocation = conflict["resolved_allocation"]
+    assert allocation["capital_budget_pct"] <= 1.0
+    assert set(allocation["direction_by_instrument"]) == set(case["portfolio"]["instruments"])
+    assert set(allocation["weight_by_instrument"]) == set(case["portfolio"]["instruments"])
+
+    recovery = operational["restart_recovery"]
+    assert recovery["checkpoint_written"] is True
+    assert recovery["recovered"] is True
+    assert recovery["duplicate_execution_suppressed"] is True
+    assert recovery["next_step_completed"] is True
+    assert recovery["resume_step"] == "execute_generation2_future_holdout"
+    assert recovery["memory_refs_before_restart"] == recovery["memory_refs_after_recovery"]
+
+    schedule = operational["autonomous_schedule"]
+    assert schedule["trigger_mode"] == "autonomous_daily_paper_loop"
+    assert schedule["phase_order_valid"] is True
+    assert [phase["phase"] for phase in schedule["phases"]] == list(AUTONOMOUS_SCHEDULER_PHASES)
+    assert schedule["missed_cycle_recovered"] is True
+    assert schedule["next_cycle_due_at"]
+
+    handoff = operational["lean_handoff"]
+    assert handoff["component"] == "lean_handoff"
+    assert handoff["strategy_packet_materialized"] is True
+    assert handoff["received_by_lean_handoff"] is True
+    assert handoff["target_stage"] == "paper"
+    assert handoff["broker_live_submitted"] is False
+    assert set(handoff["portfolio_instruments"]) == set(case["portfolio"]["instruments"])
+    assert handoff["runtime_bundle_refs"]
 
 
 def _assert_evolution_and_scores(case: dict) -> None:

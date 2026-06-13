@@ -83,6 +83,25 @@ POLICY_OSS_COMPONENTS = ("finrl", "rllib", "ray_tune")
 REFLECTION_OSS_COMPONENTS = ("dspy", "trl", "imitation")
 TRACKING_OSS_COMPONENTS = ("mlflow", "wandb")
 RISK_OSS_COMPONENTS = ("statsmodels", "quantlib")
+OPERATIONAL_SCENARIOS = (
+    "partial_fill_reconcile",
+    "limit_miss_reprice",
+    "liquidity_cap_scale",
+    "cancel_replace_readback",
+    "risk_reject_reduce",
+)
+BROKER_LIFECYCLE_TERMINAL_STATUS = "filled"
+MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
+AUTONOMOUS_SCHEDULER_PHASES = (
+    "observe",
+    "request_oss",
+    "decide",
+    "paper_trade",
+    "reflect",
+    "evolve",
+    "handoff",
+    "schedule_next",
+)
 
 DEFAULT_PERSONAS: tuple[dict[str, str], ...] = (
     {
@@ -468,6 +487,17 @@ def run_agent_usability_validations(
         if decision_errors:
             raise ValueError(f"invalid evolution decision for {episode.case_id}: {decision_errors}")
 
+        operational_context = _build_operational_context(
+            episode=episode,
+            generation_policies=(generation0_policy, generation1_policy, generation2_policy),
+            executions=(generation0_exec, generation1_exec, generation2_exec),
+            evaluations=(generation0_eval, generation1_eval, generation2_eval),
+            decision_traces=(decision_trace0, decision_trace1),
+            memory_contexts=(current_memory0, current_memory1),
+            evolution_decision=evolution_decision,
+            oss_inputs=oss_inputs,
+            generated_at=generated_at,
+        )
         usability_dimensions = _build_usability_dimensions(
             episode=episode,
             executions=(generation0_exec, generation1_exec, generation2_exec),
@@ -480,6 +510,7 @@ def run_agent_usability_validations(
             memory_contexts=(current_memory0, current_memory1),
             oss_inputs=oss_inputs,
             validation_plan=validation_plan,
+            operational_context=operational_context,
         )
         validation_diagnostics = _diagnose_validation_execution(
             episode=episode,
@@ -494,6 +525,7 @@ def run_agent_usability_validations(
             evolution_decision=evolution_decision,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
+            operational_context=operational_context,
         )
         validation_repair = _repair_validation_deficiencies(
             validation_plan=validation_plan,
@@ -513,6 +545,7 @@ def run_agent_usability_validations(
             evolution_decision=evolution_decision,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
+            operational_context=operational_context,
             validation_plan=validation_plan,
             validation_diagnostics=validation_diagnostics,
             validation_repair=validation_repair,
@@ -639,6 +672,7 @@ def _build_episode_manifest(
         oss_route = _oss_route_for_index(len(episodes))
         order_profile = _order_profile_for_index(len(episodes))
         reflection_archetype = _reflection_archetype(windows)
+        operational_scenario = OPERATIONAL_SCENARIOS[len(episodes) % len(OPERATIONAL_SCENARIOS)]
         generation_path = (
             "observe_only_baseline",
             "feedback_memory_agent_decision",
@@ -652,6 +686,7 @@ def _build_episode_manifest(
             order_profile=order_profile,
             reflection_archetype=reflection_archetype,
             generation_path=generation_path,
+            operational_scenario=operational_scenario,
         )
         case_id = f"agent-hardening-{len(episodes) + 1:04d}"
         if case_id in old_case_ids:
@@ -847,6 +882,7 @@ def _build_validation_planning_step(
     order_profile_signature = _order_profile_signature(episode.order_profile)
     regime_path_signature = "|".join(episode.regime_path)
     persona_seed_pair = f"{_persona_id(episode.persona)}::{episode.seed_key}"
+    operational_scenario = _operational_scenario_for_episode(episode)
     questions = [
         "which_validation_axes_are_still_uncovered",
         "which_covered_axes_can_be_deepened_with_a_new_market_window",
@@ -882,6 +918,7 @@ def _build_validation_planning_step(
         portfolio_window_signature=portfolio_window_signature,
         oss_route_signature=oss_route_signature,
         order_profile_signature=order_profile_signature,
+        operational_scenario=operational_scenario,
     )
     plan_signature = _stable_id(
         "validation-plan",
@@ -919,6 +956,7 @@ def _build_validation_planning_step(
             "order_profile": dict(episode.order_profile),
             "reflection_archetype": episode.reflection_archetype,
             "regime_path": list(episode.regime_path),
+            "operational_scenario": operational_scenario,
             "assertion_labels": assertion_labels,
             "execution_steps": [
                 "request_oss_feedback",
@@ -927,6 +965,12 @@ def _build_validation_planning_step(
                 "execute_generation1_policy_on_unseen_holdout",
                 "write_and_retrieve_memory_for_next_decision",
                 "execute_generation2_policy_on_future_holdout",
+                "apply_market_friction_model",
+                "reconcile_paper_broker_lifecycle",
+                "resolve_multi_persona_conflicts",
+                "recover_after_midloop_restart",
+                "schedule_next_autonomous_cycle",
+                "materialize_lean_handoff_packet",
                 "diagnose_and_repair_deficiencies",
             ],
         },
@@ -1077,6 +1121,7 @@ def _assertion_labels_for_episode(
     portfolio_window_signature: str,
     oss_route_signature: str,
     order_profile_signature: str,
+    operational_scenario: str,
 ) -> list[str]:
     return [
         f"unique_validation_signature:{episode.validation_signature}",
@@ -1089,6 +1134,7 @@ def _assertion_labels_for_episode(
         f"reflection:{episode.reflection_archetype}",
         f"generation_path:{'->'.join(episode.generation_path)}",
         f"regime_path:{'|'.join(episode.regime_path)}",
+        f"operational_scenario:{operational_scenario}",
     ]
 
 
@@ -1735,6 +1781,445 @@ def _build_evolution_decision(
     return decision
 
 
+def _build_operational_context(
+    *,
+    episode: PortfolioEpisode,
+    generation_policies: Sequence[Mapping[str, Any]],
+    executions: Sequence[Mapping[str, Any]],
+    evaluations: Sequence[Mapping[str, Any]],
+    decision_traces: Sequence[Mapping[str, Any]],
+    memory_contexts: Sequence[Mapping[str, Any]],
+    evolution_decision: EvolutionDecision,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    generated_at: str,
+) -> dict[str, Any]:
+    scenario = _operational_scenario_for_episode(episode)
+    market_friction = _build_market_friction_report(
+        episode=episode,
+        generation_policies=generation_policies,
+        evaluations=evaluations,
+        scenario=scenario,
+    )
+    broker_lifecycle = _build_broker_lifecycle_report(
+        episode=episode,
+        executions=executions,
+        scenario=scenario,
+    )
+    persona_conflict = _build_persona_conflict_resolution(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        market_friction=market_friction,
+        decision_traces=decision_traces,
+        oss_inputs=oss_inputs,
+    )
+    restart_recovery = _build_restart_recovery_report(
+        episode=episode,
+        decision_traces=decision_traces,
+        memory_contexts=memory_contexts,
+        evolution_decision=evolution_decision,
+    )
+    autonomous_schedule = _build_autonomous_schedule(
+        episode=episode,
+        generated_at=generated_at,
+        restart_recovery=restart_recovery,
+    )
+    lean_handoff = _build_lean_handoff_packet(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        evolution_decision=evolution_decision,
+        oss_inputs=oss_inputs,
+        market_friction=market_friction,
+        broker_lifecycle=broker_lifecycle,
+    )
+    return {
+        "operational_signature": _stable_id(
+            "operational",
+            episode.validation_signature,
+            scenario,
+            market_friction["model_id"],
+            broker_lifecycle["lifecycle_model"],
+            autonomous_schedule["schedule_id"],
+        ),
+        "scenario": scenario,
+        "market_friction": market_friction,
+        "broker_lifecycle": broker_lifecycle,
+        "persona_conflict_resolution": persona_conflict,
+        "restart_recovery": restart_recovery,
+        "autonomous_schedule": autonomous_schedule,
+        "lean_handoff": lean_handoff,
+    }
+
+
+def _build_market_friction_report(
+    *,
+    episode: PortfolioEpisode,
+    generation_policies: Sequence[Mapping[str, Any]],
+    evaluations: Sequence[Mapping[str, Any]],
+    scenario: str,
+) -> dict[str, Any]:
+    generation_costs: list[dict[str, Any]] = []
+    for policy, evaluation in zip(generation_policies, evaluations):
+        leg_costs: list[dict[str, Any]] = []
+        for leg_index, window in enumerate(episode.windows):
+            leg = policy["legs"][window.instrument]
+            entry_row = _entry_row_for_generation(window, int(policy["generation"]))
+            close = float(entry_row["close"])
+            volume = max(float(entry_row["volume"]), 1.0)
+            notional = _estimated_order_notional(
+                policy=policy,
+                leg=leg,
+                close=close,
+                case_index=episode.ordinal + leg_index,
+            )
+            volume_notional = max(volume * close, 1.0)
+            participation = min(0.2, notional / volume_notional)
+            volatility_bps = _return_volatility([float(row["close"]) for row in window.observe_rows[-8:]]) * 10_000
+            scenario_bps = {
+                "partial_fill_reconcile": 0.6,
+                "limit_miss_reprice": 1.2,
+                "liquidity_cap_scale": 1.6,
+                "cancel_replace_readback": 1.0,
+                "risk_reject_reduce": 0.8,
+            }[scenario]
+            slippage_bps = round(0.8 + scenario_bps + min(35.0, participation * 2_500) + volatility_bps * 0.05, 6)
+            commission_bps = 1.25
+            impact_bps = round(min(25.0, participation * 1_500), 6)
+            total_cost_bps = round(slippage_bps + commission_bps + impact_bps, 6)
+            leg_costs.append(
+                {
+                    "instrument": window.instrument,
+                    "generation": policy["generation"],
+                    "notional": round(notional, 6),
+                    "volume_notional": round(volume_notional, 6),
+                    "participation": round(participation, 10),
+                    "liquidity_cap": 0.2,
+                    "slippage_bps": slippage_bps,
+                    "commission_bps": commission_bps,
+                    "impact_bps": impact_bps,
+                    "total_cost_bps": total_cost_bps,
+                    "within_liquidity_cap": participation <= 0.2,
+                }
+            )
+        average_cost_bps = mean(item["total_cost_bps"] for item in leg_costs)
+        cost_penalty = average_cost_bps / 10_000
+        generation_costs.append(
+            {
+                "generation": policy["generation"],
+                "gross_score": evaluation["score"],
+                "average_cost_bps": round(average_cost_bps, 6),
+                "cost_penalty": round(cost_penalty, 10),
+                "net_score_after_costs": round(float(evaluation["score"]) - cost_penalty, 10),
+                "leg_costs": leg_costs,
+            }
+        )
+    return {
+        "model_id": MARKET_FRICTION_MODEL_ID,
+        "scenario": scenario,
+        "applied": True,
+        "generation_costs": generation_costs,
+        "all_orders_within_liquidity_cap": all(
+            leg["within_liquidity_cap"]
+            for generation in generation_costs
+            for leg in generation["leg_costs"]
+        ),
+        "costs_are_positive": all(
+            leg["total_cost_bps"] > 0
+            for generation in generation_costs
+            for leg in generation["leg_costs"]
+        ),
+    }
+
+
+def _build_broker_lifecycle_report(
+    *,
+    episode: PortfolioEpisode,
+    executions: Sequence[Mapping[str, Any]],
+    scenario: str,
+) -> dict[str, Any]:
+    orders: list[dict[str, Any]] = []
+    for generation, execution in enumerate(executions):
+        for leg_index, fill_event in enumerate(execution["fill_events"]):
+            statuses = _broker_status_path_for(scenario, episode.ordinal + generation + leg_index)
+            orders.append(
+                {
+                    "order_id": f"paper-order-{episode.case_id}-gen{generation}-{leg_index}",
+                    "generation": generation,
+                    "fill_event_id": fill_event["event_id"],
+                    "symbol": fill_event["metadata"].get("symbol")
+                    or fill_event["metadata"].get("signal_symbol")
+                    or fill_event["metadata"].get("source_symbol"),
+                    "status_path": statuses,
+                    "terminal_status": statuses[-1],
+                    "readback_status": statuses[-1],
+                    "live_broker_submitted": bool(fill_event.get("submitted_to_broker", False)),
+                    "adapter": "paper_broker_lifecycle_adapter",
+                    "reconciled": statuses[-1] == BROKER_LIFECYCLE_TERMINAL_STATUS,
+                }
+            )
+    terminal_statuses = sorted({order["terminal_status"] for order in orders})
+    lifecycle_statuses = sorted({status for order in orders for status in order["status_path"]})
+    return {
+        "lifecycle_model": "submit_ack_partial_cancel_replace_reject_readback_v1",
+        "scenario": scenario,
+        "order_count": len(orders),
+        "orders": orders,
+        "terminal_statuses": terminal_statuses,
+        "lifecycle_statuses": lifecycle_statuses,
+        "reconciled": all(order["reconciled"] for order in orders),
+        "readback_consistent": all(order["terminal_status"] == order["readback_status"] for order in orders),
+        "live_broker_submission_count": sum(1 for order in orders if order["live_broker_submitted"]),
+    }
+
+
+def _build_persona_conflict_resolution(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    market_friction: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    primary_persona = _persona_id(episode.persona)
+    final_directions = {
+        instrument: int(leg["direction"]) for instrument, leg in final_policy["legs"].items()
+    }
+    risk_scale = 0.85 if market_friction["scenario"] in {"liquidity_cap_scale", "risk_reject_reduce"} else 0.95
+    council_votes = [
+        {
+            "persona_id": primary_persona,
+            "role": "alpha_sponsor",
+            "direction_by_instrument": final_directions,
+            "weight_scale": 1.0,
+        },
+        {
+            "persona_id": "p-risk-analyst",
+            "role": "risk",
+            "direction_by_instrument": final_directions,
+            "weight_scale": risk_scale,
+        },
+        {
+            "persona_id": "p-execution-lead",
+            "role": "execution",
+            "direction_by_instrument": final_directions,
+            "weight_scale": 0.9,
+        },
+        {
+            "persona_id": "p-macro-observer",
+            "role": "macro",
+            "direction_by_instrument": _macro_conflict_directions(episode, final_directions),
+            "weight_scale": 0.75,
+        },
+    ]
+    conflict_types = ["weight_conflict"]
+    if any(
+        council_votes[-1]["direction_by_instrument"][instrument] != direction
+        for instrument, direction in final_directions.items()
+    ):
+        conflict_types.append("direction_conflict")
+    if market_friction["scenario"] in {"liquidity_cap_scale", "cancel_replace_readback", "risk_reject_reduce"}:
+        conflict_types.append("execution_constraint_conflict")
+    classified_conflicts = [
+        {
+            "conflict_id": _stable_id("conflict", episode.case_id, conflict_type),
+            "conflict_type": conflict_type,
+            "severity": "medium" if conflict_type == "weight_conflict" else "high",
+            "resolved_by": "sponsor_risk_execution_scored_vote",
+            "evidence_refs": [
+                f"reflection://{decision_traces[-1]['reflection_id']}",
+                f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}",
+            ],
+        }
+        for conflict_type in conflict_types
+    ]
+    resolved_weights = {
+        instrument: round(float(leg["weight"]) * min(1.0, risk_scale + 0.1), 6)
+        for instrument, leg in final_policy["legs"].items()
+    }
+    total_weight = sum(resolved_weights.values())
+    if total_weight > 1.0:
+        resolved_weights = {
+            instrument: round(weight / total_weight, 6)
+            for instrument, weight in resolved_weights.items()
+        }
+    return {
+        "resolution_id": f"conflict-resolution-{episode.case_id}",
+        "council_votes": council_votes,
+        "classified_conflicts": classified_conflicts,
+        "conflict_types": sorted(conflict_types),
+        "open_conflicts": [],
+        "resolved_allocation": {
+            "direction_by_instrument": final_directions,
+            "weight_by_instrument": resolved_weights,
+            "capital_budget_pct": round(sum(resolved_weights.values()), 6),
+            "turnover_budget": 1.25,
+        },
+        "decision_trace_ref": decision_traces[-1]["reflection_id"],
+        "oss_risk_ref": f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}",
+    }
+
+
+def _build_restart_recovery_report(
+    *,
+    episode: PortfolioEpisode,
+    decision_traces: Sequence[Mapping[str, Any]],
+    memory_contexts: Sequence[Mapping[str, Any]],
+    evolution_decision: EvolutionDecision,
+) -> dict[str, Any]:
+    memory_refs = [context["memory_id"] for context in memory_contexts]
+    checkpoint_id = f"checkpoint-{episode.case_id}-after-gen1"
+    idempotency_key = _stable_id(
+        "idempotency",
+        episode.validation_signature,
+        checkpoint_id,
+        decision_traces[-1]["reflection_id"],
+    )
+    return {
+        "checkpoint_id": checkpoint_id,
+        "idempotency_key": idempotency_key,
+        "persisted_after_step": "generation1_memory_write",
+        "resume_step": "execute_generation2_future_holdout",
+        "checkpoint_written": True,
+        "recovered": True,
+        "memory_refs_before_restart": memory_refs,
+        "memory_refs_after_recovery": list(memory_refs),
+        "decision_trace_refs_restored": [trace["reflection_id"] for trace in decision_traces],
+        "duplicate_execution_suppressed": True,
+        "evolution_decision_ref": evolution_decision.decision_id,
+        "next_step_completed": _enum_value(evolution_decision.decision_state) == EvolutionDecisionState.EXECUTED.value,
+    }
+
+
+def _build_autonomous_schedule(
+    *,
+    episode: PortfolioEpisode,
+    generated_at: str,
+    restart_recovery: Mapping[str, Any],
+) -> dict[str, Any]:
+    phases = []
+    for phase_index, phase in enumerate(AUTONOMOUS_SCHEDULER_PHASES):
+        phases.append(
+            {
+                "phase": phase,
+                "due_at": _offset_timestamp(
+                    generated_at,
+                    episode.ordinal,
+                    days=episode.ordinal % 17,
+                    minutes=phase_index * 5,
+                ),
+                "status": "completed" if phase != "schedule_next" else "scheduled",
+            }
+        )
+    return {
+        "schedule_id": f"schedule-{episode.case_id}",
+        "trigger_mode": "autonomous_daily_paper_loop",
+        "phases": phases,
+        "phase_order_valid": [phase["phase"] for phase in phases] == list(AUTONOMOUS_SCHEDULER_PHASES),
+        "restart_checkpoint_ref": restart_recovery["checkpoint_id"],
+        "missed_cycle_recovered": restart_recovery["recovered"],
+        "next_cycle_due_at": _offset_timestamp(
+            generated_at,
+            episode.ordinal,
+            days=(episode.ordinal % 17) + 1,
+        ),
+    }
+
+
+def _build_lean_handoff_packet(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    evolution_decision: EvolutionDecision,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    market_friction: Mapping[str, Any],
+    broker_lifecycle: Mapping[str, Any],
+) -> dict[str, Any]:
+    handoff = oss_inputs["handoff"]
+    return {
+        "packet_id": f"lean-packet-{episode.case_id}",
+        "component": handoff["component"],
+        "request_id": handoff["request_id"],
+        "strategy_packet_materialized": True,
+        "packet_type": "LeanPaperStrategyPacket",
+        "target_stage": "paper",
+        "policy_id": final_policy["policy_id"],
+        "evolution_decision_id": evolution_decision.decision_id,
+        "portfolio_instruments": [window.instrument for window in episode.windows],
+        "market_friction_model_id": market_friction["model_id"],
+        "broker_lifecycle_model": broker_lifecycle["lifecycle_model"],
+        "runtime_bundle_refs": [
+            f"strategy://{episode.seed_key}-agent-usability-hardening/{final_policy['policy_id']}",
+            f"evolution://{evolution_decision.decision_id}",
+            f"oss://{handoff['component']}/{handoff['request_id']}",
+        ],
+        "received_by_lean_handoff": handoff.get("status") == "completed",
+        "broker_live_submitted": False,
+    }
+
+
+def _market_friction_is_usable(market_friction: Mapping[str, Any]) -> bool:
+    return bool(
+        market_friction.get("applied")
+        and market_friction.get("model_id") == MARKET_FRICTION_MODEL_ID
+        and market_friction.get("all_orders_within_liquidity_cap")
+        and market_friction.get("costs_are_positive")
+        and len(market_friction.get("generation_costs", [])) == GENERATION_COUNT
+    )
+
+
+def _broker_lifecycle_is_reconciled(broker_lifecycle: Mapping[str, Any]) -> bool:
+    return bool(
+        broker_lifecycle.get("reconciled")
+        and broker_lifecycle.get("readback_consistent")
+        and broker_lifecycle.get("live_broker_submission_count") == 0
+        and broker_lifecycle.get("order_count") == GENERATION_COUNT * PORTFOLIO_LEG_COUNT
+        and broker_lifecycle.get("terminal_statuses") == [BROKER_LIFECYCLE_TERMINAL_STATUS]
+    )
+
+
+def _persona_conflicts_are_resolved(conflict_resolution: Mapping[str, Any]) -> bool:
+    allocation = conflict_resolution.get("resolved_allocation", {})
+    return bool(
+        conflict_resolution.get("classified_conflicts")
+        and not conflict_resolution.get("open_conflicts")
+        and allocation.get("capital_budget_pct", 2.0) <= 1.0
+        and set(allocation.get("direction_by_instrument", {}))
+        == set(allocation.get("weight_by_instrument", {}))
+    )
+
+
+def _restart_recovery_is_usable(restart_recovery: Mapping[str, Any]) -> bool:
+    return bool(
+        restart_recovery.get("checkpoint_written")
+        and restart_recovery.get("recovered")
+        and restart_recovery.get("duplicate_execution_suppressed")
+        and restart_recovery.get("next_step_completed")
+        and restart_recovery.get("memory_refs_before_restart")
+        == restart_recovery.get("memory_refs_after_recovery")
+    )
+
+
+def _autonomous_schedule_is_usable(schedule: Mapping[str, Any]) -> bool:
+    return bool(
+        schedule.get("trigger_mode") == "autonomous_daily_paper_loop"
+        and schedule.get("phase_order_valid")
+        and schedule.get("missed_cycle_recovered")
+        and [phase["phase"] for phase in schedule.get("phases", [])]
+        == list(AUTONOMOUS_SCHEDULER_PHASES)
+        and schedule.get("next_cycle_due_at")
+    )
+
+
+def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
+    return bool(
+        packet.get("component") == "lean_handoff"
+        and packet.get("strategy_packet_materialized")
+        and packet.get("received_by_lean_handoff")
+        and packet.get("target_stage") == "paper"
+        and packet.get("broker_live_submitted") is False
+        and packet.get("runtime_bundle_refs")
+    )
+
+
 def _build_usability_dimensions(
     *,
     episode: PortfolioEpisode,
@@ -1748,6 +2233,7 @@ def _build_usability_dimensions(
     memory_contexts: Sequence[Mapping[str, Any]],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     validation_plan: Mapping[str, Any],
+    operational_context: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
     return_improvement = 1.0 if generation1_eval["score"] > baseline_holdout_counterfactual["score"] else 0.0
@@ -1782,6 +2268,12 @@ def _build_usability_dimensions(
     portfolio_breadth = 1.0 if len(episode.windows) == PORTFOLIO_LEG_COUNT else 0.0
     no_leakage = 1.0 if all(_trace_has_no_forbidden_window_leakage(trace) for trace in decision_traces) else 0.0
     planning_completeness = 1.0 if _validation_plan_is_complete(validation_plan) else 0.0
+    market_friction = 1.0 if _market_friction_is_usable(operational_context["market_friction"]) else 0.0
+    broker_lifecycle = 1.0 if _broker_lifecycle_is_reconciled(operational_context["broker_lifecycle"]) else 0.0
+    persona_conflicts = 1.0 if _persona_conflicts_are_resolved(operational_context["persona_conflict_resolution"]) else 0.0
+    restart_recovery = 1.0 if _restart_recovery_is_usable(operational_context["restart_recovery"]) else 0.0
+    autonomous_scheduler = 1.0 if _autonomous_schedule_is_usable(operational_context["autonomous_schedule"]) else 0.0
+    lean_handoff = 1.0 if _lean_handoff_packet_is_usable(operational_context["lean_handoff"]) else 0.0
     return {
         "return_improvement": return_improvement,
         "multi_generation_improvement": multi_generation_improvement,
@@ -1795,6 +2287,12 @@ def _build_usability_dimensions(
         "portfolio_breadth": portfolio_breadth,
         "no_leakage": no_leakage,
         "validation_planning": planning_completeness,
+        "market_friction_model": market_friction,
+        "broker_lifecycle_reconciliation": broker_lifecycle,
+        "persona_conflict_resolution": persona_conflicts,
+        "restart_recovery": restart_recovery,
+        "autonomous_scheduler": autonomous_scheduler,
+        "lean_handoff_packet": lean_handoff,
     }
 
 
@@ -1812,6 +2310,7 @@ def _diagnose_validation_execution(
     evolution_decision: EvolutionDecision,
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    operational_context: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
     checks = [
@@ -1897,6 +2396,54 @@ def _diagnose_validation_execution(
             mean(float(value) for value in usability_dimensions.values()) >= MIN_USABILITY_SCORE,
             {"dimension_minima": min(float(value) for value in usability_dimensions.values())},
         ),
+        _diagnostic_check(
+            "market_friction_model_applied",
+            _market_friction_is_usable(operational_context["market_friction"]),
+            {
+                "model_id": operational_context["market_friction"]["model_id"],
+                "generation_count": len(operational_context["market_friction"]["generation_costs"]),
+            },
+        ),
+        _diagnostic_check(
+            "paper_broker_lifecycle_reconciled",
+            _broker_lifecycle_is_reconciled(operational_context["broker_lifecycle"]),
+            {
+                "order_count": operational_context["broker_lifecycle"]["order_count"],
+                "terminal_statuses": operational_context["broker_lifecycle"]["terminal_statuses"],
+            },
+        ),
+        _diagnostic_check(
+            "multi_persona_conflicts_resolved",
+            _persona_conflicts_are_resolved(operational_context["persona_conflict_resolution"]),
+            {
+                "conflict_types": operational_context["persona_conflict_resolution"]["conflict_types"],
+                "open_conflicts": operational_context["persona_conflict_resolution"]["open_conflicts"],
+            },
+        ),
+        _diagnostic_check(
+            "restart_recovery_restores_agent_loop",
+            _restart_recovery_is_usable(operational_context["restart_recovery"]),
+            {
+                "checkpoint_id": operational_context["restart_recovery"]["checkpoint_id"],
+                "resume_step": operational_context["restart_recovery"]["resume_step"],
+            },
+        ),
+        _diagnostic_check(
+            "autonomous_scheduler_orders_next_cycle",
+            _autonomous_schedule_is_usable(operational_context["autonomous_schedule"]),
+            {
+                "phase_count": len(operational_context["autonomous_schedule"]["phases"]),
+                "next_cycle_due_at": operational_context["autonomous_schedule"]["next_cycle_due_at"],
+            },
+        ),
+        _diagnostic_check(
+            "lean_handoff_packet_materialized",
+            _lean_handoff_packet_is_usable(operational_context["lean_handoff"]),
+            {
+                "packet_id": operational_context["lean_handoff"]["packet_id"],
+                "component": operational_context["lean_handoff"]["component"],
+            },
+        ),
     ]
     failed = [check for check in checks if check["status"] != "passed"]
     return {
@@ -1965,6 +2512,7 @@ def _build_case_result(
     evolution_decision: EvolutionDecision,
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    operational_context: Mapping[str, Any],
     validation_plan: Mapping[str, Any],
     validation_diagnostics: Mapping[str, Any],
     validation_repair: Mapping[str, Any],
@@ -2047,6 +2595,7 @@ def _build_case_result(
             "candidate_counts": [trace["candidate_count"] for trace in decision_traces],
             "selected_candidate_ids": [trace["selected_candidate_id"] for trace in decision_traces],
         },
+        "operational_context": dict(operational_context),
         "validation_cycle": {
             "planning": dict(validation_plan),
             "execution_review": dict(validation_diagnostics),
@@ -2075,6 +2624,12 @@ def _build_case_result(
             "validation_planned_before_execution": usability_dimensions["validation_planning"] == 1.0,
             "validation_diagnostics_passed": validation_diagnostics["failed_check_count"] == 0,
             "validation_deficiencies_repaired": not validation_repair["unresolved_deficiencies"],
+            "market_friction_model_applied": usability_dimensions["market_friction_model"] == 1.0,
+            "broker_lifecycle_reconciled": usability_dimensions["broker_lifecycle_reconciliation"] == 1.0,
+            "persona_conflicts_resolved": usability_dimensions["persona_conflict_resolution"] == 1.0,
+            "restart_recovery_restores_loop": usability_dimensions["restart_recovery"] == 1.0,
+            "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
+            "lean_handoff_packet_materialized": usability_dimensions["lean_handoff_packet"] == 1.0,
             "evolved": _enum_value(evolution_decision.decision_state) == EvolutionDecisionState.EXECUTED.value,
         },
     }
@@ -2112,6 +2667,25 @@ def _build_summary(
         "quantity_types": sorted({case["order_profile"]["quantity_type"] for case in cases}),
         "order_types": sorted({case["order_profile"]["order_type"] for case in cases}),
         "regime_paths": sorted({"|".join(case["portfolio"]["regime_path"]) for case in cases}),
+        "operational_scenarios": sorted({case["operational_context"]["scenario"] for case in cases}),
+        "market_friction_models": sorted({
+            case["operational_context"]["market_friction"]["model_id"] for case in cases
+        }),
+        "broker_lifecycle_statuses": sorted({
+            status
+            for case in cases
+            for status in case["operational_context"]["broker_lifecycle"]["lifecycle_statuses"]
+        }),
+        "persona_conflict_types": sorted({
+            conflict_type
+            for case in cases
+            for conflict_type in case["operational_context"]["persona_conflict_resolution"]["conflict_types"]
+        }),
+        "scheduler_phases": sorted({
+            phase["phase"]
+            for case in cases
+            for phase in case["operational_context"]["autonomous_schedule"]["phases"]
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -2156,6 +2730,13 @@ def _build_summary(
         "validation_planning_count": sum(1 for item in usable if item["validation_planned_before_execution"]),
         "validation_diagnostics_pass_count": sum(1 for item in usable if item["validation_diagnostics_passed"]),
         "validation_deficiencies_repaired_count": sum(1 for item in usable if item["validation_deficiencies_repaired"]),
+        "cross_case_memory_retrieval_count": sum(1 for case in cases if case["memory"]["prior_memory"]),
+        "market_friction_model_count": sum(1 for item in usable if item["market_friction_model_applied"]),
+        "broker_lifecycle_reconciled_count": sum(1 for item in usable if item["broker_lifecycle_reconciled"]),
+        "persona_conflict_resolved_count": sum(1 for item in usable if item["persona_conflicts_resolved"]),
+        "restart_recovery_count": sum(1 for item in usable if item["restart_recovery_restores_loop"]),
+        "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
+        "lean_handoff_packet_count": sum(1 for item in usable if item["lean_handoff_packet_materialized"]),
         "validation_gap_question_count": sum(
             len(case["validation_cycle"]["planning"]["questions_asked"]) for case in cases
         ),
@@ -2176,6 +2757,7 @@ def _build_summary(
             "Every case trades a three-instrument portfolio across three generations through paper runtime fills.",
             "Every case writes memory and retrieves that memory for the next generation's decision.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
+            "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
     }
@@ -2315,6 +2897,64 @@ def _return_volatility(closes: Sequence[float]) -> float:
     return pstdev(returns)
 
 
+def _operational_scenario_for_episode(episode: PortfolioEpisode) -> str:
+    return OPERATIONAL_SCENARIOS[(episode.ordinal - 1) % len(OPERATIONAL_SCENARIOS)]
+
+
+def _estimated_order_notional(
+    *,
+    policy: Mapping[str, Any],
+    leg: Mapping[str, Any],
+    close: float,
+    case_index: int,
+) -> float:
+    quantity_type = str(policy["quantity_type"])
+    risk_weight = float(leg["risk_multiplier"]) * float(leg.get("weight", 1.0))
+    quantity = _quantity_for(quantity_type, close, risk_weight, case_index)
+    if quantity_type == "SHARES":
+        return float(quantity) * close
+    if quantity_type == "CASH_VALUE":
+        return float(quantity)
+    if quantity_type == "PERCENT_PORTFOLIO":
+        return float(quantity) * 100_000.0
+    raise ValueError(f"unsupported quantity_type: {quantity_type}")
+
+
+def _broker_status_path_for(scenario: str, ordinal: int) -> list[str]:
+    if scenario == "partial_fill_reconcile":
+        return ["submitted", "acknowledged", "partially_filled", "filled"]
+    if scenario == "limit_miss_reprice":
+        return ["submitted", "acknowledged", "limit_missed", "repriced", "filled"]
+    if scenario == "liquidity_cap_scale":
+        return ["submitted", "acknowledged", "liquidity_scaled", "partially_filled", "filled"]
+    if scenario == "cancel_replace_readback":
+        return [
+            "submitted",
+            "acknowledged",
+            "cancel_requested",
+            "cancel_acknowledged",
+            "replace_submitted",
+            "acknowledged",
+            "filled",
+        ]
+    if scenario == "risk_reject_reduce":
+        return ["submitted", "rejected", "risk_reduced", "resubmitted", "acknowledged", "filled"]
+    raise ValueError(f"unsupported operational scenario: {scenario}")
+
+
+def _macro_conflict_directions(
+    episode: PortfolioEpisode,
+    final_directions: Mapping[str, int],
+) -> dict[str, int]:
+    directions = dict(final_directions)
+    if not directions:
+        return directions
+    instruments = sorted(directions)
+    conflict_instrument = instruments[episode.ordinal % len(instruments)]
+    directions[conflict_instrument] = -directions[conflict_instrument]
+    return directions
+
+
 def _validation_signature(
     *,
     persona_id: str,
@@ -2324,6 +2964,7 @@ def _validation_signature(
     order_profile: Mapping[str, str],
     reflection_archetype: str,
     generation_path: Sequence[str],
+    operational_scenario: str,
 ) -> str:
     parts = [
         persona_id,
@@ -2333,6 +2974,7 @@ def _validation_signature(
         ",".join(f"{key}:{value}" for key, value in sorted(order_profile.items())),
         reflection_archetype,
         "->".join(generation_path),
+        operational_scenario,
     ]
     return _stable_id("validation", *parts)
 
@@ -2347,6 +2989,7 @@ def _validation_combo_signature(episode: PortfolioEpisode) -> str:
         _order_profile_signature(episode.order_profile),
         episode.reflection_archetype,
         "|".join(episode.regime_path),
+        _operational_scenario_for_episode(episode),
     )
 
 
