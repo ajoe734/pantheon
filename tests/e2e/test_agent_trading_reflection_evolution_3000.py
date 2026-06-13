@@ -24,6 +24,7 @@ from services.persona.agent_usability_validation import (
     NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID,
     OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
+    OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID,
     PERSONA_CANDIDATE_GENERATOR_MODEL_ID,
     PERSONA_CANDIDATE_SCORER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
@@ -80,6 +81,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["intra_case_memory_influence_count"] == DEFAULT_CASE_COUNT
     assert summary["cross_case_memory_influence_count"] == DEFAULT_CASE_COUNT - summary["persona_count"]
     assert summary["multi_oss_feedback_drives_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["oss_response_followup_loop_count"] == DEFAULT_CASE_COUNT
+    assert summary["oss_response_followup_loop_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["oss_response_followup_loop_drives_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["agent_decision_artifact_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["agent_decision_artifact_replay_count"] == DEFAULT_CASE_COUNT
     assert summary["persona_reasoning_response_count"] == DEFAULT_CASE_COUNT * 2
@@ -178,6 +182,24 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "rl_policy",
         "vectorbt_backtest",
     }
+    assert coverage["oss_response_followup_loop_models"] == [OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID]
+    assert coverage["oss_response_followup_roles"] == [
+        "alpha_model",
+        "backtest",
+        "handoff",
+        "policy_candidate",
+        "reflection_artifact",
+        "risk_analytics",
+        "session",
+        "tracker",
+    ]
+    assert set(coverage["oss_response_followup_components"]) == set(OSS_REQUIRED_COMPONENTS)
+    assert coverage["oss_response_followup_candidate_actions"] == [
+        "contrarian-check",
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    ]
     assert coverage["agent_decision_artifact_models"] == [PERSONA_DECISION_ARTIFACT_MODEL_ID]
     assert coverage["agent_candidate_generator_models"] == [PERSONA_CANDIDATE_GENERATOR_MODEL_ID]
     assert coverage["agent_candidate_scorer_models"] == [PERSONA_CANDIDATE_SCORER_MODEL_ID]
@@ -372,6 +394,17 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert set(input_context["required_oss_roles"]) == set(case["oss_feedback"]["request_ids"])
         assert set(input_context["oss_evidence_refs"]).issubset(set(trace["evidence_refs"]))
         assert input_context["portfolio_instruments"] == case["portfolio"]["instruments"]
+        followup_loop = case["oss_feedback"]["response_followup_loop"]
+        followup_refs = [
+            followup["response"]["output_ref"]
+            for followup in followup_loop["followups"]
+        ]
+        assert followup_loop["model_id"] == OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID
+        assert input_context["oss_followup_loop_ref"] == followup_loop["loop_ref"]
+        assert trace["decision_inputs"]["oss_followup_loop_ref"] == followup_loop["loop_ref"]
+        assert input_context["oss_followup_response_refs"] == followup_refs
+        assert set(input_context["oss_followup_request_ids_by_role"]) == set(case["oss_feedback"]["request_ids"])
+        assert followup_loop["loop_ref"] in trace["evidence_refs"]
 
         persona_reasoning = artifact["persona_reasoning"]
         reasoning_request = persona_reasoning["request"]
@@ -384,6 +417,14 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert all(check["status"] == "passed" for check in reasoning_evaluator["checks"])
         assert reasoning_request["allowed_windows"] == trace["decision_inputs"]["allowed_windows"]
         assert reasoning_request["forbidden_windows_not_used"] == trace["decision_inputs"]["forbidden_windows_not_used"]
+        assert reasoning_request["oss_followup_loop_ref"] == followup_loop["loop_ref"]
+        assert followup_loop["loop_ref"] in reasoning_request["input_refs"]
+        assert reasoning_response["oss_followup_usage"]["loop_ref"] == followup_loop["loop_ref"]
+        assert reasoning_response["oss_followup_usage"]["model_id"] == OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID
+        assert reasoning_response["oss_followup_usage"]["followup_count"] == len(followup_loop["followups"])
+        assert reasoning_response["oss_followup_usage"]["candidate_score_adjustments"] == followup_loop[
+            "candidate_score_adjustments"
+        ]
         if memory_ref:
             assert memory_ref in reasoning_request["input_refs"]
             assert reasoning_response["memory_usage"]["influence_ref"] == memory_ref
@@ -408,6 +449,8 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert response["source_reasoning_response_id"] == reasoning_response["response_id"]
         assert response["source_reasoning_ref"] == reasoning_response["reasoning_ref"]
         assert reasoning_response["reasoning_ref"] in candidate_generation["request"]["input_refs"]
+        assert followup_loop["loop_ref"] in candidate_generation["request"]["input_refs"]
+        assert set(followup_refs).issubset(set(candidate_generation["request"]["input_refs"]))
         assert response["candidate_ids"] == trace_candidate_ids
         assert response["candidates"] == trace["candidates"]
         if memory_ref:
@@ -430,6 +473,10 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert scorer["model_id"] == PERSONA_CANDIDATE_SCORER_MODEL_ID
         assert scorer["scoring_inputs"]["memory_influence"]["status"] == memory_influence["status"]
         assert scorer["scoring_inputs"]["memory_score_adjustments"] == memory_influence["candidate_score_adjustments"]
+        assert scorer["scoring_inputs"]["oss_followup_loop"]["loop_ref"] == followup_loop["loop_ref"]
+        assert scorer["scoring_inputs"]["oss_followup_score_adjustments"] == followup_loop[
+            "candidate_score_adjustments"
+        ]
         assert scorer["scoring_inputs"]["persona_reasoning_ref"] == reasoning_response["reasoning_ref"]
         assert scorer["scoring_inputs"]["persona_reasoning_preferred_action"] == reasoning_response[
             "preferred_action_hint"
@@ -450,6 +497,13 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
                 "candidate_score_adjustments"
             ][selected_action_key]
             assert scorecards[selected_id]["components"]["memory_adjustment"] > 0
+        assert scorecards[selected_id]["components"]["oss_followup_adjustment"] == followup_loop[
+            "candidate_score_adjustments"
+        ][selected_action_key]
+        assert scorecards[selected_id]["components"]["oss_followup_adjustment"] > 0
+        assert set(followup_loop["candidate_evidence_refs_by_action"][selected_action_key]).issubset(
+            set(trace["selected_candidate"]["evidence_refs"])
+        )
 
         risk_evaluator = artifact["risk_evaluator"]
         assert risk_evaluator["model_id"] == PERSONA_RISK_EVALUATOR_MODEL_ID
@@ -470,6 +524,7 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert replay["uses_memory_or_declares_cold_start"] is True
         assert replay["uses_memory_in_scoring_or_declares_cold_start"] is True
         assert replay["uses_selected_oss_feedback"] is True
+        assert replay["uses_oss_response_followup_loop"] is True
         assert replay["input_hash"]
         assert replay["candidate_hash"]
         assert replay["score_hash"]
@@ -482,6 +537,7 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
     assert check_by_name["persona_decision_artifact_replays_candidate_selection"]["status"] == "passed"
     assert check_by_name["persona_reasoning_response_drives_candidate_generation"]["status"] == "passed"
     assert check_by_name["retrieved_memory_influences_persona_candidate_scoring"]["status"] == "passed"
+    assert check_by_name["oss_response_followup_loop_drives_persona_scoring"]["status"] == "passed"
 
 
 def _assert_no_leakage_temporal_protocol(case: dict) -> None:
@@ -624,6 +680,50 @@ def _assert_memory_and_oss_closed_loop(case: dict) -> None:
     assert "lean_handoff" in oss_feedback["components_used"]
     assert "vectorbt" in oss_feedback["components_used"]
     assert oss_feedback["drives_persona_steps"]["handoff"] == "evolved_strategy_handoff"
+    followup_loop = oss_feedback["response_followup_loop"]
+    assert followup_loop["model_id"] == OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID
+    assert followup_loop["case_id"] == case["case_id"]
+    assert followup_loop["persona_id"] == case["persona_id"]
+    assert followup_loop["source_feedback_id"] == case["case_upstream_artifacts"]["feedback_id"]
+    assert followup_loop["required_roles"] == [
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    ]
+    assert [followup["role"] for followup in followup_loop["followups"]] == followup_loop["required_roles"]
+    assert followup_loop["drives_generations"] == [1, 2]
+    assert followup_loop["candidate_score_adjustments"]["feedback-adapt"] > 0
+    assert followup_loop["candidate_score_adjustments"]["risk-off"] > 0
+    assert followup_loop["input_hash"]
+    for followup in followup_loop["followups"]:
+        role = followup["role"]
+        component = followup["component"]
+        if role in oss_feedback["route"]:
+            assert component == oss_feedback["route"][role]
+        else:
+            assert component
+        source_ref = f"oss://{component}/{oss_feedback['request_ids'][role]}"
+        assert followup["source_oss_ref"] == source_ref
+        assert followup["request"]["source_oss_ref"] == source_ref
+        assert followup["request"]["source_oss_request_id"] == oss_feedback["request_ids"][role]
+        assert followup["request"]["requested_after_oss_response"] is True
+        assert followup["request"]["drives_persona_step"] == oss_feedback["drives_persona_steps"][role]
+        assert followup["response"]["status"] == "completed"
+        assert followup["response"]["output_ref"].startswith("followup://persona/")
+        assert followup["response"]["used_by_generations"] == [1, 2]
+    replay = followup_loop["replay"]
+    assert replay["replayable"] is True
+    assert replay["all_required_roles_followed_up"] is True
+    assert replay["all_followups_requested_after_oss_response"] is True
+    assert replay["all_followups_completed"] is True
+    assert replay["responses_drive_candidate_scoring"] is True
+    assert replay["feedback_adapt_receives_all_followup_refs"] is True
+    assert replay["risk_response_available_to_risk_off"] is True
 
 
 def _assert_case_specific_upstream_artifacts(case: dict) -> None:
