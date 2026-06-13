@@ -30,11 +30,15 @@ from services.persona.agent_usability_validation import (
     NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID,
     OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
+    OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE,
+    OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE,
+    OSS_DISAGREEMENT_TYPES_BY_SCENARIO,
     OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID,
     PERSONA_CANDIDATE_GENERATOR_MODEL_ID,
     PERSONA_CANDIDATE_SCORER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
     PERSONA_MEMORY_INFLUENCE_MODEL_ID,
+    PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
     PERSONA_REASONING_EVALUATOR_MODEL_ID,
     PERSONA_REASONING_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
@@ -90,6 +94,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["oss_response_followup_loop_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_drives_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["oss_disagreement_arbitration_count"] == DEFAULT_CASE_COUNT
+    assert summary["oss_disagreement_arbitration_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_oss_disagreement_arbitrated_count"] == DEFAULT_CASE_COUNT
     assert summary["agent_decision_artifact_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["agent_decision_artifact_replay_count"] == DEFAULT_CASE_COUNT
     assert summary["persona_reasoning_response_count"] == DEFAULT_CASE_COUNT * 2
@@ -287,6 +294,23 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "retain-observe",
         "risk-off",
     ]
+    assert coverage["oss_disagreement_arbitration_models"] == [
+        PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID
+    ]
+    assert set(coverage["oss_disagreement_types"]) == set(OSS_DISAGREEMENT_TYPES_BY_SCENARIO.values())
+    assert set(coverage["oss_disagreement_source_role_pairs"]) == {
+        "+".join(source_roles)
+        for source_roles in OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE.values()
+    }
+    assert set(coverage["oss_disagreement_resolution_actions"]) == set(
+        OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE.values()
+    )
+    assert set(coverage["oss_disagreement_candidate_actions"]) == {
+        "contrarian-check",
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    }
     assert coverage["agent_decision_artifact_models"] == [PERSONA_DECISION_ARTIFACT_MODEL_ID]
     assert coverage["agent_candidate_generator_models"] == [PERSONA_CANDIDATE_GENERATOR_MODEL_ID]
     assert coverage["agent_candidate_scorer_models"] == [PERSONA_CANDIDATE_SCORER_MODEL_ID]
@@ -818,6 +842,7 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
     vectorbt = artifacts["vectorbt"]
     tracker = artifacts["tracker"]
     selected_oss = artifacts["selected_oss"]
+    arbitration = artifacts["oss_disagreement_arbitration"]
     persona_response = artifacts["persona_response"]
 
     assert artifacts["vectorbt_model_id"] == CASE_UPSTREAM_VECTORBT_MODEL_ID
@@ -891,6 +916,7 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
 
     assert persona_response["used_before_generation1_decision"] is True
     assert persona_response["used_before_generation2_decision"] is True
+    assert persona_response["next_disagreement_action"] == "arbitrate_multi_oss_disagreement"
     vectorbt_ref = f"oss://vectorbt/{vectorbt['request_id']}"
     tracker_ref = f"oss://{tracker['component']}/{tracker['request_id']}"
     experiment_ref = f"experiment://{tracker['backend']}/{tracker['run_id']}"
@@ -900,12 +926,55 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
     for entry in selected_oss.values():
         assert f"oss://{entry['component']}/{entry['request_id']}" in persona_response["evidence_refs"]
 
+    expected_conflict_type = OSS_DISAGREEMENT_TYPES_BY_SCENARIO[case["operational_context"]["scenario"]]
+    expected_source_roles = OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE[expected_conflict_type]
+    expected_resolution_action = OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE[expected_conflict_type]
+    assert arbitration["model_id"] == PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID
+    assert arbitration["status"] == "resolved"
+    assert arbitration["case_id"] == case["case_id"]
+    assert arbitration["arbitration_ref"] in persona_response["evidence_refs"]
+    assert arbitration["source_feedback_id"] == artifacts["feedback_id"]
+    assert arbitration["source_followup_loop_ref"] == case["oss_feedback"]["response_followup_loop"]["loop_ref"]
+    assert len(arbitration["conflicts"]) == 1
+    conflict = arbitration["conflicts"][0]
+    assert conflict["conflict_type"] == expected_conflict_type
+    assert tuple(conflict["source_roles"]) == expected_source_roles
+    assert conflict["resolution_action"] == expected_resolution_action
+    assert conflict["resolution_ref"].startswith(arbitration["arbitration_ref"])
+    assert all(ref.startswith("oss://") for ref in conflict["source_refs"])
+    assert conflict["observed_signals"]
+    assert arbitration["candidate_score_adjustments"][expected_resolution_action] > 0
+    assert set(arbitration["candidate_evidence_refs_by_action"]) == {
+        "contrarian-check",
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    }
+    assert arbitration["arbitration_ref"] in arbitration["candidate_evidence_refs_by_action"]["feedback-adapt"]
+    assert arbitration["persona_arbitration_response"]["next_action"] == "score_candidates_with_arbitrated_oss_weights"
+    assert arbitration["persona_arbitration_response"]["preferred_candidate_action"] == "feedback-adapt"
+    assert expected_resolution_action in arbitration["persona_arbitration_response"]["resolution_actions"]
+    assert all(arbitration["replay"].values())
+    assert arbitration["input_hash"]
+
     for trace in case["reflection"]["agent_decision_traces"]:
+        artifact = trace["agent_decision_artifact"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
         assert vectorbt_ref in trace["evidence_refs"]
         assert tracker_ref in trace["evidence_refs"]
+        assert arbitration["arbitration_ref"] in trace["evidence_refs"]
+        assert trace["decision_inputs"]["oss_disagreement_arbitration_ref"] == arbitration["arbitration_ref"]
+        assert artifact["input_context"]["oss_disagreement_arbitration_ref"] == arbitration["arbitration_ref"]
+        assert artifact["persona_reasoning"]["response"]["oss_disagreement_arbitration_usage"]["arbitration_ref"] == arbitration["arbitration_ref"]
+        assert scoring_inputs["oss_disagreement_arbitration"]["arbitration_id"] == arbitration["arbitration_id"]
+        assert scoring_inputs["oss_disagreement_score_adjustments"][expected_resolution_action] > 0
+        assert artifact["replay"]["uses_oss_disagreement_arbitration"] is True
         selected_refs = trace["selected_candidate"]["evidence_refs"]
         assert vectorbt_ref in selected_refs
         assert tracker_ref in selected_refs
+        assert set(
+            arbitration["candidate_evidence_refs_by_action"]["feedback-adapt"]
+        ).issubset(set(selected_refs))
         for entry in selected_oss.values():
             oss_ref = f"oss://{entry['component']}/{entry['request_id']}"
             assert oss_ref in trace["evidence_refs"]
@@ -917,6 +986,7 @@ def _assert_case_specific_upstream_artifacts(case: dict) -> None:
     }
     assert check_by_name["case_specific_upstream_artifacts_drive_persona_decision"]["status"] == "passed"
     assert check_by_name["case_specific_selected_oss_route_feedback_drives_persona_decision"]["status"] == "passed"
+    assert check_by_name["multi_oss_disagreement_arbitration_drives_persona_scoring"]["status"] == "passed"
 
 
 def _assert_operational_context(case: dict) -> None:
