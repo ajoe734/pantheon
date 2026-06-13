@@ -23,6 +23,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_CANDIDATE_GENERATOR_MODEL_ID,
     PERSONA_CANDIDATE_SCORER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
+    PERSONA_MEMORY_INFLUENCE_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
     SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID,
     OSS_REQUIRED_COMPONENTS,
@@ -68,6 +69,8 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["portfolio_trade_generation_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["portfolio_trade_generation_fill_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["memory_retrieval_drives_next_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["intra_case_memory_influence_count"] == DEFAULT_CASE_COUNT
+    assert summary["cross_case_memory_influence_count"] == DEFAULT_CASE_COUNT - summary["persona_count"]
     assert summary["multi_oss_feedback_drives_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["agent_decision_artifact_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["agent_decision_artifact_replay_count"] == DEFAULT_CASE_COUNT
@@ -168,6 +171,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert coverage["agent_candidate_scorer_models"] == [PERSONA_CANDIDATE_SCORER_MODEL_ID]
     assert coverage["agent_risk_evaluator_models"] == [PERSONA_RISK_EVALUATOR_MODEL_ID]
     assert coverage["agent_decision_artifact_generations"] == [1, 2]
+    assert coverage["agent_memory_influence_models"] == [PERSONA_MEMORY_INFLUENCE_MODEL_ID]
+    assert coverage["agent_memory_influence_statuses"] == ["applied", "cold_start"]
+    assert "feedback-adapt" in coverage["agent_memory_selected_action_hints"]
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -309,6 +315,29 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
             assert input_context["memory_status"] == "retrieved"
         else:
             assert input_context["memory_status"] == "cold_start_declared"
+        memory_influence = artifact["memory_influence"]
+        assert memory_influence["model_id"] == PERSONA_MEMORY_INFLUENCE_MODEL_ID
+        if input_context["memory_ref"]:
+            memory_ref = f"memory://{input_context['memory_ref']}"
+            assert memory_influence["status"] == "applied"
+            assert memory_influence["memory_id"] == input_context["memory_ref"]
+            assert memory_influence["influence_ref"] == memory_ref
+            assert memory_influence["content_summary"]
+            assert memory_influence["cited_proposal_ids"]
+            assert memory_influence["retrieval_tags"]
+            assert memory_influence["selected_action_hint"] in {
+                "feedback-adapt",
+                "risk-off",
+                "retain-observe",
+                "contrarian-check",
+            }
+            assert input_context["memory_influence_ref"] == memory_ref
+            assert input_context["memory_influence"]["memory_id"] == input_context["memory_ref"]
+        else:
+            memory_ref = None
+            assert memory_influence["status"] == "cold_start"
+            assert memory_influence["influence_ref"] is None
+            assert all(value == 0.0 for value in memory_influence["candidate_score_adjustments"].values())
         assert input_context["oss_request_ids_by_role"] == case["oss_feedback"]["request_ids"]
         assert set(input_context["required_oss_roles"]) == set(case["oss_feedback"]["request_ids"])
         assert set(input_context["oss_evidence_refs"]).issubset(set(trace["evidence_refs"]))
@@ -321,9 +350,13 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert response["status"] == "completed"
         assert response["candidate_ids"] == trace_candidate_ids
         assert response["candidates"] == trace["candidates"]
+        if memory_ref:
+            assert memory_ref in candidate_generation["request"]["input_refs"]
 
         scorer = artifact["scorer"]
         assert scorer["model_id"] == PERSONA_CANDIDATE_SCORER_MODEL_ID
+        assert scorer["scoring_inputs"]["memory_influence"]["status"] == memory_influence["status"]
+        assert scorer["scoring_inputs"]["memory_score_adjustments"] == memory_influence["candidate_score_adjustments"]
         scorecards = scorer["scorecards"]
         assert set(scorecards) == set(trace_candidate_ids)
         assert all(card["score_replay_match"] is True for card in scorecards.values())
@@ -332,6 +365,14 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert selected_score == max(card["candidate_score"] for card in scorecards.values())
         assert scorer["scoring_inputs"]["policy_quality"] >= 0
         assert scorer["scoring_inputs"]["reflection_quality"] >= 0
+        selected_action = selected_id.rsplit("-", maxsplit=2)[-2:]
+        selected_action_key = "-".join(selected_action)
+        if memory_ref:
+            assert memory_ref in trace["selected_candidate"]["evidence_refs"]
+            assert scorecards[selected_id]["components"]["memory_adjustment"] == memory_influence[
+                "candidate_score_adjustments"
+            ][selected_action_key]
+            assert scorecards[selected_id]["components"]["memory_adjustment"] > 0
 
         risk_evaluator = artifact["risk_evaluator"]
         assert risk_evaluator["model_id"] == PERSONA_RISK_EVALUATOR_MODEL_ID
@@ -350,6 +391,7 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert replay["selected_candidate_is_top_score"] is True
         assert replay["no_forbidden_window_sources"] is True
         assert replay["uses_memory_or_declares_cold_start"] is True
+        assert replay["uses_memory_in_scoring_or_declares_cold_start"] is True
         assert replay["uses_selected_oss_feedback"] is True
         assert replay["input_hash"]
         assert replay["candidate_hash"]
@@ -361,6 +403,7 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         for check in case["validation_cycle"]["execution_review"]["checks"]
     }
     assert check_by_name["persona_decision_artifact_replays_candidate_selection"]["status"] == "passed"
+    assert check_by_name["retrieved_memory_influences_persona_candidate_scoring"]["status"] == "passed"
 
 
 def _assert_memory_and_oss_closed_loop(case: dict) -> None:
@@ -374,6 +417,16 @@ def _assert_memory_and_oss_closed_loop(case: dict) -> None:
     if memory["prior_memory"]:
         first_trace = case["reflection"]["agent_decision_traces"][0]
         assert first_trace["decision_inputs"]["memory_ref"] == memory["prior_memory"]["memory_id"]
+        assert first_trace["agent_decision_artifact"]["memory_influence"]["memory_id"] == memory["prior_memory"]["memory_id"]
+        assert f"memory://{memory['prior_memory']['memory_id']}" in first_trace["selected_candidate"]["evidence_refs"]
+    second_trace = case["reflection"]["agent_decision_traces"][1]
+    assert second_trace["decision_inputs"]["memory_ref"] == memory["memory_reused_for_next_decision"][0]["memory_id"]
+    assert second_trace["agent_decision_artifact"]["memory_influence"]["memory_id"] == memory[
+        "memory_reused_for_next_decision"
+    ][0]["memory_id"]
+    assert f"memory://{memory['memory_reused_for_next_decision'][0]['memory_id']}" in second_trace[
+        "selected_candidate"
+    ]["evidence_refs"]
 
     oss_feedback = case["oss_feedback"]
     assert set(oss_feedback["request_ids"]) == {
