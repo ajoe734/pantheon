@@ -27,6 +27,7 @@ from services.persona.agent_usability_validation import (
     LOOKBACK_BARS,
     MARKET_FRICTION_MODEL_ID,
     MIN_USABILITY_SCORE,
+    MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID,
     NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID,
     OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
@@ -108,6 +109,11 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["intra_case_memory_influence_count"] == DEFAULT_CASE_COUNT
     assert summary["cross_case_memory_influence_count"] == DEFAULT_CASE_COUNT - summary["persona_count"]
     assert summary["multi_oss_feedback_drives_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_oss_closed_loop_proof_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_oss_closed_loop_proof_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_oss_closed_loop_role_binding_count"] == DEFAULT_CASE_COUNT * 8
+    assert summary["multi_oss_closed_loop_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["multi_oss_closed_loop_drives_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_drives_decision_count"] == DEFAULT_CASE_COUNT
@@ -317,6 +323,39 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "retain-observe",
         "risk-off",
     ]
+    assert coverage["multi_oss_closed_loop_models"] == [MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID]
+    assert set(coverage["multi_oss_closed_loop_roles"]) == {
+        "alpha_model",
+        "backtest",
+        "handoff",
+        "policy_candidate",
+        "reflection_artifact",
+        "risk_analytics",
+        "session",
+        "tracker",
+    }
+    assert set(coverage["multi_oss_closed_loop_components"]) == set(OSS_REQUIRED_COMPONENTS)
+    assert set(coverage["multi_oss_closed_loop_candidate_actions"]) == {
+        "contrarian-check",
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    }
+    assert set(coverage["multi_oss_closed_loop_replay_flags"]) == {
+        "all_followup_outputs_consumed_by_candidate_generation",
+        "all_followup_outputs_used_by_both_generations",
+        "all_followup_responses_completed",
+        "all_followups_requested_after_oss_response",
+        "all_oss_responses_completed",
+        "all_required_roles_present",
+        "all_role_score_adjustments_available_to_scorer",
+        "all_source_oss_refs_consumed_by_reasoning",
+        "all_source_refs_bound_to_followup_requests",
+        "feedback_adapt_path_receives_all_oss_feedback",
+        "replayable",
+        "selected_candidate_cites_all_followup_outputs",
+        "selected_case_oss_roles_bound",
+    }
     assert coverage["oss_disagreement_arbitration_models"] == [
         PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID
     ]
@@ -462,6 +501,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_no_leakage_temporal_protocol(case)
         _assert_strict_oos_evolution_proof(case)
         _assert_memory_and_oss_closed_loop(case)
+        _assert_multi_oss_closed_loop_proof(case)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
         _assert_evolution_and_scores(case)
@@ -1084,6 +1124,107 @@ def _assert_memory_and_oss_closed_loop(case: dict) -> None:
     assert replay["responses_drive_candidate_scoring"] is True
     assert replay["feedback_adapt_receives_all_followup_refs"] is True
     assert replay["risk_response_available_to_risk_off"] is True
+
+
+def _assert_multi_oss_closed_loop_proof(case: dict) -> None:
+    proof = case["oss_feedback"]["closed_loop_proof"]
+    followup_loop = case["oss_feedback"]["response_followup_loop"]
+    traces = case["reflection"]["agent_decision_traces"]
+    required_roles = [
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    ]
+
+    assert proof["model_id"] == MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == f"multi-oss-closed-loop://{case['case_id']}"
+    assert proof["input_hash"]
+    assert [record["role"] for record in proof["role_records"]] == required_roles
+    assert len(proof["trace_bindings"]) == 2
+
+    followup_by_role = {
+        followup["role"]: followup for followup in followup_loop["followups"]
+    }
+    selected_oss = case["case_upstream_artifacts"]["selected_oss"]
+    followup_output_refs = {record["followup_output_ref"] for record in proof["role_records"]}
+    assert set(followup_loop["candidate_evidence_refs_by_action"]["feedback-adapt"]) == followup_output_refs
+
+    for record in proof["role_records"]:
+        role = record["role"]
+        component = record["component"]
+        request_id = case["oss_feedback"]["request_ids"][role]
+        source_ref = f"oss://{component}/{request_id}"
+        followup = followup_by_role[role]
+
+        assert component in OSS_REQUIRED_COMPONENTS
+        assert record["source_oss_request_id"] == request_id
+        assert record["source_oss_ref"] == source_ref
+        assert record["source_status"] == "completed"
+        assert record["source_drives_persona_step"] == case["oss_feedback"]["drives_persona_steps"][role]
+        assert record["followup_request_id"] == followup["request"]["request_id"]
+        assert record["followup_response_id"] == followup["response"]["response_id"]
+        assert record["followup_output_ref"] == followup["response"]["output_ref"]
+        assert record["followup_candidate_action"] == followup["response"]["candidate_action"]
+        assert record["source_ref_bound_to_followup"] is True
+        assert record["followup_requested_after_oss_response"] is True
+        assert record["followup_completed"] is True
+        assert record["followup_drives_persona_step"] == case["oss_feedback"]["drives_persona_steps"][role]
+        assert record["used_by_generations"] == [1, 2]
+        assert any(value > 0 for value in record["followup_score_adjustments"].values())
+        if role in selected_oss:
+            selected_entry = selected_oss[role]
+            assert record["selected_oss_ref"] == f"oss://{selected_entry['component']}/{selected_entry['request_id']}"
+            assert record["selected_oss_bound"] is True
+        else:
+            assert record["selected_oss_ref"] is None
+            assert record["selected_oss_bound"] is True
+
+    for binding, trace in zip(proof["trace_bindings"], traces):
+        artifact = trace["agent_decision_artifact"]
+        reasoning_refs = set(artifact["persona_reasoning"]["request"]["input_refs"])
+        candidate_refs = set(artifact["candidate_generation"]["request"]["input_refs"])
+        selected_refs = set(trace["selected_candidate"]["evidence_refs"])
+        scorer_adjustments = artifact["scorer"]["scoring_inputs"]["oss_followup_score_adjustments"]
+
+        assert binding["generation"] == artifact["generation"]
+        assert binding["trace_id"] == trace["reflection_id"]
+        assert binding["selected_candidate_id"] == trace["selected_candidate_id"]
+        assert binding["selected_action"] == "feedback-adapt"
+        assert binding["oss_followup_loop_ref"] == followup_loop["loop_ref"]
+        assert binding["reasoning_request_consumes_all_source_oss_refs"] is True
+        assert binding["candidate_request_consumes_all_followup_outputs"] is True
+        assert binding["selected_candidate_cites_all_followup_outputs"] is True
+        assert binding["scorer_has_all_role_adjustments"] is True
+        assert set(followup_output_refs).issubset(selected_refs)
+        assert [role_binding["role"] for role_binding in binding["role_bindings"]] == required_roles
+        for role_binding, record in zip(binding["role_bindings"], proof["role_records"]):
+            action = record["followup_candidate_action"]
+            expected_adjustment = record["followup_score_adjustments"][action]
+            assert record["source_oss_ref"] in reasoning_refs
+            assert record["followup_output_ref"] in candidate_refs
+            assert record["followup_output_ref"] in selected_refs
+            assert scorer_adjustments[action] >= expected_adjustment
+            assert role_binding["source_ref_in_reasoning_request"] is True
+            assert role_binding["followup_output_in_candidate_request"] is True
+            assert role_binding["followup_output_in_selected_evidence"] is True
+            assert role_binding["scorer_adjustment_available"] is True
+
+    assert all(proof["replay"].values())
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["multi_oss_closed_loop_proof_replays_role_bindings"]["status"] == "passed"
+    assert case["usability_dimensions"]["multi_oss_closed_loop"] == 1.0
+    assert case["usable"]["multi_oss_closed_loop_drives_decision"] is True
 
 
 def _assert_case_specific_upstream_artifacts(case: dict) -> None:
