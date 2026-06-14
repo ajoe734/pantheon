@@ -26,6 +26,23 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert drift["depends_on"]["runtime-manager"]["condition"] == "service_healthy"
     assert "healthcheck" in drift
 
+    consumer = services["reconciliation-drift-consumer"]
+    assert consumer["profiles"] == ["reconciliation-drift-consumer"]
+    assert consumer["build"]["dockerfile"] == "services/reconciliation-drift/Dockerfile"
+    assert consumer["command"] == ["python", "services/reconciliation-drift/consumer.py"]
+    assert consumer["environment"]["RECONCILIATION_DRIFT_URL"] == "http://reconciliation-drift-svc:8102"
+    assert consumer["environment"]["RECONCILIATION_DRIFT_CONSUMER_INPUT"] == "/fixtures/reconciliation-drift"
+    assert (
+        consumer["environment"]["RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS"]
+        == "${RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS:-60}"
+    )
+    assert (
+        consumer["environment"]["RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS"]
+        == "${RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS:-0}"
+    )
+    assert "./services/reconciliation-drift/fixtures:/fixtures/reconciliation-drift:ro" in consumer["volumes"]
+    assert consumer["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
+
     smoke = services["smoke-stack"]
     assert smoke["environment"]["RECONCILIATION_DRIFT_URL"] == "http://reconciliation-drift-svc:8102"
     assert smoke["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"

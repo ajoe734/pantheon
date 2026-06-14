@@ -1194,6 +1194,23 @@ services:
       retries: 10
       start_period: 5s
 
+  reconciliation-drift-consumer:
+    profiles: ["reconciliation-drift-consumer"]
+    build:
+      context: .
+      dockerfile: services/reconciliation-drift/Dockerfile
+    command: ["python", "services/reconciliation-drift/consumer.py"]
+    environment:
+      RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
+      RECONCILIATION_DRIFT_CONSUMER_INPUT: /fixtures/reconciliation-drift
+      RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS:-60}
+      RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS: ${RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS:-0}
+    volumes:
+      - ./services/reconciliation-drift/fixtures:/fixtures/reconciliation-drift:ro
+    depends_on:
+      reconciliation-drift-svc:
+        condition: service_healthy
+
   research-worker-gateway-svc:
     build:
       context: .
