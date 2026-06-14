@@ -50,6 +50,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
     PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
     PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID,
+    PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID,
     PERSONA_REASONING_EVALUATOR_MODEL_ID,
     PERSONA_REASONING_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
@@ -125,6 +126,10 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["policy_candidate_materiality_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["policy_candidate_materiality_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["policy_candidate_oss_materiality_count"] == DEFAULT_CASE_COUNT
+    assert summary["reflection_artifact_materiality_count"] == DEFAULT_CASE_COUNT
+    assert summary["reflection_artifact_materiality_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["reflection_artifact_materiality_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["reflection_artifact_oss_materiality_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_closed_loop_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_closed_loop_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_closed_loop_role_binding_count"] == DEFAULT_CASE_COUNT * 8
@@ -472,6 +477,47 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "selected_policy_uses_policy_hint_risk",
         "selected_scorecard_replays_policy_quality",
     }
+    assert coverage["reflection_artifact_materiality_models"] == [
+        PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID
+    ]
+    assert set(coverage["reflection_artifact_materiality_components"]) == {
+        "dspy",
+        "imitation",
+        "trl",
+    }
+    assert set(coverage["reflection_artifact_materiality_artifact_families"]) == {
+        "imitation_policy",
+        "model_artifact",
+        "prompt_bundle",
+    }
+    assert {
+        "accuracy",
+        "action_coverage_ratio",
+        "intent_accuracy",
+        "training_accuracy",
+    }.issubset(set(coverage["reflection_artifact_materiality_metric_signal_keys"]))
+    assert set(coverage["reflection_artifact_materiality_replay_flags"]) == {
+        "artifact_family_matches_component",
+        "candidate_generation_consumes_reflection_oss",
+        "component_is_reflection_learning_oss",
+        "contrarian_blueprint_consumes_reflection_role",
+        "contrarian_candidate_cites_reflection_oss",
+        "decision_artifact_replays_reflection_materiality",
+        "feedback_blueprint_consumes_reflection_role",
+        "feedback_scorecard_replays_reflection_quality",
+        "metrics_drive_nonzero_reflection_quality",
+        "no_holdout_or_future_leakage_in_reflection_artifact",
+        "reasoning_consumes_reflection_oss",
+        "reasoning_usage_replays_reflection_quality",
+        "reflection_material_to_selected_score",
+        "reflection_oss_role_completed",
+        "registry_and_producer_bound",
+        "replayable",
+        "scorer_recomputes_reflection_quality",
+        "selected_candidate_cites_reflection_oss",
+        "selected_rationale_mentions_reflection",
+        "selected_scorecard_replays_reflection_quality",
+    }
     assert coverage["oss_response_followup_loop_models"] == [OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID]
     assert coverage["oss_response_followup_roles"] == [
         "alpha_model",
@@ -736,6 +782,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_memory_and_oss_closed_loop(case)
         _assert_institutional_memory_lineage(case, institutional_writes_by_id)
         _assert_policy_candidate_materiality(case)
+        _assert_reflection_artifact_materiality(case)
         _assert_multi_oss_closed_loop_proof(case)
         _assert_persona_oss_ooda_causal_ledger(case)
         _assert_cross_cycle_runtime_carryover(case, latest_case_by_persona)
@@ -913,6 +960,10 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert input_context["oss_followup_response_refs"] == followup_refs
         assert set(input_context["oss_followup_request_ids_by_role"]) == set(case["oss_feedback"]["request_ids"])
         assert followup_loop["loop_ref"] in trace["evidence_refs"]
+        reflection_ref = (
+            f"oss://{input_context['oss_components_by_role']['reflection_artifact']}/"
+            f"{input_context['oss_request_ids_by_role']['reflection_artifact']}"
+        )
 
         persona_reasoning = artifact["persona_reasoning"]
         reasoning_request = persona_reasoning["request"]
@@ -927,12 +978,25 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert reasoning_request["forbidden_windows_not_used"] == trace["decision_inputs"]["forbidden_windows_not_used"]
         assert reasoning_request["oss_followup_loop_ref"] == followup_loop["loop_ref"]
         assert followup_loop["loop_ref"] in reasoning_request["input_refs"]
+        assert reasoning_request["reflection_artifact_ref"] == reflection_ref
+        assert reasoning_request["reflection_artifact_component"] == input_context[
+            "oss_components_by_role"
+        ]["reflection_artifact"]
+        assert reasoning_request["reflection_artifact_request_id"] == input_context[
+            "oss_request_ids_by_role"
+        ]["reflection_artifact"]
+        assert reflection_ref in reasoning_request["input_refs"]
         assert reasoning_response["oss_followup_usage"]["loop_ref"] == followup_loop["loop_ref"]
         assert reasoning_response["oss_followup_usage"]["model_id"] == OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID
         assert reasoning_response["oss_followup_usage"]["followup_count"] == len(followup_loop["followups"])
         assert reasoning_response["oss_followup_usage"]["candidate_score_adjustments"] == followup_loop[
             "candidate_score_adjustments"
         ]
+        assert reasoning_response["reflection_artifact_usage"]["source_oss_ref"] == reflection_ref
+        assert reasoning_response["reflection_artifact_usage"]["materiality_model_id"] == (
+            PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID
+        )
+        assert reasoning_response["reflection_artifact_usage"]["reflection_quality"] > 0
         if memory_ref:
             assert memory_ref in reasoning_request["input_refs"]
             assert reasoning_response["memory_usage"]["influence_ref"] == memory_ref
@@ -958,6 +1022,7 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert response["source_reasoning_ref"] == reasoning_response["reasoning_ref"]
         assert reasoning_response["reasoning_ref"] in candidate_generation["request"]["input_refs"]
         assert followup_loop["loop_ref"] in candidate_generation["request"]["input_refs"]
+        assert reflection_ref in candidate_generation["request"]["input_refs"]
         assert set(followup_refs).issubset(set(candidate_generation["request"]["input_refs"]))
         assert response["candidate_ids"] == trace_candidate_ids
         assert response["candidates"] == trace["candidates"]
@@ -989,6 +1054,9 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert scorer["scoring_inputs"]["persona_reasoning_preferred_action"] == reasoning_response[
             "preferred_action_hint"
         ]
+        assert scorer["scoring_inputs"]["reflection_quality"] == reasoning_response[
+            "reflection_artifact_usage"
+        ]["reflection_quality"]
         scorecards = scorer["scorecards"]
         assert set(scorecards) == set(trace_candidate_ids)
         assert all(card["score_replay_match"] is True for card in scorecards.values())
@@ -1012,6 +1080,12 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert set(followup_loop["candidate_evidence_refs_by_action"][selected_action_key]).issubset(
             set(trace["selected_candidate"]["evidence_refs"])
         )
+        assert reflection_ref in trace["selected_candidate"]["evidence_refs"]
+        assert "reflection" in trace["selected_candidate"]["rationale"].lower()
+        assert scorecards[selected_id]["components"]["reflection_quality"] == scorer[
+            "scoring_inputs"
+        ]["reflection_quality"]
+        assert scorecards[selected_id]["components"]["reflection_quality"] > 0
 
         risk_evaluator = artifact["risk_evaluator"]
         assert risk_evaluator["model_id"] == PERSONA_RISK_EVALUATOR_MODEL_ID
@@ -1034,6 +1108,7 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert replay["memory_counterfactual_replays_score_delta"] is True
         assert replay["uses_selected_oss_feedback"] is True
         assert replay["uses_policy_candidate_oss_metrics"] is True
+        assert replay["uses_reflection_artifact_oss_metrics"] is True
         assert replay["uses_oss_response_followup_loop"] is True
         assert replay["input_hash"]
         assert replay["candidate_hash"]
@@ -1607,6 +1682,117 @@ def _assert_policy_candidate_materiality(case: dict) -> None:
         for check in case["validation_cycle"]["execution_review"]["checks"]
     }
     assert check_by_name["policy_candidate_oss_materiality_drives_evolved_policy"]["status"] == "passed"
+
+
+def _assert_reflection_artifact_materiality(case: dict) -> None:
+    proof = case["oss_feedback"]["reflection_artifact_materiality"]
+    reflection_entry = case["case_upstream_artifacts"]["selected_oss"]["reflection_artifact"]
+    source_ref = f"oss://{reflection_entry['component']}/{reflection_entry['request_id']}"
+    expected_artifact_family = {
+        "dspy": "prompt_bundle",
+        "imitation": "imitation_policy",
+        "trl": "model_artifact",
+    }[reflection_entry["component"]]
+
+    assert proof["model_id"] == PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["proof_ref"] == f"reflection-materiality://{case['case_id']}"
+    assert proof["component"] == reflection_entry["component"]
+    assert proof["request_id"] == reflection_entry["request_id"]
+    assert proof["source_oss_ref"] == source_ref
+    assert proof["artifact_family"] == expected_artifact_family
+    assert proof["expected_artifact_family"] == expected_artifact_family
+    assert proof["registry_id"] == reflection_entry["registry_id"]
+    assert proof["registry_artifact_type"] == reflection_entry["registry_artifact_type"]
+    assert proof["producer_run_id"] == reflection_entry["producer_run_id"]
+    assert proof["metric_signal_keys"]
+    assert proof["reflection_quality"] > 0
+    assert set(reflection_entry["primary_output_keys"]).issubset(set(proof["primary_output_keys"]))
+    assert source_ref in proof["evidence_refs"]
+    assert f"registry://{reflection_entry['registry_id']}" in proof["evidence_refs"]
+
+    trace_bindings = proof["trace_bindings"]
+    traces = case["reflection"]["agent_decision_traces"]
+    assert len(trace_bindings) == 2
+    assert [binding["generation"] for binding in trace_bindings] == [1, 2]
+    for binding, trace in zip(trace_bindings, traces):
+        artifact = trace["agent_decision_artifact"]
+        generation = artifact["generation"]
+        selected_id = trace["selected_candidate_id"]
+        selected_action = _candidate_action_from_id(selected_id)
+        selected_candidate = trace["selected_candidate"]
+        reasoning = artifact["persona_reasoning"]
+        reasoning_request = reasoning["request"]
+        reasoning_response = reasoning["response"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        scorecards = artifact["scorer"]["scorecards"]
+        selected_scorecard = scorecards[selected_id]
+        feedback_candidate = next(
+            candidate
+            for candidate in trace["candidates"]
+            if _candidate_action_from_id(candidate["candidate_id"]) == "feedback-adapt"
+        )
+        feedback_scorecard = scorecards[feedback_candidate["candidate_id"]]
+        contrarian_candidate = next(
+            candidate
+            for candidate in trace["candidates"]
+            if _candidate_action_from_id(candidate["candidate_id"]) == "contrarian-check"
+        )
+
+        assert binding["generation"] == generation
+        assert binding["trace_id"] == trace["reflection_id"]
+        assert binding["selected_candidate_id"] == selected_id
+        assert binding["selected_action"] == selected_action
+        assert binding["source_oss_ref"] == source_ref
+        assert binding["reasoning_request_consumes_reflection_oss"] is True
+        assert binding["reasoning_usage_ref_matches"] is True
+        assert binding["reasoning_usage_quality"] == proof["reflection_quality"]
+        assert binding["reasoning_usage_quality_replay_match"] is True
+        assert binding["feedback_blueprint_uses_reflection_role"] is True
+        assert binding["contrarian_blueprint_uses_reflection_role"] is True
+        assert binding["candidate_generation_consumes_reflection_oss"] is True
+        assert binding["selected_candidate_cites_reflection_oss"] is True
+        assert binding["contrarian_candidate_cites_reflection_oss"] is True
+        assert binding["selected_rationale_mentions_reflection"] is True
+        assert binding["scoring_reflection_quality"] == proof["reflection_quality"]
+        assert binding["recomputed_reflection_quality"] == proof["reflection_quality"]
+        assert binding["scoring_reflection_quality_replay_match"] is True
+        assert binding["feedback_scorecard_reflection_quality"] == proof["reflection_quality"]
+        assert binding["selected_scorecard_reflection_quality"] == proof["reflection_quality"]
+        assert binding["feedback_scorecard_replays_reflection_quality"] is True
+        assert binding["selected_scorecard_replays_reflection_quality"] is True
+        assert binding["decision_replay_uses_reflection_artifact_metrics"] is True
+        assert binding["reflection_ref_in_decision_evidence"] is True
+        assert binding["no_forbidden_window_reflection_sources"] is True
+        assert source_ref in reasoning_request["input_refs"]
+        assert reasoning_request["reflection_artifact_ref"] == source_ref
+        assert reasoning_response["reflection_artifact_usage"]["source_oss_ref"] == source_ref
+        assert reasoning_response["reflection_artifact_usage"]["reflection_quality"] == proof[
+            "reflection_quality"
+        ]
+        assert source_ref in candidate_request["input_refs"]
+        assert source_ref in selected_candidate["evidence_refs"]
+        assert source_ref in contrarian_candidate["evidence_refs"]
+        assert source_ref in trace["evidence_refs"]
+        assert scoring_inputs["reflection_quality"] == proof["reflection_quality"]
+        assert feedback_scorecard["components"]["reflection_quality"] == proof["reflection_quality"]
+        assert selected_scorecard["components"]["reflection_quality"] == proof["reflection_quality"]
+        assert "reflection" in selected_candidate["rationale"].lower()
+        assert selected_action == "feedback-adapt"
+        assert artifact["replay"]["uses_reflection_artifact_oss_metrics"] is True
+
+    replay = proof["replay"]
+    assert all(replay.values())
+    assert case["usable"]["reflection_artifact_oss_materiality"] is True
+    assert case["usability_dimensions"]["reflection_artifact_oss_materiality"] == 1.0
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name[
+        "reflection_artifact_oss_materiality_drives_persona_reasoning"
+    ]["status"] == "passed"
 
 
 def _assert_multi_oss_closed_loop_proof(case: dict) -> None:
