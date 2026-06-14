@@ -140,6 +140,7 @@ BROKER_ADAPTER_FOLLOWUP_MODEL_ID = "persona_broker_adapter_followup_v1"
 CASE_UPSTREAM_VECTORBT_MODEL_ID = "case_specific_vectorbt_feedback_v1"
 CASE_UPSTREAM_TRACKING_MODEL_ID = "case_specific_tracking_artifact_roundtrip_v1"
 CASE_SELECTED_OSS_MODEL_ID = "case_specific_selected_oss_feedback_v1"
+PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID = "persona_policy_candidate_oss_materiality_v1"
 PERSONA_DECISION_ARTIFACT_MODEL_ID = "persona_replayable_candidate_decision_v1"
 PERSONA_CANDIDATE_GENERATOR_MODEL_ID = "persona_candidate_generation_from_oss_feedback_v1"
 PERSONA_CANDIDATE_SCORER_MODEL_ID = "persona_multi_factor_candidate_scorer_v1"
@@ -690,6 +691,13 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
         )
+        policy_candidate_materiality = _build_policy_candidate_materiality_proof(
+            episode=episode,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
+            generation_policies=(generation0_policy, generation1_policy, generation2_policy),
+            decision_traces=(decision_trace0, decision_trace1),
+        )
         multi_oss_closed_loop_proof = _build_multi_oss_closed_loop_proof(
             episode=episode,
             oss_inputs=oss_inputs,
@@ -757,6 +765,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            policy_candidate_materiality=policy_candidate_materiality,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
@@ -783,6 +792,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            policy_candidate_materiality=policy_candidate_materiality,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
@@ -810,6 +820,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            policy_candidate_materiality=policy_candidate_materiality,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
@@ -5859,6 +5870,22 @@ def _build_persona_decision_artifact(
         "uses_selected_oss_feedback": set(selected_candidate.get("evidence_refs", [])).issuperset(
             _selected_persona_decision_oss_refs(oss_inputs)
         ),
+        "uses_policy_candidate_oss_metrics": (
+            (
+                f"oss://{oss_inputs['policy_candidate']['component']}/"
+                f"{oss_inputs['policy_candidate']['request_id']}"
+            )
+            in candidate_generation["request"]["input_refs"]
+            and (
+                f"oss://{oss_inputs['policy_candidate']['component']}/"
+                f"{oss_inputs['policy_candidate']['request_id']}"
+            )
+            in selected_candidate.get("evidence_refs", [])
+            and float(scoring_inputs["policy_quality"]) > 0.0
+            and float(scorecards[selected_id]["components"].get("policy_quality", 0.0)) > 0.0
+            and float(selected_candidate["risk_multiplier"])
+            == float(scoring_inputs["policy_hint_risk"])
+        ),
         "uses_oss_response_followup_loop": (
             _oss_response_followup_loop_is_usable(oss_followup_loop)
             and str(oss_followup_loop["loop_ref"]) in candidate_generation["request"]["input_refs"]
@@ -8310,6 +8337,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("memory_counterfactual_replays_score_delta") is True
         and replay.get("uses_persona_reasoning_response") is True
         and replay.get("uses_selected_oss_feedback") is True
+        and replay.get("uses_policy_candidate_oss_metrics") is True
         and replay.get("uses_oss_response_followup_loop") is True
         and replay.get("uses_oss_disagreement_arbitration") is True
         and replay.get("uses_tracking_reconciliation") is True
@@ -9202,6 +9230,238 @@ def _strict_oos_evolution_proof_is_usable(proof: Mapping[str, Any]) -> bool:
     )
 
 
+def _build_policy_candidate_materiality_proof(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    generation_policies: Sequence[Mapping[str, Any]],
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    policy_entry = case_upstream_artifacts["selected_oss"]["policy_candidate"]
+    policy_input = oss_inputs["policy_candidate"]
+    component = str(policy_entry["component"])
+    request_id = str(policy_entry["request_id"])
+    source_ref = f"oss://{component}/{request_id}"
+    expected_artifact_family = _policy_candidate_expected_artifact_family(component)
+    policy_quality = _policy_quality_from_oss(oss_inputs)
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        generation = int(artifact["generation"])
+        candidate_request = artifact["candidate_generation"]["request"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_id = str(trace["selected_candidate_id"])
+        selected_action = _candidate_action_key(selected_id)
+        scorecard = artifact["scorer"]["scorecards"][selected_id]
+        feedback_candidate_id = next(
+            candidate_id
+            for candidate_id in artifact["scorer"]["scorecards"]
+            if str(candidate_id).endswith("-feedback-adapt")
+        )
+        feedback_scorecard = artifact["scorer"]["scorecards"][feedback_candidate_id]
+        policy = generation_policies[generation]
+        recomputed_hint = _risk_hint_from_oss(oss_inputs, generation)
+        trace_bindings.append(
+            {
+                "generation": generation,
+                "trace_id": trace["reflection_id"],
+                "policy_id": policy["policy_id"],
+                "selected_candidate_id": selected_id,
+                "selected_action": selected_action,
+                "source_oss_ref": source_ref,
+                "reasoning_consumes_policy_oss": source_ref in reasoning_request["input_refs"],
+                "candidate_generation_consumes_policy_oss": source_ref in candidate_request["input_refs"],
+                "selected_candidate_cites_policy_oss": source_ref in selected_candidate["evidence_refs"],
+                "scoring_input_component": artifact["input_context"]["oss_components_by_role"]["policy_candidate"],
+                "scoring_input_request_id": artifact["input_context"]["oss_request_ids_by_role"]["policy_candidate"],
+                "scoring_policy_hint_risk": float(scoring_inputs["policy_hint_risk"]),
+                "recomputed_policy_hint_risk": float(recomputed_hint),
+                "scoring_policy_quality": float(scoring_inputs["policy_quality"]),
+                "recomputed_policy_quality": float(policy_quality),
+                "feedback_scorecard_policy_quality": float(
+                    feedback_scorecard["components"].get("policy_quality", 0.0)
+                ),
+                "selected_scorecard_policy_quality": float(
+                    scorecard["components"].get("policy_quality", 0.0)
+                ),
+                "selected_candidate_risk_multiplier": float(selected_candidate["risk_multiplier"]),
+                "evolved_policy_risk_multiplier": float(policy["risk_multiplier"]),
+                "policy_hint_risk_replay_match": float(scoring_inputs["policy_hint_risk"]) == float(recomputed_hint),
+                "policy_quality_replay_match": float(scoring_inputs["policy_quality"]) == float(policy_quality),
+                "feedback_scorecard_replays_policy_quality": float(
+                    feedback_scorecard["components"].get("policy_quality", 0.0)
+                )
+                == float(policy_quality),
+                "selected_scorecard_replays_policy_quality": (
+                    selected_action == "feedback-adapt"
+                    and float(scorecard["components"].get("policy_quality", 0.0)) == float(policy_quality)
+                ),
+                "selected_candidate_uses_policy_hint_risk": float(
+                    selected_candidate["risk_multiplier"]
+                )
+                == float(recomputed_hint),
+                "evolved_policy_uses_policy_hint_risk": (
+                    float(policy["risk_multiplier"]) == max(float(recomputed_hint), 1.15)
+                    if generation == 2
+                    else float(policy["risk_multiplier"]) == float(recomputed_hint)
+                ),
+                "selected_candidate_is_feedback_adapt_policy_candidate": selected_action == "feedback-adapt",
+                "decision_replay_uses_policy_candidate_oss_metrics": artifact["replay"].get(
+                    "uses_policy_candidate_oss_metrics"
+                )
+                is True,
+                "policy_ref_in_decision_evidence": source_ref in trace["evidence_refs"],
+                "no_forbidden_window_policy_sources": "future_holdout"
+                not in set(trace["decision_inputs"]["allowed_windows"]),
+            }
+        )
+
+    metric_signal_keys = sorted(
+        key
+        for key, value in policy_entry.get("metrics", {}).items()
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    )
+    replay = {
+        "replayable": True,
+        "policy_oss_role_completed": policy_entry.get("status") == "completed"
+        and policy_input.get("status") == "completed",
+        "component_is_policy_learning_oss": component in POLICY_OSS_COMPONENTS,
+        "artifact_family_matches_component": policy_entry.get("artifact_family") == expected_artifact_family,
+        "registry_and_producer_bound": bool(policy_entry.get("registry_id"))
+        and bool(policy_entry.get("producer_run_id"))
+        and policy_entry.get("registry_artifact_type") in {"model_artifact", "optimizer_result"},
+        "metrics_drive_nonzero_policy_quality": float(policy_quality) > 0.0,
+        "policy_hint_risk_is_recomputed_from_oss_metrics": all(
+            binding["policy_hint_risk_replay_match"] for binding in trace_bindings
+        ),
+        "policy_quality_is_recomputed_from_oss_metrics": all(
+            binding["policy_quality_replay_match"] for binding in trace_bindings
+        ),
+        "reasoning_consumes_policy_oss": all(
+            binding["reasoning_consumes_policy_oss"] for binding in trace_bindings
+        ),
+        "candidate_generation_consumes_policy_oss": all(
+            binding["candidate_generation_consumes_policy_oss"] for binding in trace_bindings
+        ),
+        "selected_candidate_cites_policy_oss": all(
+            binding["selected_candidate_cites_policy_oss"] for binding in trace_bindings
+        ),
+        "feedback_scorecard_replays_policy_quality": all(
+            binding["feedback_scorecard_replays_policy_quality"] for binding in trace_bindings
+        ),
+        "selected_scorecard_replays_policy_quality": all(
+            binding["selected_scorecard_replays_policy_quality"] for binding in trace_bindings
+        ),
+        "selected_policy_uses_policy_hint_risk": all(
+            binding["selected_candidate_uses_policy_hint_risk"]
+            and binding["evolved_policy_uses_policy_hint_risk"]
+            for binding in trace_bindings
+        ),
+        "policy_material_to_selected_score": all(
+            binding["selected_candidate_is_feedback_adapt_policy_candidate"]
+            and binding["selected_scorecard_policy_quality"] > 0.0
+            for binding in trace_bindings
+        ),
+        "decision_artifact_replays_policy_materiality": all(
+            binding["decision_replay_uses_policy_candidate_oss_metrics"] for binding in trace_bindings
+        ),
+        "no_holdout_or_future_leakage_in_policy_artifact": case_upstream_artifacts.get("allowed_windows")
+        == ["observe", "feedback"]
+        and case_upstream_artifacts.get("forbidden_windows_not_used") == ["holdout", "future_holdout"]
+        and all(binding["no_forbidden_window_policy_sources"] for binding in trace_bindings),
+        "evolved_policy_lineage_bound": [binding["generation"] for binding in trace_bindings] == [1, 2]
+        and [binding["policy_id"] for binding in trace_bindings]
+        == [generation_policies[1]["policy_id"], generation_policies[2]["policy_id"]],
+    }
+    return {
+        "proof_id": f"policy-candidate-materiality-{episode.case_id}",
+        "proof_ref": f"policy-materiality://{episode.case_id}",
+        "model_id": PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_ref,
+        "artifact_family": policy_entry.get("artifact_family"),
+        "expected_artifact_family": expected_artifact_family,
+        "registry_id": policy_entry.get("registry_id"),
+        "registry_artifact_type": policy_entry.get("registry_artifact_type"),
+        "producer_run_id": policy_entry.get("producer_run_id"),
+        "metric_signal_keys": metric_signal_keys,
+        "primary_output_keys": sorted(policy_entry.get("primary_output", {})),
+        "policy_quality": policy_quality,
+        "trace_bindings": trace_bindings,
+        "evidence_refs": [
+            source_ref,
+            f"registry://{policy_entry.get('registry_id')}",
+            *[f"reflection://{trace['reflection_id']}" for trace in decision_traces],
+            *[f"policy://{generation_policies[index]['policy_id']}" for index in (1, 2)],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "policy-candidate-materiality",
+            {
+                "case_id": episode.case_id,
+                "component": component,
+                "request_id": request_id,
+                "metrics": policy_entry.get("metrics", {}),
+                "trace_bindings": trace_bindings,
+            },
+        ),
+    }
+
+
+def _policy_candidate_expected_artifact_family(component: str) -> str:
+    if component in {"finrl", "rllib"}:
+        return "rl_policy"
+    if component == "ray_tune":
+        return "optimizer_result"
+    return "policy_candidate"
+
+
+def _policy_candidate_materiality_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    trace_bindings = list(proof.get("trace_bindings", []))
+    return bool(
+        proof.get("model_id") == PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("policy-materiality://")
+        and proof.get("component") in POLICY_OSS_COMPONENTS
+        and proof.get("artifact_family") == proof.get("expected_artifact_family")
+        and proof.get("registry_id")
+        and proof.get("producer_run_id")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and [binding.get("generation") for binding in trace_bindings] == [1, 2]
+        and all(float(binding.get("scoring_policy_quality", 0.0)) > 0.0 for binding in trace_bindings)
+        and all(float(binding.get("selected_scorecard_policy_quality", 0.0)) > 0.0 for binding in trace_bindings)
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "policy_oss_role_completed",
+            "component_is_policy_learning_oss",
+            "artifact_family_matches_component",
+            "registry_and_producer_bound",
+            "metrics_drive_nonzero_policy_quality",
+            "policy_hint_risk_is_recomputed_from_oss_metrics",
+            "policy_quality_is_recomputed_from_oss_metrics",
+            "reasoning_consumes_policy_oss",
+            "candidate_generation_consumes_policy_oss",
+            "selected_candidate_cites_policy_oss",
+            "feedback_scorecard_replays_policy_quality",
+            "selected_scorecard_replays_policy_quality",
+            "selected_policy_uses_policy_hint_risk",
+            "policy_material_to_selected_score",
+            "decision_artifact_replays_policy_materiality",
+            "no_holdout_or_future_leakage_in_policy_artifact",
+            "evolved_policy_lineage_bound",
+        ))
+    )
+
+
 def _build_usability_dimensions(
     *,
     episode: PortfolioEpisode,
@@ -9220,6 +9480,7 @@ def _build_usability_dimensions(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    policy_candidate_materiality: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
@@ -9312,6 +9573,9 @@ def _build_usability_dimensions(
     strict_oos_evolution = 1.0 if _strict_oos_evolution_proof_is_usable(
         strict_oos_evolution_proof
     ) else 0.0
+    policy_candidate_oss_materiality = 1.0 if _policy_candidate_materiality_is_usable(
+        policy_candidate_materiality
+    ) else 0.0
     oss_response_followup_loop = 1.0 if (
         _oss_response_followup_loop_is_usable(oss_followup_loop)
         and all(_trace_oss_followup_loop_is_usable(trace) for trace in decision_traces)
@@ -9349,6 +9613,7 @@ def _build_usability_dimensions(
         "multi_generation_trajectory": multi_generation_trajectory,
         "no_leakage_temporal_protocol": no_leakage_temporal_protocol,
         "strict_oos_evolution": strict_oos_evolution,
+        "policy_candidate_oss_materiality": policy_candidate_oss_materiality,
         "drawdown_reduction": drawdown_reduction,
         "turnover_control": turnover_control,
         "fill_quality": fill_quality,
@@ -9407,6 +9672,7 @@ def _diagnose_validation_execution(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    policy_candidate_materiality: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
@@ -9613,6 +9879,18 @@ def _diagnose_validation_execution(
                     dict(oss_followup_loop["candidate_score_adjustments"])
                 ),
                 "trace_ids": [trace["reflection_id"] for trace in decision_traces],
+            },
+        ),
+        _diagnostic_check(
+            "policy_candidate_oss_materiality_drives_evolved_policy",
+            _policy_candidate_materiality_is_usable(policy_candidate_materiality),
+            {
+                "proof_id": policy_candidate_materiality["proof_id"],
+                "component": policy_candidate_materiality["component"],
+                "artifact_family": policy_candidate_materiality["artifact_family"],
+                "policy_quality": policy_candidate_materiality["policy_quality"],
+                "trace_binding_count": len(policy_candidate_materiality["trace_bindings"]),
+                "replay": copy.deepcopy(dict(policy_candidate_materiality["replay"])),
             },
         ),
         _diagnostic_check(
@@ -10049,6 +10327,7 @@ def _build_case_result(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    policy_candidate_materiality: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
@@ -10109,6 +10388,7 @@ def _build_case_result(
                 role: result["drives_persona_step"] for role, result in oss_inputs.items()
             },
             "response_followup_loop": copy.deepcopy(dict(oss_followup_loop)),
+            "policy_candidate_materiality": copy.deepcopy(dict(policy_candidate_materiality)),
             "closed_loop_proof": copy.deepcopy(dict(multi_oss_closed_loop_proof)),
             "ooda_causal_ledger": copy.deepcopy(dict(persona_oss_ooda_ledger)),
         },
@@ -10188,6 +10468,9 @@ def _build_case_result(
                 "institutional_memory_lineage"
             ] == 1.0,
             "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
+            "policy_candidate_oss_materiality": usability_dimensions[
+                "policy_candidate_oss_materiality"
+            ] == 1.0,
             "multi_oss_closed_loop_drives_decision": usability_dimensions["multi_oss_closed_loop"] == 1.0,
             "persona_oss_ooda_causality_replayed": usability_dimensions[
                 "persona_oss_ooda_causality"
@@ -10276,6 +10559,9 @@ def _build_summary(
     no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
     strict_oos_evolution_proofs = [
         case["evolution"]["strict_oos_evolution_proof"] for case in cases
+    ]
+    policy_candidate_materialities = [
+        case["oss_feedback"]["policy_candidate_materiality"] for case in cases
     ]
     oss_followup_loops = [case["oss_feedback"]["response_followup_loop"] for case in cases]
     multi_oss_closed_loop_proofs = [
@@ -10436,6 +10722,26 @@ def _build_summary(
             entry["artifact_family"]
             for case in cases
             for entry in case["case_upstream_artifacts"]["selected_oss"].values()
+        }),
+        "policy_candidate_materiality_models": sorted({
+            proof["model_id"] for proof in policy_candidate_materialities
+        }),
+        "policy_candidate_materiality_components": sorted({
+            proof["component"] for proof in policy_candidate_materialities
+        }),
+        "policy_candidate_materiality_artifact_families": sorted({
+            proof["artifact_family"] for proof in policy_candidate_materialities
+        }),
+        "policy_candidate_materiality_metric_signal_keys": sorted({
+            key
+            for proof in policy_candidate_materialities
+            for key in proof["metric_signal_keys"]
+        }),
+        "policy_candidate_materiality_replay_flags": sorted({
+            flag
+            for proof in policy_candidate_materialities
+            for flag, value in proof["replay"].items()
+            if value is True
         }),
         "oss_response_followup_loop_models": sorted({
             loop["model_id"] for loop in oss_followup_loops
@@ -10849,6 +11155,18 @@ def _build_summary(
         "multi_oss_feedback_drives_decision_count": sum(
             1 for item in usable if item["multi_oss_feedback_drives_decision"]
         ),
+        "policy_candidate_materiality_count": len(policy_candidate_materialities),
+        "policy_candidate_materiality_pass_count": sum(
+            1
+            for proof in policy_candidate_materialities
+            if _policy_candidate_materiality_is_usable(proof)
+        ),
+        "policy_candidate_materiality_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in policy_candidate_materialities
+        ),
+        "policy_candidate_oss_materiality_count": sum(
+            1 for item in usable if item["policy_candidate_oss_materiality"]
+        ),
         "multi_oss_closed_loop_proof_count": len(multi_oss_closed_loop_proofs),
         "multi_oss_closed_loop_proof_pass_count": sum(
             1
@@ -11054,6 +11372,7 @@ def _build_summary(
             "Every agent decision emits a memory counterfactual proving retrieved lessons change selected scores and margins, while cold starts declare zero memory influence.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every case converts OSS responses into persona follow-up requests that feed reasoning, candidate evidence, and scorer adjustments.",
+            "Every case proves the selected FinRL/RLlib/Ray Tune policy-candidate artifact materially changes persona scoring, risk sizing, and the evolved policy packet.",
             "Every case emits a multi-OSS closed-loop proof replaying each role from OSS response through persona follow-up, reasoning inputs, candidate generation, scorer adjustments, and selected evidence.",
             "Every case emits an OODA causal ledger proving OSS responses, persona follow-up outputs, candidate generation, scorer output, selected action, and LEAN handoff occur in replayable temporal order without future artifact references.",
             "Every non-cold-start persona case consumes the prior autonomous cycle's LEAN runtime feedback in reasoning, candidate generation, selected evidence, and scorer adjustments.",
