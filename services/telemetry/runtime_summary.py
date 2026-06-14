@@ -161,6 +161,42 @@ class RuntimeSummaryProjectionStore:
                         current[target_key] = metrics[source_key]
                         break
 
+            # Surface executed paper fills so trade activity is visible end-to-end.
+            # The runtime emits paper_fill_simulated / bracket_order_logged events that
+            # were ingested but previously not reflected in the runtime summary the BFF
+            # reads (only health + pnl were projected). Project a trade counter, the
+            # last fill, and net positions so executed trades light up downstream.
+            if event_type in ("paper_fill_simulated", "bracket_order_logged"):
+                symbol = metadata.get("symbol") or metrics.get("symbol")
+                fill_qty = metrics.get("fill_quantity")
+                fill_price = metrics.get("fill_price")
+                trade_count = int(current.get("executed_trade_count") or 0) + 1
+                current["executed_trade_count"] = trade_count
+                # total_trades may also arrive via metrics; the executed counter is
+                # authoritative for paper fills and must not regress below it.
+                current["total_trades"] = max(int(current.get("total_trades") or 0), trade_count)
+                if symbol is not None:
+                    current["last_fill"] = {
+                        "symbol": symbol,
+                        "quantity": fill_qty,
+                        "fill_price": fill_price,
+                        "action": metrics.get("action"),
+                        "submitted_to_broker": bool(metrics.get("submitted_to_broker")),
+                        "at": event_time,
+                    }
+                    positions = current.get("_positions_by_symbol")
+                    if not isinstance(positions, dict):
+                        positions = {}
+                    if isinstance(fill_qty, (int, float)):
+                        positions[symbol] = float(positions.get(symbol, 0.0)) + float(fill_qty)
+                    current["_positions_by_symbol"] = positions
+                    current["positions"] = [
+                        {"symbol": s, "quantity": q}
+                        for s, q in sorted(positions.items())
+                        if q
+                    ]
+                    current["position_count"] = len(current["positions"])
+
             if bridge_repo is not None:
                 current["engine_bridge_repo"] = bridge_repo
             if bridge_commit is not None:
@@ -169,6 +205,12 @@ class RuntimeSummaryProjectionStore:
                 current["engine_bridge_path"] = bridge_path
             if runtime_adapter_version is not None:
                 current["runtime_adapter_version"] = runtime_adapter_version
+
+            # total_trades must never regress below the authoritative executed fill
+            # counter, regardless of event ordering or stale metric payloads.
+            executed = int(current.get("executed_trade_count") or 0)
+            if executed:
+                current["total_trades"] = max(int(current.get("total_trades") or 0), executed)
 
             current["health_summary"] = self._health_summary(current)
             self._summaries[runtime_id] = current
