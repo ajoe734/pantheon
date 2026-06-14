@@ -466,6 +466,21 @@ function buildGate3(routeProbe, authSmoke) {
   const writeResult = authSmoke.exists ? allRowsPass(authSmoke.rows, writePaths) : authMissingResult;
   const meRow = authSmoke.rows.get("/bff/me");
   const authAllPassed = authSmoke.exists && authSmoke.passed !== null && authSmoke.total !== null && authSmoke.passed === authSmoke.total;
+  const approvalRaceRows = [...authSmoke.rows.values()].filter((row) =>
+    row.route.startsWith("/bff/approvals/") && row.route.endsWith("#race")
+  );
+  const approvalRaceStatus = !authSmoke.exists
+    ? authSmoke.missingStatus
+    : !approvalRaceRows.length
+      ? "missing"
+      : approvalRaceRows.every((row) => row.passed)
+        ? "pass"
+        : "fail";
+  const approvalRaceNote = !authSmoke.exists
+    ? authSmoke.missingNote
+    : !approvalRaceRows.length
+      ? "approval race row missing; set PANTHEON_BFF_APPROVAL_RACE_ID and two distinct race tokens"
+      : `${approvalRaceRows.length} approval race row(s)`;
 
   return [
     makeCheck("Anonymous: `/health` or `/healthz` returns 200.", routeStatus(healthStatus), {
@@ -512,6 +527,11 @@ function buildGate3(routeProbe, authSmoke) {
       owner: writeResult.status === "pass" ? "" : GATE_OWNERS[3],
       evidence: authEvidence,
       note: writeResult.note,
+    }),
+    makeCheck("Authenticated: multi-operator approval race has no duplicate winner.", approvalRaceStatus, {
+      owner: approvalRaceStatus === "pass" ? "" : GATE_OWNERS[3],
+      evidence: authEvidence,
+      note: approvalRaceNote,
     }),
     makeCheck("Authenticated: safe write / dry-run endpoints do not create live capital side effects.", authStatus(authAllPassed), {
       owner: authOwner(authAllPassed),
