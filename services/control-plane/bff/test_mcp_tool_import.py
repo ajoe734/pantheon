@@ -250,6 +250,6 @@ def test_tool_action_rejects_missing_tool_viewer_role_and_live_lean_direct_grant
         json={"reason": "Try live grant", "scope": {"executionContext": "live"}},
     )
     assert denied.status_code == 409, denied.text
-    detail = denied.json()["detail"]
+    detail = denied.json()
     assert detail["error"]["code"] == "PRECONDITION_FAILED"
     assert detail["error"]["details"]["precondition_failed"] == "lean_direct_live"

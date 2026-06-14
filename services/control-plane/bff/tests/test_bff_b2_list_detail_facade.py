@@ -195,7 +195,7 @@ def test_bff_strategy_detail_not_found() -> None:
             client = _fresh_client(td)
             resp = client.get("/bff/strategies/nonexistent-strategy-b2", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
-            detail = resp.json()["detail"]
+            detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
             bff_main.read_store = original
@@ -321,7 +321,7 @@ def test_bff_persona_detail_not_found() -> None:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/nonexistent-persona-b2", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
-            detail = resp.json()["detail"]
+            detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
             bff_main.read_store = original
@@ -533,7 +533,7 @@ def test_bff_capital_pool_detail_not_found() -> None:
             client = _fresh_client(td)
             resp = client.get("/bff/capital-pools/nonexistent-pool-b2", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
-            detail = resp.json()["detail"]
+            detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
             bff_main.read_store = original
@@ -592,7 +592,7 @@ def test_bff_deployment_detail_not_found() -> None:
             client = _fresh_client(td)
             resp = client.get("/bff/deployments/nonexistent-deploy-b2", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
-            detail = resp.json()["detail"]
+            detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
             bff_main.read_store = original
@@ -681,7 +681,7 @@ def test_bff_rebalance_detail_not_found() -> None:
             client = _fresh_client(td)
             resp = client.get("/bff/rebalances/nonexistent-rb-b2", headers=OPERATOR_HEADERS)
             assert resp.status_code == 404, resp.text
-            detail = resp.json()["detail"]
+            detail = resp.json()
             assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
             bff_main.read_store = original

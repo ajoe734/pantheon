@@ -100,7 +100,7 @@ def test_acknowledge_idempotency_conflict_returns_409(monkeypatch, seeded_alerts
         headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": key},
     )
     assert second.status_code == 409
-    detail = second.json()["detail"]
+    detail = second.json()
     assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
 
 
@@ -117,7 +117,7 @@ def test_acknowledge_unknown_alert_returns_404_when_surface_available(monkeypatc
         headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": "ack-404-key"},
     )
     assert resp.status_code == 404, resp.text
-    detail = resp.json()["detail"]
+    detail = resp.json()
     assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
     assert detail["error"]["details"].get("precondition_failed") == "alert_id"
 
@@ -130,7 +130,7 @@ def test_acknowledge_body_idempotency_key_rejected(monkeypatch, seeded_alerts) -
         headers={"Authorization": _OPERATOR_AUTH},
     )
     assert resp.status_code == 400
-    detail = resp.json()["detail"]
+    detail = resp.json()
     assert detail["error"]["code"] == "VALIDATION_FAILED"
 
 
