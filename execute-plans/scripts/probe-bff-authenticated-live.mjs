@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const BASE = process.env.PANTHEON_BFF_BASE_URL || "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io";
+const BASE = process.env.PANTHEON_BFF_BASE_URL || "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io";
 let TOKEN = process.env.PANTHEON_BFF_ACCESS_TOKEN || process.env.PANTHEON_BFF_SMOKE_BEARER_TOKEN;
 const APPROVAL_RACE_ID = process.env.PANTHEON_BFF_APPROVAL_RACE_ID || "";
 const APPROVAL_RACE_TOKEN_A = process.env.PANTHEON_BFF_APPROVAL_RACE_TOKEN_A || "";

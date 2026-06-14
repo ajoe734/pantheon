@@ -15,7 +15,7 @@
  *   6. evidence JSON captures each family transcript
  *
  * Runner: Playwright (page.request - BFF API smoke, no UI render required)
- * Env:    BFF_BASE_URL  (default: https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io)
+ * Env:    BFF_BASE_URL  (default: https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io)
  *         BFF_AUTH_TOKEN  (optional bearer token; omit for unauthenticated probe)
  */
 
@@ -59,7 +59,7 @@ type JsonRecord = Record<string, any>;
 function bffUrl(path: string): string {
   const base =
     process.env.BFF_BASE_URL ||
-    "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io";
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io";
   return `${base.replace(/\/$/, "")}${path}`;
 }
 
