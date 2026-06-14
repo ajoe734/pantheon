@@ -30,6 +30,7 @@ from services.persona.agent_usability_validation import (
     NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID,
     OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
+    STRICT_OOS_EVOLUTION_PROOF_MODEL_ID,
     ALPHA_SEED_REVISION_ACTION_BY_COMPONENT,
     OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE,
     OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE,
@@ -90,6 +91,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["no_leakage_holdout_count"] == DEFAULT_CASE_COUNT
     assert summary["no_leakage_temporal_protocol_count"] == DEFAULT_CASE_COUNT
     assert summary["no_leakage_temporal_protocol_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["strict_oos_evolution_proof_count"] == DEFAULT_CASE_COUNT
+    assert summary["strict_oos_evolution_proof_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["strict_oos_evolution_count"] == DEFAULT_CASE_COUNT
     assert summary["portfolio_trade_generation_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["portfolio_trade_generation_fill_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["memory_retrieval_drives_next_decision_count"] == DEFAULT_CASE_COUNT
@@ -396,6 +400,23 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "observe_decide->feedback_reflect->holdout_evolve->future_holdout_verify"
     ]
     assert coverage["no_leakage_temporal_protocol_stage_windows"] == ["feedback->holdout->future_holdout"]
+    assert coverage["strict_oos_evolution_proof_models"] == [STRICT_OOS_EVOLUTION_PROOF_MODEL_ID]
+    assert coverage["strict_oos_evolution_source_to_validation_paths"] == [
+        "feedback:holdout->holdout:future_holdout"
+    ]
+    assert set(coverage["strict_oos_evolution_replay_flags"]) == {
+        "evolution_decision_executed",
+        "evolution_trajectory_passed",
+        "future_holdout_hidden_from_all_decisions",
+        "generation1_uses_feedback_only_before_holdout",
+        "generation2_uses_holdout_only_before_future_holdout",
+        "holdout_and_future_holdout_disjoint",
+        "no_leakage_protocol_passed",
+        "replayable",
+        "strict_improvement_on_each_unseen_window",
+        "trajectory_agrees_with_oos_steps",
+        "uses_two_distinct_validation_windows",
+    }
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -411,6 +432,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_portfolio_generations(case)
         _assert_agent_decision_traces_are_no_leakage(case)
         _assert_no_leakage_temporal_protocol(case)
+        _assert_strict_oos_evolution_proof(case)
         _assert_memory_and_oss_closed_loop(case)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
@@ -805,6 +827,86 @@ def _assert_no_leakage_temporal_protocol(case: dict) -> None:
     }
     assert check_by_name["no_leakage_temporal_protocol_replays_window_boundaries"]["status"] == "passed"
     assert case["usability_dimensions"]["no_leakage_temporal_protocol"] == 1.0
+
+
+def _assert_strict_oos_evolution_proof(case: dict) -> None:
+    proof = case["evolution"]["strict_oos_evolution_proof"]
+    generation_results = case["generation_results"]
+
+    assert proof["model_id"] == STRICT_OOS_EVOLUTION_PROOF_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == f"strict-oos-evolution://{case['case_id']}"
+    assert proof["input_hash"]
+
+    assert [policy["generation"] for policy in proof["policy_lineage"]] == [0, 1, 2]
+    assert [policy["policy_id"] for policy in proof["policy_lineage"]] == [
+        result["policy_id"] for result in generation_results
+    ]
+    assert [policy["policy_version"] for policy in proof["policy_lineage"]] == [
+        result["policy_version"] for result in generation_results
+    ]
+
+    assert len(proof["window_pairs"]) == PORTFOLIO_LEG_COUNT
+    for pair in proof["window_pairs"]:
+        assert pair["instrument"] in case["portfolio"]["instruments"]
+        assert pair["holdout"]["bar_count"] == HOLDOUT_BARS
+        assert pair["future_holdout"]["bar_count"] == FUTURE_HOLDOUT_BARS
+        assert pair["holdout"]["end_date"] < pair["future_holdout"]["start_date"]
+        assert pair["strictly_after"] is True
+        assert pair["disjoint"] is True
+
+    steps = proof["proof_steps"]
+    traces = case["reflection"]["agent_decision_traces"]
+    assert [step["source_outcome_window"] for step in steps] == ["feedback", "holdout"]
+    assert [step["validation_window"] for step in steps] == ["holdout", "future_holdout"]
+    assert [step["decision_trace_ref"] for step in steps] == [
+        trace["reflection_id"] for trace in traces
+    ]
+
+    first_step, second_step = steps
+    assert first_step["candidate_policy_id"] == generation_results[1]["policy_id"]
+    assert first_step["counterfactual_policy_id"] == generation_results[0]["policy_id"]
+    assert first_step["counterfactual_score"] == case["scores"]["baseline_holdout_counterfactual"]
+    assert first_step["candidate_score"] == case["scores"]["generation1_holdout"]
+    assert first_step["score_improvement"] == case["scores"]["holdout_improvement"]
+    assert first_step["visible_windows_before_decision"] == ["observe", "feedback"]
+    assert set(first_step["hidden_windows_before_decision"]) == {"holdout", "future_holdout"}
+
+    assert second_step["candidate_policy_id"] == generation_results[2]["policy_id"]
+    assert second_step["counterfactual_policy_id"] == generation_results[1]["policy_id"]
+    assert second_step["counterfactual_score"] == case["scores"]["generation1_future_counterfactual"]
+    assert second_step["candidate_score"] == case["scores"]["generation2_future_holdout"]
+    assert second_step["score_improvement"] == case["scores"]["future_generation_improvement"]
+    assert second_step["visible_windows_before_decision"] == ["observe", "feedback", "holdout"]
+    assert second_step["hidden_windows_before_decision"] == ["future_holdout"]
+
+    for step in steps:
+        assert step["score_improvement"] > 0
+        assert step["strict_improvement"] is True
+        assert step["validation_window_unseen_by_decision"] is True
+        assert step["future_window_hidden"] is True
+
+    replay = proof["replay"]
+    assert replay["replayable"] is True
+    assert replay["uses_two_distinct_validation_windows"] is True
+    assert replay["holdout_and_future_holdout_disjoint"] is True
+    assert replay["generation1_uses_feedback_only_before_holdout"] is True
+    assert replay["generation2_uses_holdout_only_before_future_holdout"] is True
+    assert replay["future_holdout_hidden_from_all_decisions"] is True
+    assert replay["strict_improvement_on_each_unseen_window"] is True
+    assert replay["trajectory_agrees_with_oos_steps"] is True
+    assert replay["no_leakage_protocol_passed"] is True
+    assert replay["evolution_trajectory_passed"] is True
+    assert replay["evolution_decision_executed"] is True
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["strict_oos_evolution_proof_replays_unseen_windows"]["status"] == "passed"
+    assert case["usability_dimensions"]["strict_oos_evolution"] == 1.0
 
 
 def _candidate_action_from_id(candidate_id: str) -> str:
