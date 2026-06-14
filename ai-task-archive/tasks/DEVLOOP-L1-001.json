@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "task_id": "DEVLOOP-L1-001",
+  "archived_at": "2026-06-14T14:13:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "DEVLOOP-L1-001",
+    "title": "Implement signal producer bridge (decision -> signal-store)",
+    "summary_zh": "實作 signal producer:把 persona/strategy 決策輸出對應到信號 schema v1,per active binding enqueue 進 RedisPendingSignalStore。這是決策->執行的橋,讓信號不靠手動種子自然流入。",
+    "phase": "Layer 1 / real loop closure",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DEVLOOP-L0-003"
+    ],
+    "artifacts": [
+      "services/execution/lean_runtime/pending_signal_store.py",
+      "services/persona",
+      "services/research"
+    ],
+    "acceptance": [
+      "存在一個可部署的 producer",
+      "對 active binding 產生 schema-v1 信號 enqueue 進 signal-store;有單元測試覆蓋 enqueue 路徑;信號 schema 驗證通過"
+    ],
+    "next": "Flattened into ready-now parallel batch (independent producer impl).",
+    "last_update": "2026-06-14T14:13:51Z",
+    "auto_created_by": "dispatch_devloop_rightside_2026-06-14",
+    "terminal_outcome": "superseded",
+    "superseded_by": "DEVLOOP-PRODUCER"
+  },
+  "handoffs": [],
+  "blockers": []
+}
