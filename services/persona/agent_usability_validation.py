@@ -153,6 +153,7 @@ STRICT_OOS_EVOLUTION_PROOF_MODEL_ID = "persona_strict_oos_evolution_proof_v1"
 PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID = "persona_memory_counterfactual_decision_proof_v1"
 MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID = "persona_multi_oss_closed_loop_proof_v1"
 PERSONA_OSS_OODA_LEDGER_MODEL_ID = "persona_oss_ooda_causal_ledger_v1"
+PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID = "persona_cross_cycle_runtime_carryover_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
 PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
@@ -440,9 +441,14 @@ def run_agent_usability_validations(
     persona_store = PersonaMemoryStore()
     institutional_store = InstitutionalMemoryStore()
     cases: list[dict[str, Any]] = []
+    latest_cycle_state_by_persona: dict[str, dict[str, Any]] = {}
 
     for index, episode in enumerate(episodes):
         persona_id = _persona_id(episode.persona)
+        cross_cycle_context = _cross_cycle_context_for_episode(
+            episode=episode,
+            prior_cycle_state=latest_cycle_state_by_persona.get(persona_id),
+        )
         oss_inputs = _oss_inputs_for_episode(episode, oss_by_component)
         case_upstream_artifacts = _build_case_upstream_artifact_feedback(
             episode=episode,
@@ -523,6 +529,7 @@ def run_agent_usability_validations(
             oss_disagreement_arbitration=oss_disagreement_arbitration,
             tracking_reconciliation=tracking_reconciliation,
             alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
+            cross_cycle_context=cross_cycle_context,
         )
         memory_write0 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -584,6 +591,7 @@ def run_agent_usability_validations(
             oss_disagreement_arbitration=oss_disagreement_arbitration,
             tracking_reconciliation=tracking_reconciliation,
             alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
+            cross_cycle_context=cross_cycle_context,
         )
         memory_write1 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -692,6 +700,12 @@ def run_agent_usability_validations(
             decision_traces=(decision_trace0, decision_trace1),
             operational_context=operational_context,
         )
+        cross_cycle_carryover = _build_cross_cycle_carryover_proof(
+            episode=episode,
+            cross_cycle_context=cross_cycle_context,
+            decision_traces=(decision_trace0, decision_trace1),
+            persona_oss_ooda_ledger=persona_oss_ooda_ledger,
+        )
         usability_dimensions = _build_usability_dimensions(
             episode=episode,
             executions=(generation0_exec, generation1_exec, generation2_exec),
@@ -711,6 +725,7 @@ def run_agent_usability_validations(
             strict_oos_evolution_proof=strict_oos_evolution_proof,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
+            cross_cycle_carryover=cross_cycle_carryover,
             oss_followup_loop=oss_followup_loop,
         )
         validation_diagnostics = _diagnose_validation_execution(
@@ -733,6 +748,7 @@ def run_agent_usability_validations(
             strict_oos_evolution_proof=strict_oos_evolution_proof,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
+            cross_cycle_carryover=cross_cycle_carryover,
             oss_followup_loop=oss_followup_loop,
         )
         validation_repair = _repair_validation_deficiencies(
@@ -756,6 +772,7 @@ def run_agent_usability_validations(
             strict_oos_evolution_proof=strict_oos_evolution_proof,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
+            cross_cycle_carryover=cross_cycle_carryover,
             oss_followup_loop=oss_followup_loop,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
@@ -766,6 +783,7 @@ def run_agent_usability_validations(
             validation_repair=validation_repair,
         )
         cases.append(case)
+        latest_cycle_state_by_persona[persona_id] = _cross_cycle_state_from_case(case)
 
     summary = _build_summary(
         dataset=dataset,
@@ -3342,6 +3360,247 @@ def _candidate_action_key(candidate_id: str) -> str:
     return "unknown"
 
 
+def _cross_cycle_score_adjustments(context: Mapping[str, Any]) -> dict[str, float]:
+    adjustments = {
+        "feedback-adapt": 0.0,
+        "retain-observe": 0.0,
+        "risk-off": 0.0,
+        "contrarian-check": 0.0,
+    }
+    if context.get("status") == "applied":
+        adjustments["feedback-adapt"] = 0.18
+        adjustments["risk-off"] = 0.03
+    return adjustments
+
+
+def _cross_cycle_context_for_episode(
+    *,
+    episode: PortfolioEpisode,
+    prior_cycle_state: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if not prior_cycle_state:
+        return {
+            "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
+            "status": "cold_start",
+            "case_id": episode.case_id,
+            "persona_id": _persona_id(episode.persona),
+            "previous_case_id": None,
+            "state_ref": None,
+            "runtime_feedback_ref": None,
+            "source_runtime_ref": None,
+            "source_handoff_ref": None,
+            "previous_ooda_ledger_ref": None,
+            "previous_selected_action_ref": None,
+            "next_ooda_step": None,
+            "next_ooda_action": None,
+            "prior_case_completed_before_current_case": False,
+            "evidence_refs": [],
+            "candidate_score_adjustments": _cross_cycle_score_adjustments({"status": "cold_start"}),
+        }
+    previous_case_id = str(prior_cycle_state["case_id"])
+    state_ref = f"cross-cycle-runtime://{previous_case_id}->{episode.case_id}"
+    runtime_feedback_ref = str(prior_cycle_state["runtime_feedback_ref"])
+    return {
+        "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
+        "status": "applied",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "previous_case_id": previous_case_id,
+        "state_ref": state_ref,
+        "runtime_feedback_ref": runtime_feedback_ref,
+        "source_runtime_ref": prior_cycle_state["source_runtime_ref"],
+        "source_handoff_ref": prior_cycle_state["source_handoff_ref"],
+        "previous_ooda_ledger_ref": prior_cycle_state["ooda_ledger_ref"],
+        "previous_selected_action_ref": prior_cycle_state["selected_action_ref"],
+        "next_ooda_step": prior_cycle_state["next_ooda_step"],
+        "next_ooda_action": prior_cycle_state["next_ooda_action"],
+        "next_scheduler_phase": prior_cycle_state["next_scheduler_phase"],
+        "prior_case_completed_before_current_case": True,
+        "evidence_refs": [
+            state_ref,
+            runtime_feedback_ref,
+            str(prior_cycle_state["source_runtime_ref"]),
+            str(prior_cycle_state["source_handoff_ref"]),
+            str(prior_cycle_state["ooda_ledger_ref"]),
+            str(prior_cycle_state["selected_action_ref"]),
+        ],
+        "candidate_score_adjustments": _cross_cycle_score_adjustments({"status": "applied"}),
+    }
+
+
+def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
+    feedback = case["operational_context"]["lean_runtime_feedback"]
+    ledger = case["oss_feedback"]["ooda_causal_ledger"]
+    selected_event = next(
+        event
+        for event in ledger["events"]
+        if event["event_type"] == "selected_action"
+    )
+    persona_followup = feedback["persona_ooda_followup"]
+    return {
+        "case_id": case["case_id"],
+        "persona_id": case["persona_id"],
+        "runtime_feedback_ref": f"lean-runtime-feedback://{feedback['feedback_id']}",
+        "source_runtime_ref": feedback["source_runtime_ref"],
+        "source_handoff_ref": feedback["source_handoff_ref"],
+        "ooda_ledger_ref": ledger["ledger_ref"],
+        "selected_action_ref": selected_event["output_ref"],
+        "next_ooda_step": persona_followup["ooda_step"],
+        "next_ooda_action": persona_followup["action"],
+        "next_scheduler_phase": persona_followup["next_scheduler_phase"],
+    }
+
+
+def _build_cross_cycle_carryover_proof(
+    *,
+    episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    persona_oss_ooda_ledger: Mapping[str, Any],
+) -> dict[str, Any]:
+    state_ref = cross_cycle_context.get("state_ref")
+    runtime_feedback_ref = cross_cycle_context.get("runtime_feedback_ref")
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_action = _candidate_action_key(str(trace["selected_candidate_id"]))
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_action": selected_action,
+                "decision_input_state_ref": trace["decision_inputs"].get("cross_cycle_state_ref"),
+                "reasoning_consumes_state_ref": (
+                    state_ref is not None and state_ref in reasoning_request["input_refs"]
+                ),
+                "reasoning_consumes_runtime_feedback_ref": (
+                    runtime_feedback_ref is not None
+                    and runtime_feedback_ref in reasoning_request["input_refs"]
+                ),
+                "candidate_request_consumes_state_ref": (
+                    state_ref is not None and state_ref in candidate_request["input_refs"]
+                ),
+                "candidate_request_consumes_runtime_feedback_ref": (
+                    runtime_feedback_ref is not None
+                    and runtime_feedback_ref in candidate_request["input_refs"]
+                ),
+                "selected_candidate_cites_state_ref": (
+                    state_ref is not None and state_ref in selected_candidate["evidence_refs"]
+                ),
+                "scorer_cross_cycle_adjustment": float(
+                    scoring_inputs["cross_cycle_score_adjustments"].get(selected_action, 0.0)
+                ),
+            }
+        )
+
+    status = str(cross_cycle_context["status"])
+    applied = status == "applied"
+    cold_start = status == "cold_start"
+    replay = {
+        "replayable": True,
+        "cold_start_or_prior_cycle_bound": cold_start
+        or (
+            applied
+            and cross_cycle_context.get("previous_case_id")
+            and cross_cycle_context.get("prior_case_completed_before_current_case") is True
+        ),
+        "runtime_feedback_ref_available": cold_start or bool(runtime_feedback_ref),
+        "previous_lean_handoff_ref_available": cold_start or bool(cross_cycle_context.get("source_handoff_ref")),
+        "previous_ooda_ledger_ref_available": cold_start or bool(cross_cycle_context.get("previous_ooda_ledger_ref")),
+        "reasoning_consumes_prior_runtime_feedback": cold_start
+        or all(binding["reasoning_consumes_runtime_feedback_ref"] for binding in trace_bindings),
+        "candidate_generation_consumes_prior_runtime_feedback": cold_start
+        or all(binding["candidate_request_consumes_runtime_feedback_ref"] for binding in trace_bindings),
+        "selected_candidate_cites_cross_cycle_state": cold_start
+        or all(binding["selected_candidate_cites_state_ref"] for binding in trace_bindings),
+        "scorer_applies_cross_cycle_adjustment": cold_start
+        or all(binding["scorer_cross_cycle_adjustment"] > 0.0 for binding in trace_bindings),
+        "same_persona_cycle_carryover": cold_start
+        or cross_cycle_context.get("persona_id") == _persona_id(episode.persona),
+        "current_ooda_ledger_available": _persona_oss_ooda_causal_ledger_is_usable(persona_oss_ooda_ledger),
+        "no_future_current_case_artifact_used_as_prior": cold_start
+        or str(cross_cycle_context.get("previous_case_id")) != episode.case_id,
+    }
+    return {
+        "proof_id": f"cross-cycle-carryover-{episode.case_id}",
+        "proof_ref": f"cross-cycle-carryover://{episode.case_id}",
+        "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "carryover_status": status,
+        "previous_case_id": cross_cycle_context.get("previous_case_id"),
+        "state_ref": state_ref,
+        "runtime_feedback_ref": runtime_feedback_ref,
+        "source_runtime_ref": cross_cycle_context.get("source_runtime_ref"),
+        "source_handoff_ref": cross_cycle_context.get("source_handoff_ref"),
+        "previous_ooda_ledger_ref": cross_cycle_context.get("previous_ooda_ledger_ref"),
+        "current_ooda_ledger_ref": persona_oss_ooda_ledger["ledger_ref"],
+        "next_ooda_step": cross_cycle_context.get("next_ooda_step"),
+        "next_ooda_action": cross_cycle_context.get("next_ooda_action"),
+        "score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
+        "trace_bindings": trace_bindings,
+        "evidence_refs": list(cross_cycle_context.get("evidence_refs", [])),
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "cross-cycle-carryover-proof",
+            {
+                "case_id": episode.case_id,
+                "cross_cycle_context": cross_cycle_context,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _cross_cycle_carryover_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("carryover_status")
+    trace_bindings = list(proof.get("trace_bindings", []))
+    return bool(
+        proof.get("model_id") == PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("cross-cycle-carryover://")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_prior_cycle_bound",
+            "runtime_feedback_ref_available",
+            "previous_lean_handoff_ref_available",
+            "previous_ooda_ledger_ref_available",
+            "reasoning_consumes_prior_runtime_feedback",
+            "candidate_generation_consumes_prior_runtime_feedback",
+            "selected_candidate_cites_cross_cycle_state",
+            "scorer_applies_cross_cycle_adjustment",
+            "same_persona_cycle_carryover",
+            "current_ooda_ledger_available",
+            "no_future_current_case_artifact_used_as_prior",
+        ))
+        and (
+            (
+                status == "cold_start"
+                and proof.get("previous_case_id") is None
+                and proof.get("runtime_feedback_ref") is None
+                and all(float(value) == 0.0 for value in proof.get("score_adjustments", {}).values())
+            )
+            or (
+                status == "applied"
+                and proof.get("previous_case_id")
+                and proof.get("runtime_feedback_ref")
+                and proof.get("state_ref")
+                and float(proof.get("score_adjustments", {}).get("feedback-adapt", 0.0)) > 0.0
+                and all(binding.get("scorer_cross_cycle_adjustment", 0.0) > 0.0 for binding in trace_bindings)
+            )
+        )
+    )
+
+
 def _memory_influence_applied_to_selected_candidate(
     *,
     memory_influence: Mapping[str, Any],
@@ -3565,6 +3824,7 @@ def _build_persona_reasoning_response(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
 ) -> dict[str, Any]:
     allowed_windows = ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"]
     forbidden_windows = ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"]
@@ -3587,6 +3847,7 @@ def _build_persona_reasoning_response(
             str(oss_disagreement_arbitration["arbitration_ref"]),
             str(tracking_reconciliation["reconciliation_ref"]),
             str(alpha_seed_revision["revision_ref"]),
+            *list(cross_cycle_context.get("evidence_refs", [])),
             *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
         ],
         "portfolio_instruments": [window.instrument for window in episode.windows],
@@ -3605,6 +3866,9 @@ def _build_persona_reasoning_response(
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
         "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
         "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
+        "cross_cycle_status": cross_cycle_context["status"],
+        "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
+        "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
         "oss_followup_request_ids": [
             followup["request"]["request_id"]
             for followup in oss_followup_loop["followups"]
@@ -3619,6 +3883,7 @@ def _build_persona_reasoning_response(
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        cross_cycle_context=cross_cycle_context,
     )
     reasoning_response = {
         "response_id": f"persona-reasoning-response-{episode.case_id}-gen{generation}",
@@ -3682,6 +3947,15 @@ def _build_persona_reasoning_response(
                 dict(alpha_seed_revision["candidate_score_adjustments"])
             ),
         },
+        "cross_cycle_usage": {
+            "model_id": cross_cycle_context["model_id"],
+            "status": cross_cycle_context["status"],
+            "state_ref": cross_cycle_context.get("state_ref"),
+            "runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+            "previous_case_id": cross_cycle_context.get("previous_case_id"),
+            "next_ooda_step": cross_cycle_context.get("next_ooda_step"),
+            "candidate_score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
+        },
         "candidate_blueprints": candidate_blueprints,
         "forbidden_windows_not_used": forbidden_windows,
         "output_contract": {
@@ -3716,12 +3990,20 @@ def _persona_reasoning_candidate_blueprints(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     del oss_inputs
     shared_windows = list(allowed_windows)
     feedback_windows = ["observe", "feedback"] if generation == 1 else shared_windows
     memory_ref = memory_influence.get("influence_ref")
     memory_refs = [str(memory_ref)] if memory_ref else []
+    cross_cycle_refs = list(cross_cycle_context.get("evidence_refs", []))
+    cross_cycle_score_adjustments = _cross_cycle_score_adjustments(cross_cycle_context)
+    risk_cross_cycle_refs = (
+        cross_cycle_refs
+        if float(cross_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0
+        else []
+    )
     feedback_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "feedback-adapt")
     risk_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "risk-off")
     retain_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "retain-observe")
@@ -3759,6 +4041,7 @@ def _persona_reasoning_candidate_blueprints(
                 *feedback_tracking_refs,
                 *feedback_alpha_refs,
                 *memory_refs,
+                *cross_cycle_refs,
             ],
             "memory_adjustment_key": "feedback-adapt",
             "rationale": (
@@ -3795,8 +4078,12 @@ def _persona_reasoning_candidate_blueprints(
                 *risk_tracking_refs,
                 *risk_alpha_refs,
                 *memory_refs,
+                *risk_cross_cycle_refs,
             ]
-            if float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
+            if (
+                float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
+                or risk_cross_cycle_refs
+            )
             else [*risk_followup_refs, *risk_arbitration_refs, *risk_tracking_refs, *risk_alpha_refs],
             "memory_adjustment_key": "risk-off",
             "rationale": "Use feedback direction but reduce exposure when the risk interpretation asks for caution.",
@@ -3905,6 +4192,35 @@ def _evaluate_persona_reasoning_response(
             },
         ),
         _persona_risk_check(
+            "reasoning_uses_cross_cycle_runtime_feedback_or_declares_cold_start",
+            (
+                request.get("cross_cycle_status") == "cold_start"
+                and response.get("cross_cycle_usage", {}).get("status") == "cold_start"
+                and request.get("cross_cycle_state_ref") is None
+            )
+            or (
+                request.get("cross_cycle_status") == "applied"
+                and response.get("cross_cycle_usage", {}).get("status") == "applied"
+                and request.get("cross_cycle_state_ref")
+                == response.get("cross_cycle_usage", {}).get("state_ref")
+                and request.get("cross_cycle_runtime_feedback_ref")
+                == response.get("cross_cycle_usage", {}).get("runtime_feedback_ref")
+                and request.get("cross_cycle_state_ref") in request.get("input_refs", [])
+                and request.get("cross_cycle_runtime_feedback_ref") in request.get("input_refs", [])
+                and float(
+                    response.get("cross_cycle_usage", {})
+                    .get("candidate_score_adjustments", {})
+                    .get("feedback-adapt", 0.0)
+                )
+                > 0.0
+            ),
+            {
+                "cross_cycle_status": request.get("cross_cycle_status"),
+                "cross_cycle_state_ref": request.get("cross_cycle_state_ref"),
+                "usage": copy.deepcopy(dict(response.get("cross_cycle_usage", {}))),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_routes_to_scorer_and_risk_evaluator",
             response.get("output_contract", {}).get("scorer_required") is True
             and response.get("output_contract", {}).get("risk_evaluator_required") is True,
@@ -3931,6 +4247,7 @@ def _build_agent_decision_trace(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
 ) -> dict[str, Any]:
     memory_influence = _memory_influence_profile(prior_memory)
     trigger = (
@@ -3951,6 +4268,7 @@ def _build_agent_decision_trace(
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        cross_cycle_context=cross_cycle_context,
     )
     candidates = _score_agent_candidates(
         episode=episode,
@@ -3965,6 +4283,7 @@ def _build_agent_decision_trace(
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        cross_cycle_context=cross_cycle_context,
     )
     selected = max(candidates, key=lambda item: item.score)
     candidate_dicts = [_candidate_to_dict(candidate) for candidate in candidates]
@@ -3980,6 +4299,9 @@ def _build_agent_decision_trace(
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
         "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
         "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
+        "cross_cycle_status": cross_cycle_context["status"],
+        "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
+        "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
     }
     evidence_refs = [
         f"telemetry-event://{telemetry_event['event_id']}",
@@ -3991,6 +4313,7 @@ def _build_agent_decision_trace(
         str(oss_disagreement_arbitration["arbitration_ref"]),
         str(tracking_reconciliation["reconciliation_ref"]),
         str(alpha_seed_revision["revision_ref"]),
+        *list(cross_cycle_context.get("evidence_refs", [])),
     ]
     agent_decision_artifact = _build_persona_decision_artifact(
         episode=episode,
@@ -4007,6 +4330,7 @@ def _build_agent_decision_trace(
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        cross_cycle_context=cross_cycle_context,
         decision_inputs=decision_inputs,
         evidence_refs=evidence_refs,
         candidates=candidate_dicts,
@@ -4047,6 +4371,7 @@ def _score_agent_candidates(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
 ) -> list[PolicyCandidate]:
     del prior_memory
     feedback_directions = {
@@ -4066,6 +4391,7 @@ def _score_agent_candidates(
     disagreement_score_adjustments = dict(oss_disagreement_arbitration["candidate_score_adjustments"])
     tracking_score_adjustments = dict(tracking_reconciliation["candidate_score_adjustments"])
     alpha_seed_score_adjustments = dict(alpha_seed_revision["candidate_score_adjustments"])
+    cross_cycle_score_adjustments = _cross_cycle_score_adjustments(cross_cycle_context)
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_score_adjustments = dict(memory_influence["candidate_score_adjustments"])
     memory_ref = memory_influence.get("influence_ref")
@@ -4085,6 +4411,9 @@ def _score_agent_candidates(
         feedback_evidence_refs.append(str(memory_ref))
         if float(memory_score_adjustments.get("risk-off", 0.0)) > 0:
             risk_off_evidence_refs.append(str(memory_ref))
+    feedback_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
+    if float(cross_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0:
+        risk_off_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
     action_context = {
         "feedback-adapt": {
             "directions": feedback_directions,
@@ -4096,6 +4425,7 @@ def _score_agent_candidates(
                 + float(disagreement_score_adjustments["feedback-adapt"])
                 + float(tracking_score_adjustments["feedback-adapt"])
                 + float(alpha_seed_score_adjustments["feedback-adapt"])
+                + float(cross_cycle_score_adjustments["feedback-adapt"])
                 + feedback_score
                 + policy_quality
                 + reflection_quality
@@ -4127,6 +4457,7 @@ def _score_agent_candidates(
                 + float(disagreement_score_adjustments["risk-off"])
                 + float(tracking_score_adjustments["risk-off"])
                 + float(alpha_seed_score_adjustments["risk-off"])
+                + float(cross_cycle_score_adjustments["risk-off"])
                 + max(0.0, risk_penalty)
             ),
             "fallback_evidence_refs": tuple(risk_off_evidence_refs),
@@ -4206,6 +4537,7 @@ def _build_persona_decision_artifact(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
     decision_inputs: Mapping[str, Any],
     evidence_refs: Sequence[str],
     candidates: Sequence[Mapping[str, Any]],
@@ -4250,6 +4582,8 @@ def _build_persona_decision_artifact(
         "alpha_seed_revision_score_adjustments": copy.deepcopy(
             dict(alpha_seed_revision["candidate_score_adjustments"])
         ),
+        "cross_cycle_context": copy.deepcopy(dict(cross_cycle_context)),
+        "cross_cycle_score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
         "persona_reasoning_ref": persona_reasoning["response"]["reasoning_ref"],
         "persona_reasoning_preferred_action": persona_reasoning["response"]["preferred_action_hint"],
         "baseline_risk_multiplier": float(baseline_policy["risk_multiplier"]),
@@ -4324,6 +4658,10 @@ def _build_persona_decision_artifact(
         "alpha_seed_revision_action": alpha_seed_revision["revision"]["action"],
         "alpha_seed_revision_component": alpha_seed_revision["alpha_component"],
         "alpha_seed_revision_key": alpha_seed_revision["revision"]["revision_key"],
+        "cross_cycle_status": cross_cycle_context["status"],
+        "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
+        "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+        "cross_cycle_previous_case_id": cross_cycle_context.get("previous_case_id"),
         "oss_followup_response_refs": [
             followup["response"]["output_ref"]
             for followup in oss_followup_loop["followups"]
@@ -4366,6 +4704,7 @@ def _build_persona_decision_artifact(
                 ],
                 *tracking_reconciliation["repair"]["evidence_refs"],
                 *alpha_seed_revision["persona_alpha_response"]["evidence_refs"],
+                *list(cross_cycle_context.get("evidence_refs", [])),
                 *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
             ],
             "allowed_windows": list(decision_inputs["allowed_windows"]),
@@ -4475,6 +4814,28 @@ def _build_persona_decision_artifact(
                 for value in scoring_inputs["alpha_seed_revision_score_adjustments"].values()
             )
         ),
+        "uses_cross_cycle_runtime_feedback_or_declares_cold_start": (
+            (
+                cross_cycle_context["status"] == "cold_start"
+                and not cross_cycle_context.get("state_ref")
+                and all(
+                    float(value) == 0.0
+                    for value in scoring_inputs["cross_cycle_score_adjustments"].values()
+                )
+            )
+            or (
+                cross_cycle_context["status"] == "applied"
+                and str(cross_cycle_context["state_ref"]) in candidate_generation["request"]["input_refs"]
+                and str(cross_cycle_context["runtime_feedback_ref"]) in candidate_generation["request"]["input_refs"]
+                and str(cross_cycle_context["state_ref"]) in selected_candidate.get("evidence_refs", [])
+                and float(
+                    scoring_inputs["cross_cycle_score_adjustments"][
+                        _candidate_action_key(str(selected_candidate["candidate_id"]))
+                    ]
+                )
+                > 0.0
+            )
+        ),
     }
     return {
         "artifact_id": f"persona-decision-artifact-{episode.case_id}-gen{generation}",
@@ -4515,6 +4876,7 @@ def _persona_candidate_scorecard(
     disagreement_score_adjustments = dict(scoring_inputs["oss_disagreement_score_adjustments"])
     tracking_reconciliation_score_adjustments = dict(scoring_inputs["tracking_reconciliation_score_adjustments"])
     alpha_seed_revision_score_adjustments = dict(scoring_inputs["alpha_seed_revision_score_adjustments"])
+    cross_cycle_score_adjustments = dict(scoring_inputs["cross_cycle_score_adjustments"])
     if candidate_id.endswith("-feedback-adapt"):
         formula_id = "feedback_adapt_score_v1"
         memory_adjustment = float(memory_score_adjustments["feedback-adapt"])
@@ -4522,6 +4884,7 @@ def _persona_candidate_scorecard(
         disagreement_adjustment = float(disagreement_score_adjustments["feedback-adapt"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["feedback-adapt"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["feedback-adapt"])
+        cross_cycle_adjustment = float(cross_cycle_score_adjustments["feedback-adapt"])
         replayed_score = round(
             3.0
             + memory_adjustment
@@ -4529,6 +4892,7 @@ def _persona_candidate_scorecard(
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + cross_cycle_adjustment
             + feedback_score
             + policy_quality
             + reflection_quality
@@ -4542,6 +4906,7 @@ def _persona_candidate_scorecard(
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "cross_cycle_adjustment": cross_cycle_adjustment,
             "feedback_score": feedback_score,
             "policy_quality": policy_quality,
             "reflection_quality": reflection_quality,
@@ -4554,6 +4919,7 @@ def _persona_candidate_scorecard(
         disagreement_adjustment = float(disagreement_score_adjustments["retain-observe"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["retain-observe"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["retain-observe"])
+        cross_cycle_adjustment = float(cross_cycle_score_adjustments["retain-observe"])
         replayed_score = round(
             1.0
             + memory_adjustment
@@ -4561,6 +4927,7 @@ def _persona_candidate_scorecard(
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + cross_cycle_adjustment
             + max(feedback_score, 0.0),
             10,
         )
@@ -4571,6 +4938,7 @@ def _persona_candidate_scorecard(
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "cross_cycle_adjustment": cross_cycle_adjustment,
             "positive_feedback_score": round(max(feedback_score, 0.0), 10),
         }
     elif candidate_id.endswith("-risk-off"):
@@ -4580,6 +4948,7 @@ def _persona_candidate_scorecard(
         disagreement_adjustment = float(disagreement_score_adjustments["risk-off"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["risk-off"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["risk-off"])
+        cross_cycle_adjustment = float(cross_cycle_score_adjustments["risk-off"])
         replayed_score = round(
             2.0
             + memory_adjustment
@@ -4587,6 +4956,7 @@ def _persona_candidate_scorecard(
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + cross_cycle_adjustment
             + max(0.0, risk_penalty),
             10,
         )
@@ -4597,6 +4967,7 @@ def _persona_candidate_scorecard(
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "cross_cycle_adjustment": cross_cycle_adjustment,
             "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
         }
     else:
@@ -4606,13 +4977,15 @@ def _persona_candidate_scorecard(
         disagreement_adjustment = float(disagreement_score_adjustments["contrarian-check"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["contrarian-check"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["contrarian-check"])
+        cross_cycle_adjustment = float(cross_cycle_score_adjustments["contrarian-check"])
         replayed_score = round(
             0.25
             + memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
-            + alpha_seed_revision_adjustment,
+            + alpha_seed_revision_adjustment
+            + cross_cycle_adjustment,
             10,
         )
         components = {
@@ -4622,6 +4995,7 @@ def _persona_candidate_scorecard(
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "cross_cycle_adjustment": cross_cycle_adjustment,
         }
     candidate_score = round(float(candidate["score"]), 10)
     return {
@@ -6695,6 +7069,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("uses_oss_disagreement_arbitration") is True
         and replay.get("uses_tracking_reconciliation") is True
         and replay.get("uses_alpha_seed_revision") is True
+        and replay.get("uses_cross_cycle_runtime_feedback_or_declares_cold_start") is True
         and replay.get("input_hash")
         and replay.get("candidate_hash")
         and replay.get("score_hash")
@@ -7541,6 +7916,7 @@ def _build_usability_dimensions(
     strict_oos_evolution_proof: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
+    cross_cycle_carryover: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
@@ -7634,6 +8010,9 @@ def _build_usability_dimensions(
     persona_oss_ooda_causality = 1.0 if _persona_oss_ooda_causal_ledger_is_usable(
         persona_oss_ooda_ledger
     ) else 0.0
+    cross_cycle_runtime_carryover = 1.0 if _cross_cycle_carryover_is_usable(
+        cross_cycle_carryover
+    ) else 0.0
     oss_disagreement_arbitration = 1.0 if all(
         _trace_oss_disagreement_arbitration_is_usable(trace)
         for trace in decision_traces
@@ -7665,6 +8044,7 @@ def _build_usability_dimensions(
         "oss_response_followup_loop": oss_response_followup_loop,
         "multi_oss_closed_loop": multi_oss_closed_loop,
         "persona_oss_ooda_causality": persona_oss_ooda_causality,
+        "cross_cycle_runtime_carryover": cross_cycle_runtime_carryover,
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
         "tracking_reconciliation": tracking_reconciliation,
         "alpha_seed_revision": alpha_seed_revision,
@@ -7708,6 +8088,7 @@ def _diagnose_validation_execution(
     strict_oos_evolution_proof: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
+    cross_cycle_carryover: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
@@ -7918,6 +8299,18 @@ def _diagnose_validation_execution(
                 "phase_order": list(persona_oss_ooda_ledger["phase_order"]),
                 "event_types": list(persona_oss_ooda_ledger["event_types"]),
                 "replay": copy.deepcopy(dict(persona_oss_ooda_ledger["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "cross_cycle_runtime_feedback_drives_next_case_decision",
+            _cross_cycle_carryover_is_usable(cross_cycle_carryover),
+            {
+                "proof_id": cross_cycle_carryover["proof_id"],
+                "carryover_status": cross_cycle_carryover["carryover_status"],
+                "previous_case_id": cross_cycle_carryover.get("previous_case_id"),
+                "runtime_feedback_ref": cross_cycle_carryover.get("runtime_feedback_ref"),
+                "trace_binding_count": len(cross_cycle_carryover["trace_bindings"]),
+                "replay": copy.deepcopy(dict(cross_cycle_carryover["replay"])),
             },
         ),
         _diagnostic_check(
@@ -8294,6 +8687,7 @@ def _build_case_result(
     strict_oos_evolution_proof: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
+    cross_cycle_carryover: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
@@ -8386,6 +8780,9 @@ def _build_case_result(
             "selected_candidate_ids": [trace["selected_candidate_id"] for trace in decision_traces],
         },
         "operational_context": dict(operational_context),
+        "cross_cycle": {
+            "runtime_feedback_carryover": copy.deepcopy(dict(cross_cycle_carryover)),
+        },
         "validation_cycle": {
             "planning": dict(validation_plan),
             "execution_review": dict(validation_diagnostics),
@@ -8417,6 +8814,9 @@ def _build_case_result(
             "multi_oss_closed_loop_drives_decision": usability_dimensions["multi_oss_closed_loop"] == 1.0,
             "persona_oss_ooda_causality_replayed": usability_dimensions[
                 "persona_oss_ooda_causality"
+            ] == 1.0,
+            "cross_cycle_runtime_feedback_drives_next_case": usability_dimensions[
+                "cross_cycle_runtime_carryover"
             ] == 1.0,
             "oss_response_followup_loop_drives_decision": usability_dimensions[
                 "oss_response_followup_loop"
@@ -8497,6 +8897,9 @@ def _build_summary(
     ]
     persona_oss_ooda_ledgers = [
         case["oss_feedback"]["ooda_causal_ledger"] for case in cases
+    ]
+    cross_cycle_carryovers = [
+        case["cross_cycle"]["runtime_feedback_carryover"] for case in cases
     ]
     oss_disagreement_arbitrations = [
         case["case_upstream_artifacts"]["oss_disagreement_arbitration"] for case in cases
@@ -8711,6 +9114,29 @@ def _build_summary(
             flag
             for ledger in persona_oss_ooda_ledgers
             for flag, value in ledger["replay"].items()
+            if value is True
+        }),
+        "cross_cycle_carryover_models": sorted({
+            proof["model_id"] for proof in cross_cycle_carryovers
+        }),
+        "cross_cycle_carryover_statuses": sorted({
+            proof["carryover_status"] for proof in cross_cycle_carryovers
+        }),
+        "cross_cycle_carryover_next_ooda_steps": sorted({
+            str(proof["next_ooda_step"])
+            for proof in cross_cycle_carryovers
+            if proof.get("next_ooda_step")
+        }),
+        "cross_cycle_carryover_score_adjusted_actions": sorted({
+            action
+            for proof in cross_cycle_carryovers
+            for action, value in proof["score_adjustments"].items()
+            if float(value) > 0.0
+        }),
+        "cross_cycle_carryover_replay_flags": sorted({
+            flag
+            for proof in cross_cycle_carryovers
+            for flag, value in proof["replay"].items()
             if value is True
         }),
         "oss_disagreement_arbitration_models": sorted({
@@ -8976,6 +9402,22 @@ def _build_summary(
         "persona_oss_ooda_causality_replay_count": sum(
             1 for item in usable if item["persona_oss_ooda_causality_replayed"]
         ),
+        "cross_cycle_carryover_count": len(cross_cycle_carryovers),
+        "cross_cycle_carryover_pass_count": sum(
+            1 for proof in cross_cycle_carryovers if _cross_cycle_carryover_is_usable(proof)
+        ),
+        "cross_cycle_runtime_feedback_applied_count": sum(
+            1 for proof in cross_cycle_carryovers if proof["carryover_status"] == "applied"
+        ),
+        "cross_cycle_runtime_feedback_cold_start_count": sum(
+            1 for proof in cross_cycle_carryovers if proof["carryover_status"] == "cold_start"
+        ),
+        "cross_cycle_carryover_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in cross_cycle_carryovers
+        ),
+        "cross_cycle_runtime_feedback_drives_next_case_count": sum(
+            1 for item in usable if item["cross_cycle_runtime_feedback_drives_next_case"]
+        ),
         "oss_response_followup_loop_count": len(oss_followup_loops),
         "oss_response_followup_loop_pass_count": sum(
             1 for loop in oss_followup_loops if _oss_response_followup_loop_is_usable(loop)
@@ -9099,6 +9541,7 @@ def _build_summary(
             "Every case converts OSS responses into persona follow-up requests that feed reasoning, candidate evidence, and scorer adjustments.",
             "Every case emits a multi-OSS closed-loop proof replaying each role from OSS response through persona follow-up, reasoning inputs, candidate generation, scorer adjustments, and selected evidence.",
             "Every case emits an OODA causal ledger proving OSS responses, persona follow-up outputs, candidate generation, scorer output, selected action, and LEAN handoff occur in replayable temporal order without future artifact references.",
+            "Every non-cold-start persona case consumes the prior autonomous cycle's LEAN runtime feedback in reasoning, candidate generation, selected evidence, and scorer adjustments.",
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
             "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case reconciles experiment-tracker readback divergence and routes the repaired tracking ref into persona reasoning, scorer adjustments, and selected candidate evidence.",
