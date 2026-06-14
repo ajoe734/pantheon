@@ -150,6 +150,7 @@ PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
 EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v1"
 NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1"
 STRICT_OOS_EVOLUTION_PROOF_MODEL_ID = "persona_strict_oos_evolution_proof_v1"
+PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID = "persona_memory_counterfactual_decision_proof_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
 PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
@@ -2786,6 +2787,199 @@ def _memory_influence_applied_to_selected_candidate(
     )
 
 
+def _build_memory_counterfactual_proof(
+    *,
+    episode: PortfolioEpisode,
+    generation: int,
+    decision_trace_ref: str,
+    input_context: Mapping[str, Any],
+    candidate_request: Mapping[str, Any],
+    scorecards: Mapping[str, Mapping[str, Any]],
+    selected_candidate: Mapping[str, Any],
+    memory_influence: Mapping[str, Any],
+) -> dict[str, Any]:
+    selected_id = str(selected_candidate["candidate_id"])
+    selected_action = _candidate_action_key(selected_id)
+    memory_ref = memory_influence.get("influence_ref")
+    memory_status = "retrieved" if memory_ref else "cold_start_declared"
+    actual_scores = {
+        candidate_id: round(float(card["candidate_score"]), 10)
+        for candidate_id, card in scorecards.items()
+    }
+    counterfactual_scores = {
+        candidate_id: round(
+            float(card["candidate_score"])
+            - float(card.get("components", {}).get("memory_adjustment", 0.0)),
+            10,
+        )
+        for candidate_id, card in scorecards.items()
+    }
+    selected_actual_score = actual_scores[selected_id]
+    selected_counterfactual_score = counterfactual_scores[selected_id]
+    selected_score_delta = round(selected_actual_score - selected_counterfactual_score, 10)
+    actual_winner_id = max(actual_scores, key=actual_scores.__getitem__)
+    counterfactual_winner_id = max(counterfactual_scores, key=counterfactual_scores.__getitem__)
+    other_actual_scores = [
+        score for candidate_id, score in actual_scores.items() if candidate_id != selected_id
+    ]
+    other_counterfactual_scores = [
+        score for candidate_id, score in counterfactual_scores.items() if candidate_id != selected_id
+    ]
+    actual_runner_up_score = max(other_actual_scores)
+    counterfactual_runner_up_score = max(other_counterfactual_scores)
+    actual_margin = round(selected_actual_score - actual_runner_up_score, 10)
+    counterfactual_margin = round(
+        selected_counterfactual_score - counterfactual_runner_up_score,
+        10,
+    )
+    margin_lift = round(actual_margin - counterfactual_margin, 10)
+    selected_card = scorecards[selected_id]
+    selected_memory_adjustment = round(
+        float(selected_card.get("components", {}).get("memory_adjustment", 0.0)),
+        10,
+    )
+    memory_adjustments = dict(memory_influence.get("candidate_score_adjustments", {}))
+    recomputed_scores_match = all(
+        abs(
+            counterfactual_scores[candidate_id]
+            - round(
+                float(card["candidate_score"])
+                - float(card.get("components", {}).get("memory_adjustment", 0.0)),
+                10,
+            )
+        ) <= 1e-9
+        for candidate_id, card in scorecards.items()
+    )
+    selected_refs = set(str(ref) for ref in selected_candidate.get("evidence_refs", []))
+    request_refs = set(str(ref) for ref in candidate_request.get("input_refs", []))
+    replay = {
+        "replayable": True,
+        "actual_selection_replayed": actual_winner_id == selected_id,
+        "counterfactual_scores_recomputed": recomputed_scores_match,
+        "score_delta_equals_selected_memory_adjustment": abs(
+            selected_score_delta - selected_memory_adjustment
+        ) <= 1e-9,
+        "retrieved_memory_ref_bound": (
+            memory_ref is None
+            or (
+                input_context.get("memory_influence_ref") == memory_ref
+                and memory_influence.get("influence_ref") == memory_ref
+            )
+        ),
+        "candidate_request_includes_memory_when_retrieved": (
+            memory_ref is None or str(memory_ref) in request_refs
+        ),
+        "selected_candidate_cites_memory_when_retrieved": (
+            memory_ref is None or str(memory_ref) in selected_refs
+        ),
+        "selected_action_matches_memory_hint_when_retrieved": (
+            memory_ref is None
+            or selected_action == memory_influence.get("selected_action_hint")
+        ),
+        "memory_changes_selected_score_when_retrieved": (
+            memory_ref is None or selected_score_delta > 0.0
+        ),
+        "memory_improves_selected_margin_when_retrieved": (
+            memory_ref is None or margin_lift > 0.0
+        ),
+        "cold_start_zero_memory_adjustments": (
+            memory_ref is not None
+            or all(float(value) == 0.0 for value in memory_adjustments.values())
+        ),
+    }
+    return {
+        "proof_id": f"memory-counterfactual-{episode.case_id}-gen{generation}",
+        "proof_ref": f"memory-counterfactual://{episode.case_id}/gen{generation}",
+        "model_id": PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation": generation,
+        "decision_trace_ref": decision_trace_ref,
+        "memory_status": memory_status,
+        "memory_id": memory_influence.get("memory_id"),
+        "memory_ref": memory_ref,
+        "memory_source_event_id": memory_influence.get("source_event_id"),
+        "selected_action_hint": memory_influence.get("selected_action_hint"),
+        "selected_candidate_id": selected_id,
+        "selected_action": selected_action,
+        "actual_winner_id": actual_winner_id,
+        "counterfactual_without_memory_winner_id": counterfactual_winner_id,
+        "selection_flips_without_memory": counterfactual_winner_id != selected_id,
+        "selected_actual_score": selected_actual_score,
+        "selected_counterfactual_without_memory_score": selected_counterfactual_score,
+        "selected_score_delta_from_memory": selected_score_delta,
+        "selected_memory_adjustment": selected_memory_adjustment,
+        "actual_margin_to_runner_up": actual_margin,
+        "counterfactual_margin_to_runner_up": counterfactual_margin,
+        "memory_margin_lift": margin_lift,
+        "actual_scores": actual_scores,
+        "counterfactual_without_memory_scores": counterfactual_scores,
+        "outcome": (
+            "memory_material_to_selected_score"
+            if memory_ref
+            else "cold_start_declared"
+        ),
+        "evidence_refs": [
+            *([str(memory_ref)] if memory_ref else []),
+            f"decision-request://{candidate_request['request_id']}",
+            f"candidate://{selected_id}",
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "memory-counterfactual-proof",
+            {
+                "case_id": episode.case_id,
+                "generation": generation,
+                "memory_ref": memory_ref,
+                "selected_candidate_id": selected_id,
+                "actual_scores": actual_scores,
+                "counterfactual_without_memory_scores": counterfactual_scores,
+            },
+        ),
+    }
+
+
+def _memory_counterfactual_proof_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    memory_ref = proof.get("memory_ref")
+    return bool(
+        proof.get("model_id") == PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("memory-counterfactual://")
+        and proof.get("input_hash")
+        and proof.get("actual_winner_id") == proof.get("selected_candidate_id")
+        and float(proof.get("selected_score_delta_from_memory", 0.0))
+        == float(proof.get("selected_memory_adjustment", -1.0))
+        and replay.get("replayable") is True
+        and replay.get("actual_selection_replayed") is True
+        and replay.get("counterfactual_scores_recomputed") is True
+        and replay.get("score_delta_equals_selected_memory_adjustment") is True
+        and replay.get("retrieved_memory_ref_bound") is True
+        and replay.get("candidate_request_includes_memory_when_retrieved") is True
+        and replay.get("selected_candidate_cites_memory_when_retrieved") is True
+        and replay.get("selected_action_matches_memory_hint_when_retrieved") is True
+        and replay.get("memory_changes_selected_score_when_retrieved") is True
+        and replay.get("memory_improves_selected_margin_when_retrieved") is True
+        and replay.get("cold_start_zero_memory_adjustments") is True
+        and (
+            (
+                memory_ref
+                and proof.get("memory_status") == "retrieved"
+                and proof.get("outcome") == "memory_material_to_selected_score"
+                and float(proof.get("selected_score_delta_from_memory", 0.0)) > 0.0
+                and float(proof.get("memory_margin_lift", 0.0)) > 0.0
+            )
+            or (
+                not memory_ref
+                and proof.get("memory_status") == "cold_start_declared"
+                and proof.get("outcome") == "cold_start_declared"
+                and float(proof.get("selected_score_delta_from_memory", 1.0)) == 0.0
+            )
+        )
+    )
+
+
 def _build_persona_reasoning_response(
     *,
     episode: PortfolioEpisode,
@@ -3622,6 +3816,16 @@ def _build_persona_decision_artifact(
         "rejected_candidates": rejected_candidates,
         "decision_rule": "choose highest replayed persona scorer value after risk evaluator passes",
     }
+    memory_counterfactual = _build_memory_counterfactual_proof(
+        episode=episode,
+        generation=generation,
+        decision_trace_ref=f"reflection-{episode.case_id}-gen{generation}",
+        input_context=input_context,
+        candidate_request=candidate_generation["request"],
+        scorecards=scorecards,
+        selected_candidate=selected_candidate,
+        memory_influence=memory_influence,
+    )
     replay = {
         "input_hash": _stable_payload_hash("decision-input", input_context),
         "candidate_hash": _stable_payload_hash("decision-candidates", candidate_generation["response"]),
@@ -3641,6 +3845,9 @@ def _build_persona_decision_artifact(
             selected_candidate=selected_candidate,
         )
         or input_context["memory_status"] == "cold_start_declared",
+        "memory_counterfactual_replays_score_delta": _memory_counterfactual_proof_is_usable(
+            memory_counterfactual
+        ),
         "uses_persona_reasoning_response": candidate_generation["response"]["source_reasoning_response_id"]
         == persona_reasoning["response"]["response_id"]
         and persona_reasoning["response"]["reasoning_ref"] in candidate_generation["request"]["input_refs"],
@@ -3714,6 +3921,7 @@ def _build_persona_decision_artifact(
             "scoring_inputs": scoring_inputs,
             "scorecards": scorecards,
         },
+        "memory_counterfactual": memory_counterfactual,
         "risk_evaluator": risk_evaluator,
         "selection": selection,
         "evidence_refs": list(evidence_refs),
@@ -5841,10 +6049,11 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
     response = candidate_generation.get("response", {})
     scorer = artifact.get("scorer", {})
     scorecards = scorer.get("scorecards", {})
+    memory_counterfactual = artifact.get("memory_counterfactual", {})
     risk_evaluator = artifact.get("risk_evaluator", {})
     selection = artifact.get("selection", {})
     replay = artifact.get("replay", {})
-    if not all(isinstance(item, Mapping) for item in (input_context, response, scorer, scorecards, risk_evaluator, selection, replay)):
+    if not all(isinstance(item, Mapping) for item in (input_context, response, scorer, scorecards, memory_counterfactual, risk_evaluator, selection, replay)):
         return False
 
     required_roles = {
@@ -5908,6 +6117,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("no_forbidden_window_sources") is True
         and replay.get("uses_memory_or_declares_cold_start") is True
         and replay.get("uses_memory_in_scoring_or_declares_cold_start") is True
+        and replay.get("memory_counterfactual_replays_score_delta") is True
         and replay.get("uses_persona_reasoning_response") is True
         and replay.get("uses_selected_oss_feedback") is True
         and replay.get("uses_oss_response_followup_loop") is True
@@ -5920,6 +6130,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("selection_hash")
         and _trace_has_no_forbidden_window_leakage(trace)
         and _trace_memory_influence_is_usable(trace)
+        and _memory_counterfactual_proof_is_usable(memory_counterfactual)
         and _trace_persona_reasoning_is_usable(trace)
         and _trace_oss_followup_loop_is_usable(trace)
         and _trace_oss_disagreement_arbitration_is_usable(trace)
@@ -6774,6 +6985,12 @@ def _build_usability_dimensions(
         all(_trace_memory_influence_is_usable(trace) for trace in decision_traces)
         and any(trace["decision_inputs"].get("memory_ref") for trace in decision_traces)
     ) else 0.0
+    memory_counterfactual_decision = 1.0 if all(
+        _memory_counterfactual_proof_is_usable(
+            trace["agent_decision_artifact"]["memory_counterfactual"]
+        )
+        for trace in decision_traces
+    ) else 0.0
     decision_explainability = 1.0 if all(
         trace["candidate_count"] >= 4
         and trace["selected_candidate"]["rationale"]
@@ -6862,6 +7079,7 @@ def _build_usability_dimensions(
         "regime_adaptation": regime_adaptation,
         "memory_reuse": memory_reuse,
         "memory_influences_decision": memory_influences_decision,
+        "memory_counterfactual_decision": memory_counterfactual_decision,
         "decision_explainability": decision_explainability,
         "persona_decision_artifact": persona_decision_artifact,
         "persona_reasoning_generation": persona_reasoning_generation,
@@ -7036,6 +7254,31 @@ def _diagnose_validation_execution(
                 ],
                 "selected_candidate_refs": [
                     trace["selected_candidate"]["evidence_refs"] for trace in decision_traces
+                ],
+            },
+        ),
+        _diagnostic_check(
+            "memory_counterfactual_proves_retrieval_materiality",
+            all(
+                _memory_counterfactual_proof_is_usable(
+                    trace["agent_decision_artifact"]["memory_counterfactual"]
+                )
+                for trace in decision_traces
+            ),
+            {
+                "proofs": [
+                    {
+                        "proof_id": trace["agent_decision_artifact"]["memory_counterfactual"]["proof_id"],
+                        "memory_status": trace["agent_decision_artifact"]["memory_counterfactual"]["memory_status"],
+                        "outcome": trace["agent_decision_artifact"]["memory_counterfactual"]["outcome"],
+                        "selected_score_delta_from_memory": trace[
+                            "agent_decision_artifact"
+                        ]["memory_counterfactual"]["selected_score_delta_from_memory"],
+                        "memory_margin_lift": trace["agent_decision_artifact"]["memory_counterfactual"][
+                            "memory_margin_lift"
+                        ],
+                    }
+                    for trace in decision_traces
                 ],
             },
         ),
@@ -7556,6 +7799,9 @@ def _build_case_result(
             "traded_portfolio_all_generations": all(execution["filled"] for execution in executions),
             "no_leakage_holdout": usability_dimensions["no_leakage_temporal_protocol"] == 1.0,
             "memory_retrieval_drives_next_decision": usability_dimensions["memory_influences_decision"] == 1.0,
+            "memory_counterfactual_drives_decision": usability_dimensions[
+                "memory_counterfactual_decision"
+            ] == 1.0,
             "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
             "oss_response_followup_loop_drives_decision": usability_dimensions[
                 "oss_response_followup_loop"
@@ -7621,6 +7867,9 @@ def _build_summary(
         trace["agent_decision_artifact"]
         for case in cases
         for trace in case["reflection"]["agent_decision_traces"]
+    ]
+    memory_counterfactuals = [
+        artifact["memory_counterfactual"] for artifact in decision_artifacts
     ]
     evolution_trajectories = [case["evolution"]["trajectory"] for case in cases]
     no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
@@ -7881,6 +8130,18 @@ def _build_summary(
         "agent_memory_selected_action_hints": sorted({
             artifact["memory_influence"]["selected_action_hint"] for artifact in decision_artifacts
         }),
+        "agent_memory_counterfactual_models": sorted({
+            proof["model_id"] for proof in memory_counterfactuals
+        }),
+        "agent_memory_counterfactual_outcomes": sorted({
+            proof["outcome"] for proof in memory_counterfactuals
+        }),
+        "agent_memory_counterfactual_replay_flags": sorted({
+            flag
+            for proof in memory_counterfactuals
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
         "agent_persona_reasoning_models": sorted({
             artifact["persona_reasoning"]["response"]["model_id"] for artifact in decision_artifacts
         }),
@@ -7975,6 +8236,23 @@ def _build_summary(
         ),
         "memory_retrieval_drives_next_decision_count": sum(
             1 for item in usable if item["memory_retrieval_drives_next_decision"]
+        ),
+        "memory_counterfactual_proof_count": len(memory_counterfactuals),
+        "memory_counterfactual_proof_pass_count": sum(
+            1 for proof in memory_counterfactuals if _memory_counterfactual_proof_is_usable(proof)
+        ),
+        "memory_counterfactual_retrieved_material_count": sum(
+            1
+            for proof in memory_counterfactuals
+            if proof["memory_status"] == "retrieved"
+            and proof["outcome"] == "memory_material_to_selected_score"
+            and proof["replay"]["memory_changes_selected_score_when_retrieved"] is True
+        ),
+        "memory_counterfactual_cold_start_count": sum(
+            1 for proof in memory_counterfactuals if proof["memory_status"] == "cold_start_declared"
+        ),
+        "memory_counterfactual_drives_decision_count": sum(
+            1 for item in usable if item["memory_counterfactual_drives_decision"]
         ),
         "intra_case_memory_influence_count": sum(
             1
@@ -8109,6 +8387,7 @@ def _build_summary(
             "Every case emits a strict OOS evolution proof showing gen1 uses feedback to improve holdout and gen2 uses only holdout outcome before improving a disjoint future holdout.",
             "Every case trades a three-instrument portfolio across three generations through paper runtime fills.",
             "Every case writes memory and proves retrieved lessons influence later candidate scoring and selected evidence refs.",
+            "Every agent decision emits a memory counterfactual proving retrieved lessons change selected scores and margins, while cold starts declare zero memory influence.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every case converts OSS responses into persona follow-up requests that feed reasoning, candidate evidence, and scorer adjustments.",
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
