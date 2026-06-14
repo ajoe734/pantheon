@@ -139,3 +139,31 @@ jobs:
           else
             echo "no smoke gate configured; skipping"
           fi
+
+  verify-suites:
+    name: Verify service suites (informational)
+    runs-on: ubuntu-latest
+    needs:
+      - trailers
+    # Informational gate: runs the verified-green service/contract suites that the
+    # smoke/full gates never covered (root cause of silent BFF contract-test rot,
+    # see docs/05/system-verification-rounds/v3-service-suite-gate.md). Marked
+    # continue-on-error until service-dep install in CI is made reliable; once it is,
+    # drop continue-on-error and add this check to branch protection to make it blocking.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install service deps (best-effort)
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install pytest pyyaml || true
+          for d in services/optimizer-svc services/evolution services/governance                    services/consultation services/telemetry services/execution/runtime-manager                    services/foundation services/research-worker-gateway services/broker; do
+            [[ -f "$d/requirements.txt" ]] && pip install -r "$d/requirements.txt" || true
+          done
+      - name: Run verification suites
+        run: ./scripts/run-acceptance.sh verify

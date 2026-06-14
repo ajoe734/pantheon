@@ -86,8 +86,32 @@ case "$MODE" in
     run_step "trailers-range" trailers_on_range "$RANGE"
     run_step "stage0-baseline" stage0_baseline
     ;;
+  verify)
+    # Regression gate for the service/contract test suites that the smoke/full
+    # gates never covered (this is why BFF contract-test rot accumulated silently,
+    # see docs/05/system-verification-rounds/v3-*). Runs the verified-green
+    # service-layer suites under the auth stub. Fails on regressions.
+    SUITES=(
+      services/optimizer-svc
+      services/evolution
+      services/governance
+      services/consultation
+      services/telemetry
+      services/execution/runtime-manager
+      services/foundation
+      services/research-worker-gateway
+      services/broker
+    )
+    PRESENT=()
+    for d in "${SUITES[@]}"; do [[ -d "$d" ]] && PRESENT+=("$d"); done
+    if [[ ${#PRESENT[@]} -gt 0 ]]; then
+      run_step "verify-suites" env PANTHEON_BFF_AUTH_STUB=true "$PYTHON" -m pytest -q -p no:cacheprovider "${PRESENT[@]}"
+    else
+      echo "no verification suites present; skipping"
+    fi
+    ;;
   *)
-    echo "usage: $0 {smoke|full|wave [<ref>]}" >&2
+    echo "usage: $0 {smoke|full|wave [<ref>]|verify}" >&2
     exit 1
     ;;
 esac
