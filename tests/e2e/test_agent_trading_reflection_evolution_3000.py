@@ -57,6 +57,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID,
     PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID,
     PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID,
+    PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID,
     PERSONA_REASONING_EVALUATOR_MODEL_ID,
     PERSONA_REASONING_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
@@ -230,6 +231,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["policy_oss_lineage_handoff_count"] == DEFAULT_CASE_COUNT
     assert summary["policy_oss_lineage_handoff_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["policy_oss_lineage_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
+    assert summary["reflection_oss_lineage_handoff_count"] == DEFAULT_CASE_COUNT
+    assert summary["reflection_oss_lineage_handoff_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["reflection_oss_lineage_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_handoff_count"] == DEFAULT_CASE_COUNT
@@ -359,9 +363,13 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "loaded_packet_preserves_tracking_provenance",
         "loaded_tracking_ref_matches_packet",
         "all_targets_bind_policy_oss_lineage",
+        "all_targets_bind_reflection_oss_lineage",
         "loaded_packet_preserves_policy_oss_lineage",
+        "loaded_packet_preserves_reflection_oss_lineage",
         "loaded_policy_oss_ref_matches_packet",
+        "loaded_reflection_oss_ref_matches_packet",
         "policy_oss_lineage_present_in_packet",
+        "reflection_oss_lineage_present_in_packet",
         "tracking_provenance_present_in_packet",
     }
     assert coverage["lean_packet_execution_projection_models"] == [
@@ -420,6 +428,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "object_store_readback_verified",
         "paper_runtime_guard_retained",
         "policy_oss_lineage_bound",
+        "reflection_oss_lineage_bound",
         "runtime_binding_readback_verified",
         "runtime_feedback_consumed",
     }
@@ -461,6 +470,31 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "replayable",
         "runtime_feedback_cites_policy_oss_lineage",
         "strategy_packet_carries_policy_oss_lineage",
+    }
+    assert coverage["reflection_oss_lineage_handoff_models"] == [
+        PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID
+    ]
+    assert set(coverage["reflection_oss_lineage_handoff_components"]) == {
+        "dspy",
+        "imitation",
+        "trl",
+    }
+    assert set(coverage["reflection_oss_lineage_handoff_artifact_families"]) == {
+        "imitation_policy",
+        "model_artifact",
+        "prompt_bundle",
+    }
+    assert set(coverage["reflection_oss_lineage_handoff_replay_flags"]) == {
+        "all_packet_targets_bind_reflection_oss_lineage",
+        "evolved_policy_carries_reflection_oss_lineage",
+        "handoff_runtime_bundle_contains_reflection_oss_refs",
+        "lineage_hash_stable_across_reflection_policy_packet_readback_handoff",
+        "materiality_source_matches_reflection_lineage",
+        "object_store_readback_preserves_reflection_oss_lineage",
+        "reflection_artifact_materiality_passed",
+        "replayable",
+        "runtime_feedback_cites_reflection_oss_lineage",
+        "strategy_packet_carries_reflection_oss_lineage",
     }
     assert coverage["evolved_strategy_packet_models"] == [
         LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID
@@ -990,6 +1024,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_operational_context(case)
         _assert_experiment_tracking_lineage_handoff(case)
         _assert_policy_oss_lineage_handoff(case)
+        _assert_reflection_oss_lineage_handoff(case)
         _assert_lean_packet_execution_projection(case)
         _assert_evolved_strategy_packet_proof(case)
         _assert_scheduler_conflict_ooda_proof(case)
@@ -3158,6 +3193,32 @@ def _assert_operational_context(case: dict) -> None:
     )
     assert replay["case_specific_strategy_packet"]["policy_oss_component"] == policy_entry["component"]
     assert replay["case_specific_strategy_packet"]["policy_oss_request_id"] == policy_entry["request_id"]
+    reflection_entry = case["case_upstream_artifacts"]["selected_oss"]["reflection_artifact"]
+    reflection_oss_ref = f"oss://{reflection_entry['component']}/{reflection_entry['request_id']}"
+    packet_reflection_lineage = replay["case_specific_strategy_packet"]["reflection_oss_lineage"]
+    assert packet_reflection_lineage["model_id"] == PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID
+    assert packet_reflection_lineage["component"] == reflection_entry["component"]
+    assert packet_reflection_lineage["request_id"] == reflection_entry["request_id"]
+    assert packet_reflection_lineage["source_oss_ref"] == reflection_oss_ref
+    assert packet_reflection_lineage["artifact_family"] == reflection_entry["artifact_family"]
+    assert packet_reflection_lineage["registry_id"] == reflection_entry["registry_id"]
+    assert packet_reflection_lineage["producer_run_id"] == reflection_entry["producer_run_id"]
+    assert packet_reflection_lineage["lineage_ref"].startswith(
+        f"reflection-oss-lineage://{case['case_id']}/generation2/"
+    )
+    assert packet_reflection_lineage["lineage_hash"]
+    assert replay["case_specific_strategy_packet"]["reflection_oss_ref"] == reflection_oss_ref
+    assert replay["case_specific_strategy_packet"]["reflection_oss_lineage_ref"] == (
+        packet_reflection_lineage["lineage_ref"]
+    )
+    assert replay["case_specific_strategy_packet"]["reflection_oss_lineage_hash"] == (
+        packet_reflection_lineage["lineage_hash"]
+    )
+    assert replay["case_specific_strategy_packet"]["reflection_oss_registry_ref"] == (
+        packet_reflection_lineage["registry_ref"]
+    )
+    assert replay["case_specific_strategy_packet"]["reflection_oss_component"] == reflection_entry["component"]
+    assert replay["case_specific_strategy_packet"]["reflection_oss_request_id"] == reflection_entry["request_id"]
     assert replay["plan"]["target_stage"] == "paper"
     assert replay["binding"]["deployment_mode"] == "paper"
     assert replay["runtime_context"]["runtime_binding_id"] == replay["binding"]["binding_id"]
@@ -3200,6 +3261,13 @@ def _assert_operational_context(case: dict) -> None:
     assert packet_readback["policy_oss_lineage_hash"] == packet_policy_lineage["lineage_hash"]
     assert packet_readback["loaded_policy_oss_lineage_hash"] == packet_policy_lineage["lineage_hash"]
     assert packet_readback["loaded_policy_oss_lineage"] == packet_policy_lineage
+    assert packet_readback["reflection_oss_ref"] == reflection_oss_ref
+    assert packet_readback["loaded_reflection_oss_ref"] == reflection_oss_ref
+    assert packet_readback["reflection_oss_lineage_ref"] == packet_reflection_lineage["lineage_ref"]
+    assert packet_readback["loaded_reflection_oss_lineage_ref"] == packet_reflection_lineage["lineage_ref"]
+    assert packet_readback["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
+    assert packet_readback["loaded_reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
+    assert packet_readback["loaded_reflection_oss_lineage"] == packet_reflection_lineage
     assert packet_readback["object_store_keys"] == replay["object_store_keys"]
     assert all(packet_readback["replay"].values())
     assert packet_readback["input_hash"]
@@ -3223,6 +3291,11 @@ def _assert_operational_context(case: dict) -> None:
         assert target["policy_oss_lineage_hash"] == packet_policy_lineage["lineage_hash"]
         assert target["policy_oss_component"] == policy_entry["component"]
         assert target["policy_oss_request_id"] == policy_entry["request_id"]
+        assert target["reflection_oss_ref"] == reflection_oss_ref
+        assert target["reflection_oss_lineage_ref"] == packet_reflection_lineage["lineage_ref"]
+        assert target["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
+        assert target["reflection_oss_component"] == reflection_entry["component"]
+        assert target["reflection_oss_request_id"] == reflection_entry["request_id"]
         assert target["signal"]["metadata"]["strategy_packet_ref"] == packet_readback["packet_ref"]
         assert target["signal"]["metadata"]["packet_target_ref"] == target["target_ref"]
         assert target["signal"]["metadata"]["lean_object_store_readback_model_id"] == (
@@ -3231,6 +3304,9 @@ def _assert_operational_context(case: dict) -> None:
         assert target["signal"]["metadata"]["policy_oss_ref"] == policy_oss_ref
         assert target["signal"]["metadata"]["policy_oss_lineage_ref"] == packet_policy_lineage["lineage_ref"]
         assert target["signal"]["metadata"]["policy_oss_lineage_hash"] == packet_policy_lineage["lineage_hash"]
+        assert target["signal"]["metadata"]["reflection_oss_ref"] == reflection_oss_ref
+        assert target["signal"]["metadata"]["reflection_oss_lineage_ref"] == packet_reflection_lineage["lineage_ref"]
+        assert target["signal"]["metadata"]["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
         assert target["signal"]["metadata"]["source_dataset_ref"] == HISTORICAL_OHLCV_DATASET_ID
 
     sandbox = operational["shioaji_sandbox_lifecycle"]
@@ -3385,6 +3461,13 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["policy_oss_registry_ref"] == packet_policy_lineage["registry_ref"]
     assert handoff["policy_oss_component"] == policy_entry["component"]
     assert handoff["policy_oss_request_id"] == policy_entry["request_id"]
+    assert handoff["reflection_oss_lineage"] == packet_reflection_lineage
+    assert handoff["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
+    assert handoff["reflection_oss_lineage_ref"] == packet_reflection_lineage["lineage_ref"]
+    assert handoff["reflection_oss_ref"] == reflection_oss_ref
+    assert handoff["reflection_oss_registry_ref"] == packet_reflection_lineage["registry_ref"]
+    assert handoff["reflection_oss_component"] == reflection_entry["component"]
+    assert handoff["reflection_oss_request_id"] == reflection_entry["request_id"]
     assert handoff["target_stage"] == "paper"
     assert handoff["broker_live_submitted"] is False
     assert set(handoff["portfolio_instruments"]) == set(case["portfolio"]["instruments"])
@@ -3406,6 +3489,9 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["policy_oss_lineage_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["policy_oss_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["policy_oss_registry_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["reflection_oss_lineage_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["reflection_oss_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["reflection_oss_registry_ref"] in handoff["runtime_bundle_refs"]
     assert conflict["resolution_ref"] in handoff["runtime_bundle_refs"]
     assert schedule["schedule_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["runtime_bundle_refs"]
@@ -3460,6 +3546,9 @@ def _assert_operational_context(case: dict) -> None:
         handoff["policy_oss_lineage_ref"],
         handoff["policy_oss_ref"],
         handoff["policy_oss_registry_ref"],
+        handoff["reflection_oss_lineage_ref"],
+        handoff["reflection_oss_ref"],
+        handoff["reflection_oss_registry_ref"],
         f"runtime-binding://{runtime_readback['runtime_binding_id']}",
         f"object-store://{runtime_readback['object_store_metadata_key']}",
         f"reflection://{case['reflection']['agent_decision_traces'][-1]['reflection_id']}",
@@ -3474,6 +3563,11 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["state_updates"]["bind_policy_oss_lineage_ref"] == handoff["policy_oss_lineage_ref"]
     assert runtime_feedback["state_updates"]["bind_policy_oss_ref"] == handoff["policy_oss_ref"]
     assert runtime_feedback["state_updates"]["bind_policy_oss_registry_ref"] == handoff["policy_oss_registry_ref"]
+    assert runtime_feedback["state_updates"]["bind_reflection_oss_lineage_ref"] == handoff["reflection_oss_lineage_ref"]
+    assert runtime_feedback["state_updates"]["bind_reflection_oss_ref"] == handoff["reflection_oss_ref"]
+    assert runtime_feedback["state_updates"]["bind_reflection_oss_registry_ref"] == handoff[
+        "reflection_oss_registry_ref"
+    ]
     assert runtime_feedback["state_updates"]["bind_lean_packet_execution_projection"] == projection["projection_ref"]
     assert runtime_feedback["state_updates"]["attach_to_handoff_packet"] == handoff["packet_id"]
     assert runtime_feedback["state_updates"]["attach_to_decision_trace"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
@@ -3484,15 +3578,18 @@ def _assert_operational_context(case: dict) -> None:
     assert case["usability_dimensions"]["lean_runtime_feedback"] == 1.0
     assert case["usability_dimensions"]["experiment_tracking_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["policy_oss_lineage_handoff"] == 1.0
+    assert case["usability_dimensions"]["reflection_oss_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["evolved_strategy_packet_handoff"] == 1.0
     assert case["usable"]["lean_packet_execution_projection_replayed"] is True
     assert case["usable"]["experiment_tracking_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["policy_oss_lineage_reaches_lean_handoff"] is True
+    assert case["usable"]["reflection_oss_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["evolved_strategy_packet_reaches_lean_handoff"] is True
     assert check_by_name["lean_packet_execution_projection_replays_packet_legs"]["status"] == "passed"
     assert check_by_name["lean_runtime_feedback_drives_persona_ooda"]["status"] == "passed"
     assert check_by_name["tracking_experiment_lineage_reaches_evolution_and_lean_packet"]["status"] == "passed"
     assert check_by_name["policy_oss_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
+    assert check_by_name["reflection_oss_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
     assert check_by_name["evolved_strategy_packet_reaches_lean_handoff"]["status"] == "passed"
     assert case["usability_dimensions"]["scheduler_conflict_ooda_dispatch"] == 1.0
     assert case["usable"]["scheduler_conflict_ooda_dispatch_replayed"] is True
@@ -3596,6 +3693,65 @@ def _assert_policy_oss_lineage_handoff(case: dict) -> None:
     assert lineage_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
     assert registry_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
     assert packet_readback["loaded_policy_oss_lineage"] == packet_policy_lineage
+    assert all(proof["replay"].values())
+    assert proof["input_hash"]
+
+
+def _assert_reflection_oss_lineage_handoff(case: dict) -> None:
+    operational = case["operational_context"]
+    proof = operational["reflection_oss_lineage_handoff"]
+    replay = operational["lean_engine_replay"]
+    handoff = operational["lean_handoff"]
+    runtime_feedback = operational["lean_runtime_feedback"]
+    packet_readback = replay["lean_object_store_packet_readback"]
+    reflection_entry = case["case_upstream_artifacts"]["selected_oss"]["reflection_artifact"]
+    reflection_materiality = case["oss_feedback"]["reflection_artifact_materiality"]
+    packet_reflection_lineage = replay["case_specific_strategy_packet"][
+        "reflection_oss_lineage"
+    ]
+    source_ref = f"oss://{reflection_entry['component']}/{reflection_entry['request_id']}"
+    lineage_ref = packet_reflection_lineage["lineage_ref"]
+    registry_ref = packet_reflection_lineage["registry_ref"]
+    lineage_hash = packet_reflection_lineage["lineage_hash"]
+
+    assert proof["proof_id"] == f"reflection-oss-lineage-handoff-{case['case_id']}"
+    assert proof["proof_ref"] == f"reflection-oss-lineage-handoff://{case['case_id']}"
+    assert proof["model_id"] == PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["component"] == reflection_entry["component"]
+    assert proof["request_id"] == reflection_entry["request_id"]
+    assert proof["source_oss_ref"] == source_ref
+    assert proof["lineage_ref"] == lineage_ref
+    assert proof["registry_ref"] == registry_ref
+    assert proof["artifact_family"] == reflection_entry["artifact_family"]
+    assert proof["reflection_quality"] == reflection_materiality["reflection_quality"]
+    assert proof["strategy_packet_ref"] == replay["case_specific_strategy_packet"][
+        "packet_ref"
+    ]
+    assert proof["lean_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert proof["lean_runtime_feedback_ref"] == (
+        f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
+    )
+    assert proof["object_store_readback_ref"] == packet_readback["readback_id"]
+    assert set(proof["lineage_hashes"].values()) == {lineage_hash}
+    assert set(proof["input_refs"]) == {
+        source_ref,
+        lineage_ref,
+        registry_ref,
+        proof["strategy_packet_ref"],
+        proof["lean_handoff_ref"],
+        proof["lean_runtime_feedback_ref"],
+        proof["object_store_readback_ref"],
+    }
+    assert source_ref in handoff["runtime_bundle_refs"]
+    assert lineage_ref in handoff["runtime_bundle_refs"]
+    assert registry_ref in handoff["runtime_bundle_refs"]
+    assert source_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
+    assert lineage_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
+    assert registry_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
+    assert packet_readback["loaded_reflection_oss_lineage"] == packet_reflection_lineage
     assert all(proof["replay"].values())
     assert proof["input_hash"]
 

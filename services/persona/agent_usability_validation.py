@@ -146,6 +146,7 @@ CASE_SELECTED_OSS_MODEL_ID = "case_specific_selected_oss_feedback_v1"
 PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID = "persona_policy_candidate_oss_materiality_v1"
 PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID = "persona_policy_oss_lineage_handoff_v1"
 PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID = "persona_reflection_artifact_oss_materiality_v1"
+PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID = "persona_reflection_oss_lineage_handoff_v1"
 PERSONA_CONFLICT_RESOLUTION_MODEL_ID = "persona_multi_persona_conflict_resolution_v1"
 PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID = "persona_scheduler_conflict_ooda_dispatch_v1"
 PERSONA_DECISION_ARTIFACT_MODEL_ID = "persona_replayable_candidate_decision_v1"
@@ -738,6 +739,7 @@ def run_agent_usability_validations(
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
             policy_candidate_materiality=policy_candidate_materiality,
+            reflection_artifact_materiality=reflection_artifact_materiality,
             oss_inputs=oss_inputs,
             case_upstream_artifacts=case_upstream_artifacts,
             generated_at=generated_at,
@@ -6416,6 +6418,12 @@ def _policy_from_decision_trace(
         case_upstream_artifacts=case_upstream_artifacts,
         generation=generation,
     )
+    reflection_oss_lineage = _build_reflection_oss_lineage(
+        episode=episode,
+        oss_inputs=oss_inputs,
+        case_upstream_artifacts=case_upstream_artifacts,
+        generation=generation,
+    )
     legs = {
         window.instrument: {
             "instrument": window.instrument,
@@ -6440,6 +6448,10 @@ def _policy_from_decision_trace(
         "policy_oss_lineage_ref": policy_oss_lineage["lineage_ref"],
         "policy_oss_lineage_hash": policy_oss_lineage["lineage_hash"],
         "policy_oss_lineage": policy_oss_lineage,
+        "reflection_oss_ref": reflection_oss_lineage["source_oss_ref"],
+        "reflection_oss_lineage_ref": reflection_oss_lineage["lineage_ref"],
+        "reflection_oss_lineage_hash": reflection_oss_lineage["lineage_hash"],
+        "reflection_oss_lineage": reflection_oss_lineage,
         "decision_inputs": {
             **dict(decision_trace["decision_inputs"]),
             "memory_reused": {
@@ -6520,6 +6532,72 @@ def _build_policy_oss_lineage(
     }
 
 
+def _build_reflection_oss_lineage(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    generation: int,
+) -> dict[str, Any]:
+    reflection_entry = case_upstream_artifacts["selected_oss"]["reflection_artifact"]
+    reflection_input = oss_inputs["reflection_artifact"]
+    component = str(reflection_entry["component"])
+    request_id = str(reflection_entry["request_id"])
+    metric_signal_keys = sorted(
+        key
+        for key, value in reflection_entry.get("metrics", {}).items()
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    )
+    reflection_quality = _reflection_quality_from_oss(oss_inputs)
+    source_oss_ref = f"oss://{component}/{request_id}"
+    registry_ref = f"registry://{reflection_entry.get('registry_id')}"
+    producer_ref = f"producer-run://{reflection_entry.get('producer_run_id')}"
+    lineage_seed = {
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation": generation,
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_oss_ref,
+        "artifact_family": reflection_entry.get("artifact_family"),
+        "expected_artifact_family": _reflection_artifact_expected_family(component),
+        "registry_id": reflection_entry.get("registry_id"),
+        "registry_artifact_type": reflection_entry.get("registry_artifact_type"),
+        "producer_run_id": reflection_entry.get("producer_run_id"),
+        "reflection_input_status": reflection_input.get("status"),
+        "metric_signal_keys": metric_signal_keys,
+        "metrics": copy.deepcopy(dict(reflection_entry.get("metrics") or {})),
+        "primary_output_keys": sorted(reflection_entry.get("primary_output", {})),
+        "reflection_quality": reflection_quality,
+    }
+    lineage_hash = _stable_payload_hash("reflection-oss-lineage", lineage_seed)
+    return {
+        "model_id": PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID,
+        "lineage_ref": (
+            f"reflection-oss-lineage://{episode.case_id}/generation{generation}/"
+            f"{component}/{request_id}"
+        ),
+        "lineage_hash": lineage_hash,
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation": generation,
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_oss_ref,
+        "registry_ref": registry_ref,
+        "producer_ref": producer_ref,
+        "artifact_family": reflection_entry.get("artifact_family"),
+        "expected_artifact_family": _reflection_artifact_expected_family(component),
+        "registry_id": reflection_entry.get("registry_id"),
+        "registry_artifact_type": reflection_entry.get("registry_artifact_type"),
+        "producer_run_id": reflection_entry.get("producer_run_id"),
+        "metric_signal_keys": metric_signal_keys,
+        "primary_output_keys": sorted(reflection_entry.get("primary_output", {})),
+        "reflection_quality": reflection_quality,
+        "input_hash": lineage_hash,
+    }
+
+
 def _build_signals(
     *,
     episode: PortfolioEpisode,
@@ -6529,6 +6607,7 @@ def _build_signals(
 ) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
     policy_oss_lineage = dict(policy.get("policy_oss_lineage") or {})
+    reflection_oss_lineage = dict(policy.get("reflection_oss_lineage") or {})
     for leg_index, window in enumerate(episode.windows):
         leg = policy["legs"][window.instrument]
         entry_row = _entry_row_for_generation(window, generation)
@@ -6571,6 +6650,11 @@ def _build_signals(
                 "policy_oss_lineage_hash": policy_oss_lineage.get("lineage_hash"),
                 "policy_oss_component": policy_oss_lineage.get("component"),
                 "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+                "reflection_oss_ref": reflection_oss_lineage.get("source_oss_ref"),
+                "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+                "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+                "reflection_oss_component": reflection_oss_lineage.get("component"),
+                "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
                 "validation_signature": episode.validation_signature,
                 "historical_ohlcv_fixture": HISTORICAL_OHLCV_FIXTURE,
                 "market_data_ref": f"{HISTORICAL_OHLCV_DATASET_ID}/{window.instrument}/{entry_row['date']}",
@@ -7075,6 +7159,7 @@ def _build_operational_context(
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
     policy_candidate_materiality: Mapping[str, Any],
+    reflection_artifact_materiality: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     case_upstream_artifacts: Mapping[str, Any],
     generated_at: str,
@@ -7195,6 +7280,15 @@ def _build_operational_context(
         lean_handoff=lean_handoff,
         lean_runtime_feedback=lean_runtime_feedback,
     )
+    reflection_oss_lineage_handoff = _build_reflection_oss_lineage_handoff_proof(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        reflection_artifact_materiality=reflection_artifact_materiality,
+        case_upstream_artifacts=case_upstream_artifacts,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        lean_runtime_feedback=lean_runtime_feedback,
+    )
     evolved_strategy_packet_proof = _build_evolved_strategy_packet_proof(
         episode=episode,
         final_policy=generation_policies[-1],
@@ -7231,6 +7325,7 @@ def _build_operational_context(
             lean_runtime_feedback["feedback_id"],
             experiment_tracking_lineage_handoff["proof_id"],
             policy_oss_lineage_handoff["proof_id"],
+            reflection_oss_lineage_handoff["proof_id"],
         ),
         "scenario": scenario,
         "market_friction": market_friction,
@@ -7248,6 +7343,7 @@ def _build_operational_context(
         "lean_runtime_feedback": lean_runtime_feedback,
         "experiment_tracking_lineage_handoff": experiment_tracking_lineage_handoff,
         "policy_oss_lineage_handoff": policy_oss_lineage_handoff,
+        "reflection_oss_lineage_handoff": reflection_oss_lineage_handoff,
         "evolved_strategy_packet_proof": evolved_strategy_packet_proof,
         "scheduler_conflict_ooda_proof": scheduler_conflict_ooda_proof,
     }
@@ -7794,6 +7890,7 @@ def _build_lean_object_store_packet_targets(
     generated_at: str,
 ) -> list[dict[str, Any]]:
     policy_oss_lineage = dict(final_policy.get("policy_oss_lineage") or {})
+    reflection_oss_lineage = dict(final_policy.get("reflection_oss_lineage") or {})
     signals = _build_signals(
         episode=episode,
         policy=final_policy,
@@ -7817,6 +7914,11 @@ def _build_lean_object_store_packet_targets(
             "policy_oss_lineage_hash": policy_oss_lineage.get("lineage_hash"),
             "policy_oss_component": policy_oss_lineage.get("component"),
             "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+            "reflection_oss_ref": reflection_oss_lineage.get("source_oss_ref"),
+            "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+            "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+            "reflection_oss_component": reflection_oss_lineage.get("component"),
+            "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
         }
         entry_row = _entry_row_for_generation(window, int(final_policy["generation"]))
         targets.append(
@@ -7833,6 +7935,11 @@ def _build_lean_object_store_packet_targets(
                 "policy_oss_lineage_hash": policy_oss_lineage.get("lineage_hash"),
                 "policy_oss_component": policy_oss_lineage.get("component"),
                 "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+                "reflection_oss_ref": reflection_oss_lineage.get("source_oss_ref"),
+                "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+                "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+                "reflection_oss_component": reflection_oss_lineage.get("component"),
+                "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
                 "generation": final_policy["generation"],
                 "direction": int(leg["direction"]),
                 "action": signal_payload["action"],
@@ -7872,6 +7979,10 @@ def _build_lean_object_store_packet_readback(
     loaded_policy_oss_lineage = dict(loaded_packet.get("policy_oss_lineage") or {})
     policy_oss_lineage_hash = str(policy_oss_lineage.get("lineage_hash") or "")
     policy_oss_ref = str(policy_oss_lineage.get("source_oss_ref") or "")
+    reflection_oss_lineage = dict(strategy_packet.get("reflection_oss_lineage") or {})
+    loaded_reflection_oss_lineage = dict(loaded_packet.get("reflection_oss_lineage") or {})
+    reflection_oss_lineage_hash = str(reflection_oss_lineage.get("lineage_hash") or "")
+    reflection_oss_ref = str(reflection_oss_lineage.get("source_oss_ref") or "")
     replay = {
         "replayable": True,
         "packet_present_in_object_store_artifact": bool(loaded_packet),
@@ -7959,6 +8070,31 @@ def _build_lean_object_store_packet_readback(
             == policy_oss_lineage_hash
             for target in loaded_targets
         ),
+        "reflection_oss_lineage_present_in_packet": bool(
+            reflection_oss_lineage.get("lineage_ref")
+            and reflection_oss_lineage_hash
+            and reflection_oss_ref.startswith("oss://")
+        ),
+        "loaded_packet_preserves_reflection_oss_lineage": (
+            loaded_reflection_oss_lineage == reflection_oss_lineage
+        ),
+        "loaded_reflection_oss_ref_matches_packet": (
+            loaded_packet.get("reflection_oss_ref") == reflection_oss_ref
+            and loaded_packet.get("reflection_oss_lineage_ref")
+            == reflection_oss_lineage.get("lineage_ref")
+            and loaded_packet.get("reflection_oss_lineage_hash") == reflection_oss_lineage_hash
+            and loaded_packet.get("reflection_oss_registry_ref")
+            == reflection_oss_lineage.get("registry_ref")
+        ),
+        "all_targets_bind_reflection_oss_lineage": all(
+            target.get("reflection_oss_ref") == reflection_oss_ref
+            and target.get("reflection_oss_lineage_hash") == reflection_oss_lineage_hash
+            and target.get("signal", {}).get("metadata", {}).get("reflection_oss_ref")
+            == reflection_oss_ref
+            and target.get("signal", {}).get("metadata", {}).get("reflection_oss_lineage_hash")
+            == reflection_oss_lineage_hash
+            for target in loaded_targets
+        ),
         "paper_only_guard_retained": result.get("broker_production_live_enabled") == "false",
     }
     return {
@@ -7989,6 +8125,13 @@ def _build_lean_object_store_packet_readback(
         "policy_oss_lineage_ref": policy_oss_lineage.get("lineage_ref"),
         "loaded_policy_oss_lineage_ref": loaded_packet.get("policy_oss_lineage_ref"),
         "loaded_policy_oss_lineage": loaded_policy_oss_lineage,
+        "reflection_oss_lineage_hash": reflection_oss_lineage_hash,
+        "loaded_reflection_oss_lineage_hash": loaded_reflection_oss_lineage.get("lineage_hash"),
+        "reflection_oss_ref": reflection_oss_ref,
+        "loaded_reflection_oss_ref": loaded_packet.get("reflection_oss_ref"),
+        "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+        "loaded_reflection_oss_lineage_ref": loaded_packet.get("reflection_oss_lineage_ref"),
+        "loaded_reflection_oss_lineage": loaded_reflection_oss_lineage,
         "object_store_keys": sorted(object_store_keys),
         "replay": replay,
         "input_hash": _stable_payload_hash(
@@ -8025,6 +8168,7 @@ def _run_lean_engine_replay(
     tracking_reconciliation = case_upstream_artifacts["tracking_reconciliation"]
     tracking_repair = tracking_reconciliation["repair"]
     policy_oss_lineage = copy.deepcopy(dict(final_policy.get("policy_oss_lineage") or {}))
+    reflection_oss_lineage = copy.deepcopy(dict(final_policy.get("reflection_oss_lineage") or {}))
     tracking_provenance_seed = {
         "backend": tracker["backend"],
         "request_id": tracker["request_id"],
@@ -8073,6 +8217,13 @@ def _run_lean_engine_replay(
         "policy_oss_registry_ref": policy_oss_lineage.get("registry_ref"),
         "policy_oss_component": policy_oss_lineage.get("component"),
         "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+        "reflection_oss_lineage": reflection_oss_lineage,
+        "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+        "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+        "reflection_oss_ref": reflection_oss_lineage.get("source_oss_ref"),
+        "reflection_oss_registry_ref": reflection_oss_lineage.get("registry_ref"),
+        "reflection_oss_component": reflection_oss_lineage.get("component"),
+        "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
         "future_holdout_score": final_evaluation["score"],
         "future_holdout_improvement": final_oos_step["score_improvement"],
         "validation_window_unseen_by_decision": final_oos_step[
@@ -8267,6 +8418,12 @@ def _build_lean_handoff_packet(
     policy_oss_ref = str(policy_oss_lineage.get("source_oss_ref") or "")
     policy_oss_lineage_ref = str(policy_oss_lineage.get("lineage_ref") or "")
     policy_oss_registry_ref = str(policy_oss_lineage.get("registry_ref") or "")
+    reflection_oss_lineage = copy.deepcopy(
+        dict(strategy_packet.get("reflection_oss_lineage") or {})
+    )
+    reflection_oss_ref = str(reflection_oss_lineage.get("source_oss_ref") or "")
+    reflection_oss_lineage_ref = str(reflection_oss_lineage.get("lineage_ref") or "")
+    reflection_oss_registry_ref = str(reflection_oss_lineage.get("registry_ref") or "")
     return {
         "packet_id": f"lean-packet-{episode.case_id}",
         "component": handoff["component"],
@@ -8294,6 +8451,13 @@ def _build_lean_handoff_packet(
         "policy_oss_registry_ref": policy_oss_registry_ref,
         "policy_oss_component": policy_oss_lineage.get("component"),
         "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+        "reflection_oss_lineage": reflection_oss_lineage,
+        "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+        "reflection_oss_lineage_ref": reflection_oss_lineage_ref,
+        "reflection_oss_ref": reflection_oss_ref,
+        "reflection_oss_registry_ref": reflection_oss_registry_ref,
+        "reflection_oss_component": reflection_oss_lineage.get("component"),
+        "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
         "strategy_packet": strategy_packet,
         "strategy_packet_hash": _stable_payload_hash(
             "lean-strategy-packet",
@@ -8345,6 +8509,9 @@ def _build_lean_handoff_packet(
             policy_oss_lineage_ref,
             policy_oss_ref,
             policy_oss_registry_ref,
+            reflection_oss_lineage_ref,
+            reflection_oss_ref,
+            reflection_oss_registry_ref,
             experiment_ref,
             tracking_reconciliation_ref,
             tracking_repair_ref,
@@ -8649,6 +8816,9 @@ def _build_lean_runtime_feedback_response(
     policy_oss_ref = str(lean_handoff.get("policy_oss_ref", ""))
     policy_oss_lineage_ref = str(lean_handoff.get("policy_oss_lineage_ref", ""))
     policy_oss_registry_ref = str(lean_handoff.get("policy_oss_registry_ref", ""))
+    reflection_oss_ref = str(lean_handoff.get("reflection_oss_ref", ""))
+    reflection_oss_lineage_ref = str(lean_handoff.get("reflection_oss_lineage_ref", ""))
+    reflection_oss_registry_ref = str(lean_handoff.get("reflection_oss_registry_ref", ""))
     projection_ref = str(lean_packet_execution_projection.get("projection_ref", ""))
     evidence_refs = [
         runtime_ref,
@@ -8663,6 +8833,9 @@ def _build_lean_runtime_feedback_response(
         policy_oss_lineage_ref,
         policy_oss_ref,
         policy_oss_registry_ref,
+        reflection_oss_lineage_ref,
+        reflection_oss_ref,
+        reflection_oss_registry_ref,
         f"runtime-binding://{runtime_context.get('runtime_binding_id')}",
         f"object-store://{metadata_key}",
         f"reflection://{decision_traces[-1]['reflection_id']}",
@@ -8718,6 +8891,19 @@ def _build_lean_runtime_feedback_response(
             and policy_oss_registry_ref in evidence_refs
             and lean_handoff.get("policy_oss_lineage_hash")
             == lean_handoff.get("policy_oss_lineage", {}).get("lineage_hash")
+        ),
+        "reflection_oss_lineage_bound": (
+            bool(reflection_oss_lineage_ref)
+            and reflection_oss_lineage_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and reflection_oss_lineage_ref in evidence_refs
+            and bool(reflection_oss_ref)
+            and reflection_oss_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and reflection_oss_ref in evidence_refs
+            and bool(reflection_oss_registry_ref)
+            and reflection_oss_registry_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and reflection_oss_registry_ref in evidence_refs
+            and lean_handoff.get("reflection_oss_lineage_hash")
+            == lean_handoff.get("reflection_oss_lineage", {}).get("lineage_hash")
         ),
         "lean_packet_execution_projection_consumed": (
             lean_packet_execution_projection.get("model_id") == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
@@ -8780,6 +8966,9 @@ def _build_lean_runtime_feedback_response(
             "bind_policy_oss_lineage_ref": policy_oss_lineage_ref,
             "bind_policy_oss_ref": policy_oss_ref,
             "bind_policy_oss_registry_ref": policy_oss_registry_ref,
+            "bind_reflection_oss_lineage_ref": reflection_oss_lineage_ref,
+            "bind_reflection_oss_ref": reflection_oss_ref,
+            "bind_reflection_oss_registry_ref": reflection_oss_registry_ref,
             "bind_lean_packet_execution_projection": projection_ref,
             "attach_to_handoff_packet": lean_handoff["packet_id"],
             "attach_to_decision_trace": decision_traces[-1]["reflection_id"],
@@ -8801,6 +8990,9 @@ def _build_lean_runtime_feedback_response(
                 "policy_oss_lineage_ref": policy_oss_lineage_ref,
                 "policy_oss_ref": policy_oss_ref,
                 "policy_oss_registry_ref": policy_oss_registry_ref,
+                "reflection_oss_lineage_ref": reflection_oss_lineage_ref,
+                "reflection_oss_ref": reflection_oss_ref,
+                "reflection_oss_registry_ref": reflection_oss_registry_ref,
                 "projection_ref": projection_ref,
                 "runtime_binding_id": runtime_context.get("runtime_binding_id"),
                 "metadata_key": metadata_key,
@@ -9065,6 +9257,153 @@ def _build_policy_oss_lineage_handoff_proof(
         "replay": replay,
         "input_hash": _stable_payload_hash(
             "policy-oss-lineage-handoff",
+            {
+                "case_id": episode.case_id,
+                "source_ref": source_ref,
+                "lineage_ref": lineage_ref,
+                "lineage_hashes": lineage_hashes,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _build_reflection_oss_lineage_handoff_proof(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    reflection_artifact_materiality: Mapping[str, Any],
+    case_upstream_artifacts: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    lean_runtime_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    reflection_entry = case_upstream_artifacts["selected_oss"]["reflection_artifact"]
+    source_ref = f"oss://{reflection_entry['component']}/{reflection_entry['request_id']}"
+    final_policy_lineage = copy.deepcopy(dict(final_policy.get("reflection_oss_lineage") or {}))
+    strategy_packet = lean_engine_replay["case_specific_strategy_packet"]
+    packet_lineage = copy.deepcopy(dict(strategy_packet.get("reflection_oss_lineage") or {}))
+    readback = lean_engine_replay["lean_object_store_packet_readback"]
+    loaded_lineage = copy.deepcopy(dict(readback.get("loaded_reflection_oss_lineage") or {}))
+    handoff_lineage = copy.deepcopy(dict(lean_handoff.get("reflection_oss_lineage") or {}))
+    handoff_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    runtime_feedback_refs = set(
+        lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+    )
+    lineage_ref = str(final_policy_lineage.get("lineage_ref") or "")
+    registry_ref = str(final_policy_lineage.get("registry_ref") or "")
+    lineage_hashes = {
+        "final_policy": str(final_policy.get("reflection_oss_lineage_hash") or ""),
+        "final_policy_lineage": str(final_policy_lineage.get("lineage_hash") or ""),
+        "strategy_packet": str(strategy_packet.get("reflection_oss_lineage_hash") or ""),
+        "packet_lineage": str(packet_lineage.get("lineage_hash") or ""),
+        "object_store_readback": str(readback.get("reflection_oss_lineage_hash") or ""),
+        "loaded_object_store_readback": str(
+            readback.get("loaded_reflection_oss_lineage_hash") or ""
+        ),
+        "handoff": str(lean_handoff.get("reflection_oss_lineage_hash") or ""),
+    }
+    loaded_targets = list(lean_engine_replay.get("case_specific_packet_targets", []))
+    replay = {
+        "replayable": True,
+        "reflection_artifact_materiality_passed": _reflection_artifact_materiality_is_usable(
+            reflection_artifact_materiality
+        ),
+        "materiality_source_matches_reflection_lineage": (
+            reflection_artifact_materiality.get("source_oss_ref") == source_ref
+            and final_policy_lineage.get("source_oss_ref") == source_ref
+            and final_policy_lineage.get("component")
+            == reflection_artifact_materiality.get("component")
+            and final_policy_lineage.get("request_id")
+            == reflection_artifact_materiality.get("request_id")
+        ),
+        "evolved_policy_carries_reflection_oss_lineage": (
+            final_policy.get("generation") == 2
+            and final_policy.get("reflection_oss_ref") == source_ref
+            and final_policy.get("reflection_oss_lineage_ref") == lineage_ref
+            and final_policy.get("reflection_oss_lineage_hash")
+            == final_policy_lineage.get("lineage_hash")
+            and final_policy_lineage.get("model_id")
+            == PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID
+        ),
+        "strategy_packet_carries_reflection_oss_lineage": (
+            packet_lineage == final_policy_lineage
+            and strategy_packet.get("reflection_oss_ref") == source_ref
+            and strategy_packet.get("reflection_oss_lineage_ref") == lineage_ref
+            and strategy_packet.get("reflection_oss_lineage_hash")
+            == final_policy_lineage.get("lineage_hash")
+            and strategy_packet.get("reflection_oss_registry_ref") == registry_ref
+        ),
+        "object_store_readback_preserves_reflection_oss_lineage": (
+            readback.get("reflection_oss_ref") == source_ref
+            and readback.get("loaded_reflection_oss_ref") == source_ref
+            and readback.get("reflection_oss_lineage_ref") == lineage_ref
+            and readback.get("loaded_reflection_oss_lineage_ref") == lineage_ref
+            and loaded_lineage == final_policy_lineage
+        ),
+        "all_packet_targets_bind_reflection_oss_lineage": (
+            len(loaded_targets) == PORTFOLIO_LEG_COUNT
+            and all(
+                target.get("reflection_oss_ref") == source_ref
+                and target.get("reflection_oss_lineage_ref") == lineage_ref
+                and target.get("reflection_oss_lineage_hash")
+                == final_policy_lineage.get("lineage_hash")
+                and target.get("signal", {}).get("metadata", {}).get("reflection_oss_ref")
+                == source_ref
+                and target.get("signal", {}).get("metadata", {}).get(
+                    "reflection_oss_lineage_ref"
+                )
+                == lineage_ref
+                for target in loaded_targets
+            )
+        ),
+        "handoff_runtime_bundle_contains_reflection_oss_refs": {
+            source_ref,
+            lineage_ref,
+            registry_ref,
+        }.issubset(handoff_refs)
+        and handoff_lineage == final_policy_lineage,
+        "runtime_feedback_cites_reflection_oss_lineage": {
+            source_ref,
+            lineage_ref,
+            registry_ref,
+        }.issubset(runtime_feedback_refs),
+        "lineage_hash_stable_across_reflection_policy_packet_readback_handoff": (
+            bool(lineage_hashes["final_policy"])
+            and len(set(lineage_hashes.values())) == 1
+        ),
+    }
+    return {
+        "proof_id": f"reflection-oss-lineage-handoff-{episode.case_id}",
+        "proof_ref": f"reflection-oss-lineage-handoff://{episode.case_id}",
+        "model_id": PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "component": reflection_entry["component"],
+        "request_id": reflection_entry["request_id"],
+        "source_oss_ref": source_ref,
+        "lineage_ref": lineage_ref,
+        "registry_ref": registry_ref,
+        "artifact_family": reflection_entry["artifact_family"],
+        "reflection_quality": final_policy_lineage.get("reflection_quality"),
+        "strategy_packet_ref": strategy_packet["packet_ref"],
+        "lean_handoff_ref": f"lean-handoff://{lean_handoff['packet_id']}",
+        "lean_runtime_feedback_ref": f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+        "object_store_readback_ref": readback["readback_id"],
+        "lineage_hashes": lineage_hashes,
+        "input_refs": [
+            source_ref,
+            lineage_ref,
+            registry_ref,
+            strategy_packet["packet_ref"],
+            f"lean-handoff://{lean_handoff['packet_id']}",
+            f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+            readback["readback_id"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "reflection-oss-lineage-handoff",
             {
                 "case_id": episode.case_id,
                 "source_ref": source_ref,
@@ -9600,6 +9939,14 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
         and packet.get("policy_oss_registry_ref") in runtime_refs
         and packet.get("policy_oss_lineage_hash")
         == packet.get("policy_oss_lineage", {}).get("lineage_hash")
+        and packet.get("reflection_oss_ref", "").startswith("oss://")
+        and packet.get("reflection_oss_ref") in runtime_refs
+        and packet.get("reflection_oss_lineage_ref", "").startswith("reflection-oss-lineage://")
+        and packet.get("reflection_oss_lineage_ref") in runtime_refs
+        and packet.get("reflection_oss_registry_ref", "").startswith("registry://")
+        and packet.get("reflection_oss_registry_ref") in runtime_refs
+        and packet.get("reflection_oss_lineage_hash")
+        == packet.get("reflection_oss_lineage", {}).get("lineage_hash")
         and packet.get("strategy_packet_replay_passed") is True
         and packet.get("strategy_packet_hash")
         and packet.get("received_by_lean_handoff")
@@ -9657,6 +10004,7 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("evolved_strategy_packet_refs_bound") is True
         and replay.get("experiment_tracking_lineage_bound") is True
         and replay.get("policy_oss_lineage_bound") is True
+        and replay.get("reflection_oss_lineage_bound") is True
         and replay.get("lean_packet_execution_projection_consumed") is True
         and replay.get("next_cycle_scheduled") is True
         and replay.get("drives_persona_next_ooda_step") is True
@@ -9728,6 +10076,43 @@ def _policy_oss_lineage_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
             "handoff_runtime_bundle_contains_policy_oss_refs",
             "runtime_feedback_cites_policy_oss_lineage",
             "lineage_hash_stable_across_policy_packet_readback_handoff",
+        ))
+    )
+
+
+def _reflection_oss_lineage_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    lineage_hashes = proof.get("lineage_hashes", {})
+    return bool(
+        proof.get("model_id") == PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("reflection-oss-lineage-handoff://")
+        and proof.get("source_oss_ref", "").startswith("oss://")
+        and proof.get("lineage_ref", "").startswith("reflection-oss-lineage://")
+        and proof.get("registry_ref", "").startswith("registry://")
+        and proof.get("component") in REFLECTION_OSS_COMPONENTS
+        and proof.get("artifact_family") == _reflection_artifact_expected_family(
+            str(proof.get("component"))
+        )
+        and proof.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
+        and proof.get("object_store_readback_ref", "").startswith("lean-object-store-packet-readback-")
+        and float(proof.get("reflection_quality", 0.0)) > 0.0
+        and proof.get("input_hash")
+        and lineage_hashes
+        and len({str(value) for value in lineage_hashes.values()}) == 1
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "reflection_artifact_materiality_passed",
+            "materiality_source_matches_reflection_lineage",
+            "evolved_policy_carries_reflection_oss_lineage",
+            "strategy_packet_carries_reflection_oss_lineage",
+            "object_store_readback_preserves_reflection_oss_lineage",
+            "all_packet_targets_bind_reflection_oss_lineage",
+            "handoff_runtime_bundle_contains_reflection_oss_refs",
+            "runtime_feedback_cites_reflection_oss_lineage",
+            "lineage_hash_stable_across_reflection_policy_packet_readback_handoff",
         ))
     )
 
@@ -9873,6 +10258,7 @@ def _lean_engine_result_is_usable(
     object_store_keys = set(result.get("object_store_keys", []))
     tracking_provenance = loaded_packet.get("experiment_tracking_provenance", {})
     policy_oss_lineage = loaded_packet.get("policy_oss_lineage", {})
+    reflection_oss_lineage = loaded_packet.get("reflection_oss_lineage", {})
     packet_readback_valid = True
     if loaded_packet:
         packet_readback_valid = bool(
@@ -9894,6 +10280,12 @@ def _lean_engine_result_is_usable(
             )
             and loaded_packet.get("policy_oss_lineage_hash")
             == policy_oss_lineage.get("lineage_hash")
+            and loaded_packet.get("reflection_oss_ref", "").startswith("oss://")
+            and loaded_packet.get("reflection_oss_lineage_ref", "").startswith(
+                "reflection-oss-lineage://"
+            )
+            and loaded_packet.get("reflection_oss_lineage_hash")
+            == reflection_oss_lineage.get("lineage_hash")
             and all(
                 target.get("signal", {}).get("metadata", {}).get("strategy_packet_ref")
                 == loaded_packet.get("packet_ref")
@@ -9901,6 +10293,10 @@ def _lean_engine_result_is_usable(
                 == loaded_packet.get("policy_oss_lineage_hash")
                 and target.get("signal", {}).get("metadata", {}).get("policy_oss_ref")
                 == loaded_packet.get("policy_oss_ref")
+                and target.get("reflection_oss_lineage_hash")
+                == loaded_packet.get("reflection_oss_lineage_hash")
+                and target.get("signal", {}).get("metadata", {}).get("reflection_oss_ref")
+                == loaded_packet.get("reflection_oss_ref")
                 for target in loaded_targets
             )
         )
@@ -9947,6 +10343,10 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
         and readback.get("policy_oss_ref", "").startswith("oss://")
         and readback.get("policy_oss_lineage_ref", "").startswith("policy-oss-lineage://")
         and readback.get("policy_oss_lineage_hash") == readback.get("loaded_policy_oss_lineage_hash")
+        and readback.get("reflection_oss_ref", "").startswith("oss://")
+        and readback.get("reflection_oss_lineage_ref", "").startswith("reflection-oss-lineage://")
+        and readback.get("reflection_oss_lineage_hash")
+        == readback.get("loaded_reflection_oss_lineage_hash")
         and all(replay.get(flag) is True for flag in (
             "replayable",
             "packet_present_in_object_store_artifact",
@@ -9968,6 +10368,10 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
             "loaded_packet_preserves_policy_oss_lineage",
             "loaded_policy_oss_ref_matches_packet",
             "all_targets_bind_policy_oss_lineage",
+            "reflection_oss_lineage_present_in_packet",
+            "loaded_packet_preserves_reflection_oss_lineage",
+            "loaded_reflection_oss_ref_matches_packet",
+            "all_targets_bind_reflection_oss_lineage",
             "paper_only_guard_retained",
         ))
     )
@@ -9979,6 +10383,7 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
     strategy_packet = replay.get("case_specific_strategy_packet", {})
     tracking_provenance = strategy_packet.get("experiment_tracking_provenance", {})
     policy_oss_lineage = strategy_packet.get("policy_oss_lineage", {})
+    reflection_oss_lineage = strategy_packet.get("reflection_oss_lineage", {})
     packet_targets = replay.get("case_specific_packet_targets", [])
     packet_readback = replay.get("lean_object_store_packet_readback", {})
     return bool(
@@ -10015,10 +10420,20 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
             "policy-oss-lineage://"
         )
         and strategy_packet.get("policy_oss_lineage_hash") == policy_oss_lineage.get("lineage_hash")
+        and strategy_packet.get("reflection_oss_ref", "").startswith("oss://")
+        and strategy_packet.get("reflection_oss_lineage_ref", "").startswith(
+            "reflection-oss-lineage://"
+        )
+        and strategy_packet.get("reflection_oss_lineage_hash") == reflection_oss_lineage.get(
+            "lineage_hash"
+        )
         and all(
             target.get("policy_oss_ref") == strategy_packet.get("policy_oss_ref")
             and target.get("policy_oss_lineage_hash")
             == strategy_packet.get("policy_oss_lineage_hash")
+            and target.get("reflection_oss_ref") == strategy_packet.get("reflection_oss_ref")
+            and target.get("reflection_oss_lineage_hash")
+            == strategy_packet.get("reflection_oss_lineage_hash")
             for target in packet_targets
         )
         and strategy_packet.get("strict_oos_replay_passed") is True
@@ -11870,6 +12285,9 @@ def _build_usability_dimensions(
     policy_oss_lineage_handoff = 1.0 if _policy_oss_lineage_handoff_is_usable(
         operational_context["policy_oss_lineage_handoff"]
     ) else 0.0
+    reflection_oss_lineage_handoff = 1.0 if _reflection_oss_lineage_handoff_is_usable(
+        operational_context["reflection_oss_lineage_handoff"]
+    ) else 0.0
     evolved_strategy_packet = 1.0 if _evolved_strategy_packet_proof_is_usable(
         operational_context["evolved_strategy_packet_proof"]
     ) else 0.0
@@ -11967,6 +12385,7 @@ def _build_usability_dimensions(
         "lean_runtime_feedback": lean_runtime_feedback,
         "experiment_tracking_lineage_handoff": experiment_tracking_lineage_handoff,
         "policy_oss_lineage_handoff": policy_oss_lineage_handoff,
+        "reflection_oss_lineage_handoff": reflection_oss_lineage_handoff,
         "evolved_strategy_packet_handoff": evolved_strategy_packet,
         "scheduler_conflict_ooda_dispatch": scheduler_conflict_ooda,
     }
@@ -12526,6 +12945,28 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "reflection_oss_lineage_reaches_evolved_policy_and_lean_packet",
+            _reflection_oss_lineage_handoff_is_usable(
+                operational_context["reflection_oss_lineage_handoff"]
+            ),
+            {
+                "proof_id": operational_context["reflection_oss_lineage_handoff"]["proof_id"],
+                "component": operational_context["reflection_oss_lineage_handoff"]["component"],
+                "source_oss_ref": operational_context["reflection_oss_lineage_handoff"][
+                    "source_oss_ref"
+                ],
+                "lineage_ref": operational_context["reflection_oss_lineage_handoff"][
+                    "lineage_ref"
+                ],
+                "lineage_hashes": copy.deepcopy(
+                    dict(operational_context["reflection_oss_lineage_handoff"]["lineage_hashes"])
+                ),
+                "replay": copy.deepcopy(
+                    dict(operational_context["reflection_oss_lineage_handoff"]["replay"])
+                ),
+            },
+        ),
+        _diagnostic_check(
             "case_specific_upstream_artifacts_drive_persona_decision",
             _case_upstream_artifacts_are_usable(
                 episode=episode,
@@ -12967,6 +13408,9 @@ def _build_case_result(
             "policy_oss_lineage_reaches_lean_handoff": usability_dimensions[
                 "policy_oss_lineage_handoff"
             ] == 1.0,
+            "reflection_oss_lineage_reaches_lean_handoff": usability_dimensions[
+                "reflection_oss_lineage_handoff"
+            ] == 1.0,
             "lean_packet_execution_projection_replayed": usability_dimensions[
                 "lean_packet_execution_projection"
             ] == 1.0,
@@ -13079,6 +13523,9 @@ def _build_summary(
     ]
     policy_oss_lineage_handoffs = [
         case["operational_context"]["policy_oss_lineage_handoff"] for case in cases
+    ]
+    reflection_oss_lineage_handoffs = [
+        case["operational_context"]["reflection_oss_lineage_handoff"] for case in cases
     ]
     evolved_strategy_packet_proofs = [
         case["operational_context"]["evolved_strategy_packet_proof"] for case in cases
@@ -13252,6 +13699,21 @@ def _build_summary(
         "policy_oss_lineage_handoff_replay_flags": sorted({
             flag
             for proof in policy_oss_lineage_handoffs
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "reflection_oss_lineage_handoff_models": sorted({
+            proof["model_id"] for proof in reflection_oss_lineage_handoffs
+        }),
+        "reflection_oss_lineage_handoff_components": sorted({
+            proof["component"] for proof in reflection_oss_lineage_handoffs
+        }),
+        "reflection_oss_lineage_handoff_artifact_families": sorted({
+            proof["artifact_family"] for proof in reflection_oss_lineage_handoffs
+        }),
+        "reflection_oss_lineage_handoff_replay_flags": sorted({
+            flag
+            for proof in reflection_oss_lineage_handoffs
             for flag, value in proof["replay"].items()
             if value is True
         }),
@@ -14035,6 +14497,17 @@ def _build_summary(
             1
             for item in usable
             if item["policy_oss_lineage_reaches_lean_handoff"]
+        ),
+        "reflection_oss_lineage_handoff_count": len(reflection_oss_lineage_handoffs),
+        "reflection_oss_lineage_handoff_pass_count": sum(
+            1
+            for proof in reflection_oss_lineage_handoffs
+            if _reflection_oss_lineage_handoff_is_usable(proof)
+        ),
+        "reflection_oss_lineage_handoff_drives_lean_count": sum(
+            1
+            for item in usable
+            if item["reflection_oss_lineage_reaches_lean_handoff"]
         ),
         "evolved_strategy_packet_proof_count": len(evolved_strategy_packet_proofs),
         "evolved_strategy_packet_proof_pass_count": sum(
