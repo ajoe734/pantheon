@@ -40,8 +40,9 @@ The campaign deliberately goes **deeper and broader** each round.
 | 2 | Contract-surface conformance breadth & ghost-route audit | [round-02-plan.md](round-02-plan.md) | [round-02-results.md](round-02-results.md) | `/api/v1/incidents/stream` SSE route un-shadowed (PR #1541) |
 | 3 | Parameterized-route robustness (no unhandled 500s) | [round-03-plan.md](round-03-plan.md) | [round-03-results.md](round-03-results.md) | persona-league detail 500→404 + ErrorCode static guard (PR #1542) |
 | 4 | Write-surface input robustness & error-envelope consistency | [round-04-plan.md](round-04-plan.md) | [round-04-results.md](round-04-results.md) | PASS (no defect); stub laxity O1/O2 documented (PR #1543) |
-| 5 | SSE streaming substrate behavior | [round-05-plan.md](round-05-plan.md) | [round-05-results.md](round-05-results.md) | PASS; F6 deploy-lag for Round 2 fix flagged |
-| 6 | _(planned at end of round 5, deeper/broader)_ | — | — | — |
+| 5 | SSE streaming substrate behavior | [round-05-plan.md](round-05-plan.md) | [round-05-results.md](round-05-results.md) | PASS; F6 deploy-lag for Round 2 fix flagged (PR #1545) |
+| 6 | Authorization depth (RBAC) audit of write surface | [round-06-plan.md](round-06-plan.md) | [round-06-results.md](round-06-results.md) | PASS (133/136 write-gated); F7 read-gated creates flagged for product decision |
+| 7 | _(planned at end of round 6, deeper/broader)_ | — | — | — |
 
 ## Environment under test
 
