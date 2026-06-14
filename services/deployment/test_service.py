@@ -787,6 +787,15 @@ def test_saga_progress_and_inbox_replay_receipts(client):
     )
     assert binding.status_code == 200
     assert binding.json()["event"]["sequence_no"] == 2
+    binding_plan = test_client.get("/api/deployment/plans/plan-paper-saga-001")
+    assert binding_plan.status_code == 200
+    assert binding_plan.json()["binding_id"] == "binding-001"
+    assert binding_plan.json()["status"] == "executing"
+    assert binding_plan.json()["current_stage"] == "none"
+    assert binding_plan.json()["metadata"]["runtime_lifecycle"] == {
+        "binding_id": "binding-001",
+        "runtime_id": "runtime-001",
+    }
 
     active = test_client.post(
         f"/api/deployment/sagas/{saga_id}/runtime-active",
@@ -794,6 +803,25 @@ def test_saga_progress_and_inbox_replay_receipts(client):
     )
     assert active.status_code == 200
     seq3_event_id = active.json()["event"]["event_id"]
+    active_plan = test_client.get("/api/deployment/plans/plan-paper-saga-001")
+    assert active_plan.status_code == 200
+    active_plan_body = active_plan.json()
+    assert active_plan_body["binding_id"] == "binding-001"
+    assert active_plan_body["status"] == "executed"
+    assert active_plan_body["current_stage"] == "paper"
+    assert active_plan_body["target_stage"] == "paper"
+    assert active_plan_body["metadata"]["runtime_lifecycle"] == {
+        "binding_id": "binding-001",
+        "runtime_id": "runtime-001",
+        "runtime_status": "active",
+        "activated_stage": "paper",
+    }
+
+    projection = test_client.get("/api/deployment/projections/plan-paper-saga-001")
+    assert projection.status_code == 200
+    assert projection.json()["current_stage"] == "paper"
+    assert projection.json()["actual_stage"] == "paper"
+    assert projection.json()["plan_status"] == "executed"
 
     seq1 = test_client.post(
         f"/api/deployment/outbox/{seq1_event_id}/consume",
