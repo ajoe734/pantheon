@@ -10,7 +10,7 @@ on:
       bff_base_url:
         description: "BFF base URL"
         required: false
-        default: "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io"
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
 
 jobs:
   integration-gate:

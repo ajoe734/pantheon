@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const FE_BASE = process.env.PANTHEON_FE_BASE_URL || "https://pantheon-dev.lovable.app";
-const BFF_BASE = process.env.PANTHEON_BFF_BASE_URL || "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io";
+const BFF_BASE = process.env.PANTHEON_BFF_BASE_URL || "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io";
 const OLD_BFF_URL = process.env.PANTHEON_OLD_BFF_URL || "pantheon-ai-system-front-dev";
 const OUT_DIR = process.env.PANTHEON_AUDIT_OUT_DIR || ".lovable/audits";
 
