@@ -75,3 +75,66 @@ def test_integration_gate_uploads_only_current_run_audits() -> None:
     assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
     assert ".lovable/audits/current-run" in text
     assert ".lovable/audits/*.md" not in text
+
+
+def test_release_gate_accepts_authenticated_approval_race_evidence(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    (current_run / "bff-authenticated-live-smoke-2026-06-14.md").write_text(
+        "\n".join(
+            [
+                "# Authenticated BFF Live Smoke",
+                "",
+                "Passed: 1/1",
+                "",
+                "| Pass | Status | Method | Path | Expectation | ErrorCode |",
+                "|---|---:|---|---|---|---|",
+                "| ✅ | 202/409 | POST | /bff/approvals/appr-race/decide#race | multi-operator race: <=1 accepted | STATE_CONFLICT |",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode in {0, 1}, result.stderr
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    race_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: multi-operator approval race has no duplicate winner."
+    )
+    assert race_check["status"] == "pass"
+    assert race_check["note"] == "1 approval race row(s)"

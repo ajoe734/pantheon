@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -212,6 +213,18 @@ DRY_RUN_META_VALUES = (
     (("meta", "liveCapitalSideEffects"), False),
 )
 NOT_FOUND_ERROR_CODES = ("RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND")
+APPROVAL_RACE_ACCEPTED_STATUSES = {200, 201, 202}
+APPROVAL_RACE_SAFE_ERROR_CODES = (
+    "RESOURCE_NOT_FOUND",
+    "OBJECT_NOT_FOUND",
+    "NOT_FOUND",
+    "STATE_CONFLICT",
+    "VERSION_CONFLICT",
+    "CONFLICT",
+    "VALIDATION_FAILED",
+    "PRECONDITION_NOT_MET",
+    "APPROVAL_ALREADY_DECIDED",
+)
 
 
 def utc_now() -> str:
@@ -569,6 +582,144 @@ def request_json(
     return result
 
 
+def approval_race_tokens(args: argparse.Namespace, primary_token: str) -> tuple[str, str, dict[str, Any]]:
+    token_a = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "").removeprefix("Bearer ").strip()
+    token_b = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "").removeprefix("Bearer ").strip()
+    if token_a and token_b:
+        return token_a, token_b, {
+            "kind": "provided_bearer_pair",
+            "token_a_sha256_12": sha256_12(token_a),
+            "token_b_sha256_12": sha256_12(token_b),
+        }
+
+    secret = (
+        os.getenv("PANTHEON_BFF_SMOKE_JWT_SECRET", "").strip()
+        or os.getenv("PANTHEON_BFF_JWT_SECRET", "").strip()
+    )
+    if secret and not args.require_provided_approval_race_tokens:
+        minted_a = mint_hs256_jwt(
+            subject=f"{args.subject}-approval-race-a",
+            roles=["approver"],
+            issuer=args.issuer,
+            audience=args.audience,
+            ttl_seconds=args.ttl_seconds,
+            secret=secret,
+        )
+        minted_b = mint_hs256_jwt(
+            subject=f"{args.subject}-approval-race-b",
+            roles=["admin"],
+            issuer=args.issuer,
+            audience=args.audience,
+            ttl_seconds=args.ttl_seconds,
+            secret=secret,
+        )
+        return minted_a, minted_b, {
+            "kind": "minted_hs256_jwt_pair",
+            "subjects": [f"{args.subject}-approval-race-a", f"{args.subject}-approval-race-b"],
+            "roles": [["approver"], ["admin"]],
+            "secret_sha256_12": sha256_12(secret),
+        }
+
+    if args.allow_single_token_approval_race:
+        return primary_token, primary_token, {
+            "kind": "single_bearer_fallback",
+            "sha256_12": sha256_12(primary_token),
+            "warning": "same bearer token used for both race requests; this is not a true multi-operator proof",
+        }
+
+    raise SystemExit(
+        "Set PANTHEON_BFF_APPROVAL_RACE_TOKEN_A and PANTHEON_BFF_APPROVAL_RACE_TOKEN_B, "
+        "or set PANTHEON_BFF_SMOKE_JWT_SECRET/PANTHEON_BFF_JWT_SECRET for dev/staging minting. "
+        "Use --allow-single-token-approval-race only for transport debugging, not final evidence."
+    )
+
+
+def build_approval_race_results(
+    *,
+    args: argparse.Namespace,
+    base_url: str,
+    token: str,
+    timeout: float,
+    idempotency_prefix: str,
+) -> dict[str, Any]:
+    target_id = args.approval_race_id.strip()
+    if not target_id:
+        raise SystemExit("--include-approval-race requires --approval-race-id for an expendable staging approval")
+
+    token_a, token_b, token_source = approval_race_tokens(args, token)
+    path = f"/bff/approvals/{urllib.parse.quote(target_id, safe='')}/decide"
+    barrier = threading.Barrier(2)
+    results: list[dict[str, Any] | None] = [None, None]
+
+    def run_one(index: int, bearer: str, actor_label: str) -> None:
+        barrier.wait(timeout=timeout)
+        result = request_json(
+            base_url=base_url,
+            probe=Probe(
+                "POST",
+                path,
+                f"approval-race-{actor_label}",
+                body={
+                    "decision": args.approval_race_decision,
+                    "memo": f"approval race probe {actor_label}",
+                },
+                expect_status=set(range(200, 600)),
+                required_paths=(),
+            ),
+            token=bearer,
+            timeout=timeout,
+            idempotency_prefix=f"{idempotency_prefix}-race-{actor_label}",
+        )
+        results[index] = result
+
+    threads = [
+        threading.Thread(target=run_one, args=(0, token_a, "a"), daemon=True),
+        threading.Thread(target=run_one, args=(1, token_b, "b"), daemon=True),
+    ]
+    started = time.time()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=timeout + 2.0)
+    if any(thread.is_alive() for thread in threads):
+        raise RuntimeError("approval race probe threads did not finish before timeout")
+
+    race_results = [result for result in results if result is not None]
+    accepted = [
+        result
+        for result in race_results
+        if int(result.get("status") or 0) in APPROVAL_RACE_ACCEPTED_STATUSES
+    ]
+    safe_errors = [
+        result
+        for result in race_results
+        if int(result.get("status") or 0) >= 400
+        and result.get("error_envelope")
+        and str(result.get("error_code") or "") in APPROVAL_RACE_SAFE_ERROR_CODES
+    ]
+    transport_failures = [result for result in race_results if int(result.get("status") or 0) == 0]
+    duplicate_winners = len(accepted) > 1
+    bounded = len(race_results) == 2 and not transport_failures and not duplicate_winners and (
+        (len(accepted) == 1 and len(safe_errors) == 1) or len(safe_errors) == 2
+    )
+    return {
+        "family": "approval-race",
+        "method": "POST",
+        "path": path,
+        "status": "/".join(str(result.get("status") or 0) for result in race_results),
+        "target_id": target_id,
+        "duration_ms": round((time.time() - started) * 1000),
+        "ok": bounded,
+        "bounded": bounded,
+        "accepted_count": len(accepted),
+        "safe_error_count": len(safe_errors),
+        "duplicate_winners": duplicate_winners,
+        "token_source": token_source,
+        "expectation": "one accepted decision plus one safe BffErrorEnvelope loser, or two safe BffErrorEnvelope conflicts/not-found responses",
+        "results": race_results,
+    }
+
+
 def build_rbac_matrix_results(
     *,
     args: argparse.Namespace,
@@ -730,7 +881,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-writes", action="store_true")
     parser.add_argument("--include-rbac-matrix", action="store_true")
     parser.add_argument("--include-dry-run", action="store_true")
+    parser.add_argument("--include-approval-race", action="store_true")
+    parser.add_argument("--approval-race-id", default="")
+    parser.add_argument("--approval-race-decision", default="approve")
     parser.add_argument("--require-provided-rbac-tokens", action="store_true")
+    parser.add_argument("--require-provided-approval-race-tokens", action="store_true")
+    parser.add_argument("--allow-single-token-approval-race", action="store_true")
     parser.add_argument("--subject", default="op-live-smoke")
     parser.add_argument("--roles", default="operator,admin,reviewer,approver")
     parser.add_argument("--issuer", default="pantheon-dev")
@@ -815,7 +971,24 @@ def main() -> int:
             idempotency_prefix=idempotency_prefix,
         )
 
-    all_results = [health, openapi, *route_results, *rbac_results, *dry_run_results]
+    approval_race_result: dict[str, Any] | None = None
+    if args.include_approval_race:
+        approval_race_result = build_approval_race_results(
+            args=args,
+            base_url=args.base_url,
+            token=token,
+            timeout=args.timeout,
+            idempotency_prefix=idempotency_prefix,
+        )
+
+    all_results = [
+        health,
+        openapi,
+        *route_results,
+        *rbac_results,
+        *dry_run_results,
+        *([approval_race_result] if approval_race_result else []),
+    ]
     failed = [item for item in all_results if not item.get("ok")]
     evidence = {
         "task_id": "BFF-LUV-AUTHED-LIVE-001",
@@ -826,8 +999,9 @@ def main() -> int:
         "include_writes": args.include_writes,
         "include_rbac_matrix": args.include_rbac_matrix,
         "include_dry_run": args.include_dry_run,
+        "include_approval_race": args.include_approval_race,
         "commands": [
-            "PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> scripts/probe_bff_authenticated_live.py --include-writes --include-rbac-matrix --include-dry-run",
+            "PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> scripts/probe_bff_authenticated_live.py --include-writes --include-rbac-matrix --include-dry-run --include-approval-race --approval-race-id=<expendable-staging-approval-id>",
         ],
         "summary": {
             "total": len(all_results),
@@ -837,6 +1011,8 @@ def main() -> int:
             "write_probes": len(WRITE_PROBES) if args.include_writes else 0,
             "rbac_matrix_probes": len(rbac_results),
             "dry_run_probes": len(dry_run_results),
+            "approval_race_probes": 1 if approval_race_result else 0,
+            "approval_race_bounded": bool(approval_race_result and approval_race_result.get("bounded")),
             "VITE_BFF_MODE_live_allowed": len(failed) == 0,
             "VITE_BFF_REAL_WRITES_true_allowed": args.include_writes and len(failed) == 0,
             "live_capital_side_effects": False,
@@ -846,6 +1022,7 @@ def main() -> int:
         "routes": route_results,
         "rbac_matrix": rbac_results,
         "dry_run": dry_run_results,
+        "approval_race": approval_race_result,
         "failed_routes": [
             {
                 "family": item.get("family"),

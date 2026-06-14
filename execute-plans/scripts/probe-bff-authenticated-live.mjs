@@ -4,6 +4,9 @@ import path from "node:path";
 
 const BASE = process.env.PANTHEON_BFF_BASE_URL || "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io";
 let TOKEN = process.env.PANTHEON_BFF_ACCESS_TOKEN || process.env.PANTHEON_BFF_SMOKE_BEARER_TOKEN;
+const APPROVAL_RACE_ID = process.env.PANTHEON_BFF_APPROVAL_RACE_ID || "";
+const APPROVAL_RACE_TOKEN_A = process.env.PANTHEON_BFF_APPROVAL_RACE_TOKEN_A || "";
+const APPROVAL_RACE_TOKEN_B = process.env.PANTHEON_BFF_APPROVAL_RACE_TOKEN_B || "";
 const CLIENT_ID = process.env.PANTHEON_BFF_OIDC_CLIENT_ID;
 const CLIENT_SECRET = process.env.PANTHEON_BFF_OIDC_CLIENT_SECRET;
 const DEV_LOGIN_PATH = process.env.PANTHEON_BFF_DEV_LOGIN_PATH || "/bff/auth/dev-login";
@@ -108,17 +111,21 @@ function errorCodeFrom(j) {
   return j?.error?.code || j?.detail?.error?.code || "";
 }
 
-async function call(method, route, body) {
+function bearerToken(token) {
+  return String(token || "").replace(/^Bearer\s+/i, "");
+}
+
+async function callWithToken(method, route, body, token, idempotencyScope = "auth_smoke") {
   const headers = {
     "Accept": "application/json",
-    "Authorization": `Bearer ${TOKEN}`,
-    "X-Request-Id": `req_auth_smoke_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-    "X-Correlation-Id": `corr_auth_smoke_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    "Authorization": `Bearer ${bearerToken(token)}`,
+    "X-Request-Id": `req_${idempotencyScope}_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    "X-Correlation-Id": `corr_${idempotencyScope}_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     "X-BFF-Api-Version": "2026-05-07",
   };
   if (method !== "GET") {
     headers["Content-Type"] = "application/json";
-    headers["Idempotency-Key"] = `idk_auth_smoke_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    headers["Idempotency-Key"] = `idk_${idempotencyScope}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   }
   const res = await fetch(`${BASE}${route}`, {
     method,
@@ -135,6 +142,26 @@ async function call(method, route, body) {
     correlationId: res.headers.get("X-Correlation-Id"),
     json,
   };
+}
+
+async function call(method, route, body) {
+  return callWithToken(method, route, body, TOKEN);
+}
+
+function approvalRaceSafeError(r) {
+  return r.status >= 400 &&
+    isErrorEnvelope(r.json) &&
+    [
+      "RESOURCE_NOT_FOUND",
+      "OBJECT_NOT_FOUND",
+      "NOT_FOUND",
+      "STATE_CONFLICT",
+      "VERSION_CONFLICT",
+      "CONFLICT",
+      "VALIDATION_FAILED",
+      "PRECONDITION_NOT_MET",
+      "APPROVAL_ALREADY_DECIDED",
+    ].includes(errorCodeFrom(r.json));
 }
 
 const rows = [];
@@ -154,6 +181,29 @@ for (const [method, route, body, allowedCodes] of preconditionChecks) {
   rows.push({ ...r, pass, expectation: `2xx command or non-2xx envelope in ${allowedCodes.join("/")}` });
 }
 
+if (APPROVAL_RACE_ID && APPROVAL_RACE_TOKEN_A && APPROVAL_RACE_TOKEN_B && bearerToken(APPROVAL_RACE_TOKEN_A) !== bearerToken(APPROVAL_RACE_TOKEN_B)) {
+  const route = `/bff/approvals/${encodeURIComponent(APPROVAL_RACE_ID)}/decide`;
+  const body = { decision: "approve", memo: "authenticated live approval race probe" };
+  const [a, b] = await Promise.all([
+    callWithToken("POST", route, body, APPROVAL_RACE_TOKEN_A, "approval_race_a"),
+    callWithToken("POST", route, body, APPROVAL_RACE_TOKEN_B, "approval_race_b"),
+  ]);
+  const accepted = [a, b].filter(r => r.status >= 200 && r.status < 300);
+  const safeErrors = [a, b].filter(approvalRaceSafeError);
+  const pass = accepted.length <= 1 &&
+    ((accepted.length === 1 && safeErrors.length === 1) || safeErrors.length === 2);
+  rows.push({
+    method: "POST",
+    route: `${route}#race`,
+    status: `${a.status}/${b.status}`,
+    requestId: `${a.requestId || ""}/${b.requestId || ""}`,
+    correlationId: `${a.correlationId || ""}/${b.correlationId || ""}`,
+    json: { error: { code: [errorCodeFrom(a.json), errorCodeFrom(b.json)].filter(Boolean).join("/") } },
+    pass,
+    expectation: "multi-operator race: 1 accepted + 1 safe envelope, or 2 safe envelopes",
+  });
+}
+
 const passed = rows.filter(r => r.pass).length;
 const now = new Date().toISOString().slice(0, 10);
 const md = [
@@ -161,6 +211,7 @@ const md = [
   ``,
   `Date: ${new Date().toISOString()}`,
   `Target: ${BASE}`,
+  `Approval race configured: ${Boolean(APPROVAL_RACE_ID && APPROVAL_RACE_TOKEN_A && APPROVAL_RACE_TOKEN_B && bearerToken(APPROVAL_RACE_TOKEN_A) !== bearerToken(APPROVAL_RACE_TOKEN_B))}`,
   ``,
   `## Summary`,
   ``,
