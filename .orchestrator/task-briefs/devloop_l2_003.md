@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Fix deployment-plan.current_stage consistency
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Helper-claimed by Codex while Claude is dispatch-paused.
+- Next: Review approved: current_stage correctly advances to target_stage on runtime_active; validation relaxation for EXECUTED status is correct; all 51 tests pass. Returning to Codex for closeout.
 
 ## Summary
 修 deployment-plan.current_stage 永遠停在 'none' 但 binding 已 active/paper 的一致性 bug;binding 啟用時 plan lifecycle 欄位應前進到對應 stage。
