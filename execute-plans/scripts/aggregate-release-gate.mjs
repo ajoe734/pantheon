@@ -408,7 +408,52 @@ function analyzeAuthSmoke(stepOutcomes) {
   };
 }
 
-function buildGate3(routeProbe, authSmoke) {
+function analyzeSseSmoke(stepOutcomes) {
+  const step = stepInfo(stepOutcomes, "sse_smoke", ".lovable/audits/bff-sse-replay-smoke.log");
+  const file = latestAuditFile([
+    /^BFF-CONSOL-011-sse-replay-smoke\.json$/,
+    /^bff-sse-replay-smoke-.*\.json$/,
+    /sse.*replay.*smoke.*\.json$/i,
+  ]) || evidencePath(step.evidence);
+  const json = readJson(file);
+  const soak = json?.soak || {};
+  const bearerSoak = soak?.bearer_polyfill || {};
+  const blocks = bearerSoak?.blocks || {};
+  const seconds = Number(soak?.seconds ?? bearerSoak?.soak_seconds ?? 0);
+  const minHeartbeats = Number(soak?.min_heartbeats ?? bearerSoak?.min_heartbeats ?? 0);
+  const heartbeatCount = Number(blocks?.heartbeat_count ?? 0);
+  const duplicateEventIds = Array.isArray(blocks?.duplicate_event_ids) ? blocks.duplicate_event_ids : [];
+  const missingExpected = Array.isArray(bearerSoak?.missing_expected_event_ids) ? bearerSoak.missing_expected_event_ids : [];
+  const strict = json?.strict_live_evidence === true;
+  const summaryPassed = json?.summary?.passed === true;
+  const soakOk = soak?.enabled === true
+    && bearerSoak?.ok === true
+    && seconds >= 75
+    && minHeartbeats >= 1
+    && heartbeatCount >= minHeartbeats
+    && duplicateEventIds.length === 0
+    && missingExpected.length === 0;
+  return {
+    exists: Boolean(json),
+    file,
+    strict,
+    summaryPassed,
+    soakOk,
+    seconds,
+    minHeartbeats,
+    heartbeatCount,
+    duplicateEventIds,
+    missingExpected,
+    missingStatus: missingEvidenceStatus(step.status),
+    missingNote: step.outcome
+      ? `sse smoke outcome: ${step.outcome}; JSON evidence missing`
+      : "sse smoke JSON evidence missing",
+    stepStatus: step.status,
+    stepOutcome: step.outcome,
+  };
+}
+
+function buildGate3(routeProbe, authSmoke, sseSmoke) {
   const routeEvidence = routeProbe.file || routeProbe.stepEvidence;
   const authEvidence = authSmoke.file || routeEvidence;
   const healthStatus = [routeProbe.rows.get("/health")?.status, routeProbe.rows.get("/healthz")?.status].includes("200");
@@ -461,6 +506,11 @@ function buildGate3(routeProbe, authSmoke) {
   const authOwner = (condition) => authSmoke.exists && condition ? "" : GATE_OWNERS[3];
   const authNote = (note) => authSmoke.exists ? note : authSmoke.missingNote;
   const authMissingResult = { status: authSmoke.missingStatus, note: authSmoke.missingNote };
+  const sseStrictOk = sseSmoke.exists && sseSmoke.strict && sseSmoke.summaryPassed && sseSmoke.soakOk;
+  const sseStatus = sseSmoke.exists ? sseStrictOk ? "pass" : "fail" : sseSmoke.missingStatus;
+  const sseNote = sseSmoke.exists
+    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} duplicates:${sseSmoke.duplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length}`
+    : sseSmoke.missingNote;
   const listResult = authSmoke.exists ? allRowsPass(authSmoke.rows, readListPaths) : authMissingResult;
   const v5Result = authSmoke.exists ? allRowsPass(authSmoke.rows, v5Paths) : authMissingResult;
   const writeResult = authSmoke.exists ? allRowsPass(authSmoke.rows, writePaths) : authMissingResult;
@@ -497,6 +547,11 @@ function buildGate3(routeProbe, authSmoke) {
       owner: routeOwner(streamStatus === "200"),
       evidence: routeEvidence,
       note: routeNote(`status: ${streamStatus || "missing"}`),
+    }),
+    makeCheck("Authenticated: strict SSE soak observes heartbeat and no duplicate replay.", sseStatus, {
+      owner: sseStatus === "pass" ? "" : GATE_OWNERS[3],
+      evidence: sseSmoke.file || authEvidence || routeEvidence,
+      note: sseNote,
     }),
     makeCheck("Anonymous: canonical protected routes return 401/403, not 404.", routeStatus(protectedValid), {
       owner: routeOwner(protectedValid),
@@ -851,6 +906,7 @@ function main() {
   const stepOutcomes = getStepOutcomes();
   const routeProbe = analyzeRouteProbe(stepOutcomes);
   const authSmoke = analyzeAuthSmoke(stepOutcomes);
+  const sseSmoke = analyzeSseSmoke(stepOutcomes);
   const hosted = analyzeHostedProbe(stepOutcomes);
   const playwright = analyzePlaywright();
 
@@ -858,7 +914,7 @@ function main() {
     0: buildGate0(hosted),
     1: buildGate1(stepOutcomes),
     2: buildGate2(stepOutcomes),
-    3: buildGate3(routeProbe, authSmoke),
+    3: buildGate3(routeProbe, authSmoke, sseSmoke),
     4: buildGate4(hosted),
     5: buildGate5(playwright),
     6: buildGate6(playwright),
