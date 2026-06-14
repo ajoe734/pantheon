@@ -146,6 +146,54 @@ def test_make_rbac_tokens_mints_full_matrix_without_leaking_tokens(monkeypatch) 
     assert all(str(token) not in json.dumps(source) for token in tokens.values() if token)
 
 
+def test_strict_live_evidence_forces_real_bearer_matrix_and_race_tokens(monkeypatch) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "live-primary-token")
+    monkeypatch.setenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "live-race-token-a")
+    monkeypatch.setenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "live-race-token-b")
+    args = argparse.Namespace(
+        strict_live_evidence=True,
+        include_rbac_matrix=False,
+        include_dry_run=False,
+        include_approval_race=False,
+        require_provided_rbac_tokens=False,
+        require_provided_approval_race_tokens=False,
+        approval_race_id="approval-strict-race",
+    )
+
+    probe.apply_strict_live_evidence(args)
+
+    assert args.include_rbac_matrix is True
+    assert args.include_dry_run is True
+    assert args.include_approval_race is True
+    assert args.require_provided_rbac_tokens is True
+    assert args.require_provided_approval_race_tokens is True
+
+
+def test_strict_live_evidence_rejects_dev_jwt_without_primary_bearer(monkeypatch) -> None:
+    probe = _load_probe_module()
+    monkeypatch.delenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_SMOKE_JWT_SECRET", "dev-secret-must-not-count")
+    monkeypatch.setenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "live-race-token-a")
+    monkeypatch.setenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "live-race-token-b")
+    args = argparse.Namespace(
+        strict_live_evidence=True,
+        include_rbac_matrix=False,
+        include_dry_run=False,
+        include_approval_race=False,
+        require_provided_rbac_tokens=False,
+        require_provided_approval_race_tokens=False,
+        approval_race_id="approval-strict-race",
+    )
+
+    try:
+        probe.apply_strict_live_evidence(args)
+    except SystemExit as exc:
+        assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in str(exc)
+    else:
+        raise AssertionError("strict live evidence must reject dev JWT-only auth")
+
+
 def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) -> None:
     probe = _load_probe_module()
     calls: list[str] = []

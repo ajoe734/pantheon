@@ -873,6 +873,33 @@ def build_dry_run_results(
     return results
 
 
+def apply_strict_live_evidence(args: argparse.Namespace) -> None:
+    if not args.strict_live_evidence:
+        return
+
+    args.include_rbac_matrix = True
+    args.include_dry_run = True
+    args.include_approval_race = True
+    args.require_provided_rbac_tokens = True
+    args.require_provided_approval_race_tokens = True
+
+    if not os.getenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "").strip():
+        raise SystemExit(
+            "--strict-live-evidence requires PANTHEON_BFF_SMOKE_BEARER_TOKEN; "
+            "dev/staging minted JWTs are not accepted as final live bearer evidence"
+        )
+    if not args.approval_race_id.strip():
+        raise SystemExit("--strict-live-evidence requires --approval-race-id for an expendable staging approval")
+    if not (
+        os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "").strip()
+        and os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "").strip()
+    ):
+        raise SystemExit(
+            "--strict-live-evidence requires PANTHEON_BFF_APPROVAL_RACE_TOKEN_A and "
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B for two distinct operators"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
@@ -882,6 +909,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-rbac-matrix", action="store_true")
     parser.add_argument("--include-dry-run", action="store_true")
     parser.add_argument("--include-approval-race", action="store_true")
+    parser.add_argument("--strict-live-evidence", action="store_true")
     parser.add_argument("--approval-race-id", default="")
     parser.add_argument("--approval-race-decision", default="approve")
     parser.add_argument("--require-provided-rbac-tokens", action="store_true")
@@ -897,6 +925,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    apply_strict_live_evidence(args)
     token, auth_source = make_token(args)
     ts = utc_now()
     idempotency_prefix = f"bff-live-smoke-{int(time.time())}"
@@ -1000,8 +1029,9 @@ def main() -> int:
         "include_rbac_matrix": args.include_rbac_matrix,
         "include_dry_run": args.include_dry_run,
         "include_approval_race": args.include_approval_race,
+        "strict_live_evidence": args.strict_live_evidence,
         "commands": [
-            "PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> scripts/probe_bff_authenticated_live.py --include-writes --include-rbac-matrix --include-dry-run --include-approval-race --approval-race-id=<expendable-staging-approval-id>",
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> PANTHEON_BFF_RBAC_TOKENS_JSON=<redacted> PANTHEON_BFF_APPROVAL_RACE_TOKEN_A=<redacted> PANTHEON_BFF_APPROVAL_RACE_TOKEN_B=<redacted> scripts/probe_bff_authenticated_live.py --strict-live-evidence --include-writes --approval-race-id=<expendable-staging-approval-id>",
         ],
         "summary": {
             "total": len(all_results),
