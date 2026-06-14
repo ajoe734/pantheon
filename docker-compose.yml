@@ -451,6 +451,8 @@ services:
     build:
       context: .
       dockerfile: services/broker/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       PORT: "8102"
       BROKER_PAPER_ENABLED: "false"
@@ -470,6 +472,8 @@ services:
     build:
       context: .
       dockerfile: services/runtime-manager/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       PORT: "8081"
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
@@ -540,6 +544,8 @@ services:
     build:
       context: .
       dockerfile: services/telemetry/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       PORT: "8083"
       TELEMETRY_STORAGE_DIR: /data/telemetry
@@ -647,6 +653,8 @@ services:
     build:
       context: .
       dockerfile: services/control-plane/bff/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       BFF_DATA_DIR: /data/bff
       PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
@@ -1114,6 +1122,8 @@ services:
     build:
       context: .
       dockerfile: services/execution/runtime-manager/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
     environment:
       PORT: "8011"
