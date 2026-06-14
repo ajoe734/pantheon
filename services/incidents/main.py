@@ -16,6 +16,10 @@ POST  /api/incidents
     Body: CreateIncidentRequest.
     Returns 201 on success, 422 on validation failure.
 
+POST  /api/incidents/consume-threshold
+    Consume a telemetry threshold-breach payload and create an IncidentCase.
+    Returns 201 on first write, 200 when the payload is idempotently replayed.
+
 GET   /api/incidents
     List incidents.  Optional query params:
       binding_id      — filter by RuntimeBinding
@@ -61,9 +65,9 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -100,6 +104,7 @@ try:
         OperatorIncidentPayload,
         UpdateIncidentStatusRequest,
     )
+    from .consumer import IncidentConsumerError, ThresholdTelemetryIncidentConsumer
 except ImportError:
     from models import (  # type: ignore
         CreateIncidentRequest,
@@ -107,6 +112,7 @@ except ImportError:
         OperatorIncidentPayload,
         UpdateIncidentStatusRequest,
     )
+    from consumer import IncidentConsumerError, ThresholdTelemetryIncidentConsumer  # type: ignore
 
 try:
     from services.incident.reference_validation import (  # type: ignore
@@ -245,6 +251,39 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
 
     log.info("Created IncidentCase %s severity=%s binding=%s", incident_id, body.severity, body.binding_id)
     return _to_response(inc)
+
+
+@app.post(
+    "/api/incidents/consume-threshold",
+    response_model=IncidentResponse,
+    status_code=201,
+    summary="Consume a telemetry threshold breach into an IncidentCase",
+)
+def consume_threshold_incident(
+    response: Response,
+    body: Dict[str, Any] = Body(...),
+) -> IncidentResponse:
+    """Consume a threshold telemetry payload through the Incident domain writer."""
+    consumer = ThresholdTelemetryIncidentConsumer(
+        incident_store=store,
+        reference_validator=reference_validator,
+    )
+    try:
+        result = consumer.consume(body)
+    except CanonicalReferenceError as exc:
+        raise HTTPException(status_code=422, detail={"reference_errors": exc.errors})
+    except IncidentConsumerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    if not result.created:
+        response.status_code = 200
+
+    log.info(
+        "Consumed threshold telemetry into IncidentCase %s created=%s",
+        result.incident.incident_id,
+        result.created,
+    )
+    return _to_response(result.incident)
 
 
 # ---------------------------------------------------------------------------
