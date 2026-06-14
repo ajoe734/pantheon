@@ -723,6 +723,63 @@ class DetectWorkerFailureTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
 
+    def test_mark_revoked_auth_pause_is_sticky_until_probe(self) -> None:
+        from datetime import datetime, timezone
+
+        config = {
+            "provider_guardrails": {"auth_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        state: dict = {}
+        fake_now = datetime(2026, 6, 14, 15, 0, 0, tzinfo=timezone.utc)
+
+        with (
+            mock.patch.object(supervisor, "datetime") as datetime_mock,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            datetime_mock.now.return_value = fake_now
+            datetime_mock.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "codex2",
+                "error refreshing token: refresh-token-revoked",
+                failure_kind="auth",
+                pause_kind="auth",
+            )
+
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertTrue(pause["sticky_until_auth_probe"])
+        self.assertEqual(pause["sticky_reason"], "refresh_token_revoked")
+        self.assertEqual(pause["blocked_until"], "9999-12-31T23:59:59Z")
+
+    def test_expire_provider_dispatch_pauses_keeps_revoked_auth_pause(self) -> None:
+        config = {
+            "provider_guardrails": {"auth_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "provider": "codex2",
+                        "blocked_until": "2026-04-06T12:00:00Z",
+                        "pause_kind": "auth",
+                        "reason": "error refreshing token: refresh-token-revoked",
+                    }
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.expire_provider_dispatch_pauses(config, state)
+            active = supervisor.current_provider_dispatch_pause(state, "codex2", config)
+
+        self.assertFalse(changed)
+        self.assertIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertIs(active, state["provider_guardrails"]["dispatch_pauses"]["codex2"])
+        write_activity_log.assert_not_called()
+
     def test_clear_provider_dispatch_pause_removes_group_pause(self) -> None:
         config = {
             "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
@@ -831,6 +888,66 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertNotIn("OPS-AUTH2:codex2", streaks)
         self.assertIn("OPS-QUOTA:codex2_2", streaks)
         self.assertIn("OPS-GEMINI:gemini", streaks)
+        self.assertGreaterEqual(write_activity_log.call_count, 2)
+
+    def test_sticky_revoked_auth_recovery_requires_live_probe_success(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {"codex2": {"delivery_mode": "codex", "quota_group": "codex2"}},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "pause_kind": "auth",
+                        "reason": "error refreshing token: refresh-token-revoked",
+                        "sticky_until_auth_probe": True,
+                    }
+                },
+                "task_failure_streaks": {
+                    "OPS-AUTH:codex2": {
+                        "task_id": "OPS-AUTH",
+                        "provider": "codex2",
+                        "last_failure_kind": "auth",
+                        "last_reason": "refresh-token-revoked",
+                    }
+                },
+            }
+        }
+        previous = {"providers": {"codex2": {"auth_ready": False}}}
+        cached_current = {
+            "providers": {
+                "codex2": {
+                    "auth_ready": True,
+                    "auth_probe": {"ready": True, "source": "cached", "method": "codex_exec_oauth"},
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.reconcile_provider_auth_recovery(config, state, previous, cached_current)
+
+        self.assertFalse(changed)
+        self.assertIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertIn("OPS-AUTH:codex2", state["provider_guardrails"]["task_failure_streaks"])
+        write_activity_log.assert_not_called()
+
+        live_current = {
+            "providers": {
+                "codex2": {
+                    "auth_ready": True,
+                    "auth_method": "codex_exec_oauth",
+                    "last_auth_probe_at": "2026-06-14T15:10:00Z",
+                    "auth_probe": {"ready": True, "source": "live", "method": "codex_exec_oauth"},
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.reconcile_provider_auth_recovery(config, state, previous, live_current)
+
+        self.assertTrue(changed)
+        self.assertNotIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertNotIn("OPS-AUTH:codex2", state["provider_guardrails"]["task_failure_streaks"])
         self.assertGreaterEqual(write_activity_log.call_count, 2)
 
 
@@ -7692,6 +7809,26 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
                 config, {}, "codex", provider_report
             )
         self.assertIsNone(reason)
+
+    def test_block_reason_blocks_auth_down_provider(self) -> None:
+        config = {
+            "agents": {"codex2": {"provider": "codex2"}},
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        provider_report = {"providers": {"codex2": {"auth_ready": False}}}
+        with (
+            mock.patch.object(supervisor, "agent_dispatch_paused", return_value=False),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent") as scan,
+        ):
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config,
+                {},
+                "codex2",
+                provider_report,
+            )
+
+        self.assertEqual(reason, "codex2 authentication is not ready")
+        scan.assert_not_called()
 
     def test_block_reason_allows_slotted_logical_agent_with_free_slot(self) -> None:
         config = {
