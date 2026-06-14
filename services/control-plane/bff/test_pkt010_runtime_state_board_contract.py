@@ -160,6 +160,11 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
                         },
                         "projection_source": "telemetry_ingest",
                     },
+                    "executed_trade_count": None,
+                    "total_trades": 47,
+                    "position_count": None,
+                    "positions": None,
+                    "last_fill": None,
                     "paper_runtime_monitoring": {
                         "session_id": "prmon-rtb-042",
                         "session_type": "paper_runtime_monitoring",
