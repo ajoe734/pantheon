@@ -136,6 +136,7 @@ LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
 LEAN_RUNTIME_FEEDBACK_MODEL_ID = "persona_lean_runtime_feedback_v1"
 LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID = "lean_evolved_strategy_packet_provenance_v1"
 LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID = "lean_evolved_packet_multi_asset_execution_projection_v1"
+LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID = "lean_object_store_evolved_packet_readback_v1"
 SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
 BROKER_ADAPTER_LIFECYCLE_MODEL_ID = "persona_broker_adapter_lifecycle_v1"
 BROKER_ADAPTER_FOLLOWUP_MODEL_ID = "persona_broker_adapter_followup_v1"
@@ -7019,6 +7020,8 @@ def _build_operational_context(
         evolution_trajectory=evolution_trajectory,
         no_leakage_protocol=no_leakage_protocol,
         strict_oos_evolution_proof=strict_oos_evolution_proof,
+        persona_conflict_resolution=persona_conflict,
+        generated_at=generated_at,
     )
     lean_handoff = _build_lean_handoff_packet(
         episode=episode,
@@ -7642,6 +7645,156 @@ def _build_autonomous_schedule(
     }
 
 
+def _build_lean_object_store_packet_targets(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    persona_conflict_resolution: Mapping[str, Any],
+    strategy_packet_ref: str,
+    generated_at: str,
+) -> list[dict[str, Any]]:
+    signals = _build_signals(
+        episode=episode,
+        policy=final_policy,
+        generation=int(final_policy["generation"]),
+        generated_at=generated_at,
+    )
+    allocation = persona_conflict_resolution["resolved_allocation"]
+    targets: list[dict[str, Any]] = []
+    for leg_index, (window, signal) in enumerate(zip(episode.windows, signals)):
+        leg = final_policy["legs"][window.instrument]
+        target_ref = f"lean-packet-target://{episode.case_id}/generation{final_policy['generation']}/leg{leg_index}"
+        signal_payload = copy.deepcopy(dict(signal))
+        signal_payload.setdefault("metadata", {})
+        signal_payload["metadata"] = {
+            **dict(signal_payload["metadata"]),
+            "strategy_packet_ref": strategy_packet_ref,
+            "packet_target_ref": target_ref,
+            "lean_object_store_readback_model_id": LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID,
+        }
+        entry_row = _entry_row_for_generation(window, int(final_policy["generation"]))
+        targets.append(
+            {
+                "target_ref": target_ref,
+                "leg_index": leg_index,
+                "instrument": window.instrument,
+                "execution_symbol": window.execution_symbol,
+                "lean_symbol": _lean_symbol_for_execution_symbol(window.execution_symbol),
+                "policy_id": final_policy["policy_id"],
+                "policy_version": final_policy["policy_version"],
+                "generation": final_policy["generation"],
+                "direction": int(leg["direction"]),
+                "action": signal_payload["action"],
+                "signal_id": signal_payload["signal_id"],
+                "target_weight": allocation["weight_by_instrument"][window.instrument],
+                "resolved_direction": allocation["direction_by_instrument"][window.instrument],
+                "quantity": signal_payload["quantity"],
+                "quantity_type": signal_payload["quantity_type"],
+                "order_type": signal_payload["order_type"],
+                "limit_price": signal_payload.get("limit_price"),
+                "market_data_ref": signal_payload["metadata"]["market_data_ref"],
+                "source_dataset_ref": signal_payload["metadata"]["source_dataset_ref"],
+                "entry_close": float(entry_row["close"]),
+                "signal": signal_payload,
+            }
+        )
+    return targets
+
+
+def _build_lean_object_store_packet_readback(
+    *,
+    episode: PortfolioEpisode,
+    strategy_packet: Mapping[str, Any],
+    packet_targets: Sequence[Mapping[str, Any]],
+    result: Mapping[str, Any],
+) -> dict[str, Any]:
+    loaded_packet = dict(result.get("loaded_strategy_packet") or {})
+    loaded_targets = [dict(target) for target in result.get("loaded_packet_targets") or []]
+    loaded_signal = dict(result.get("loaded_signal") or {})
+    fill_events = [dict(event) for event in result.get("fill_events") or []]
+    first_target = loaded_targets[0] if loaded_targets else {}
+    first_target_signal = first_target.get("signal") if isinstance(first_target.get("signal"), Mapping) else {}
+    object_store_keys = set(result.get("object_store_keys", []))
+    replay = {
+        "replayable": True,
+        "packet_present_in_object_store_artifact": bool(loaded_packet),
+        "packet_ref_matches_case_strategy_packet": (
+            loaded_packet.get("packet_ref") == strategy_packet.get("packet_ref")
+            and loaded_packet.get("policy_id") == strategy_packet.get("policy_id")
+        ),
+        "packet_hash_matches_persona_packet": (
+            _stable_payload_hash("lean-strategy-packet", loaded_packet)
+            == _stable_payload_hash("lean-strategy-packet", strategy_packet)
+        ),
+        "target_count_matches_portfolio": len(loaded_targets) == PORTFOLIO_LEG_COUNT,
+        "all_targets_have_signals": all(
+            isinstance(target.get("signal"), Mapping)
+            and target.get("signal_id") == target.get("signal", {}).get("signal_id")
+            for target in loaded_targets
+        ),
+        "all_targets_bind_strategy_packet_ref": all(
+            target.get("signal", {}).get("metadata", {}).get("strategy_packet_ref")
+            == strategy_packet.get("packet_ref")
+            for target in loaded_targets
+        ),
+        "target_refs_unique": (
+            len({target.get("target_ref") for target in loaded_targets}) == PORTFOLIO_LEG_COUNT
+        ),
+        "loaded_signal_from_first_packet_target": (
+            loaded_signal.get("signal_id")
+            == first_target.get("signal_id")
+            == first_target_signal.get("signal_id")
+        ),
+        "loaded_signal_symbol_matches_first_target": (
+            loaded_signal.get("symbol") == first_target.get("execution_symbol")
+            and str(loaded_signal.get("symbol", "")).split(".", 1)[0]
+            == first_target.get("lean_symbol")
+        ),
+        "loaded_signal_quantity_matches_first_target": (
+            loaded_signal.get("quantity") == first_target.get("quantity")
+            and loaded_signal.get("quantity_type") == first_target.get("quantity_type")
+            and loaded_signal.get("order_type") == first_target.get("order_type")
+        ),
+        "algorithm_executed_loaded_packet_signal": (
+            int(result.get("fill_count", 0)) >= 1
+            and any(event.get("signal_id") == loaded_signal.get("signal_id") for event in fill_events)
+        ),
+        "object_store_keys_include_packet_artifact_and_metadata": (
+            any(key.endswith("/artifact.bin") for key in object_store_keys)
+            and any(key.endswith("/metadata.json") for key in object_store_keys)
+        ),
+        "paper_only_guard_retained": result.get("broker_production_live_enabled") == "false",
+    }
+    return {
+        "readback_id": f"lean-object-store-packet-readback-{episode.case_id}",
+        "model_id": LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "packet_ref": strategy_packet["packet_ref"],
+        "packet_hash": _stable_payload_hash("lean-strategy-packet", loaded_packet),
+        "source_packet_hash": _stable_payload_hash("lean-strategy-packet", strategy_packet),
+        "artifact_payload_checksum": result.get("artifact_payload_checksum"),
+        "target_count": len(loaded_targets),
+        "target_refs": [target.get("target_ref") for target in loaded_targets],
+        "target_signal_ids": [target.get("signal_id") for target in loaded_targets],
+        "target_symbols": [target.get("execution_symbol") for target in loaded_targets],
+        "loaded_signal_id": loaded_signal.get("signal_id"),
+        "loaded_signal_symbol": loaded_signal.get("symbol"),
+        "loaded_signal_source_target_ref": first_target.get("target_ref"),
+        "object_store_keys": sorted(object_store_keys),
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "lean-object-store-packet-readback",
+            {
+                "case_id": episode.case_id,
+                "loaded_packet": loaded_packet,
+                "loaded_targets": loaded_targets,
+                "loaded_signal": loaded_signal,
+                "replay": replay,
+            },
+        ),
+    }
+
+
 def _run_lean_engine_replay(
     *,
     episode: PortfolioEpisode,
@@ -7651,10 +7804,46 @@ def _run_lean_engine_replay(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    persona_conflict_resolution: Mapping[str, Any],
+    generated_at: str,
 ) -> dict[str, Any]:
     artifact_id = f"reg-{SMOKE_STRATEGY_ID}-{SMOKE_VERSION}"
     final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
     packet_ref = f"lean-strategy-packet://{episode.case_id}/generation2"
+    strategy_packet = {
+        "packet_ref": packet_ref,
+        "policy_id": final_policy["policy_id"],
+        "policy_version": final_policy["policy_version"],
+        "generation": final_policy["generation"],
+        "evolution_decision_id": evolution_decision.decision_id,
+        "portfolio_instruments": [window.instrument for window in episode.windows],
+        "validation_signature": episode.validation_signature,
+        "source_outcome_window": final_oos_step["source_outcome_window"],
+        "validation_window": final_oos_step["validation_window"],
+        "decision_trace_ref": final_oos_step["decision_trace_ref"],
+        "strict_oos_proof_ref": strict_oos_evolution_proof["proof_ref"],
+        "no_leakage_protocol_ref": f"no-leakage://{no_leakage_protocol['protocol_id']}",
+        "evolution_trajectory_ref": f"trajectory://{evolution_trajectory['trajectory_id']}",
+        "future_holdout_score": final_evaluation["score"],
+        "future_holdout_improvement": final_oos_step["score_improvement"],
+        "validation_window_unseen_by_decision": final_oos_step[
+            "validation_window_unseen_by_decision"
+        ],
+        "future_window_hidden": final_oos_step["future_window_hidden"],
+        "strict_oos_replay_passed": strict_oos_evolution_proof["status"] == "passed"
+        and all(strict_oos_evolution_proof["replay"].values()),
+        "no_leakage_replay_passed": no_leakage_protocol["replay"][
+            "future_holdout_hidden_until_evaluation"
+        ]
+        and all(no_leakage_protocol["replay"].values()),
+    }
+    packet_targets = _build_lean_object_store_packet_targets(
+        episode=episode,
+        final_policy=final_policy,
+        persona_conflict_resolution=persona_conflict_resolution,
+        strategy_packet_ref=packet_ref,
+        generated_at=generated_at,
+    )
     plan = {
         "plan_id": f"lean-plan-{episode.case_id}",
         "approval_decision_id": f"lean-approval-{episode.case_id}",
@@ -7675,8 +7864,21 @@ def _run_lean_engine_replay(
         deployment_mode="paper",
         persona_capital_binding_id=f"pcb-usability-{_persona_id(episode.persona)}",
     )
-    result = run_algorithm_smoke_from_binding(plan, binding).to_dict()
+    result = run_algorithm_smoke_from_binding(
+        plan,
+        binding,
+        strategy_packet=strategy_packet,
+        packet_targets=packet_targets,
+    ).to_dict()
     runtime_context = dict(result["runtime_context"])
+    readback_targets = list(result.get("loaded_packet_targets", []))
+    loaded_signal = dict(result.get("loaded_signal", {}))
+    object_store_packet_readback = _build_lean_object_store_packet_readback(
+        episode=episode,
+        strategy_packet=strategy_packet,
+        packet_targets=packet_targets,
+        result=result,
+    )
     return {
         "replay_id": f"lean-engine-replay-{episode.case_id}",
         "model_id": LEAN_ENGINE_REPLAY_MODEL_ID,
@@ -7685,32 +7887,16 @@ def _run_lean_engine_replay(
         else "failed",
         "algorithm_module": "pantheon_algo.smoke_loader_test",
         "case_specific_runtime_binding": True,
-        "case_specific_strategy_packet": {
-            "packet_ref": packet_ref,
-            "policy_id": final_policy["policy_id"],
-            "policy_version": final_policy["policy_version"],
-            "generation": final_policy["generation"],
-            "evolution_decision_id": evolution_decision.decision_id,
-            "portfolio_instruments": [window.instrument for window in episode.windows],
-            "validation_signature": episode.validation_signature,
-            "source_outcome_window": final_oos_step["source_outcome_window"],
-            "validation_window": final_oos_step["validation_window"],
-            "decision_trace_ref": final_oos_step["decision_trace_ref"],
-            "strict_oos_proof_ref": strict_oos_evolution_proof["proof_ref"],
-            "no_leakage_protocol_ref": f"no-leakage://{no_leakage_protocol['protocol_id']}",
-            "evolution_trajectory_ref": f"trajectory://{evolution_trajectory['trajectory_id']}",
-            "future_holdout_score": final_evaluation["score"],
-            "future_holdout_improvement": final_oos_step["score_improvement"],
-            "validation_window_unseen_by_decision": final_oos_step[
-                "validation_window_unseen_by_decision"
-            ],
-            "future_window_hidden": final_oos_step["future_window_hidden"],
-            "strict_oos_replay_passed": strict_oos_evolution_proof["status"] == "passed"
-            and all(strict_oos_evolution_proof["replay"].values()),
-            "no_leakage_replay_passed": no_leakage_protocol["replay"][
-                "future_holdout_hidden_until_evaluation"
-            ]
-            and all(no_leakage_protocol["replay"].values()),
+        "case_specific_strategy_packet": strategy_packet,
+        "case_specific_packet_targets": packet_targets,
+        "lean_object_store_packet_readback": object_store_packet_readback,
+        "loaded_signal": {
+            "signal_id": loaded_signal.get("signal_id"),
+            "symbol": loaded_signal.get("symbol"),
+            "quantity": loaded_signal.get("quantity"),
+            "quantity_type": loaded_signal.get("quantity_type"),
+            "order_type": loaded_signal.get("order_type"),
+            "source_target_ref": readback_targets[0].get("target_ref") if readback_targets else None,
         },
         "plan": {
             "plan_id": plan["plan_id"],
@@ -8370,6 +8556,12 @@ def _build_evolved_strategy_packet_proof(
             == strategy_packet_ref
             and lean_engine_replay.get("case_specific_strategy_packet", {}).get("policy_id")
             == final_policy.get("policy_id")
+            and lean_engine_replay.get("lean_object_store_packet_readback", {}).get("packet_ref")
+            == strategy_packet_ref
+            and lean_engine_replay.get("lean_object_store_packet_readback", {}).get("status")
+            == "passed"
+            and lean_engine_replay.get("lean_object_store_packet_readback", {}).get("target_count")
+            == PORTFOLIO_LEG_COUNT
         ),
         "handoff_consumes_same_packet": (
             lean_handoff.get("strategy_packet_ref") == strategy_packet_ref
@@ -8998,7 +9190,22 @@ def _lean_engine_result_is_usable(
 ) -> bool:
     runtime_context = result.get("runtime_context", {})
     loaded_metadata = result.get("loaded_metadata", {})
+    loaded_packet = result.get("loaded_strategy_packet", {})
+    loaded_targets = result.get("loaded_packet_targets", [])
+    loaded_signal = result.get("loaded_signal", {})
     object_store_keys = set(result.get("object_store_keys", []))
+    packet_readback_valid = True
+    if loaded_packet:
+        packet_readback_valid = bool(
+            len(loaded_targets) == PORTFOLIO_LEG_COUNT
+            and loaded_signal.get("signal_id") == loaded_targets[0].get("signal_id")
+            and loaded_signal.get("symbol") == loaded_targets[0].get("execution_symbol")
+            and all(
+                target.get("signal", {}).get("metadata", {}).get("strategy_packet_ref")
+                == loaded_packet.get("packet_ref")
+                for target in loaded_targets
+            )
+        )
     return bool(
         runtime_context.get("runtime_binding_id") == binding.binding_id
         and runtime_context.get("runtime_id") == binding.runtime_id
@@ -9013,6 +9220,43 @@ def _lean_engine_result_is_usable(
         and result.get("broker_production_live_enabled") == "false"
         and any(key.endswith("/artifact.bin") for key in object_store_keys)
         and any(key.endswith("/metadata.json") for key in object_store_keys)
+        and packet_readback_valid
+    )
+
+
+def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) -> bool:
+    replay = readback.get("replay", {})
+    target_signal_ids = list(readback.get("target_signal_ids", []))
+    target_refs = list(readback.get("target_refs", []))
+    first_signal_id = target_signal_ids[0] if target_signal_ids else None
+    first_target_ref = target_refs[0] if target_refs else None
+    return bool(
+        readback.get("model_id") == LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID
+        and readback.get("status") == "passed"
+        and readback.get("packet_ref", "").startswith("lean-strategy-packet://")
+        and readback.get("packet_hash") == readback.get("source_packet_hash")
+        and readback.get("artifact_payload_checksum")
+        and readback.get("target_count") == PORTFOLIO_LEG_COUNT
+        and len(target_refs) == PORTFOLIO_LEG_COUNT
+        and len(target_signal_ids) == PORTFOLIO_LEG_COUNT
+        and readback.get("loaded_signal_id") == first_signal_id
+        and readback.get("loaded_signal_source_target_ref") == first_target_ref
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "packet_present_in_object_store_artifact",
+            "packet_ref_matches_case_strategy_packet",
+            "packet_hash_matches_persona_packet",
+            "target_count_matches_portfolio",
+            "all_targets_have_signals",
+            "all_targets_bind_strategy_packet_ref",
+            "target_refs_unique",
+            "loaded_signal_from_first_packet_target",
+            "loaded_signal_symbol_matches_first_target",
+            "loaded_signal_quantity_matches_first_target",
+            "algorithm_executed_loaded_packet_signal",
+            "object_store_keys_include_packet_artifact_and_metadata",
+            "paper_only_guard_retained",
+        ))
     )
 
 
@@ -9020,6 +9264,8 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
     runtime_context = replay.get("runtime_context", {})
     loaded_metadata = replay.get("loaded_metadata", {})
     strategy_packet = replay.get("case_specific_strategy_packet", {})
+    packet_targets = replay.get("case_specific_packet_targets", [])
+    packet_readback = replay.get("lean_object_store_packet_readback", {})
     return bool(
         replay.get("model_id") == LEAN_ENGINE_REPLAY_MODEL_ID
         and replay.get("status") == "passed"
@@ -9044,6 +9290,8 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
         and strategy_packet.get("evolution_trajectory_ref", "").startswith("trajectory://")
         and strategy_packet.get("strict_oos_replay_passed") is True
         and strategy_packet.get("no_leakage_replay_passed") is True
+        and len(packet_targets) == PORTFOLIO_LEG_COUNT
+        and _lean_object_store_packet_readback_is_usable(packet_readback)
     )
 
 
@@ -11545,6 +11793,12 @@ def _diagnose_validation_execution(
                 "replay_id": operational_context["lean_engine_replay"]["replay_id"],
                 "runtime_binding_id": operational_context["lean_engine_replay"]["runtime_context"]["runtime_binding_id"],
                 "fill_count": operational_context["lean_engine_replay"]["fill_count"],
+                "packet_readback_id": operational_context["lean_engine_replay"][
+                    "lean_object_store_packet_readback"
+                ]["readback_id"],
+                "packet_target_count": operational_context["lean_engine_replay"][
+                    "lean_object_store_packet_readback"
+                ]["target_count"],
             },
         ),
         _diagnostic_check(
@@ -12016,6 +12270,10 @@ def _build_summary(
     lean_packet_execution_projections = [
         case["operational_context"]["lean_packet_execution_projection"] for case in cases
     ]
+    lean_object_store_packet_readbacks = [
+        case["operational_context"]["lean_engine_replay"]["lean_object_store_packet_readback"]
+        for case in cases
+    ]
     lean_runtime_feedbacks = [
         case["operational_context"]["lean_runtime_feedback"] for case in cases
     ]
@@ -12096,6 +12354,23 @@ def _build_summary(
         }),
         "lean_engine_algorithm_modules": sorted({
             case["operational_context"]["lean_engine_replay"]["algorithm_module"] for case in cases
+        }),
+        "lean_object_store_packet_readback_models": sorted({
+            readback["model_id"] for readback in lean_object_store_packet_readbacks
+        }),
+        "lean_object_store_packet_readback_target_counts": sorted({
+            readback["target_count"] for readback in lean_object_store_packet_readbacks
+        }),
+        "lean_object_store_packet_readback_loaded_signal_sources": sorted({
+            "first_packet_target"
+            for readback in lean_object_store_packet_readbacks
+            if readback["loaded_signal_id"] == readback["target_signal_ids"][0]
+        }),
+        "lean_object_store_packet_readback_replay_flags": sorted({
+            flag
+            for readback in lean_object_store_packet_readbacks
+            for flag, value in readback["replay"].items()
+            if value is True
         }),
         "lean_packet_execution_projection_models": sorted({
             projection["model_id"] for projection in lean_packet_execution_projections
@@ -12859,6 +13134,20 @@ def _build_summary(
         "restart_recovery_count": sum(1 for item in usable if item["restart_recovery_restores_loop"]),
         "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
         "lean_engine_replay_count": sum(1 for item in usable if item["lean_engine_replay_uses_runtime_binding"]),
+        "lean_object_store_packet_readback_count": len(lean_object_store_packet_readbacks),
+        "lean_object_store_packet_readback_pass_count": sum(
+            1
+            for readback in lean_object_store_packet_readbacks
+            if _lean_object_store_packet_readback_is_usable(readback)
+        ),
+        "lean_object_store_packet_readback_target_count": sum(
+            readback["target_count"] for readback in lean_object_store_packet_readbacks
+        ),
+        "lean_object_store_loaded_signal_from_packet_target_count": sum(
+            1
+            for readback in lean_object_store_packet_readbacks
+            if readback["loaded_signal_id"] == readback["target_signal_ids"][0]
+        ),
         "lean_packet_execution_projection_count": len(lean_packet_execution_projections),
         "lean_packet_execution_projection_pass_count": sum(
             1
@@ -12977,6 +13266,7 @@ def _build_summary(
             "Every broker adapter response triggers a scenario-specific persona follow-up action before the next autonomous paper cycle.",
             "Every LEAN runtime response is consumed by the persona and drives a scenario-specific next OODA action with runtime binding, object-store readback, and handoff refs.",
             "Every case proves the generation-2 strict-OOS evolved strategy packet reaches LEAN handoff, runtime bundle refs, and runtime feedback with future-holdout provenance intact.",
+            "Every case materializes the evolved multi-leg strategy packet into the LEAN Object Store and proves the smoke algorithm loaded its first target signal from that packet artifact.",
             "Every case projects each generation-2 strategy packet leg into a LEAN-side target/order/fill/readback chain and feeds that projection into persona runtime feedback.",
             "Every case replays scheduler and multi-persona conflict causality from recovered schedule tick through resolved allocation, LEAN handoff, adapter/runtime feedback, and next-cycle dispatch.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",

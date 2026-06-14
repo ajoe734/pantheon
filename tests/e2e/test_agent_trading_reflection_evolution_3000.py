@@ -22,6 +22,7 @@ from services.persona.agent_usability_validation import (
     HOLDOUT_BARS,
     LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID,
     LEAN_ENGINE_REPLAY_MODEL_ID,
+    LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID,
     LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID,
     LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO,
     LEAN_RUNTIME_FEEDBACK_MODEL_ID,
@@ -206,6 +207,10 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["restart_recovery_count"] == DEFAULT_CASE_COUNT
     assert summary["autonomous_scheduler_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_engine_replay_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_object_store_packet_readback_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_object_store_packet_readback_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_object_store_packet_readback_target_count"] == DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
+    assert summary["lean_object_store_loaded_signal_from_packet_target_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_packet_execution_projection_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_packet_execution_projection_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_packet_execution_projection_leg_count"] == DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
@@ -321,6 +326,29 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert set(coverage["scheduler_phases"]) == set(AUTONOMOUS_SCHEDULER_PHASES)
     assert coverage["lean_engine_replay_models"] == [LEAN_ENGINE_REPLAY_MODEL_ID]
     assert coverage["lean_engine_algorithm_modules"] == ["pantheon_algo.smoke_loader_test"]
+    assert coverage["lean_object_store_packet_readback_models"] == [
+        LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID
+    ]
+    assert coverage["lean_object_store_packet_readback_target_counts"] == [PORTFOLIO_LEG_COUNT]
+    assert coverage["lean_object_store_packet_readback_loaded_signal_sources"] == [
+        "first_packet_target"
+    ]
+    assert set(coverage["lean_object_store_packet_readback_replay_flags"]) == {
+        "algorithm_executed_loaded_packet_signal",
+        "all_targets_bind_strategy_packet_ref",
+        "all_targets_have_signals",
+        "loaded_signal_from_first_packet_target",
+        "loaded_signal_quantity_matches_first_target",
+        "loaded_signal_symbol_matches_first_target",
+        "object_store_keys_include_packet_artifact_and_metadata",
+        "packet_hash_matches_persona_packet",
+        "packet_present_in_object_store_artifact",
+        "packet_ref_matches_case_strategy_packet",
+        "paper_only_guard_retained",
+        "replayable",
+        "target_count_matches_portfolio",
+        "target_refs_unique",
+    }
     assert coverage["lean_packet_execution_projection_models"] == [
         LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
     ]
@@ -3029,6 +3057,44 @@ def _assert_operational_context(case: dict) -> None:
     assert replay["broker_production_live_enabled"] == "false"
     assert any(key.endswith("/artifact.bin") for key in replay["object_store_keys"])
     assert any(key.endswith("/metadata.json") for key in replay["object_store_keys"])
+
+    packet_readback = replay["lean_object_store_packet_readback"]
+    assert packet_readback["model_id"] == LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID
+    assert packet_readback["status"] == "passed"
+    assert packet_readback["packet_ref"] == replay["case_specific_strategy_packet"]["packet_ref"]
+    assert packet_readback["packet_hash"] == packet_readback["source_packet_hash"]
+    assert packet_readback["artifact_payload_checksum"]
+    assert packet_readback["target_count"] == PORTFOLIO_LEG_COUNT
+    assert len(packet_readback["target_refs"]) == PORTFOLIO_LEG_COUNT
+    assert len(packet_readback["target_signal_ids"]) == PORTFOLIO_LEG_COUNT
+    assert len(packet_readback["target_symbols"]) == PORTFOLIO_LEG_COUNT
+    assert packet_readback["loaded_signal_id"] == packet_readback["target_signal_ids"][0]
+    assert packet_readback["loaded_signal_symbol"] == packet_readback["target_symbols"][0]
+    assert packet_readback["loaded_signal_source_target_ref"] == packet_readback["target_refs"][0]
+    assert packet_readback["object_store_keys"] == replay["object_store_keys"]
+    assert all(packet_readback["replay"].values())
+    assert packet_readback["input_hash"]
+
+    assert replay["loaded_signal"]["signal_id"] == packet_readback["loaded_signal_id"]
+    assert replay["loaded_signal"]["symbol"] == packet_readback["loaded_signal_symbol"]
+    assert replay["loaded_signal"]["source_target_ref"] == packet_readback["loaded_signal_source_target_ref"]
+    assert replay["case_specific_packet_targets"][0]["signal_id"] == replay["loaded_signal"]["signal_id"]
+    assert replay["case_specific_packet_targets"][0]["execution_symbol"] == replay["loaded_signal"]["symbol"]
+    assert [target["target_ref"] for target in replay["case_specific_packet_targets"]] == (
+        packet_readback["target_refs"]
+    )
+    assert [target["signal_id"] for target in replay["case_specific_packet_targets"]] == (
+        packet_readback["target_signal_ids"]
+    )
+    for target in replay["case_specific_packet_targets"]:
+        assert target["generation"] == 2
+        assert target["instrument"] in case["portfolio"]["instruments"]
+        assert target["signal"]["metadata"]["strategy_packet_ref"] == packet_readback["packet_ref"]
+        assert target["signal"]["metadata"]["packet_target_ref"] == target["target_ref"]
+        assert target["signal"]["metadata"]["lean_object_store_readback_model_id"] == (
+            LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID
+        )
+        assert target["signal"]["metadata"]["source_dataset_ref"] == HISTORICAL_OHLCV_DATASET_ID
 
     sandbox = operational["shioaji_sandbox_lifecycle"]
     assert sandbox["model_id"] == SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID
