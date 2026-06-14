@@ -1,0 +1,43 @@
+{
+  "event_id": "evt-devloop-reconcile-live-001",
+  "event_type": "runtime.telemetry.metric_window",
+  "generated_at": "2026-06-14T14:00:00Z",
+  "deployment_stage": "live",
+  "binding_id": "rtb-devloop-reconcile-001",
+  "runtime_id": "runtime-devloop-reconcile-001",
+  "deployment_plan_id": "plan-devloop-reconcile-001",
+  "artifact_id": "artifact-devloop-reconcile-001",
+  "artifact_version": "1.0.0",
+  "capital_pool_id": "pool-devloop-reconcile-001",
+  "persona_capital_binding_id": "pcb-devloop-reconcile-001",
+  "trace_id": "trace-devloop-reconcile-001",
+  "baseline_ref": "paper-baseline-devloop-reconcile-001",
+  "current_ref": "live-window-devloop-reconcile-001",
+  "metrics": {
+    "pnl": 35.0,
+    "avg_slippage_bps": 4.8,
+    "drawdown": 0.12
+  },
+  "baseline_metrics": {
+    "pnl": 100.0,
+    "avg_slippage_bps": 2.0,
+    "drawdown": 0.05
+  },
+  "thresholds": {
+    "pnl": {
+      "warning_relative_delta": 0.2,
+      "critical_relative_delta": 0.5
+    },
+    "avg_slippage_bps": {
+      "warning_relative_delta": 0.25,
+      "critical_relative_delta": 0.5
+    },
+    "drawdown": {
+      "warning_relative_delta": 0.2,
+      "critical_relative_delta": 0.5
+    }
+  },
+  "evidence_refs": [
+    "fixture:services/reconciliation-drift/fixtures/devloop-drift-telemetry-event.json"
+  ]
+}

@@ -10,6 +10,7 @@ Covers:
 """
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -22,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from fastapi.testclient import TestClient
 
 from services.incident.reference_validation import CanonicalReferenceError
+from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
 from services.incidents.main import app, store
 
 
@@ -37,17 +39,26 @@ def clean_store(monkeypatch):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAllValidator())
-    store._incidents.clear()
-    store._postmortems.clear()
+    _reset_store()
     yield
+    _reset_store()
+
+
+def _reset_store():
     store._incidents.clear()
     store._postmortems.clear()
+    path = getattr(store, "_path", None)
+    if path is not None and path.exists():
+        path.unlink()
+    if hasattr(store, "_loaded_mtime_ns"):
+        store._loaded_mtime_ns = None
 
 
 client = TestClient(app)
 
 _BINDING_ID = "binding-abc"
 _INCIDENT_ID = f"inc-test-{uuid.uuid4().hex[:8]}"
+_THRESHOLD_FIXTURE_PATH = Path(__file__).with_name("fixtures") / "threshold_breach_telemetry.json"
 
 _BASE_PAYLOAD = {
     "incident_id": _INCIDENT_ID,
@@ -64,6 +75,10 @@ _BASE_PAYLOAD = {
     "runtime_id": "runtime-001",
     "trace_id": "trace-001",
 }
+
+
+def _threshold_fixture():
+    return json.loads(_THRESHOLD_FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +148,69 @@ def test_create_incident_missing_binding_id():
     payload["incident_id"] = f"inc-{uuid.uuid4().hex[:8]}"
     r = client.post("/api/incidents", json=payload)
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# POST /api/incidents/consume-threshold — telemetry threshold consumer
+# ---------------------------------------------------------------------------
+
+def test_threshold_consumer_fixture_creates_incident_case():
+    payload = _threshold_fixture()
+    result = ThresholdTelemetryIncidentConsumer(incident_store=store).consume(payload)
+
+    assert result.created is True
+    incident = result.incident
+    telemetry = payload["telemetry_event"]
+    assert incident.incident_id == payload["incident_id"]
+    assert incident.binding_id == telemetry["runtime_binding_id"]
+    assert incident.deployment_stage == "paper"
+    assert incident.deployment_plan_id == telemetry["deployment_plan_id"]
+    assert incident.capital_pool_id == telemetry["capital_pool_id"]
+    assert incident.persona_capital_binding_id == telemetry["persona_capital_binding_id"]
+    assert incident.artifact_id == telemetry["artifact_id"]
+    assert incident.artifact_version == telemetry["artifact_version"]
+    assert incident.runtime_id == telemetry["runtime_id"]
+    assert incident.trace_id == telemetry["trace_id"]
+    assert incident.severity == "high"
+    assert incident.telemetry_event_ids == [telemetry["event_id"]]
+    assert "threshold_metric=rolling_drawdown_multiple" in (incident.evidence_summary or "")
+    assert store.get_incident(payload["incident_id"]) is not None
+
+
+def test_consume_threshold_route_creates_incident_case():
+    payload = _threshold_fixture()
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+    assert r.status_code == 201, r.text
+
+    body = r.json()
+    telemetry = payload["telemetry_event"]
+    assert body["incident_id"] == payload["incident_id"]
+    assert body["binding_id"] == telemetry["runtime_binding_id"]
+    assert body["deployment_stage"] == "paper"
+    assert body["telemetry_event_ids"] == [telemetry["event_id"]]
+    assert "threshold_metric=rolling_drawdown_multiple" in body["evidence_summary"]
+
+
+def test_consume_threshold_route_idempotent_replay_returns_existing():
+    payload = _threshold_fixture()
+    first = client.post("/api/incidents/consume-threshold", json=payload)
+    second = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert second.json()["incident_id"] == payload["incident_id"]
+    assert len(store.list_incidents()) == 1
+
+
+def test_consume_threshold_route_rejects_unbreached_threshold():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-unbreached-threshold"
+    payload["threshold_snapshot"]["breached"] = False
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert store.get_incident("inc-unbreached-threshold") is None
 
 
 # ---------------------------------------------------------------------------
