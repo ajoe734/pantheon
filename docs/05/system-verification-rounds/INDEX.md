@@ -37,3 +37,4 @@ Each loop is tracked as a 3-state cell: **design has / API has / actually runs**
 | # | Path tested | Gap found | Fix | Status |
 |---|-------------|-----------|-----|--------|
 | 001 | Loop #7 / #11 - FE<->BFF deployment-config & integration-probe integrity | Test/probe/CI/env defaults still pointed at dead pre-migration BFF IP 34.81.75.241 | Repoint 10 operational files to live 35.201.239.38 | shipped -> dev |
+| 002 | Loops #1-#16 — parallel contract-coverage audit (4 sub-agents) vs live openapi+probe | Confirmed 404 feature gaps (allocation/deployment-policies/kill-switch-activate); systemic 422-before-401 on ~81 GET endpoints; 1 sub-agent claim (canary enum) FALSIFIED | Audit archived; substantive gaps escalated (design decisions, not auto-fixed); no 5xx, uniform fail-closed | shipped -> dev |
