@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "task_id": "DEVLOOP-REPLAY-RUN",
+  "archived_at": "2026-06-14T14:43:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "DEVLOOP-REPLAY-RUN",
+    "title": "Implement scripts/run_golden_replay.py (runbook 5.5)",
+    "summary_zh": "依 GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md 5.5 實作 scripts/run_golden_replay.py:載入 frozen DatasetVersion、跑五階段 decision chain、activate RuntimeBinding(paper)、capture telemetry、輸出 output manifest。新檔,獨立。",
+    "phase": "Parallel / acceptance",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "scripts/run_golden_replay.py",
+      "GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md"
+    ],
+    "acceptance": [
+      "run_golden_replay.py 可跑 scenario 1/2 並輸出 manifest 到 --output-dir;與 runbook Step 4 對齊"
+    ],
+    "next": "Closeout complete: script scripts/run_golden_replay.py delivered at 6c70afa6, reviewed and approved by Claude (10/10 and 11/11 criteria), review artifact committed, PR #1570 merged into dev.",
+    "last_update": "2026-06-14T14:43:09Z",
+    "auto_created_by": "dispatch_devloop_parallel_2026-06-14",
+    "review_notes_zh": [
+      "審查通過",
+      "兩個 scenario 均執行通過 (10/10 和 11/11 criteria)，manifest 五個檔案齊備，fixtures 與 runbook §3/§4 完全吻合。EX-001 deferred 處理正確。minor: step4 non-approved path 未呼叫 _record_verdict，但 chain 檔案存在時不可達，不影響通過。"
+    ],
+    "review_file": ".orchestrator/reviews/DEVLOOP-REPLAY-RUN-review-Claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-14T14:43:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/devloop-replay-run",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/DEVLOOP-REPLAY-RUN",
+      "git_clean_required": false,
+      "commit": "b970a3a86e3dcc491b3e3cae8b45332c341d3748",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/DEVLOOP-REPLAY-RUN",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/DEVLOOP-REPLAY-RUN",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2d071a15ce9d3474076d369c396f920cad6fd38c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "DEVLOOP-REPLAY-RUN",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "scripts/run_golden_replay.py implemented per runbook §5.5. Both scenarios pass: replay-golden-001 (10/10 criteria), replay-golden-002 (11/11 criteria). Commit 6c70afa6. Ready for review.",
+      "status": "done",
+      "created_at": "2026-06-14T14:22:18Z",
+      "resolved_at": "2026-06-14T14:30:17Z"
+    },
+    {
+      "task_id": "DEVLOOP-REPLAY-RUN",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: both scenarios PASSED (10/10 and 11/11 criteria), all 5 manifest files produced, fixtures match runbook §3/§4 exactly. Returned to Claude2 for finalization.",
+      "status": "done",
+      "created_at": "2026-06-14T14:30:17Z",
+      "resolved_at": "2026-06-14T14:43:10Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-14T14:14:08Z",
+  "updated_at": "2026-06-14T14:43:09Z",
   "counts": {
-    "total": 1479,
-    "completed": 1451,
+    "total": 1480,
+    "completed": 1452,
     "superseded": 28
   },
   "recent_terminal_ids": [
+    "DEVLOOP-REPLAY-RUN",
     "DEVLOOP-L1-002",
     "DEVLOOP-L2-002",
     "DEVLOOP-L2-001",
@@ -25,7 +26,6 @@
     "INTEGRATION-UNBLOCK-DATASTRAT-SEEDFLOW-001-MISSING-PR",
     "INTEGRATION-UNBLOCK-DATASTRAT-IDS-001-MISSING-PR",
     "DATASTRAT-IDS-003",
-    "task_08e9be7e68d0",
-    "task_c83b0fd8b087"
+    "task_08e9be7e68d0"
   ]
 }
