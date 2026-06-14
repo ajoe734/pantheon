@@ -1,0 +1,47 @@
+# System Verification Campaign — 2026-06-14
+
+An independent, multi-round verification campaign over the live Pantheon dev
+system and its supporting code/state planes. Each round produces an archived
+**plan** and **results** document; any fixes follow the normal dev workflow
+(isolated worktree off `origin/dev` → branch → patch → test → commit → push →
+PR → merge `dev`).
+
+The campaign deliberately goes **deeper and broader** each round.
+
+## Operating rules
+
+1. **No duplication.** Before each round, check the dedup ledger and the
+   prior-art list below. A round must add a verification angle not already
+   covered by existing docs or fleet tasks.
+2. **Evidence-first.** Every claim in a results doc is backed by a captured
+   probe (curl/test output, file inspection) with UTC timestamps.
+3. **Fixes via dev workflow.** Code fixes land on a branch and PR, never edited
+   directly in the orchestrator-churned main tree.
+4. **Independence.** This campaign verifies; it does not re-implement the
+   fleet's in-flight build-gap work (signal producers, market data, real
+   artifacts). When verification surfaces a fleet-owned gap, it is recorded as
+   a finding, not re-worked here.
+
+## Prior art reviewed (to avoid duplication)
+
+| Area | Existing doc(s) | Date | This campaign's distinct angle |
+|---|---|---|---|
+| Runtime/reconciliation verification | `docs/deployment/runtime-verification-*` | 2026-04-28 | Live-stack control-plane health on 06-14, post-GCP-migration IPs |
+| Cross-repo SD verify | `docs/reviews/2026-04-2x-cross-repo-sd-verify-001-*` | 2026-04-2x | N/A (sidecar acceptance) |
+| BFF API gap audits | `docs/04/pantheon_bff_api_gap_*` | 2026-05-2x | Contract-surface liveness, not gap enumeration |
+| FE/BE integration blueprint | `docs/testing/Pantheon_FE_BE_Integration_Test_Blueprint_2026-05-10.md` | 2026-05-10 | Live probes against deployed dev, not a test blueprint |
+| CI verification | `docs/04/pantheon_sa/SA-18_v2_test_ci_verification_*` | — | Targeted service-suite runs, not CI design |
+
+## Round ledger
+
+| # | Theme | Plan | Results | Fix |
+|---|---|---|---|---|
+| 1 | Live dev stack reachability & control-plane health | [round-01-plan.md](round-01-plan.md) | [round-01-results.md](round-01-results.md) | OODA card false-green when source missing (this branch) |
+| 2 | _(planned at end of round 1, deeper/broader)_ | — | — | — |
+
+## Environment under test
+
+- Dev FE: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
+- Dev BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
+- Stub auth (dev): `Authorization: Bearer op-dev:admin:mfa` (any role-bearing
+  stub token; dev BFF runs stub auth)
