@@ -41,6 +41,7 @@ if str(_CP_GOV) not in sys.path:
 from fastapi.testclient import TestClient  # noqa: E402
 
 from services.evolution import main as evo_main  # noqa: E402
+from services.evolution import scheduler_worker  # noqa: E402
 from services.evolution.main import app  # noqa: E402
 
 # ---- Incident domain objects (for seeding postmortems in tests) ----
@@ -1184,6 +1185,39 @@ def test_daily_sweep_respects_cooldown_for_same_target_after_execute():
     assert item["status"] == "cooldown_blocked"
     assert item["active_decision_id"] == decision_id
     assert "cooldown/observation" in item["reason"]
+
+
+def test_scheduler_worker_posts_daily_sweep_tick(monkeypatch):
+    seen: dict[str, Any] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"created_decisions": 0, "cooldown_blocked": 0}'
+
+    def fake_urlopen(request, timeout):
+        seen["url"] = request.full_url
+        seen["timeout"] = timeout
+        seen["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(scheduler_worker.urllib.request, "urlopen", fake_urlopen)
+
+    result = scheduler_worker.run_tick(
+        api_url="http://evolution:8093",
+        max_incidents=7,
+        timeout_seconds=4.0,
+    )
+
+    assert seen["url"] == "http://evolution:8093/api/evolution/daily-sweep"
+    assert seen["timeout"] == 4.0
+    assert seen["payload"] == {"sweep_id": "scheduled-daily", "max_incidents": 7}
+    assert result["created_decisions"] == 0
 
 
 # ---------------------------------------------------------------------------
