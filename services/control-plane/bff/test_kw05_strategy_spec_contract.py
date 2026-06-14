@@ -475,7 +475,7 @@ def test_kw05_compare_rejects_missing_duplicate_and_noncomparable_versions() -> 
             headers={"Authorization": OPERATOR_TOKEN},
         )
         assert duplicate_response.status_code == 422, duplicate_response.text
-        assert duplicate_response.json()["error"]["code"] == "INVALID_PARAMS"
+        assert duplicate_response.json()["error"]["code"] == "VALIDATION_FAILED"
 
         noncomparable_response = client.get(
             f"/api/v1/knowledge/strategy-specs/{DRAFT_STRATEGY_ID}/compare?left_version=v1&right_version=v2",
@@ -483,5 +483,5 @@ def test_kw05_compare_rejects_missing_duplicate_and_noncomparable_versions() -> 
         )
         assert noncomparable_response.status_code == 422, noncomparable_response.text
         payload = noncomparable_response.json()
-        assert payload["error"]["code"] == "INVALID_STATE"
+        assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
         assert payload["error"]["details"]["precondition_failed"] == "lifecycle_state"

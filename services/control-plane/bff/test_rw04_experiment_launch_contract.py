@@ -93,7 +93,7 @@ def test_rw04_launch_rejects_missing_ticket_id() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 422, response.text
-        assert response.json()["error"]["code"] == "INVALID_PARAMS"
+        assert response.json()["error"]["code"] == "VALIDATION_FAILED"
 
 
 def test_rw04_launch_rejects_invalid_execution_mode() -> None:
@@ -161,7 +161,7 @@ def test_rw04_list_rejects_invalid_status() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 422, response.text
-        assert response.json()["error"]["code"] == "INVALID_PARAMS"
+        assert response.json()["error"]["code"] == "VALIDATION_FAILED"
 
 
 def test_rw04_list_summary_can_cancel_invariant() -> None:
@@ -246,7 +246,7 @@ def test_rw04_detail_404_for_missing_experiment() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 404
-        assert response.json()["error"]["code"] == "OBJECT_NOT_FOUND"
+        assert response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +298,7 @@ def test_rw04_cancel_terminal_experiment_rejects() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 409, response.text
-        assert response.json()["error"]["code"] == "INVALID_STATE"
+        assert response.json()["error"]["code"] == "OPERATION_NOT_ALLOWED"
 
 
 def test_rw04_cancel_requires_reason() -> None:
@@ -415,4 +415,4 @@ def test_rw04_no_fallback_missing_experiment_returns_404() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert resp.status_code == 404
-        assert resp.json()["error"]["code"] == "OBJECT_NOT_FOUND"
+        assert resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"

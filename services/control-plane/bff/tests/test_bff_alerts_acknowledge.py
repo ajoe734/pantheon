@@ -118,7 +118,7 @@ def test_acknowledge_unknown_alert_returns_404_when_surface_available(monkeypatc
     )
     assert resp.status_code == 404, resp.text
     detail = resp.json()["detail"]
-    assert detail["error"]["code"] == "OBJECT_NOT_FOUND"
+    assert detail["error"]["code"] == "RESOURCE_NOT_FOUND"
     assert detail["error"]["details"].get("precondition_failed") == "alert_id"
 
 
@@ -131,7 +131,7 @@ def test_acknowledge_body_idempotency_key_rejected(monkeypatch, seeded_alerts) -
     )
     assert resp.status_code == 400
     detail = resp.json()["detail"]
-    assert detail["error"]["code"] == "INVALID_REQUEST"
+    assert detail["error"]["code"] == "VALIDATION_FAILED"
 
 
 def test_acknowledge_response_has_tracking_url(monkeypatch, seeded_alerts) -> None:

@@ -80,7 +80,7 @@ def test_patch_bff_me_locale_missing_locale_returns_400(monkeypatch) -> None:
 
     assert response.status_code == 400
     detail = response.json()["detail"]
-    assert detail["error"]["code"] == "INVALID_PARAMS"
+    assert detail["error"]["code"] == "VALIDATION_FAILED"
     assert detail["error"]["details"]["precondition_failed"] == "locale"
 
 
@@ -94,4 +94,4 @@ def test_patch_bff_me_locale_invalid_locale_tag_returns_400(monkeypatch) -> None
 
     assert response.status_code == 400
     detail = response.json()["detail"]
-    assert detail["error"]["code"] == "INVALID_PARAMS"
+    assert detail["error"]["code"] == "VALIDATION_FAILED"

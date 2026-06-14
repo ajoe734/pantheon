@@ -89,9 +89,9 @@ def test_command_routes_require_header_idempotency_and_reject_body_key() -> None
         )
 
         assert missing.status_code == 400, missing.text
-        assert missing.json()["error"]["code"] == "INVALID_PARAMS"
+        assert missing.json()["error"]["code"] == "VALIDATION_FAILED"
         assert body_key.status_code == 400, body_key.text
-        assert body_key.json()["error"]["code"] == "INVALID_REQUEST"
+        assert body_key.json()["error"]["code"] == "VALIDATION_FAILED"
         assert alias.status_code == 201, alias.text
         assert alias.json()["meta"]["idempotency"]["idempotencyKey"] == "sem-002-deploy-alias"
         assert len(bff_main.command_store._get_all_commands()) == 1

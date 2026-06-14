@@ -366,7 +366,7 @@ def test_bff_dev_login_rejects_bad_client_secret(monkeypatch) -> None:
 
     assert response.status_code == 401, response.text
     error = response.json()["error"]
-    assert error["code"] == "INVALID_TOKEN"
+    assert error["code"] == "AUTH_REQUIRED"
     assert error["details"]["reason"] == "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS"
 
 
@@ -384,7 +384,7 @@ def test_bff_dev_login_disabled_for_staging_live(monkeypatch) -> None:
 
     assert response.status_code == 403, response.text
     error = response.json()["error"]
-    assert error["code"] == "PRECONDITION_NOT_MET"
+    assert error["code"] == "PRECONDITION_FAILED"
     assert error["details"]["precondition_failed"] == "dev_login"
 
 
@@ -423,7 +423,7 @@ def test_bff_me_rejects_tenant_scope_mismatch(monkeypatch) -> None:
 
     assert response.status_code == 403, response.text
     error = response.json()["error"]
-    assert error["code"] == "INSUFFICIENT_ROLE"
+    assert error["code"] == "FORBIDDEN"
     assert error["details"]["precondition_failed"] == "tenant_scope"
     assert error["details"]["tenantId"] == "tenant-gamma"
     assert error["details"]["allowedTenantIds"] == ["tenant-alpha"]
@@ -437,7 +437,7 @@ def test_bff_me_strict_auth_requires_bearer_token(monkeypatch) -> None:
 
     assert response.status_code == 401, response.text
     error = response.json()["error"]
-    assert error["code"] == "INVALID_TOKEN"
+    assert error["code"] == "AUTH_REQUIRED"
     assert error["details"]["reason"]
 
 
@@ -450,5 +450,5 @@ def test_bff_me_strict_auth_rejects_viewer_without_read_role(monkeypatch) -> Non
 
     assert response.status_code == 403, response.text
     error = response.json()["error"]
-    assert error["code"] == "INSUFFICIENT_ROLE"
+    assert error["code"] == "FORBIDDEN"
     assert error["details"]["precondition_failed"] == "role_check"

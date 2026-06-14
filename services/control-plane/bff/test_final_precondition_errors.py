@@ -90,7 +90,7 @@ def test_bff_v1_commands_missing_confirm_token_returns_428_envelope() -> None:
         _assert_precondition_error(
             response,
             status_code=428,
-            code="CONFIRM_TOKEN_REQUIRED",
+            code="CONFIRMATION_REQUIRED",
             action_id="PauseRuntime",
             entity_type="Runtime",
             entity_id="runtime-final-precondition-001",

@@ -62,7 +62,7 @@ def _install_error_envelope_test_routes() -> None:
     async def _direct_json_response_probe():
         return bff_main._pack_d_direct_error_response(
             status_code=503,
-            code="DOWNSTREAM_UNAVAILABLE",
+            code="DEPENDENCY_UNAVAILABLE",
             message="Synthetic direct response failure",
             details={"reason": "SYNTHETIC_DIRECT_RESPONSE"},
         )

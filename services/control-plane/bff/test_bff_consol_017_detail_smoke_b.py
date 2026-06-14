@@ -95,13 +95,13 @@ def _assert_typed_404(payload: dict) -> None:
     if isinstance(detail, dict):
         error = detail.get("error")
         if isinstance(error, dict):
-            assert error.get("code") == "OBJECT_NOT_FOUND"
+            assert error.get("code") == "RESOURCE_NOT_FOUND"
             return
     error = payload.get("error")
     if isinstance(error, dict):
-        assert error.get("code") == "OBJECT_NOT_FOUND"
+        assert error.get("code") == "RESOURCE_NOT_FOUND"
         return
-    assert payload.get("code") == "OBJECT_NOT_FOUND"
+    assert payload.get("code") == "RESOURCE_NOT_FOUND"
 
 
 def test_detail_smoke_b_pack_b_routes_resolve_acceptance_links() -> None:

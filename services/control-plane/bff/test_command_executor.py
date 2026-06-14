@@ -669,7 +669,7 @@ class TestExecuteCommandWithStatus(unittest.TestCase):
         self.assertEqual(status, CommandStatus.FAILED)
         self.assertIsNone(result)
         self.assertIsNotNone(error)
-        self.assertEqual(error["code"], "DOWNSTREAM_UNAVAILABLE")
+        self.assertEqual(error["code"], "DEPENDENCY_UNAVAILABLE")
 
 
 class TestRemediateSentinelInterventionExecutor(unittest.TestCase):
@@ -728,7 +728,7 @@ class TestRemediateSentinelInterventionExecutor(unittest.TestCase):
         self.assertEqual(status, CommandStatus.FAILED)
         self.assertIsNone(result)
         self.assertIsNotNone(error)
-        self.assertEqual(error["code"], "DOWNSTREAM_UNAVAILABLE")
+        self.assertEqual(error["code"], "DEPENDENCY_UNAVAILABLE")
 
     def test_remediate_sentinel_missing_intervention_id_raises(self):
         """Executor raises ValueError when intervention_id is absent."""

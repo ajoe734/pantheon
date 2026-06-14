@@ -113,5 +113,5 @@ def test_ew04_inspiration_graph_returns_404_for_unknown_artifact_even_when_datas
 
         assert response.status_code == 404, response.text
         payload = response.json()
-        assert payload["error"]["code"] == "OBJECT_NOT_FOUND"
+        assert payload["error"]["code"] == "RESOURCE_NOT_FOUND"
         assert payload["error"]["message"] == "Artifact not found"

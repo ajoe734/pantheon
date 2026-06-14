@@ -104,6 +104,6 @@ def test_evolution_journal_requires_read_authentication() -> None:
             resp = client.get("/bff/management/evolution-journal")
 
             assert resp.status_code == 401, resp.text
-            assert resp.json()["error"]["code"] == "INVALID_TOKEN"
+            assert resp.json()["error"]["code"] == "AUTH_REQUIRED"
         finally:
             bff_main.read_store = original_store

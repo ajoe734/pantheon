@@ -191,7 +191,7 @@ def test_tw01_message_route_rejects_non_active_sessions() -> None:
         assert response.status_code == 409, response.text
 
         payload = response.json()
-        assert payload["error"]["code"] == "INVALID_STATE"
+        assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
         assert payload["error"]["details"]["precondition_failed"] == "status"
 
 

@@ -105,6 +105,6 @@ def test_persona_intent_requires_read_authentication() -> None:
             resp = client.get("/bff/management/persona-intent")
 
             assert resp.status_code == 401, resp.text
-            assert resp.json()["error"]["code"] == "INVALID_TOKEN"
+            assert resp.json()["error"]["code"] == "AUTH_REQUIRED"
         finally:
             bff_main.read_store = original_store
