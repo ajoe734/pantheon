@@ -8,6 +8,7 @@ x-pantheon-compose-contract:
 
 services:
   postgres:
+    restart: unless-stopped
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -33,6 +34,7 @@ services:
       start_period: 10s
 
   minio:
+    restart: unless-stopped
     image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -68,6 +70,7 @@ services:
     restart: on-failure
 
   nats:
+    restart: unless-stopped
     image: nats:2.11-alpine
     command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
     volumes:
@@ -83,6 +86,7 @@ services:
       start_period: 10s
 
   signal-store:
+    restart: unless-stopped
     image: redis:7-alpine
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -91,6 +95,7 @@ services:
       retries: 5
 
   consultation-svc:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/consultation/Dockerfile
@@ -125,6 +130,7 @@ services:
       start_period: 5s
 
   source-ingest:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -167,6 +173,7 @@ services:
       start_period: 5s
 
   source-ingest-scheduler:
+    restart: unless-stopped
     profiles: ["source-ingest-scheduler"]
     build:
       context: .
@@ -182,6 +189,7 @@ services:
         condition: service_healthy
 
   search-svc:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/search/Dockerfile
@@ -225,6 +233,7 @@ services:
       start_period: 5s
 
   search-index-scheduler:
+    restart: unless-stopped
     profiles: ["search-index-scheduler"]
     build:
       context: .
@@ -241,6 +250,7 @@ services:
         condition: service_healthy
 
   training-session-svc:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/training-session/Dockerfile
@@ -274,6 +284,7 @@ services:
       start_period: 5s
 
   policy-learning-svc:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/policy-learning/Dockerfile
@@ -308,6 +319,7 @@ services:
       start_period: 5s
 
   research-orchestrator-svc:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -350,6 +362,7 @@ services:
       - openclaw-data:/home/node/.openclaw
 
   openclaw-gateway:
+    restart: unless-stopped
     profiles: ["openclaw"]
     image: ghcr.io/openclaw/openclaw:2026.4.7
     environment:
@@ -395,6 +408,7 @@ services:
       start_period: 60s
 
   openclaw-gateway-adapter:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/openclaw-gateway-adapter/Dockerfile
@@ -448,6 +462,7 @@ services:
       start_period: 5s
 
   broker:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/broker/Dockerfile
@@ -469,6 +484,7 @@ services:
       start_period: 5s
 
   runtime-manager:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/runtime-manager/Dockerfile
@@ -504,6 +520,7 @@ services:
       start_period: 5s
 
   governance:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/governance/Dockerfile
@@ -541,6 +558,7 @@ services:
       start_period: 5s
 
   telemetry:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/telemetry/Dockerfile
@@ -572,6 +590,7 @@ services:
       start_period: 5s
 
   incidents:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/incidents/Dockerfile
@@ -612,6 +631,7 @@ services:
       start_period: 5s
 
   postmortems:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/postmortems/Dockerfile
@@ -650,6 +670,7 @@ services:
       start_period: 5s
 
   operator-bff:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/control-plane/bff/Dockerfile
@@ -790,6 +811,7 @@ services:
       start_period: 5s
 
   persona:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/control-plane/persona/Dockerfile
@@ -818,6 +840,7 @@ services:
       start_period: 5s
 
   router:
+    restart: unless-stopped
     build:
       context: services/control-plane/router
       dockerfile: Dockerfile
@@ -841,6 +864,7 @@ services:
       start_period: 5s
 
   web-channel:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/channels/web/Dockerfile
@@ -861,6 +885,7 @@ services:
       start_period: 5s
 
   evaluation:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/evaluation/Dockerfile
@@ -887,6 +912,7 @@ services:
       start_period: 5s
 
   feedback:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/control-plane/feedback/Dockerfile
@@ -905,6 +931,7 @@ services:
       start_period: 5s
 
   memory:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/memory/Dockerfile
@@ -937,6 +964,7 @@ services:
       start_period: 5s
 
   registry:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/registry/Dockerfile
@@ -965,6 +993,7 @@ services:
       start_period: 5s
 
   optimizer-svc:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/optimizer-svc/Dockerfile
@@ -991,6 +1020,7 @@ services:
       start_period: 5s
 
   promotion:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/promotion/Dockerfile
@@ -1021,6 +1051,7 @@ services:
       start_period: 5s
 
   capital:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/capital/Dockerfile
@@ -1053,6 +1084,7 @@ services:
       start_period: 5s
 
   deployment:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
@@ -1075,6 +1107,7 @@ services:
       start_period: 5s
 
   evolution:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -1100,6 +1133,7 @@ services:
       start_period: 5s
 
   lineage-read:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/lineage-read/Dockerfile
@@ -1151,6 +1185,7 @@ services:
       start_period: 10s
 
   reconciliation-drift-svc:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -1195,6 +1230,7 @@ services:
       start_period: 5s
 
   research-worker-gateway-svc:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/research-worker-gateway/Dockerfile
