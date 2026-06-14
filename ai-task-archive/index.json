@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-12T06:23:29Z",
+  "updated_at": "2026-06-14T14:07:36Z",
   "counts": {
-    "total": 1474,
-    "completed": 1450,
+    "total": 1475,
+    "completed": 1451,
     "superseded": 24
   },
   "recent_terminal_ids": [
+    "DEVLOOP-L2-003",
     "INTEGRATION-UNBLOCK-task_3725264af744-CI-RED",
     "task_3725264af744",
     "task_0f81d3c11e0b",
@@ -25,7 +26,6 @@
     "DATASTRAT-IDS-002",
     "DATASTRAT-IDS-007",
     "DATASTRAT-SEEDFLOW-001",
-    "DATASTRAT-IDS-001",
-    "DATASTRAT-MARKETDATA-OPS-ACCEPT-010"
+    "DATASTRAT-IDS-001"
   ]
 }
