@@ -20,6 +20,7 @@ from services.persona.agent_usability_validation import (
     GENERATION_COUNT,
     HISTORICAL_OHLCV_DATASET_ID,
     HOLDOUT_BARS,
+    LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID,
     LEAN_ENGINE_REPLAY_MODEL_ID,
     LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO,
     LEAN_RUNTIME_FEEDBACK_MODEL_ID,
@@ -207,6 +208,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["lean_runtime_feedback_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_runtime_feedback_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_runtime_feedback_drives_ooda_count"] == DEFAULT_CASE_COUNT
+    assert summary["evolved_strategy_packet_proof_count"] == DEFAULT_CASE_COUNT
+    assert summary["evolved_strategy_packet_proof_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["evolved_strategy_packet_handoff_count"] == DEFAULT_CASE_COUNT
     assert summary["scheduler_conflict_ooda_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["scheduler_conflict_ooda_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["scheduler_conflict_ooda_event_count"] == DEFAULT_CASE_COUNT * 6
@@ -323,6 +327,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert set(coverage["lean_runtime_feedback_replay_flags"]) == {
         "case_runtime_refs_bound",
         "drives_persona_next_ooda_step",
+        "evolved_strategy_packet_refs_bound",
         "fills_drive_next_ooda",
         "handoff_packet_consumed",
         "next_cycle_scheduled",
@@ -330,6 +335,27 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "paper_runtime_guard_retained",
         "runtime_binding_readback_verified",
         "runtime_feedback_consumed",
+    }
+    assert coverage["evolved_strategy_packet_models"] == [
+        LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID
+    ]
+    assert coverage["evolved_strategy_packet_generations"] == [2]
+    assert coverage["evolved_strategy_packet_source_to_validation_paths"] == [
+        "holdout:future_holdout"
+    ]
+    assert set(coverage["evolved_strategy_packet_replay_flags"]) == {
+        "handoff_consumes_same_packet",
+        "handoff_runtime_bundle_contains_packet_and_proofs",
+        "lean_engine_replay_reads_same_packet",
+        "packet_binds_evolution_trajectory",
+        "packet_binds_no_leakage_protocol",
+        "packet_binds_strict_oos_proof",
+        "paper_only_guard_retained",
+        "replayable",
+        "runtime_feedback_consumes_handoff_with_packet",
+        "strategy_packet_declares_future_holdout_validation",
+        "strategy_packet_is_generation2",
+        "strict_oos_generation2_step_matches_packet",
     }
     assert coverage["scheduler_conflict_ooda_models"] == [
         PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID
@@ -835,6 +861,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_multi_cycle_lineage_carryover(case, persona_case_history)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
+        _assert_evolved_strategy_packet_proof(case)
         _assert_scheduler_conflict_ooda_proof(case)
         _assert_evolution_and_scores(case)
         assert all(case["usable"].values())
@@ -2915,6 +2942,34 @@ def _assert_operational_context(case: dict) -> None:
     assert replay["case_specific_runtime_binding"] is True
     assert replay["case_specific_strategy_packet"]["validation_signature"] == case["validation_signature"]
     assert replay["case_specific_strategy_packet"]["policy_id"] == case["generation_results"][-1]["policy_id"]
+    assert replay["case_specific_strategy_packet"]["policy_version"] == case["generation_results"][-1][
+        "policy_version"
+    ]
+    assert replay["case_specific_strategy_packet"]["generation"] == 2
+    assert replay["case_specific_strategy_packet"]["packet_ref"] == (
+        f"lean-strategy-packet://{case['case_id']}/generation2"
+    )
+    assert replay["case_specific_strategy_packet"]["source_outcome_window"] == "holdout"
+    assert replay["case_specific_strategy_packet"]["validation_window"] == "future_holdout"
+    assert replay["case_specific_strategy_packet"]["strict_oos_proof_ref"] == (
+        case["evolution"]["strict_oos_evolution_proof"]["proof_ref"]
+    )
+    assert replay["case_specific_strategy_packet"]["no_leakage_protocol_ref"] == (
+        f"no-leakage://{case['evolution']['no_leakage_protocol']['protocol_id']}"
+    )
+    assert replay["case_specific_strategy_packet"]["evolution_trajectory_ref"] == (
+        f"trajectory://{case['evolution']['trajectory']['trajectory_id']}"
+    )
+    assert replay["case_specific_strategy_packet"]["future_holdout_score"] == case["scores"][
+        "generation2_future_holdout"
+    ]
+    assert replay["case_specific_strategy_packet"]["future_holdout_improvement"] == case["scores"][
+        "future_generation_improvement"
+    ]
+    assert replay["case_specific_strategy_packet"]["validation_window_unseen_by_decision"] is True
+    assert replay["case_specific_strategy_packet"]["future_window_hidden"] is True
+    assert replay["case_specific_strategy_packet"]["strict_oos_replay_passed"] is True
+    assert replay["case_specific_strategy_packet"]["no_leakage_replay_passed"] is True
     assert replay["plan"]["target_stage"] == "paper"
     assert replay["binding"]["deployment_mode"] == "paper"
     assert replay["runtime_context"]["runtime_binding_id"] == replay["binding"]["binding_id"]
@@ -3044,6 +3099,23 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["component"] == "lean_handoff"
     assert handoff["strategy_packet_materialized"] is True
     assert handoff["received_by_lean_handoff"] is True
+    assert handoff["strategy_packet_ref"] == replay["case_specific_strategy_packet"]["packet_ref"]
+    assert handoff["policy_generation"] == 2
+    assert handoff["policy_version"] == case["generation_results"][-1]["policy_version"]
+    assert handoff["strategy_packet_validation_window"] == "future_holdout"
+    assert handoff["strategy_packet_source_outcome_window"] == "holdout"
+    assert handoff["strict_oos_evolution_proof_ref"] == case["evolution"]["strict_oos_evolution_proof"][
+        "proof_ref"
+    ]
+    assert handoff["no_leakage_protocol_ref"] == (
+        f"no-leakage://{case['evolution']['no_leakage_protocol']['protocol_id']}"
+    )
+    assert handoff["evolution_trajectory_ref"] == f"trajectory://{case['evolution']['trajectory']['trajectory_id']}"
+    assert handoff["strategy_packet"] == replay["case_specific_strategy_packet"]
+    assert handoff["strategy_packet_hash"].startswith("lean-strategy-packet-")
+    assert handoff["strategy_packet_replay_passed"] is True
+    assert handoff["future_holdout_score"] == case["scores"]["generation2_future_holdout"]
+    assert handoff["future_holdout_improvement"] == case["scores"]["future_generation_improvement"]
     assert handoff["lean_engine_replay_id"] == replay["replay_id"]
     assert handoff["lean_engine_replay_status"] == "passed"
     assert handoff["shioaji_sandbox_lifecycle_id"] == sandbox["lifecycle_id"]
@@ -3065,6 +3137,10 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["next_cycle_due_at"] == schedule["next_cycle_due_at"]
     for entry in case["case_upstream_artifacts"]["selected_oss"].values():
         assert f"oss://{entry['component']}/{entry['request_id']}" in handoff["runtime_bundle_refs"]
+    assert handoff["strategy_packet_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["strict_oos_evolution_proof_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["no_leakage_protocol_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["evolution_trajectory_ref"] in handoff["runtime_bundle_refs"]
     assert conflict["resolution_ref"] in handoff["runtime_bundle_refs"]
     assert schedule["schedule_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["runtime_bundle_refs"]
@@ -3107,6 +3183,9 @@ def _assert_operational_context(case: dict) -> None:
     assert ooda_followup["evidence_refs"] == [
         runtime_feedback["source_runtime_ref"],
         runtime_feedback["source_handoff_ref"],
+        handoff["strategy_packet_ref"],
+        handoff["strict_oos_evolution_proof_ref"],
+        handoff["no_leakage_protocol_ref"],
         f"runtime-binding://{runtime_readback['runtime_binding_id']}",
         f"object-store://{runtime_readback['object_store_metadata_key']}",
         f"reflection://{case['reflection']['agent_decision_traces'][-1]['reflection_id']}",
@@ -3114,16 +3193,63 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["state_updates"]["mark_runtime_feedback_seen"] is True
     assert runtime_feedback["state_updates"]["bind_runtime_context"] == runtime_readback["runtime_binding_id"]
     assert runtime_feedback["state_updates"]["verify_object_store_metadata"] == runtime_readback["object_store_metadata_key"]
+    assert runtime_feedback["state_updates"]["bind_evolved_strategy_packet"] == handoff["strategy_packet_ref"]
     assert runtime_feedback["state_updates"]["attach_to_handoff_packet"] == handoff["packet_id"]
     assert runtime_feedback["state_updates"]["attach_to_decision_trace"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
     assert runtime_feedback["state_updates"]["schedule_next_cycle_after_feedback"] == schedule["next_cycle_due_at"]
     assert all(runtime_feedback["replay"].values())
     assert runtime_feedback["input_hash"]
     assert case["usability_dimensions"]["lean_runtime_feedback"] == 1.0
+    assert case["usability_dimensions"]["evolved_strategy_packet_handoff"] == 1.0
+    assert case["usable"]["evolved_strategy_packet_reaches_lean_handoff"] is True
     assert check_by_name["lean_runtime_feedback_drives_persona_ooda"]["status"] == "passed"
+    assert check_by_name["evolved_strategy_packet_reaches_lean_handoff"]["status"] == "passed"
     assert case["usability_dimensions"]["scheduler_conflict_ooda_dispatch"] == 1.0
     assert case["usable"]["scheduler_conflict_ooda_dispatch_replayed"] is True
     assert check_by_name["scheduler_conflict_ooda_dispatch_replays_next_cycle"]["status"] == "passed"
+
+
+def _assert_evolved_strategy_packet_proof(case: dict) -> None:
+    operational = case["operational_context"]
+    proof = operational["evolved_strategy_packet_proof"]
+    replay = operational["lean_engine_replay"]
+    handoff = operational["lean_handoff"]
+    runtime_feedback = operational["lean_runtime_feedback"]
+    strict_oos = case["evolution"]["strict_oos_evolution_proof"]
+    no_leakage = case["evolution"]["no_leakage_protocol"]
+    trajectory = case["evolution"]["trajectory"]
+    strategy_packet = replay["case_specific_strategy_packet"]
+
+    assert proof["model_id"] == LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["proof_ref"] == f"evolved-strategy-packet://{case['case_id']}"
+    assert proof["strategy_packet_ref"] == strategy_packet["packet_ref"]
+    assert proof["strategy_packet_ref"] == handoff["strategy_packet_ref"]
+    assert proof["policy_id"] == case["generation_results"][-1]["policy_id"]
+    assert proof["policy_version"] == case["generation_results"][-1]["policy_version"]
+    assert proof["generation"] == 2
+    assert proof["source_outcome_window"] == "holdout"
+    assert proof["validation_window"] == "future_holdout"
+    assert proof["strict_oos_proof_ref"] == strict_oos["proof_ref"]
+    assert proof["no_leakage_protocol_ref"] == f"no-leakage://{no_leakage['protocol_id']}"
+    assert proof["evolution_trajectory_ref"] == f"trajectory://{trajectory['trajectory_id']}"
+    assert proof["lean_engine_replay_ref"] == f"lean-engine://{replay['replay_id']}"
+    assert proof["lean_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert proof["lean_runtime_feedback_ref"] == f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
+    assert proof["future_holdout_score"] == case["scores"]["generation2_future_holdout"]
+    assert proof["future_holdout_improvement"] == case["scores"]["future_generation_improvement"]
+    assert proof["future_holdout_improvement"] > 0
+    assert proof["lineage_refs"] == [
+        strategy_packet["packet_ref"],
+        strict_oos["proof_ref"],
+        f"no-leakage://{no_leakage['protocol_id']}",
+        f"trajectory://{trajectory['trajectory_id']}",
+        f"lean-engine://{replay['replay_id']}",
+        f"lean-handoff://{handoff['packet_id']}",
+        f"lean-runtime-feedback://{runtime_feedback['feedback_id']}",
+    ]
+    assert all(proof["replay"].values())
+    assert proof["input_hash"]
 
 
 def _assert_scheduler_conflict_ooda_proof(case: dict) -> None:
