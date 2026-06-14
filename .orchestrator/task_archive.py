@@ -202,7 +202,15 @@ def rebuild_archive_index(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[s
             snapshot = load_json(path, default=None)
             if not isinstance(snapshot, dict):
                 continue
-            task_id = normalize_task_id(snapshot.get("task_id") or ((snapshot.get("task") or {}).get("id")))
+            # Resolve the task id across all archive snapshot schema variants.
+            # Legacy entries store the id at the top level as ``id`` (not
+            # ``task_id`` / nested ``task.id``); without this fallback such files
+            # resolve to None and are silently excluded from the index forever.
+            task_id = normalize_task_id(
+                snapshot.get("task_id")
+                or ((snapshot.get("task") or {}).get("id"))
+                or snapshot.get("id")
+            )
             if not task_id:
                 continue
             outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
