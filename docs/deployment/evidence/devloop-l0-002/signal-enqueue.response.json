@@ -1,0 +1,63 @@
+{
+  "queue": "pantheon:signals:pending:rb-016ccb04e393494ba03de50ccf481d71",
+  "rpush_len": 3,
+  "payloads": [
+    {
+      "version": "1.0",
+      "signal_id": "8b73e9cd-b215-44bc-95da-2e9272573188",
+      "strategy_id": "strategy-rescue-0260531-1715d8d2",
+      "timestamp": "2026-06-14T15:10:13Z",
+      "symbol": "AAPL.US",
+      "action": "BUY",
+      "direction": "LONG",
+      "quantity": 2,
+      "quantity_type": "SHARES",
+      "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+      "runtime_id": "rt-rescue-0260531-1715d8d2",
+      "source_worker": "DEVLOOP-L0-002",
+      "metadata": {
+        "confidence_score": 1.0,
+        "devloop_task_id": "DEVLOOP-L0-002",
+        "devloop_signal_index": 1
+      }
+    },
+    {
+      "version": "1.0",
+      "signal_id": "ba8781b7-8678-427e-92b4-ea8a79398563",
+      "strategy_id": "strategy-rescue-0260531-1715d8d2",
+      "timestamp": "2026-06-14T15:10:13Z",
+      "symbol": "MSFT.US",
+      "action": "BUY",
+      "direction": "LONG",
+      "quantity": 3,
+      "quantity_type": "SHARES",
+      "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+      "runtime_id": "rt-rescue-0260531-1715d8d2",
+      "source_worker": "DEVLOOP-L0-002",
+      "metadata": {
+        "confidence_score": 1.0,
+        "devloop_task_id": "DEVLOOP-L0-002",
+        "devloop_signal_index": 2
+      }
+    },
+    {
+      "version": "1.0",
+      "signal_id": "55fa204b-831e-4e6b-965f-e281eaa96154",
+      "strategy_id": "strategy-rescue-0260531-1715d8d2",
+      "timestamp": "2026-06-14T15:10:13Z",
+      "symbol": "NVDA.US",
+      "action": "BUY",
+      "direction": "LONG",
+      "quantity": 4,
+      "quantity_type": "SHARES",
+      "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+      "runtime_id": "rt-rescue-0260531-1715d8d2",
+      "source_worker": "DEVLOOP-L0-002",
+      "metadata": {
+        "confidence_score": 1.0,
+        "devloop_task_id": "DEVLOOP-L0-002",
+        "devloop_signal_index": 3
+      }
+    }
+  ]
+}
