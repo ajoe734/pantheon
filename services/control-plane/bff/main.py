@@ -17924,6 +17924,26 @@ async def list_incidents(
     }
 
 
+# NOTE: This static SSE route MUST be registered before the parameterized
+# "/api/v1/incidents/{incident_id}" route below. FastAPI/Starlette match in
+# registration order, so a later "stream" route would otherwise be shadowed by
+# {incident_id} (incident_id="stream" -> 404 "Incident not found").
+@app.get("/api/v1/incidents/stream")
+async def stream_incident_events(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """IN-SSE: Server-Sent Events stream for active incident events.
+
+    Supports reconnection via ``?last_event_id=`` to replay missed events.
+    BFF_API_CONTRACT.md §11.2
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    return _handle_sse_stream("incident", _incident_events, _incident_subscribers, last_event_id)
+
+
 @app.get("/api/v1/incidents/{incident_id}")
 async def get_incident(incident_id: str, authorization: Optional[str] = Header(default=None)):
     """IN-02: Incident Detail."""
@@ -41569,22 +41589,8 @@ async def stream_runtime_events(
     return _handle_sse_stream("runtime", _runtime_events, _runtime_subscribers, last_event_id)
 
 
-@app.get("/api/v1/incidents/stream")
-async def stream_incident_events(
-    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """IN-SSE: Server-Sent Events stream for active incident events.
-
-    Supports reconnection via ``?last_event_id=`` to replay missed events.
-    BFF_API_CONTRACT.md §11.2
-    """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    return _handle_sse_stream("incident", _incident_events, _incident_subscribers, last_event_id)
-
-
+# IN-SSE: "/api/v1/incidents/stream" is defined earlier (just above the
+# parameterized "/api/v1/incidents/{incident_id}" route) so it is not shadowed.
 @app.get("/api/v1/kill-switch/updates")
 async def stream_kill_switch_events(
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
