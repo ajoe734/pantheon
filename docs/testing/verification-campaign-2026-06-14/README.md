@@ -41,8 +41,9 @@ The campaign deliberately goes **deeper and broader** each round.
 | 3 | Parameterized-route robustness (no unhandled 500s) | [round-03-plan.md](round-03-plan.md) | [round-03-results.md](round-03-results.md) | persona-league detail 500→404 + ErrorCode static guard (PR #1542) |
 | 4 | Write-surface input robustness & error-envelope consistency | [round-04-plan.md](round-04-plan.md) | [round-04-results.md](round-04-results.md) | PASS (no defect); stub laxity O1/O2 documented (PR #1543) |
 | 5 | SSE streaming substrate behavior | [round-05-plan.md](round-05-plan.md) | [round-05-results.md](round-05-results.md) | PASS; F6 deploy-lag for Round 2 fix flagged (PR #1545) |
-| 6 | Authorization depth (RBAC) audit of write surface | [round-06-plan.md](round-06-plan.md) | [round-06-results.md](round-06-results.md) | PASS (133/136 write-gated); F7 read-gated creates flagged for product decision |
-| 7 | _(planned at end of round 6, deeper/broader)_ | — | — | — |
+| 6 | Authorization depth (RBAC) audit of write surface | [round-06-plan.md](round-06-plan.md) | [round-06-results.md](round-06-results.md) | PASS (133/136 write-gated); F7 read-gated creates flagged for product decision (PR #1549) |
+| 7 | Test-suite import/collection & execution health | [round-07-plan.md](round-07-plan.md) | [round-07-results.md](round-07-results.md) | PASS (~1,150 tests green, 0 failures) |
+| 8 | _(planned at end of round 7, deeper/broader)_ | — | — | — |
 
 ## Environment under test
 
