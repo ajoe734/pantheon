@@ -1,5 +1,6 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import "@testing-library/jest-dom/vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -97,6 +98,41 @@ const blockedDecision: HumanGateDecision = {
   reason: "Human gate is not ready: readiness_packet_can_proceed=false",
 };
 
+const rejectedDecision: HumanGateDecision = {
+  ...approvedDecision,
+  decision_id: "hgd-004",
+  signatures: [
+    approvedDecision.signatures[0],
+    {
+      signature_id: "hgs-003",
+      role: "operator",
+      actor_id: "carol@pantheon",
+      signed_at: "2026-05-19T10:17:00Z",
+      evidence_hash: evidenceHash,
+      evidence_reviewed: ["canary_plan", "rollback_drill"],
+      meaning: "rejected",
+      conditions: [],
+      source_ref: "audit://human-gate/rejection/hgs-003",
+    },
+  ],
+  status: "rejected",
+  can_proceed: false,
+  reason: "Human gate rejected by operator.",
+};
+
+const conditionalDecision: HumanGateDecision = {
+  ...approvedDecision,
+  decision_id: "hgd-005",
+  signatures: [
+    {
+      ...approvedDecision.signatures[0],
+      meaning: "approved_with_conditions",
+      conditions: ["paper-only", "max_notional=1000"],
+    },
+    approvedDecision.signatures[1],
+  ],
+};
+
 // ---------- Tests ----------
 
 describe("HumanGateStatus", () => {
@@ -110,13 +146,12 @@ describe("HumanGateStatus", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Loading human gate status");
   });
 
-  it("renders error state with retry button", async () => {
-    const user = userEvent.setup();
+  it("renders error state with retry button", () => {
     const onRetry = vi.fn();
     render(<HumanGateStatus error="Fetch failed" onRetry={onRetry} />);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Fetch failed");
-    await user.click(screen.getByTestId("retry-button"));
+    fireEvent.click(screen.getByTestId("retry-button"));
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
@@ -184,6 +219,9 @@ describe("HumanGateStatus", () => {
 
     expect(screen.getByTestId("evidence-row-canary_plan")).toBeInTheDocument();
     expect(screen.getByTestId("evidence-status-canary_plan")).toHaveTextContent("passed");
+    expect(screen.getByTestId("evidence-hash-canary_plan")).toHaveTextContent(
+      evidenceHash,
+    );
     expect(screen.getByTestId("evidence-ref-canary_plan")).toHaveTextContent(
       "docs/deployment/evidence/ep5-dual-vm/canary-deployment-plan.json",
     );
@@ -237,5 +275,29 @@ describe("HumanGateStatus", () => {
     expect(screen.getByTestId("decision-status")).toHaveTextContent("revoked");
     expect(screen.getByTestId("role-pending-risk_owner")).toHaveTextContent("Pending");
     expect(screen.getByTestId("role-signed-operator")).toBeInTheDocument();
+  });
+
+  it("renders rejected signatures with actor, evidence hash, and source ref", () => {
+    render(<HumanGateStatus decision={rejectedDecision} />);
+
+    expect(screen.getByTestId("decision-status")).toHaveTextContent("rejected");
+    expect(screen.getByTestId("role-pending-operator")).toHaveTextContent("Pending");
+    expect(screen.getByTestId("blocking-reasons").textContent).toContain(
+      "rejected_signature: operator",
+    );
+
+    const rejectedSignature = screen.getByTestId("rejected-signature-operator");
+    expect(rejectedSignature).toHaveTextContent("carol@pantheon");
+    expect(rejectedSignature).toHaveTextContent(evidenceHash);
+    expect(rejectedSignature).toHaveTextContent("audit://human-gate/rejection/hgs-003");
+  });
+
+  it("renders approved-with-conditions signatures without hiding conditions", () => {
+    render(<HumanGateStatus decision={conditionalDecision} />);
+
+    const conditionalSignature = screen.getByTestId("role-signed-risk_owner");
+    expect(conditionalSignature).toHaveTextContent("approved_with_conditions");
+    expect(conditionalSignature).toHaveTextContent("paper-only");
+    expect(conditionalSignature).toHaveTextContent("max_notional=1000");
   });
 });

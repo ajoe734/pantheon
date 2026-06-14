@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import React, { useMemo } from "react";
 
 // ---------- Types ----------
 
@@ -122,6 +122,16 @@ export function HumanGateStatus({
     [decision, activeSignaturesByRole],
   );
 
+  const rejectedSignatures = useMemo(
+    () =>
+      decision
+        ? decision.signatures.filter(
+            (sig) => !sig.revoked_at && sig.meaning === "rejected",
+          )
+        : [],
+    [decision],
+  );
+
   const blockingReasons = useMemo(() => {
     if (!decision) return [];
     const cpi = decision.can_proceed_input;
@@ -144,13 +154,11 @@ export function HumanGateStatus({
     for (const role of pendingRoles) {
       reasons.push(`missing_signature: ${role}`);
     }
-    for (const sig of decision.signatures) {
-      if (!sig.revoked_at && sig.meaning === "rejected") {
-        reasons.push(`rejected_signature: ${sig.role}`);
-      }
+    for (const sig of rejectedSignatures) {
+      reasons.push(`rejected_signature: ${sig.role}`);
     }
     return reasons;
-  }, [decision, pendingRoles]);
+  }, [decision, pendingRoles, rejectedSignatures]);
 
   const expiryLabel = useMemo(
     () => computeExpiryLabel(decision?.expires_at),
@@ -239,6 +247,9 @@ export function HumanGateStatus({
                   <span data-testid={`role-signed-${role}`}>
                     Signed by {sig.actor_id} at {formatTimestamp(sig.signed_at)}
                     {sig.meaning !== "approved" ? ` (${sig.meaning})` : ""}
+                    {sig.conditions.length > 0
+                      ? `; conditions: ${sig.conditions.join(", ")}`
+                      : ""}
                   </span>
                 ) : (
                   <span data-testid={`role-pending-${role}`}>Pending</span>
@@ -266,6 +277,25 @@ export function HumanGateStatus({
         </section>
       )}
 
+      {/* Rejections */}
+      {rejectedSignatures.length > 0 && (
+        <section aria-label="Rejected signatures">
+          <h3>Rejected Signatures</h3>
+          <ul data-testid="rejected-signatures">
+            {rejectedSignatures.map((sig) => (
+              <li key={sig.signature_id} data-testid={`rejected-signature-${sig.role}`}>
+                <span>{sig.role}</span>
+                <span>
+                  Rejected by {sig.actor_id} at {formatTimestamp(sig.signed_at)}
+                </span>
+                <span>{sig.evidence_hash}</span>
+                {sig.source_ref && <span>{sig.source_ref}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* Evidence */}
       <section aria-label="Evidence reviewed">
         <h3>Evidence Reviewed</h3>
@@ -274,6 +304,7 @@ export function HumanGateStatus({
             <li key={item.key} data-testid={`evidence-row-${item.key}`}>
               <span data-testid={`evidence-key-${item.key}`}>{item.key}</span>
               <span data-testid={`evidence-status-${item.key}`}>{item.status}</span>
+              <span data-testid={`evidence-hash-${item.key}`}>{item.evidence_hash}</span>
               <span data-testid={`evidence-ref-${item.key}`}>{item.source_ref}</span>
             </li>
           ))}
