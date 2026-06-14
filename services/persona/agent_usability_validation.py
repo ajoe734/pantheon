@@ -145,6 +145,7 @@ PERSONA_CANDIDATE_GENERATOR_MODEL_ID = "persona_candidate_generation_from_oss_fe
 PERSONA_CANDIDATE_SCORER_MODEL_ID = "persona_multi_factor_candidate_scorer_v1"
 PERSONA_RISK_EVALUATOR_MODEL_ID = "persona_oss_risk_turnover_evaluator_v1"
 PERSONA_MEMORY_INFLUENCE_MODEL_ID = "persona_retrieved_lesson_influence_v1"
+PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID = "persona_cross_persona_institutional_memory_lineage_v1"
 PERSONA_REASONING_MODEL_ID = "persona_structured_reasoning_candidate_generator_v1"
 PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
 EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v1"
@@ -495,6 +496,10 @@ def run_agent_usability_validations(
             "next_tracking_reconciliation_action"
         ] = tracking_reconciliation["repair"]["action"]
         prior_memory = _retrieve_prior_lesson(persona_store, persona_id)
+        prior_institutional_memory = _retrieve_cross_persona_institutional_lesson(
+            institutional_store,
+            persona_id,
+        )
         validation_plan = _build_validation_planning_step(
             episode=episode,
             prior_cases=cases,
@@ -538,6 +543,7 @@ def run_agent_usability_validations(
             alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
             cross_cycle_context=cross_cycle_context,
             multi_cycle_context=multi_cycle_context,
+            institutional_memory_context=prior_institutional_memory,
         )
         memory_write0 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -601,6 +607,7 @@ def run_agent_usability_validations(
             alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
             cross_cycle_context=cross_cycle_context,
             multi_cycle_context=multi_cycle_context,
+            institutional_memory_context=prior_institutional_memory,
         )
         memory_write1 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -728,6 +735,11 @@ def run_agent_usability_validations(
             cross_cycle_carryover=cross_cycle_carryover,
             persisted_cycle_resume=persisted_cycle_resume,
         )
+        institutional_memory_lineage = _build_institutional_memory_lineage_proof(
+            episode=episode,
+            institutional_memory_context=prior_institutional_memory,
+            decision_traces=(decision_trace0, decision_trace1),
+        )
         usability_dimensions = _build_usability_dimensions(
             episode=episode,
             executions=(generation0_exec, generation1_exec, generation2_exec),
@@ -750,6 +762,7 @@ def run_agent_usability_validations(
             cross_cycle_carryover=cross_cycle_carryover,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
+            institutional_memory_lineage=institutional_memory_lineage,
             oss_followup_loop=oss_followup_loop,
         )
         validation_diagnostics = _diagnose_validation_execution(
@@ -775,6 +788,7 @@ def run_agent_usability_validations(
             cross_cycle_carryover=cross_cycle_carryover,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
+            institutional_memory_lineage=institutional_memory_lineage,
             oss_followup_loop=oss_followup_loop,
         )
         validation_repair = _repair_validation_deficiencies(
@@ -801,6 +815,7 @@ def run_agent_usability_validations(
             cross_cycle_carryover=cross_cycle_carryover,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
+            institutional_memory_lineage=institutional_memory_lineage,
             oss_followup_loop=oss_followup_loop,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
@@ -809,6 +824,7 @@ def run_agent_usability_validations(
             validation_plan=validation_plan,
             validation_diagnostics=validation_diagnostics,
             validation_repair=validation_repair,
+            prior_institutional_memory=prior_institutional_memory,
         )
         cases.append(case)
         cycle_state_history_by_persona.setdefault(persona_id, []).append(
@@ -3351,6 +3367,47 @@ def _memory_influence_profile(memory: Mapping[str, Any] | None) -> dict[str, Any
     }
 
 
+def _institutional_memory_influence_profile(
+    memory: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if not memory:
+        return {
+            "model_id": PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
+            "status": "cold_start",
+            "entry_id": None,
+            "entry_ref": None,
+            "source_event_id": None,
+            "reuse_count": 0,
+            "content_summary": None,
+            "contributing_persona_ids": [],
+            "sponsor_persona_id": None,
+            "cited_proposal_ids": [],
+            "cited_evidence_refs": [],
+            "retrieval_tags": [],
+            "selected_action_hint": "none",
+            "candidate_score_adjustments": _institutional_memory_score_adjustments("none"),
+            "influence_applied": False,
+        }
+    selected_action_hint = _memory_action_from_context(memory)
+    return {
+        "model_id": PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
+        "status": "applied",
+        "entry_id": memory["entry_id"],
+        "entry_ref": memory["entry_ref"],
+        "source_event_id": memory["source_event_id"],
+        "reuse_count": memory["reuse_count"],
+        "content_summary": memory.get("content_summary"),
+        "contributing_persona_ids": list(memory.get("contributing_persona_ids", [])),
+        "sponsor_persona_id": memory.get("sponsor_persona_id"),
+        "cited_proposal_ids": list(memory.get("proposal_ids", [])),
+        "cited_evidence_refs": list(memory.get("evidence_refs", [])),
+        "retrieval_tags": list(memory.get("tags", [])),
+        "selected_action_hint": selected_action_hint,
+        "candidate_score_adjustments": _institutional_memory_score_adjustments(selected_action_hint),
+        "influence_applied": True,
+    }
+
+
 def _memory_action_from_context(memory: Mapping[str, Any]) -> str:
     tags = {str(tag).lower() for tag in memory.get("tags", [])}
     for action in ("feedback-adapt", "risk-off", "retain-observe", "contrarian-check"):
@@ -3380,6 +3437,25 @@ def _memory_score_adjustments(selected_action_hint: str) -> dict[str, float]:
         adjustments["retain-observe"] = 0.12
     elif selected_action_hint == "contrarian-check":
         adjustments["contrarian-check"] = 0.05
+    return adjustments
+
+
+def _institutional_memory_score_adjustments(selected_action_hint: str) -> dict[str, float]:
+    adjustments = {
+        "feedback-adapt": 0.0,
+        "risk-off": 0.0,
+        "retain-observe": 0.0,
+        "contrarian-check": 0.0,
+    }
+    if selected_action_hint == "feedback-adapt":
+        adjustments["feedback-adapt"] = 0.11
+        adjustments["risk-off"] = 0.02
+    elif selected_action_hint == "risk-off":
+        adjustments["risk-off"] = 0.09
+    elif selected_action_hint == "retain-observe":
+        adjustments["retain-observe"] = 0.05
+    elif selected_action_hint == "contrarian-check":
+        adjustments["contrarian-check"] = 0.04
     return adjustments
 
 
@@ -4381,6 +4457,193 @@ def _memory_counterfactual_proof_is_usable(proof: Mapping[str, Any]) -> bool:
     )
 
 
+def _build_institutional_memory_lineage_proof(
+    *,
+    episode: PortfolioEpisode,
+    institutional_memory_context: Mapping[str, Any] | None,
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    influence = _institutional_memory_influence_profile(institutional_memory_context)
+    entry_ref = influence.get("entry_ref")
+    cited_evidence_refs = [str(ref) for ref in influence.get("cited_evidence_refs", [])]
+    institutional_refs = [
+        str(ref)
+        for ref in (entry_ref, *cited_evidence_refs)
+        if ref
+    ]
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_action = _candidate_action_key(str(trace["selected_candidate_id"]))
+        selected_scorecard = artifact["scorer"]["scorecards"][trace["selected_candidate_id"]]
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_action": selected_action,
+                "decision_input_entry_ref": trace["decision_inputs"].get("institutional_memory_entry_ref"),
+                "private_memory_ref": trace["decision_inputs"].get("memory_influence_ref"),
+                "reasoning_consumes_entry_ref": entry_ref is not None
+                and str(entry_ref) in reasoning_request["input_refs"],
+                "candidate_request_consumes_entry_ref": entry_ref is not None
+                and str(entry_ref) in candidate_request["input_refs"],
+                "selected_candidate_cites_entry_ref": entry_ref is not None
+                and str(entry_ref) in selected_candidate["evidence_refs"],
+                "reasoning_consumes_cited_evidence_refs": bool(cited_evidence_refs)
+                and set(cited_evidence_refs).issubset(set(reasoning_request["input_refs"])),
+                "candidate_request_consumes_cited_evidence_refs": bool(cited_evidence_refs)
+                and set(cited_evidence_refs).issubset(set(candidate_request["input_refs"])),
+                "selected_candidate_cites_cited_evidence_refs": bool(cited_evidence_refs)
+                and set(cited_evidence_refs).issubset(set(selected_candidate["evidence_refs"])),
+                "scorer_institutional_memory_adjustment": float(
+                    scoring_inputs["institutional_memory_score_adjustments"].get(selected_action, 0.0)
+                ),
+                "scorecard_institutional_memory_adjustment": float(
+                    selected_scorecard["components"].get("institutional_memory_adjustment", 0.0)
+                ),
+                "decision_replay_uses_institutional_memory": artifact["replay"].get(
+                    "uses_cross_persona_institutional_memory_or_declares_cold_start"
+                )
+                is True,
+            }
+        )
+
+    status = str(influence["status"])
+    cold_start = status == "cold_start"
+    applied = status == "applied"
+    current_persona_id = _persona_id(episode.persona)
+    contributing_persona_ids = set(str(item) for item in influence.get("contributing_persona_ids", []))
+    replay = {
+        "replayable": True,
+        "cold_start_or_cross_persona_entry_bound": cold_start
+        or bool(applied and influence.get("entry_id") and entry_ref),
+        "source_persona_differs_from_current_persona": cold_start
+        or current_persona_id not in contributing_persona_ids,
+        "institutional_entry_ref_available": cold_start or bool(entry_ref),
+        "reasoning_consumes_institutional_memory": cold_start
+        or all(binding["reasoning_consumes_entry_ref"] for binding in trace_bindings),
+        "candidate_generation_consumes_institutional_memory": cold_start
+        or all(binding["candidate_request_consumes_entry_ref"] for binding in trace_bindings),
+        "selected_candidate_cites_institutional_memory": cold_start
+        or all(binding["selected_candidate_cites_entry_ref"] for binding in trace_bindings),
+        "reasoning_consumes_institutional_source_evidence": cold_start
+        or all(binding["reasoning_consumes_cited_evidence_refs"] for binding in trace_bindings),
+        "candidate_generation_consumes_institutional_source_evidence": cold_start
+        or all(binding["candidate_request_consumes_cited_evidence_refs"] for binding in trace_bindings),
+        "selected_candidate_cites_institutional_source_evidence": cold_start
+        or all(binding["selected_candidate_cites_cited_evidence_refs"] for binding in trace_bindings),
+        "scorer_applies_institutional_memory_adjustment": cold_start
+        or all(binding["scorer_institutional_memory_adjustment"] > 0.0 for binding in trace_bindings),
+        "scorecard_replays_institutional_memory_adjustment": cold_start
+        or all(
+            binding["scorecard_institutional_memory_adjustment"]
+            == binding["scorer_institutional_memory_adjustment"]
+            for binding in trace_bindings
+        ),
+        "decision_artifact_replays_institutional_memory": all(
+            binding["decision_replay_uses_institutional_memory"] for binding in trace_bindings
+        ),
+        "private_persona_memory_not_reused_as_institutional_memory": cold_start
+        or all(
+            binding["decision_input_entry_ref"]
+            and not str(binding["decision_input_entry_ref"]).startswith("memory://")
+            and binding["decision_input_entry_ref"] != binding["private_memory_ref"]
+            for binding in trace_bindings
+        ),
+    }
+    return {
+        "proof_id": f"institutional-memory-lineage-{episode.case_id}",
+        "proof_ref": f"institutional-memory-lineage://{episode.case_id}",
+        "model_id": PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": current_persona_id,
+        "lineage_status": status,
+        "entry_id": influence.get("entry_id"),
+        "entry_ref": entry_ref,
+        "source_event_id": influence.get("source_event_id"),
+        "reuse_count": influence.get("reuse_count"),
+        "contributing_persona_ids": list(influence.get("contributing_persona_ids", [])),
+        "sponsor_persona_id": influence.get("sponsor_persona_id"),
+        "selected_action_hint": influence.get("selected_action_hint"),
+        "score_adjustments": copy.deepcopy(dict(influence["candidate_score_adjustments"])),
+        "cited_proposal_ids": list(influence.get("cited_proposal_ids", [])),
+        "cited_evidence_refs": cited_evidence_refs,
+        "institutional_refs": institutional_refs,
+        "trace_bindings": trace_bindings,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "institutional-memory-lineage-proof",
+            {
+                "case_id": episode.case_id,
+                "institutional_memory_context": institutional_memory_context,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _institutional_memory_lineage_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("lineage_status")
+    trace_bindings = list(proof.get("trace_bindings", []))
+    score_adjustments = proof.get("score_adjustments", {})
+    return bool(
+        proof.get("model_id") == PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("institutional-memory-lineage://")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_cross_persona_entry_bound",
+            "source_persona_differs_from_current_persona",
+            "institutional_entry_ref_available",
+            "reasoning_consumes_institutional_memory",
+            "candidate_generation_consumes_institutional_memory",
+            "selected_candidate_cites_institutional_memory",
+            "reasoning_consumes_institutional_source_evidence",
+            "candidate_generation_consumes_institutional_source_evidence",
+            "selected_candidate_cites_institutional_source_evidence",
+            "scorer_applies_institutional_memory_adjustment",
+            "scorecard_replays_institutional_memory_adjustment",
+            "decision_artifact_replays_institutional_memory",
+            "private_persona_memory_not_reused_as_institutional_memory",
+        ))
+        and (
+            (
+                status == "cold_start"
+                and proof.get("entry_id") is None
+                and proof.get("entry_ref") is None
+                and proof.get("contributing_persona_ids") == []
+                and all(float(value) == 0.0 for value in score_adjustments.values())
+                and all(
+                    binding.get("scorer_institutional_memory_adjustment", 0.0) == 0.0
+                    for binding in trace_bindings
+                )
+            )
+            or (
+                status == "applied"
+                and proof.get("entry_id")
+                and proof.get("entry_ref")
+                and proof.get("source_event_id")
+                and proof.get("contributing_persona_ids")
+                and proof.get("persona_id") not in proof.get("contributing_persona_ids", [])
+                and float(score_adjustments.get("feedback-adapt", 0.0)) > 0.0
+                and all(
+                    binding.get("scorer_institutional_memory_adjustment", 0.0) > 0.0
+                    for binding in trace_bindings
+                )
+            )
+        )
+    )
+
+
 def _build_persona_reasoning_response(
     *,
     episode: PortfolioEpisode,
@@ -4390,6 +4653,7 @@ def _build_persona_reasoning_response(
     latest_evaluation: Mapping[str, Any],
     telemetry_event: Mapping[str, Any],
     memory_influence: Mapping[str, Any],
+    institutional_memory_influence: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
@@ -4422,6 +4686,12 @@ def _build_persona_reasoning_response(
             *list(cross_cycle_context.get("evidence_refs", [])),
             *list(multi_cycle_context.get("evidence_refs", [])),
             *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
+            *(
+                [str(institutional_memory_influence["entry_ref"])]
+                if institutional_memory_influence["entry_ref"]
+                else []
+            ),
+            *list(institutional_memory_influence.get("cited_evidence_refs", [])),
         ],
         "portfolio_instruments": [window.instrument for window in episode.windows],
         "baseline_risk_multiplier": float(baseline_policy["risk_multiplier"]),
@@ -4432,6 +4702,7 @@ def _build_persona_reasoning_response(
             "turnover": latest_evaluation["turnover"],
         },
         "memory_influence": copy.deepcopy(dict(memory_influence)),
+        "institutional_memory_influence": copy.deepcopy(dict(institutional_memory_influence)),
         "oss_components_by_role": {
             role: result["component"] for role, result in sorted(oss_inputs.items())
         },
@@ -4446,6 +4717,12 @@ def _build_persona_reasoning_response(
         "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
         "multi_cycle_latest_runtime_feedback_ref": multi_cycle_context.get("latest_runtime_feedback_ref"),
         "multi_cycle_older_runtime_feedback_ref": multi_cycle_context.get("older_runtime_feedback_ref"),
+        "institutional_memory_status": institutional_memory_influence["status"],
+        "institutional_memory_entry_ref": institutional_memory_influence["entry_ref"],
+        "institutional_memory_source_event_id": institutional_memory_influence["source_event_id"],
+        "institutional_memory_contributing_persona_ids": list(
+            institutional_memory_influence["contributing_persona_ids"]
+        ),
         "oss_followup_request_ids": [
             followup["request"]["request_id"]
             for followup in oss_followup_loop["followups"]
@@ -4455,6 +4732,7 @@ def _build_persona_reasoning_response(
         generation=generation,
         allowed_windows=allowed_windows,
         memory_influence=memory_influence,
+        institutional_memory_influence=institutional_memory_influence,
         oss_inputs=oss_inputs,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
@@ -4487,6 +4765,20 @@ def _build_persona_reasoning_response(
             "influence_ref": memory_influence["influence_ref"],
             "selected_action_hint": memory_influence["selected_action_hint"],
             "score_adjustments": copy.deepcopy(dict(memory_influence["candidate_score_adjustments"])),
+        },
+        "institutional_memory_usage": {
+            "model_id": institutional_memory_influence["model_id"],
+            "status": institutional_memory_influence["status"],
+            "entry_id": institutional_memory_influence["entry_id"],
+            "entry_ref": institutional_memory_influence["entry_ref"],
+            "source_event_id": institutional_memory_influence["source_event_id"],
+            "contributing_persona_ids": list(
+                institutional_memory_influence["contributing_persona_ids"]
+            ),
+            "selected_action_hint": institutional_memory_influence["selected_action_hint"],
+            "candidate_score_adjustments": copy.deepcopy(
+                dict(institutional_memory_influence["candidate_score_adjustments"])
+            ),
         },
         "preferred_action_hint": _persona_reasoning_preferred_action(memory_influence),
         "oss_followup_usage": {
@@ -4576,6 +4868,7 @@ def _persona_reasoning_candidate_blueprints(
     generation: int,
     allowed_windows: Sequence[str],
     memory_influence: Mapping[str, Any],
+    institutional_memory_influence: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
@@ -4589,6 +4882,19 @@ def _persona_reasoning_candidate_blueprints(
     feedback_windows = ["observe", "feedback"] if generation == 1 else shared_windows
     memory_ref = memory_influence.get("influence_ref")
     memory_refs = [str(memory_ref)] if memory_ref else []
+    institutional_memory_ref = institutional_memory_influence.get("entry_ref")
+    institutional_memory_refs = [str(institutional_memory_ref)] if institutional_memory_ref else []
+    institutional_memory_refs.extend(
+        str(ref) for ref in institutional_memory_influence.get("cited_evidence_refs", [])
+    )
+    institutional_memory_score_adjustments = dict(
+        institutional_memory_influence["candidate_score_adjustments"]
+    )
+    risk_institutional_memory_refs = (
+        institutional_memory_refs
+        if float(institutional_memory_score_adjustments.get("risk-off", 0.0)) > 0.0
+        else []
+    )
     cross_cycle_refs = list(cross_cycle_context.get("evidence_refs", []))
     cross_cycle_score_adjustments = _cross_cycle_score_adjustments(cross_cycle_context)
     risk_cross_cycle_refs = (
@@ -4640,6 +4946,7 @@ def _persona_reasoning_candidate_blueprints(
                 *feedback_tracking_refs,
                 *feedback_alpha_refs,
                 *memory_refs,
+                *institutional_memory_refs,
                 *cross_cycle_refs,
                 *multi_cycle_refs,
             ],
@@ -4678,11 +4985,13 @@ def _persona_reasoning_candidate_blueprints(
                 *risk_tracking_refs,
                 *risk_alpha_refs,
                 *memory_refs,
+                *risk_institutional_memory_refs,
                 *risk_cross_cycle_refs,
                 *risk_multi_cycle_refs,
             ]
             if (
                 float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
+                or risk_institutional_memory_refs
                 or risk_cross_cycle_refs
                 or risk_multi_cycle_refs
             )
@@ -4746,6 +5055,37 @@ def _evaluate_persona_reasoning_response(
             bool(response.get("memory_usage", {}).get("influence_ref"))
             or response.get("memory_usage", {}).get("status") == "cold_start",
             {"memory_usage": copy.deepcopy(dict(response.get("memory_usage", {})))},
+        ),
+        _persona_risk_check(
+            "reasoning_uses_cross_persona_institutional_memory_or_declares_cold_start",
+            (
+                request.get("institutional_memory_status") == "cold_start"
+                and response.get("institutional_memory_usage", {}).get("status") == "cold_start"
+                and request.get("institutional_memory_entry_ref") is None
+            )
+            or (
+                request.get("institutional_memory_status") == "applied"
+                and response.get("institutional_memory_usage", {}).get("status") == "applied"
+                and request.get("institutional_memory_entry_ref")
+                == response.get("institutional_memory_usage", {}).get("entry_ref")
+                and request.get("institutional_memory_entry_ref") in request.get("input_refs", [])
+                and request.get("persona_id")
+                not in set(request.get("institutional_memory_contributing_persona_ids", []))
+                and float(
+                    response.get("institutional_memory_usage", {})
+                    .get("candidate_score_adjustments", {})
+                    .get("feedback-adapt", 0.0)
+                )
+                > 0.0
+            ),
+            {
+                "institutional_memory_status": request.get("institutional_memory_status"),
+                "institutional_memory_entry_ref": request.get("institutional_memory_entry_ref"),
+                "contributing_persona_ids": list(
+                    request.get("institutional_memory_contributing_persona_ids", [])
+                ),
+                "usage": copy.deepcopy(dict(response.get("institutional_memory_usage", {}))),
+            },
         ),
         _persona_risk_check(
             "reasoning_uses_oss_followup_loop",
@@ -4892,8 +5232,12 @@ def _build_agent_decision_trace(
     alpha_seed_revision: Mapping[str, Any],
     cross_cycle_context: Mapping[str, Any],
     multi_cycle_context: Mapping[str, Any],
+    institutional_memory_context: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     memory_influence = _memory_influence_profile(prior_memory)
+    institutional_memory_influence = _institutional_memory_influence_profile(
+        institutional_memory_context
+    )
     trigger = (
         "holdout_generation_refinement"
         if generation == 2
@@ -4907,6 +5251,7 @@ def _build_agent_decision_trace(
         latest_evaluation=latest_evaluation,
         telemetry_event=telemetry_event,
         memory_influence=memory_influence,
+        institutional_memory_influence=institutional_memory_influence,
         oss_inputs=oss_inputs,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
@@ -4923,6 +5268,7 @@ def _build_agent_decision_trace(
         prior_memory=prior_memory,
         oss_inputs=oss_inputs,
         memory_influence=memory_influence,
+        institutional_memory_influence=institutional_memory_influence,
         persona_reasoning=persona_reasoning,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
@@ -4940,6 +5286,11 @@ def _build_agent_decision_trace(
         "telemetry_event_id": telemetry_event["event_id"],
         "memory_ref": prior_memory.get("memory_id") if prior_memory else None,
         "memory_influence_ref": memory_influence["influence_ref"],
+        "institutional_memory_entry_ref": institutional_memory_influence["entry_ref"],
+        "institutional_memory_source_event_id": institutional_memory_influence["source_event_id"],
+        "institutional_memory_contributing_persona_ids": list(
+            institutional_memory_influence["contributing_persona_ids"]
+        ),
         "oss_components": _oss_components_used(oss_inputs),
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
@@ -4965,6 +5316,12 @@ def _build_agent_decision_trace(
         str(alpha_seed_revision["revision_ref"]),
         *list(cross_cycle_context.get("evidence_refs", [])),
         *list(multi_cycle_context.get("evidence_refs", [])),
+        *(
+            [str(institutional_memory_influence["entry_ref"])]
+            if institutional_memory_influence["entry_ref"]
+            else []
+        ),
+        *list(institutional_memory_influence.get("cited_evidence_refs", [])),
     ]
     agent_decision_artifact = _build_persona_decision_artifact(
         episode=episode,
@@ -4976,6 +5333,7 @@ def _build_agent_decision_trace(
         prior_memory=prior_memory,
         oss_inputs=oss_inputs,
         memory_influence=memory_influence,
+        institutional_memory_influence=institutional_memory_influence,
         persona_reasoning=persona_reasoning,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
@@ -5018,6 +5376,7 @@ def _score_agent_candidates(
     prior_memory: Mapping[str, Any] | None,
     oss_inputs: Mapping[str, Mapping[str, Any]],
     memory_influence: Mapping[str, Any],
+    institutional_memory_influence: Mapping[str, Any],
     persona_reasoning: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
@@ -5048,7 +5407,11 @@ def _score_agent_candidates(
     multi_cycle_lineage_score_adjustments = _multi_cycle_lineage_score_adjustments(multi_cycle_context)
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_score_adjustments = dict(memory_influence["candidate_score_adjustments"])
+    institutional_memory_score_adjustments = dict(
+        institutional_memory_influence["candidate_score_adjustments"]
+    )
     memory_ref = memory_influence.get("influence_ref")
+    institutional_memory_ref = institutional_memory_influence.get("entry_ref")
     feedback_score = float(latest_evaluation["signed_return"]) - abs(float(latest_evaluation["drawdown"])) * 0.1
     feedback_evidence_refs = [
         f"oss://{oss_inputs['alpha_model']['component']}/{oss_inputs['alpha_model']['request_id']}",
@@ -5065,6 +5428,16 @@ def _score_agent_candidates(
         feedback_evidence_refs.append(str(memory_ref))
         if float(memory_score_adjustments.get("risk-off", 0.0)) > 0:
             risk_off_evidence_refs.append(str(memory_ref))
+    if institutional_memory_ref:
+        feedback_evidence_refs.append(str(institutional_memory_ref))
+        feedback_evidence_refs.extend(
+            str(ref) for ref in institutional_memory_influence.get("cited_evidence_refs", [])
+        )
+        if float(institutional_memory_score_adjustments.get("risk-off", 0.0)) > 0:
+            risk_off_evidence_refs.append(str(institutional_memory_ref))
+            risk_off_evidence_refs.extend(
+                str(ref) for ref in institutional_memory_influence.get("cited_evidence_refs", [])
+            )
     feedback_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
     if float(cross_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0:
         risk_off_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
@@ -5078,6 +5451,7 @@ def _score_agent_candidates(
             "score": (
                 3.0
                 + float(memory_score_adjustments["feedback-adapt"])
+                + float(institutional_memory_score_adjustments["feedback-adapt"])
                 + float(followup_score_adjustments["feedback-adapt"])
                 + float(disagreement_score_adjustments["feedback-adapt"])
                 + float(tracking_score_adjustments["feedback-adapt"])
@@ -5097,6 +5471,7 @@ def _score_agent_candidates(
             "score": (
                 1.0
                 + float(memory_score_adjustments["retain-observe"])
+                + float(institutional_memory_score_adjustments["retain-observe"])
                 + float(followup_score_adjustments["retain-observe"])
                 + float(disagreement_score_adjustments["retain-observe"])
                 + float(tracking_score_adjustments["retain-observe"])
@@ -5111,6 +5486,7 @@ def _score_agent_candidates(
             "score": (
                 2.0
                 + float(memory_score_adjustments["risk-off"])
+                + float(institutional_memory_score_adjustments["risk-off"])
                 + float(followup_score_adjustments["risk-off"])
                 + float(disagreement_score_adjustments["risk-off"])
                 + float(tracking_score_adjustments["risk-off"])
@@ -5127,6 +5503,7 @@ def _score_agent_candidates(
             "score": (
                 0.25
                 + float(memory_score_adjustments["contrarian-check"])
+                + float(institutional_memory_score_adjustments["contrarian-check"])
                 + float(followup_score_adjustments["contrarian-check"])
                 + float(disagreement_score_adjustments["contrarian-check"])
                 + float(tracking_score_adjustments["contrarian-check"])
@@ -5191,6 +5568,7 @@ def _build_persona_decision_artifact(
     prior_memory: Mapping[str, Any] | None,
     oss_inputs: Mapping[str, Mapping[str, Any]],
     memory_influence: Mapping[str, Any],
+    institutional_memory_influence: Mapping[str, Any],
     persona_reasoning: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
@@ -5226,6 +5604,10 @@ def _build_persona_decision_artifact(
         "risk_penalty": _risk_penalty_from_oss(oss_inputs),
         "memory_influence": copy.deepcopy(dict(memory_influence)),
         "memory_score_adjustments": copy.deepcopy(dict(memory_influence["candidate_score_adjustments"])),
+        "institutional_memory_influence": copy.deepcopy(dict(institutional_memory_influence)),
+        "institutional_memory_score_adjustments": copy.deepcopy(
+            dict(institutional_memory_influence["candidate_score_adjustments"])
+        ),
         "oss_followup_loop": copy.deepcopy(dict(oss_followup_loop)),
         "oss_followup_score_adjustments": copy.deepcopy(
             dict(oss_followup_loop["candidate_score_adjustments"])
@@ -5295,6 +5677,14 @@ def _build_persona_decision_artifact(
         "memory_status": "retrieved" if prior_memory else "cold_start_declared",
         "prior_memory_source_event_id": prior_memory.get("source_event_id") if prior_memory else None,
         "memory_influence": copy.deepcopy(dict(memory_influence)),
+        "institutional_memory_status": institutional_memory_influence["status"],
+        "institutional_memory_entry_id": institutional_memory_influence["entry_id"],
+        "institutional_memory_entry_ref": institutional_memory_influence["entry_ref"],
+        "institutional_memory_source_event_id": institutional_memory_influence["source_event_id"],
+        "institutional_memory_contributing_persona_ids": list(
+            institutional_memory_influence["contributing_persona_ids"]
+        ),
+        "institutional_memory_influence": copy.deepcopy(dict(institutional_memory_influence)),
         "required_oss_roles": sorted(required_roles),
         "oss_request_ids_by_role": {
             role: result["request_id"] for role, result in sorted(oss_inputs.items())
@@ -5380,6 +5770,12 @@ def _build_persona_decision_artifact(
                 *list(cross_cycle_context.get("evidence_refs", [])),
                 *list(multi_cycle_context.get("evidence_refs", [])),
                 *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
+                *(
+                    [str(institutional_memory_influence["entry_ref"])]
+                    if institutional_memory_influence["entry_ref"]
+                    else []
+                ),
+                *list(institutional_memory_influence.get("cited_evidence_refs", [])),
             ],
             "allowed_windows": list(decision_inputs["allowed_windows"]),
             "forbidden_windows_not_used": list(decision_inputs["forbidden_windows_not_used"]),
@@ -5429,6 +5825,31 @@ def _build_persona_decision_artifact(
             selected_candidate=selected_candidate,
         )
         or input_context["memory_status"] == "cold_start_declared",
+        "uses_cross_persona_institutional_memory_or_declares_cold_start": (
+            (
+                institutional_memory_influence["status"] == "cold_start"
+                and institutional_memory_influence["entry_ref"] is None
+                and all(
+                    float(value) == 0.0
+                    for value in scoring_inputs["institutional_memory_score_adjustments"].values()
+                )
+            )
+            or (
+                institutional_memory_influence["status"] == "applied"
+                and str(institutional_memory_influence["entry_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(institutional_memory_influence["entry_ref"])
+                in selected_candidate.get("evidence_refs", [])
+                and _persona_id(episode.persona)
+                not in set(institutional_memory_influence["contributing_persona_ids"])
+                and float(
+                    scoring_inputs["institutional_memory_score_adjustments"][
+                        _candidate_action_key(str(selected_candidate["candidate_id"]))
+                    ]
+                )
+                > 0.0
+            )
+        ),
         "memory_counterfactual_replays_score_delta": _memory_counterfactual_proof_is_usable(
             memory_counterfactual
         ),
@@ -5590,6 +6011,7 @@ def _persona_candidate_scorecard(
     reflection_quality = float(scoring_inputs["reflection_quality"])
     risk_penalty = float(scoring_inputs["risk_penalty"])
     memory_score_adjustments = dict(scoring_inputs["memory_score_adjustments"])
+    institutional_memory_score_adjustments = dict(scoring_inputs["institutional_memory_score_adjustments"])
     followup_score_adjustments = dict(scoring_inputs["oss_followup_score_adjustments"])
     disagreement_score_adjustments = dict(scoring_inputs["oss_disagreement_score_adjustments"])
     tracking_reconciliation_score_adjustments = dict(scoring_inputs["tracking_reconciliation_score_adjustments"])
@@ -5599,6 +6021,9 @@ def _persona_candidate_scorecard(
     if candidate_id.endswith("-feedback-adapt"):
         formula_id = "feedback_adapt_score_v1"
         memory_adjustment = float(memory_score_adjustments["feedback-adapt"])
+        institutional_memory_adjustment = float(
+            institutional_memory_score_adjustments["feedback-adapt"]
+        )
         followup_adjustment = float(followup_score_adjustments["feedback-adapt"])
         disagreement_adjustment = float(disagreement_score_adjustments["feedback-adapt"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["feedback-adapt"])
@@ -5610,6 +6035,7 @@ def _persona_candidate_scorecard(
         replayed_score = round(
             3.0
             + memory_adjustment
+            + institutional_memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
@@ -5625,6 +6051,7 @@ def _persona_candidate_scorecard(
         components = {
             "base": 3.0,
             "memory_adjustment": memory_adjustment,
+            "institutional_memory_adjustment": institutional_memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
@@ -5639,6 +6066,9 @@ def _persona_candidate_scorecard(
     elif candidate_id.endswith("-retain-observe"):
         formula_id = "retain_observe_score_v1"
         memory_adjustment = float(memory_score_adjustments["retain-observe"])
+        institutional_memory_adjustment = float(
+            institutional_memory_score_adjustments["retain-observe"]
+        )
         followup_adjustment = float(followup_score_adjustments["retain-observe"])
         disagreement_adjustment = float(disagreement_score_adjustments["retain-observe"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["retain-observe"])
@@ -5650,6 +6080,7 @@ def _persona_candidate_scorecard(
         replayed_score = round(
             1.0
             + memory_adjustment
+            + institutional_memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
@@ -5662,6 +6093,7 @@ def _persona_candidate_scorecard(
         components = {
             "base": 1.0,
             "memory_adjustment": memory_adjustment,
+            "institutional_memory_adjustment": institutional_memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
@@ -5673,6 +6105,9 @@ def _persona_candidate_scorecard(
     elif candidate_id.endswith("-risk-off"):
         formula_id = "risk_off_score_v1"
         memory_adjustment = float(memory_score_adjustments["risk-off"])
+        institutional_memory_adjustment = float(
+            institutional_memory_score_adjustments["risk-off"]
+        )
         followup_adjustment = float(followup_score_adjustments["risk-off"])
         disagreement_adjustment = float(disagreement_score_adjustments["risk-off"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["risk-off"])
@@ -5684,6 +6119,7 @@ def _persona_candidate_scorecard(
         replayed_score = round(
             2.0
             + memory_adjustment
+            + institutional_memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
@@ -5696,6 +6132,7 @@ def _persona_candidate_scorecard(
         components = {
             "base": 2.0,
             "memory_adjustment": memory_adjustment,
+            "institutional_memory_adjustment": institutional_memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
@@ -5707,6 +6144,9 @@ def _persona_candidate_scorecard(
     else:
         formula_id = "contrarian_control_score_v1"
         memory_adjustment = float(memory_score_adjustments["contrarian-check"])
+        institutional_memory_adjustment = float(
+            institutional_memory_score_adjustments["contrarian-check"]
+        )
         followup_adjustment = float(followup_score_adjustments["contrarian-check"])
         disagreement_adjustment = float(disagreement_score_adjustments["contrarian-check"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["contrarian-check"])
@@ -5718,6 +6158,7 @@ def _persona_candidate_scorecard(
         replayed_score = round(
             0.25
             + memory_adjustment
+            + institutional_memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
@@ -5729,6 +6170,7 @@ def _persona_candidate_scorecard(
         components = {
             "base": 0.25,
             "memory_adjustment": memory_adjustment,
+            "institutional_memory_adjustment": institutional_memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
@@ -6179,6 +6621,24 @@ def _retrieve_prior_lesson(
     return _memory_context_from_entry(entry)
 
 
+def _retrieve_cross_persona_institutional_lesson(
+    institutional_store: InstitutionalMemoryStore,
+    persona_id: str,
+) -> dict[str, Any] | None:
+    hits = institutional_store.retrieve(
+        query="agent usability hardening reflection selected_action",
+        tags=["agent_usability_hardening", "memory_influence_ready"],
+        limit=12,
+    )
+    for hit in hits:
+        contributing_persona_ids = {str(item) for item in hit.entry.contributing_persona_ids}
+        if persona_id in contributing_persona_ids:
+            continue
+        entry = institutional_store.mark_reused(hit.entry.entry_id)
+        return _institutional_memory_context_from_entry(entry)
+    return None
+
+
 def _retrieve_current_lesson(
     persona_store: PersonaMemoryStore,
     persona_id: str,
@@ -6195,6 +6655,51 @@ def _retrieve_current_lesson(
         raise AssertionError(f"missing current memory lesson for {reflection_id}")
     entry = persona_store.mark_reused(hits[0].entry.memory_id)
     return _memory_context_from_entry(entry)
+
+
+def _institutional_memory_context_from_entry(entry: Any) -> dict[str, Any]:
+    structured_payload = entry.content.get("structured_payload", {})
+    if not isinstance(structured_payload, Mapping):
+        structured_payload = {}
+    evidence_refs = _memory_evidence_ref_strings(
+        structured_payload.get("evidence_refs", [])
+    )
+    return {
+        "entry_id": entry.entry_id,
+        "entry_ref": f"institutional-memory://{entry.entry_id}",
+        "source_event_id": entry.source_event_id,
+        "reuse_count": entry.reuse_count,
+        "knowledge_type": entry.knowledge_type,
+        "scope": entry.scope,
+        "scope_filter": entry.scope_filter,
+        "content_summary": entry.content.get("body") or entry.content.get("headline"),
+        "headline": entry.content.get("headline"),
+        "proposal_ids": list(structured_payload.get("proposal_ids", [])),
+        "evidence_refs": evidence_refs,
+        "tags": list(entry.content.get("tags", []) or []),
+        "contributing_persona_ids": list(entry.contributing_persona_ids),
+        "sponsor_persona_id": structured_payload.get("sponsor_persona_id"),
+    }
+
+
+def _memory_evidence_ref_strings(raw_refs: Any) -> list[str]:
+    refs: list[str] = []
+    for raw_ref in raw_refs if isinstance(raw_refs, list) else []:
+        if isinstance(raw_ref, str):
+            refs.append(raw_ref)
+            continue
+        if not isinstance(raw_ref, Mapping):
+            refs.append(f"memory-evidence://{_stable_payload_hash('memory-evidence', raw_ref)}")
+            continue
+        ref_type = str(raw_ref.get("ref_type") or "memory-evidence").replace("_", "-")
+        ref_id = str(
+            raw_ref.get("ref_id")
+            or raw_ref.get("event_id")
+            or raw_ref.get("id")
+            or _stable_payload_hash("memory-evidence", raw_ref)
+        )
+        refs.append(f"{ref_type}://{ref_id}")
+    return list(dict.fromkeys(refs))
 
 
 def _memory_context_from_entry(entry: Any) -> dict[str, Any]:
@@ -7801,6 +8306,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("no_forbidden_window_sources") is True
         and replay.get("uses_memory_or_declares_cold_start") is True
         and replay.get("uses_memory_in_scoring_or_declares_cold_start") is True
+        and replay.get("uses_cross_persona_institutional_memory_or_declares_cold_start") is True
         and replay.get("memory_counterfactual_replays_score_delta") is True
         and replay.get("uses_persona_reasoning_response") is True
         and replay.get("uses_selected_oss_feedback") is True
@@ -7879,6 +8385,12 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
     tracking_reconciliation_usage = response.get("tracking_reconciliation_usage", {})
     alpha_seed_revision_ref = input_context.get("alpha_seed_revision_ref")
     alpha_seed_revision_usage = response.get("alpha_seed_revision_usage", {})
+    institutional_memory_status = input_context.get("institutional_memory_status")
+    institutional_memory_entry_ref = input_context.get("institutional_memory_entry_ref")
+    institutional_memory_contributing_persona_ids = set(
+        input_context.get("institutional_memory_contributing_persona_ids", [])
+    )
+    institutional_memory_usage = response.get("institutional_memory_usage", {})
     multi_cycle_lineage_status = input_context.get("multi_cycle_lineage_status")
     multi_cycle_lineage_ref = input_context.get("multi_cycle_lineage_ref")
     multi_cycle_latest_runtime_feedback_ref = input_context.get(
@@ -7916,6 +8428,22 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
         and alpha_seed_revision_usage.get("model_id") == PERSONA_ALPHA_SEED_REVISION_MODEL_ID
         and alpha_seed_revision_ref in request.get("input_refs", [])
         and alpha_seed_revision_ref in generation_request.get("input_refs", [])
+        and institutional_memory_usage.get("model_id") == PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID
+        and (
+            (
+                institutional_memory_status == "cold_start"
+                and institutional_memory_usage.get("status") == "cold_start"
+                and institutional_memory_entry_ref is None
+            )
+            or (
+                institutional_memory_status == "applied"
+                and institutional_memory_usage.get("status") == "applied"
+                and institutional_memory_usage.get("entry_ref") == institutional_memory_entry_ref
+                and institutional_memory_entry_ref in request.get("input_refs", [])
+                and institutional_memory_entry_ref in generation_request.get("input_refs", [])
+                and input_context.get("persona_id") not in institutional_memory_contributing_persona_ids
+            )
+        )
         and multi_cycle_lineage_usage.get("model_id") == PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID
         and (
             (
@@ -8697,6 +9225,7 @@ def _build_usability_dimensions(
     cross_cycle_carryover: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
+    institutional_memory_lineage: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
@@ -8719,6 +9248,9 @@ def _build_usability_dimensions(
             trace["agent_decision_artifact"]["memory_counterfactual"]
         )
         for trace in decision_traces
+    ) else 0.0
+    institutional_memory_lineage_score = 1.0 if _institutional_memory_lineage_is_usable(
+        institutional_memory_lineage
     ) else 0.0
     decision_explainability = 1.0 if all(
         trace["candidate_count"] >= 4
@@ -8824,6 +9356,7 @@ def _build_usability_dimensions(
         "memory_reuse": memory_reuse,
         "memory_influences_decision": memory_influences_decision,
         "memory_counterfactual_decision": memory_counterfactual_decision,
+        "institutional_memory_lineage": institutional_memory_lineage_score,
         "decision_explainability": decision_explainability,
         "persona_decision_artifact": persona_decision_artifact,
         "persona_reasoning_generation": persona_reasoning_generation,
@@ -8879,6 +9412,7 @@ def _diagnose_validation_execution(
     cross_cycle_carryover: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
+    institutional_memory_lineage: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
@@ -9034,6 +9568,20 @@ def _diagnose_validation_execution(
                     }
                     for trace in decision_traces
                 ],
+            },
+        ),
+        _diagnostic_check(
+            "cross_persona_institutional_memory_drives_persona_scoring",
+            _institutional_memory_lineage_is_usable(institutional_memory_lineage),
+            {
+                "proof_id": institutional_memory_lineage["proof_id"],
+                "lineage_status": institutional_memory_lineage["lineage_status"],
+                "entry_ref": institutional_memory_lineage.get("entry_ref"),
+                "contributing_persona_ids": list(
+                    institutional_memory_lineage.get("contributing_persona_ids", [])
+                ),
+                "trace_binding_count": len(institutional_memory_lineage["trace_bindings"]),
+                "replay": copy.deepcopy(dict(institutional_memory_lineage["replay"])),
             },
         ),
         _diagnostic_check(
@@ -9506,6 +10054,7 @@ def _build_case_result(
     cross_cycle_carryover: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
+    institutional_memory_lineage: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
@@ -9514,6 +10063,7 @@ def _build_case_result(
     validation_plan: Mapping[str, Any],
     validation_diagnostics: Mapping[str, Any],
     validation_repair: Mapping[str, Any],
+    prior_institutional_memory: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     overall_usability_score = round(mean(usability_dimensions.values()), 10)
     generation_results = []
@@ -9581,6 +10131,9 @@ def _build_case_result(
         },
         "memory": {
             "prior_memory": memory_contexts[0],
+            "prior_institutional_memory": copy.deepcopy(dict(prior_institutional_memory))
+            if prior_institutional_memory
+            else None,
             "generation_memory_writes": [
                 {
                     "created": write["created"],
@@ -9591,6 +10144,7 @@ def _build_case_result(
                 for write in memory_writes
             ],
             "memory_reused_for_next_decision": [memory_contexts[1], memory_contexts[2]],
+            "institutional_memory_lineage": copy.deepcopy(dict(institutional_memory_lineage)),
         },
         "reflection": {
             "agent_decision_traces": list(decision_traces),
@@ -9629,6 +10183,9 @@ def _build_case_result(
             "memory_retrieval_drives_next_decision": usability_dimensions["memory_influences_decision"] == 1.0,
             "memory_counterfactual_drives_decision": usability_dimensions[
                 "memory_counterfactual_decision"
+            ] == 1.0,
+            "cross_persona_institutional_memory_drives_decision": usability_dimensions[
+                "institutional_memory_lineage"
             ] == 1.0,
             "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
             "multi_oss_closed_loop_drives_decision": usability_dimensions["multi_oss_closed_loop"] == 1.0,
@@ -9711,6 +10268,9 @@ def _build_summary(
     ]
     memory_counterfactuals = [
         artifact["memory_counterfactual"] for artifact in decision_artifacts
+    ]
+    institutional_memory_lineages = [
+        case["memory"]["institutional_memory_lineage"] for case in cases
     ]
     evolution_trajectories = [case["evolution"]["trajectory"] for case in cases]
     no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
@@ -10128,6 +10688,24 @@ def _build_summary(
             for flag, value in proof["replay"].items()
             if value is True
         }),
+        "institutional_memory_lineage_models": sorted({
+            proof["model_id"] for proof in institutional_memory_lineages
+        }),
+        "institutional_memory_lineage_statuses": sorted({
+            proof["lineage_status"] for proof in institutional_memory_lineages
+        }),
+        "institutional_memory_lineage_score_adjusted_actions": sorted({
+            action
+            for proof in institutional_memory_lineages
+            for action, value in proof["score_adjustments"].items()
+            if float(value) > 0.0
+        }),
+        "institutional_memory_lineage_replay_flags": sorted({
+            flag
+            for proof in institutional_memory_lineages
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
         "agent_persona_reasoning_models": sorted({
             artifact["persona_reasoning"]["response"]["model_id"] for artifact in decision_artifacts
         }),
@@ -10239,6 +10817,22 @@ def _build_summary(
         ),
         "memory_counterfactual_drives_decision_count": sum(
             1 for item in usable if item["memory_counterfactual_drives_decision"]
+        ),
+        "institutional_memory_lineage_count": len(institutional_memory_lineages),
+        "institutional_memory_lineage_pass_count": sum(
+            1 for proof in institutional_memory_lineages if _institutional_memory_lineage_is_usable(proof)
+        ),
+        "institutional_memory_lineage_cold_start_count": sum(
+            1 for proof in institutional_memory_lineages if proof["lineage_status"] == "cold_start"
+        ),
+        "institutional_memory_lineage_applied_count": sum(
+            1 for proof in institutional_memory_lineages if proof["lineage_status"] == "applied"
+        ),
+        "institutional_memory_lineage_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in institutional_memory_lineages
+        ),
+        "cross_persona_institutional_memory_drives_decision_count": sum(
+            1 for item in usable if item["cross_persona_institutional_memory_drives_decision"]
         ),
         "intra_case_memory_influence_count": sum(
             1

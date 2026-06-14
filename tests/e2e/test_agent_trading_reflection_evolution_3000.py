@@ -43,6 +43,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_CANDIDATE_SCORER_MODEL_ID,
     PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
+    PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
     PERSONA_MEMORY_INFLUENCE_MODEL_ID,
     PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID,
     PERSONA_OSS_OODA_LEDGER_MODEL_ID,
@@ -110,6 +111,12 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     )
     assert summary["memory_counterfactual_cold_start_count"] == summary["persona_count"]
     assert summary["memory_counterfactual_drives_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["institutional_memory_lineage_count"] == DEFAULT_CASE_COUNT
+    assert summary["institutional_memory_lineage_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["institutional_memory_lineage_cold_start_count"] == 1
+    assert summary["institutional_memory_lineage_applied_count"] == DEFAULT_CASE_COUNT - 1
+    assert summary["institutional_memory_lineage_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["cross_persona_institutional_memory_drives_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["intra_case_memory_influence_count"] == DEFAULT_CASE_COUNT
     assert summary["cross_case_memory_influence_count"] == DEFAULT_CASE_COUNT - summary["persona_count"]
     assert summary["multi_oss_feedback_drives_decision_count"] == DEFAULT_CASE_COUNT
@@ -601,6 +608,33 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "selected_action_matches_memory_hint_when_retrieved",
         "selected_candidate_cites_memory_when_retrieved",
     }
+    assert coverage["institutional_memory_lineage_models"] == [
+        PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID
+    ]
+    assert set(coverage["institutional_memory_lineage_statuses"]) == {
+        "applied",
+        "cold_start",
+    }
+    assert set(coverage["institutional_memory_lineage_score_adjusted_actions"]) == {
+        "feedback-adapt",
+        "risk-off",
+    }
+    assert set(coverage["institutional_memory_lineage_replay_flags"]) == {
+        "candidate_generation_consumes_institutional_memory",
+        "candidate_generation_consumes_institutional_source_evidence",
+        "cold_start_or_cross_persona_entry_bound",
+        "decision_artifact_replays_institutional_memory",
+        "institutional_entry_ref_available",
+        "private_persona_memory_not_reused_as_institutional_memory",
+        "reasoning_consumes_institutional_memory",
+        "reasoning_consumes_institutional_source_evidence",
+        "replayable",
+        "scorecard_replays_institutional_memory_adjustment",
+        "scorer_applies_institutional_memory_adjustment",
+        "selected_candidate_cites_institutional_memory",
+        "selected_candidate_cites_institutional_source_evidence",
+        "source_persona_differs_from_current_persona",
+    }
     assert coverage["agent_persona_reasoning_models"] == [PERSONA_REASONING_MODEL_ID]
     assert coverage["agent_persona_reasoning_evaluator_models"] == [PERSONA_REASONING_EVALUATOR_MODEL_ID]
     assert "feedback-adapt" in coverage["agent_persona_reasoning_preferred_actions"]
@@ -641,6 +675,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     portfolio_window_signatures: set[str] = set()
     latest_case_by_persona: dict[str, dict] = {}
     case_history_by_persona: dict[str, list[dict]] = {}
+    institutional_writes_by_id: dict[str, dict] = {}
     for case in cases:
         persona_case_history = list(case_history_by_persona.get(case["persona_id"], []))
         assert not case["case_id"].startswith("agent-usability-")
@@ -655,6 +690,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_no_leakage_temporal_protocol(case)
         _assert_strict_oos_evolution_proof(case)
         _assert_memory_and_oss_closed_loop(case)
+        _assert_institutional_memory_lineage(case, institutional_writes_by_id)
         _assert_multi_oss_closed_loop_proof(case)
         _assert_persona_oss_ooda_causal_ledger(case)
         _assert_cross_cycle_runtime_carryover(case, latest_case_by_persona)
@@ -666,6 +702,12 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         assert all(case["usable"].values())
         latest_case_by_persona[case["persona_id"]] = case
         case_history_by_persona.setdefault(case["persona_id"], []).append(case)
+        for write in case["memory"]["generation_memory_writes"]:
+            institutional_writes_by_id[write["institutional_entry_id"]] = {
+                **write,
+                "case_id": case["case_id"],
+                "persona_id": case["persona_id"],
+            }
 
 
 def _assert_unique_planned_validation_cycle(
@@ -1284,6 +1326,153 @@ def _assert_memory_and_oss_closed_loop(case: dict) -> None:
     assert replay["responses_drive_candidate_scoring"] is True
     assert replay["feedback_adapt_receives_all_followup_refs"] is True
     assert replay["risk_response_available_to_risk_off"] is True
+
+
+def _assert_institutional_memory_lineage(
+    case: dict,
+    institutional_writes_by_id: dict[str, dict],
+) -> None:
+    memory = case["memory"]
+    proof = memory["institutional_memory_lineage"]
+    traces = case["reflection"]["agent_decision_traces"]
+
+    assert proof["model_id"] == PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == f"institutional-memory-lineage://{case['case_id']}"
+    assert proof["input_hash"]
+    assert len(proof["trace_bindings"]) == len(traces) == 2
+    assert all(proof["replay"].values())
+    assert case["usability_dimensions"]["institutional_memory_lineage"] == 1.0
+    assert case["usable"]["cross_persona_institutional_memory_drives_decision"] is True
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["cross_persona_institutional_memory_drives_persona_scoring"]["status"] == "passed"
+
+    if not institutional_writes_by_id:
+        assert memory["prior_institutional_memory"] is None
+        assert proof["lineage_status"] == "cold_start"
+        assert proof["entry_id"] is None
+        assert proof["entry_ref"] is None
+        assert proof["source_event_id"] is None
+        assert proof["contributing_persona_ids"] == []
+        assert proof["institutional_refs"] == []
+        assert all(float(value) == 0.0 for value in proof["score_adjustments"].values())
+    else:
+        prior_institutional = memory["prior_institutional_memory"]
+        assert prior_institutional
+        assert proof["lineage_status"] == "applied"
+        assert proof["entry_id"] == prior_institutional["entry_id"]
+        assert proof["entry_id"] in institutional_writes_by_id
+        previous_write = institutional_writes_by_id[proof["entry_id"]]
+        assert previous_write["persona_id"] != case["persona_id"]
+        assert proof["entry_ref"] == f"institutional-memory://{proof['entry_id']}"
+        assert proof["entry_ref"] == prior_institutional["entry_ref"]
+        assert proof["source_event_id"] == previous_write["source_event_id"]
+        assert proof["source_event_id"] == prior_institutional["source_event_id"]
+        assert proof["contributing_persona_ids"] == prior_institutional["contributing_persona_ids"]
+        assert case["persona_id"] not in proof["contributing_persona_ids"]
+        assert previous_write["persona_id"] in proof["contributing_persona_ids"]
+        assert proof["selected_action_hint"] in {
+            "feedback-adapt",
+            "risk-off",
+            "retain-observe",
+            "contrarian-check",
+        }
+        assert proof["score_adjustments"]["feedback-adapt"] > 0.0
+        assert proof["score_adjustments"]["risk-off"] > 0.0
+        assert proof["score_adjustments"]["retain-observe"] == 0.0
+        assert proof["score_adjustments"]["contrarian-check"] == 0.0
+        assert proof["cited_evidence_refs"]
+        assert proof["institutional_refs"] == [
+            proof["entry_ref"],
+            *proof["cited_evidence_refs"],
+        ]
+
+    binding_by_trace = {
+        binding["trace_id"]: binding
+        for binding in proof["trace_bindings"]
+    }
+    assert set(binding_by_trace) == {trace["reflection_id"] for trace in traces}
+    for trace in traces:
+        binding = binding_by_trace[trace["reflection_id"]]
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        reasoning_response = artifact["persona_reasoning"]["response"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scorer_inputs = artifact["scorer"]["scoring_inputs"]
+        scorecards = artifact["scorer"]["scorecards"]
+        selected_id = trace["selected_candidate_id"]
+        selected_action = _candidate_action_from_id(selected_id)
+        selected_card = scorecards[selected_id]
+
+        assert binding["generation"] == artifact["generation"]
+        assert binding["trace_id"] == trace["reflection_id"]
+        assert binding["selected_action"] == selected_action
+        assert trace["decision_inputs"]["institutional_memory_entry_ref"] == proof["entry_ref"]
+        assert trace["decision_inputs"]["institutional_memory_source_event_id"] == proof["source_event_id"]
+        assert trace["decision_inputs"]["institutional_memory_contributing_persona_ids"] == proof[
+            "contributing_persona_ids"
+        ]
+        assert artifact["input_context"]["institutional_memory_status"] == proof["lineage_status"]
+        assert artifact["input_context"]["institutional_memory_entry_id"] == proof["entry_id"]
+        assert artifact["input_context"]["institutional_memory_entry_ref"] == proof["entry_ref"]
+        assert artifact["input_context"]["institutional_memory_source_event_id"] == proof["source_event_id"]
+        assert artifact["input_context"]["institutional_memory_contributing_persona_ids"] == proof[
+            "contributing_persona_ids"
+        ]
+        assert reasoning_request["institutional_memory_status"] == proof["lineage_status"]
+        assert reasoning_request["institutional_memory_entry_ref"] == proof["entry_ref"]
+        assert reasoning_request["institutional_memory_source_event_id"] == proof["source_event_id"]
+        assert reasoning_request["institutional_memory_contributing_persona_ids"] == proof[
+            "contributing_persona_ids"
+        ]
+        assert reasoning_response["institutional_memory_usage"]["status"] == proof["lineage_status"]
+        assert reasoning_response["institutional_memory_usage"]["entry_ref"] == proof["entry_ref"]
+        assert reasoning_response["institutional_memory_usage"]["source_event_id"] == proof["source_event_id"]
+        assert reasoning_response["institutional_memory_usage"]["contributing_persona_ids"] == proof[
+            "contributing_persona_ids"
+        ]
+        assert reasoning_response["institutional_memory_usage"]["candidate_score_adjustments"] == proof[
+            "score_adjustments"
+        ]
+        assert scorer_inputs["institutional_memory_influence"]["status"] == proof["lineage_status"]
+        assert scorer_inputs["institutional_memory_influence"]["entry_ref"] == proof["entry_ref"]
+        assert scorer_inputs["institutional_memory_score_adjustments"] == proof["score_adjustments"]
+        assert selected_card["components"]["institutional_memory_adjustment"] == proof[
+            "score_adjustments"
+        ][selected_action]
+        assert artifact["replay"]["uses_cross_persona_institutional_memory_or_declares_cold_start"] is True
+
+        if proof["lineage_status"] == "cold_start":
+            assert binding["decision_input_entry_ref"] is None
+            assert binding["reasoning_consumes_entry_ref"] is False
+            assert binding["candidate_request_consumes_entry_ref"] is False
+            assert binding["selected_candidate_cites_entry_ref"] is False
+            assert binding["scorer_institutional_memory_adjustment"] == 0.0
+            assert selected_card["components"]["institutional_memory_adjustment"] == 0.0
+        else:
+            expected_refs = set(proof["institutional_refs"])
+            assert binding["decision_input_entry_ref"] == proof["entry_ref"]
+            assert binding["private_memory_ref"] != proof["entry_ref"]
+            assert not str(binding["decision_input_entry_ref"]).startswith("memory://")
+            assert binding["reasoning_consumes_entry_ref"] is True
+            assert binding["candidate_request_consumes_entry_ref"] is True
+            assert binding["selected_candidate_cites_entry_ref"] is True
+            assert binding["reasoning_consumes_cited_evidence_refs"] is True
+            assert binding["candidate_request_consumes_cited_evidence_refs"] is True
+            assert binding["selected_candidate_cites_cited_evidence_refs"] is True
+            assert binding["scorer_institutional_memory_adjustment"] == proof["score_adjustments"][selected_action]
+            assert binding["scorecard_institutional_memory_adjustment"] == proof["score_adjustments"][selected_action]
+            assert binding["scorer_institutional_memory_adjustment"] > 0.0
+            assert binding["decision_replay_uses_institutional_memory"] is True
+            assert expected_refs.issubset(set(reasoning_request["input_refs"]))
+            assert expected_refs.issubset(set(candidate_request["input_refs"]))
+            assert expected_refs.issubset(set(trace["selected_candidate"]["evidence_refs"]))
 
 
 def _assert_multi_oss_closed_loop_proof(case: dict) -> None:
