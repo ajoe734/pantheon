@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Incident consumer: audit + fixture-proven IncidentCase
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Helper-claimed by Codex while Claude completes higher-priority work.
+- Next: Review approved: 62 tests pass, fixture-proven IncidentCase, incidents service registered in both docker-compose files. Returning to owner for closeout.
 
 ## Summary
-審查 services/incidents 的 consumer;用 telemetry/threshold fixture 證明能產出 IncidentCase;確認 dev 可掛載。
+審查 services/incidents consumer；用 telemetry/threshold fixture 證明能產出 IncidentCase；確認 dev 可掛載。
