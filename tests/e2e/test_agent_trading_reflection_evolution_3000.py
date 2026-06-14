@@ -47,6 +47,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_CONFLICT_RESOLUTION_MODEL_ID,
     PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
+    PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID,
     PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
     PERSONA_MEMORY_INFLUENCE_MODEL_ID,
     PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID,
@@ -222,6 +223,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["lean_runtime_feedback_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_runtime_feedback_consumed_execution_projection_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_runtime_feedback_drives_ooda_count"] == DEFAULT_CASE_COUNT
+    assert summary["experiment_tracking_lineage_handoff_count"] == DEFAULT_CASE_COUNT
+    assert summary["experiment_tracking_lineage_handoff_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["experiment_tracking_lineage_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_handoff_count"] == DEFAULT_CASE_COUNT
@@ -348,6 +352,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "replayable",
         "target_count_matches_portfolio",
         "target_refs_unique",
+        "loaded_packet_preserves_tracking_provenance",
+        "loaded_tracking_ref_matches_packet",
+        "tracking_provenance_present_in_packet",
     }
     assert coverage["lean_packet_execution_projection_models"] == [
         LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
@@ -397,6 +404,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "case_runtime_refs_bound",
         "drives_persona_next_ooda_step",
         "evolved_strategy_packet_refs_bound",
+        "experiment_tracking_lineage_bound",
         "fills_drive_next_ooda",
         "handoff_packet_consumed",
         "lean_packet_execution_projection_consumed",
@@ -405,6 +413,21 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "paper_runtime_guard_retained",
         "runtime_binding_readback_verified",
         "runtime_feedback_consumed",
+    }
+    assert coverage["experiment_tracking_lineage_handoff_models"] == [
+        PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID
+    ]
+    assert coverage["experiment_tracking_lineage_handoff_backends"] == ["mlflow", "wandb"]
+    assert set(coverage["experiment_tracking_lineage_handoff_replay_flags"]) == {
+        "evolution_decision_cites_reconciliation",
+        "evolution_decision_metadata_carries_experiment_ref",
+        "handoff_runtime_bundle_contains_repaired_tracking_refs",
+        "lineage_hash_stable_across_packet_handoff_readback",
+        "object_store_readback_preserves_tracking_provenance",
+        "replayable",
+        "runtime_feedback_cites_repaired_tracking_refs",
+        "strategy_packet_carries_tracking_provenance",
+        "tracker_readback_reconciled",
     }
     assert coverage["evolved_strategy_packet_models"] == [
         LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID
@@ -932,6 +955,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_multi_cycle_lineage_carryover(case, persona_case_history)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
+        _assert_experiment_tracking_lineage_handoff(case)
         _assert_lean_packet_execution_projection(case)
         _assert_evolved_strategy_packet_proof(case)
         _assert_scheduler_conflict_ooda_proof(case)
@@ -3042,6 +3066,38 @@ def _assert_operational_context(case: dict) -> None:
     assert replay["case_specific_strategy_packet"]["future_window_hidden"] is True
     assert replay["case_specific_strategy_packet"]["strict_oos_replay_passed"] is True
     assert replay["case_specific_strategy_packet"]["no_leakage_replay_passed"] is True
+    reconciliation = case["case_upstream_artifacts"]["tracking_reconciliation"]
+    tracker = case["case_upstream_artifacts"]["tracker"]
+    vectorbt = case["case_upstream_artifacts"]["vectorbt"]
+    experiment_ref = reconciliation["repair"]["normalized_experiment_ref"]
+    tracking_reconciliation_ref = reconciliation["reconciliation_ref"]
+    tracking_repair_ref = reconciliation["repair"]["repair_ref"]
+    decision_evidence_refs = case["evolution"]["evidence_refs"]
+    decision_evidence_ids = {ref["ref_id"] for ref in decision_evidence_refs}
+    assert tracking_reconciliation_ref in decision_evidence_ids
+    assert case["evolution"]["metadata"]["normalized_experiment_ref"] == experiment_ref
+    assert case["evolution"]["metadata"]["tracking_reconciliation_ref"] == tracking_reconciliation_ref
+    assert case["evolution"]["metadata"]["tracking_repair_ref"] == tracking_repair_ref
+    packet_provenance = replay["case_specific_strategy_packet"]["experiment_tracking_provenance"]
+    assert packet_provenance["model_id"] == PERSONA_TRACKING_RECONCILIATION_MODEL_ID
+    assert packet_provenance["backend"] == tracker["backend"]
+    assert packet_provenance["request_id"] == tracker["request_id"]
+    assert packet_provenance["run_id"] == tracker["run_id"]
+    assert packet_provenance["artifact_uri"] == tracker["artifact_uri"]
+    assert packet_provenance["experiment_ref"] == experiment_ref
+    assert packet_provenance["reconciliation_ref"] == tracking_reconciliation_ref
+    assert packet_provenance["repair_ref"] == tracking_repair_ref
+    assert packet_provenance["repair_action"] == reconciliation["repair"]["action"]
+    assert packet_provenance["source_vectorbt_request_id"] == vectorbt["request_id"]
+    assert packet_provenance["source_vectorbt_run_id"] == vectorbt["run_id"]
+    assert packet_provenance["tracking_reconciliation_input_hash"] == reconciliation["input_hash"]
+    assert packet_provenance["lineage_hash"]
+    assert replay["case_specific_strategy_packet"]["experiment_tracking_provenance_hash"] == (
+        packet_provenance["lineage_hash"]
+    )
+    assert replay["case_specific_strategy_packet"]["normalized_experiment_ref"] == experiment_ref
+    assert replay["case_specific_strategy_packet"]["tracking_reconciliation_ref"] == tracking_reconciliation_ref
+    assert replay["case_specific_strategy_packet"]["tracking_repair_ref"] == tracking_repair_ref
     assert replay["plan"]["target_stage"] == "paper"
     assert replay["binding"]["deployment_mode"] == "paper"
     assert replay["runtime_context"]["runtime_binding_id"] == replay["binding"]["binding_id"]
@@ -3071,6 +3127,12 @@ def _assert_operational_context(case: dict) -> None:
     assert packet_readback["loaded_signal_id"] == packet_readback["target_signal_ids"][0]
     assert packet_readback["loaded_signal_symbol"] == packet_readback["target_symbols"][0]
     assert packet_readback["loaded_signal_source_target_ref"] == packet_readback["target_refs"][0]
+    assert packet_readback["normalized_experiment_ref"] == experiment_ref
+    assert packet_readback["tracking_reconciliation_ref"] == tracking_reconciliation_ref
+    assert packet_readback["tracking_repair_ref"] == tracking_repair_ref
+    assert packet_readback["experiment_tracking_provenance_hash"] == packet_provenance["lineage_hash"]
+    assert packet_readback["loaded_experiment_tracking_provenance_hash"] == packet_provenance["lineage_hash"]
+    assert packet_readback["loaded_experiment_tracking_provenance"] == packet_provenance
     assert packet_readback["object_store_keys"] == replay["object_store_keys"]
     assert all(packet_readback["replay"].values())
     assert packet_readback["input_hash"]
@@ -3236,6 +3298,11 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["case_tracking_request_id"] == case["case_upstream_artifacts"]["tracker"]["request_id"]
     assert handoff["case_tracking_backend"] == case["case_upstream_artifacts"]["tracker"]["backend"]
     assert handoff["case_tracking_run_id"] == case["case_upstream_artifacts"]["tracker"]["run_id"]
+    assert handoff["normalized_experiment_ref"] == experiment_ref
+    assert handoff["tracking_reconciliation_ref"] == tracking_reconciliation_ref
+    assert handoff["tracking_repair_ref"] == tracking_repair_ref
+    assert handoff["experiment_tracking_provenance"] == packet_provenance
+    assert handoff["experiment_tracking_provenance_hash"] == packet_provenance["lineage_hash"]
     assert handoff["target_stage"] == "paper"
     assert handoff["broker_live_submitted"] is False
     assert set(handoff["portfolio_instruments"]) == set(case["portfolio"]["instruments"])
@@ -3251,6 +3318,9 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["strict_oos_evolution_proof_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["no_leakage_protocol_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["evolution_trajectory_ref"] in handoff["runtime_bundle_refs"]
+    assert experiment_ref in handoff["runtime_bundle_refs"]
+    assert tracking_reconciliation_ref in handoff["runtime_bundle_refs"]
+    assert tracking_repair_ref in handoff["runtime_bundle_refs"]
     assert conflict["resolution_ref"] in handoff["runtime_bundle_refs"]
     assert schedule["schedule_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["runtime_bundle_refs"]
@@ -3299,6 +3369,9 @@ def _assert_operational_context(case: dict) -> None:
         handoff["strategy_packet_ref"],
         handoff["strict_oos_evolution_proof_ref"],
         handoff["no_leakage_protocol_ref"],
+        experiment_ref,
+        tracking_reconciliation_ref,
+        tracking_repair_ref,
         f"runtime-binding://{runtime_readback['runtime_binding_id']}",
         f"object-store://{runtime_readback['object_store_metadata_key']}",
         f"reflection://{case['reflection']['agent_decision_traces'][-1]['reflection_id']}",
@@ -3307,6 +3380,9 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["state_updates"]["bind_runtime_context"] == runtime_readback["runtime_binding_id"]
     assert runtime_feedback["state_updates"]["verify_object_store_metadata"] == runtime_readback["object_store_metadata_key"]
     assert runtime_feedback["state_updates"]["bind_evolved_strategy_packet"] == handoff["strategy_packet_ref"]
+    assert runtime_feedback["state_updates"]["bind_reconciled_experiment_ref"] == experiment_ref
+    assert runtime_feedback["state_updates"]["bind_tracking_reconciliation_ref"] == tracking_reconciliation_ref
+    assert runtime_feedback["state_updates"]["bind_tracking_repair_ref"] == tracking_repair_ref
     assert runtime_feedback["state_updates"]["bind_lean_packet_execution_projection"] == projection["projection_ref"]
     assert runtime_feedback["state_updates"]["attach_to_handoff_packet"] == handoff["packet_id"]
     assert runtime_feedback["state_updates"]["attach_to_decision_trace"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
@@ -3315,15 +3391,65 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["input_hash"]
     assert case["usability_dimensions"]["lean_packet_execution_projection"] == 1.0
     assert case["usability_dimensions"]["lean_runtime_feedback"] == 1.0
+    assert case["usability_dimensions"]["experiment_tracking_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["evolved_strategy_packet_handoff"] == 1.0
     assert case["usable"]["lean_packet_execution_projection_replayed"] is True
+    assert case["usable"]["experiment_tracking_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["evolved_strategy_packet_reaches_lean_handoff"] is True
     assert check_by_name["lean_packet_execution_projection_replays_packet_legs"]["status"] == "passed"
     assert check_by_name["lean_runtime_feedback_drives_persona_ooda"]["status"] == "passed"
+    assert check_by_name["tracking_experiment_lineage_reaches_evolution_and_lean_packet"]["status"] == "passed"
     assert check_by_name["evolved_strategy_packet_reaches_lean_handoff"]["status"] == "passed"
     assert case["usability_dimensions"]["scheduler_conflict_ooda_dispatch"] == 1.0
     assert case["usable"]["scheduler_conflict_ooda_dispatch_replayed"] is True
     assert check_by_name["scheduler_conflict_ooda_dispatch_replays_next_cycle"]["status"] == "passed"
+
+
+def _assert_experiment_tracking_lineage_handoff(case: dict) -> None:
+    operational = case["operational_context"]
+    proof = operational["experiment_tracking_lineage_handoff"]
+    replay = operational["lean_engine_replay"]
+    handoff = operational["lean_handoff"]
+    runtime_feedback = operational["lean_runtime_feedback"]
+    packet_readback = replay["lean_object_store_packet_readback"]
+    reconciliation = case["case_upstream_artifacts"]["tracking_reconciliation"]
+    tracker = case["case_upstream_artifacts"]["tracker"]
+
+    experiment_ref = reconciliation["repair"]["normalized_experiment_ref"]
+    reconciliation_ref = reconciliation["reconciliation_ref"]
+    repair_ref = reconciliation["repair"]["repair_ref"]
+    lineage_hash = replay["case_specific_strategy_packet"]["experiment_tracking_provenance_hash"]
+
+    assert proof["proof_id"] == f"tracking-experiment-lineage-handoff-{case['case_id']}"
+    assert proof["proof_ref"] == f"tracking-experiment-lineage://{case['case_id']}"
+    assert proof["model_id"] == PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["backend"] == tracker["backend"]
+    assert proof["tracker_request_id"] == tracker["request_id"]
+    assert proof["tracking_run_id"] == tracker["run_id"]
+    assert proof["experiment_ref"] == experiment_ref
+    assert proof["tracking_reconciliation_ref"] == reconciliation_ref
+    assert proof["tracking_repair_ref"] == repair_ref
+    assert proof["tracking_repair_action"] == reconciliation["repair"]["action"]
+    assert proof["strategy_packet_ref"] == replay["case_specific_strategy_packet"]["packet_ref"]
+    assert proof["lean_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert proof["lean_runtime_feedback_ref"] == f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
+    assert proof["object_store_readback_ref"] == packet_readback["readback_id"]
+    assert set(proof["lineage_hashes"].values()) == {lineage_hash}
+    assert {
+        experiment_ref,
+        reconciliation_ref,
+        repair_ref,
+        proof["strategy_packet_ref"],
+        proof["lean_handoff_ref"],
+        proof["lean_runtime_feedback_ref"],
+        proof["object_store_readback_ref"],
+    } == set(proof["input_refs"])
+    assert any(ref["ref_id"] == reconciliation_ref for ref in proof["decision_evidence_refs"])
+    assert all(proof["replay"].values())
+    assert proof["input_hash"]
 
 
 def _assert_lean_packet_execution_projection(case: dict) -> None:

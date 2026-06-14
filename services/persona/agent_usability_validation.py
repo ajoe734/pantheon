@@ -167,6 +167,9 @@ PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID = "persona_multi_cycle_lineage_carryover_v1
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
 PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
+PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID = (
+    "persona_experiment_tracking_lineage_handoff_v1"
+)
 PERSONA_ALPHA_SEED_REVISION_MODEL_ID = "persona_alpha_seed_revision_from_oss_v1"
 ALPHA_SEED_REVISION_ACTION_BY_COMPONENT: dict[str, str] = {
     "qlib": "apply_qlib_alpha_seed_update",
@@ -661,6 +664,7 @@ def run_agent_usability_validations(
             evolved_policy=generation2_policy,
             baseline_eval=baseline_holdout_counterfactual,
             evolved_eval=generation2_eval,
+            tracking_reconciliation=tracking_reconciliation,
             generated_at=generated_at,
         )
         decision_errors = validate_evolution_decision(evolution_decision)
@@ -6841,6 +6845,7 @@ def _build_evolution_decision(
     evolved_policy: Mapping[str, Any],
     baseline_eval: Mapping[str, Any],
     evolved_eval: Mapping[str, Any],
+    tracking_reconciliation: Mapping[str, Any],
     generated_at: str,
 ) -> EvolutionDecision:
     persona_id = _persona_id(episode.persona)
@@ -6860,6 +6865,19 @@ def _build_evolution_decision(
             "validation_signature": episode.validation_signature,
         },
         note="No-leakage holdout telemetry used for governed paper evolution.",
+    )
+    tracking_repair = tracking_reconciliation["repair"]
+    experiment_ref = str(tracking_repair["normalized_experiment_ref"])
+    tracking_evidence_ref = EvidenceRef(
+        ref_type=EvidenceRefType.AUDIT_LOG_ENTRY.value,
+        ref_id=str(tracking_reconciliation["reconciliation_ref"]),
+        storage_ref={
+            "backend": str(tracking_reconciliation["backend"]),
+            "run_id": str(tracking_reconciliation["run_id"]),
+            "experiment_ref": experiment_ref,
+            "repair_ref": str(tracking_repair["repair_ref"]),
+        },
+        note="Reconciled experiment-tracker readback used by persona scoring before evolution.",
     )
     threshold = ThresholdSnapshot(
         policy_source="agent_usability_validation.py#no-leakage-holdout-score",
@@ -6887,7 +6905,7 @@ def _build_evolution_decision(
         ),
         created_by_id="agent-usability-hardening-runtime",
         created_by_role=EvolutionActorRole.EVOLUTION_CONTROLLER,
-        evidence_refs=[evidence_ref],
+        evidence_refs=[evidence_ref, tracking_evidence_ref],
         threshold_snapshots=[threshold],
         capital_pool_id=f"pool-usability-{persona_id}",
         persona_id=persona_id,
@@ -6906,6 +6924,12 @@ def _build_evolution_decision(
                 "generation": evolved_policy["generation"],
             },
             "improvement": round(improvement, 10),
+            "tracking_reconciliation_ref": str(tracking_reconciliation["reconciliation_ref"]),
+            "tracking_repair_ref": str(tracking_repair["repair_ref"]),
+            "tracking_repair_action": str(tracking_repair["action"]),
+            "normalized_experiment_ref": experiment_ref,
+            "tracking_backend": str(tracking_reconciliation["backend"]),
+            "tracking_run_id": str(tracking_reconciliation["run_id"]),
             "proposal_only": False,
             "execution_plane": ExecutionPlane.RESEARCH.value,
         },
@@ -7021,6 +7045,7 @@ def _build_operational_context(
         no_leakage_protocol=no_leakage_protocol,
         strict_oos_evolution_proof=strict_oos_evolution_proof,
         persona_conflict_resolution=persona_conflict,
+        case_upstream_artifacts=case_upstream_artifacts,
         generated_at=generated_at,
     )
     lean_handoff = _build_lean_handoff_packet(
@@ -7059,6 +7084,14 @@ def _build_operational_context(
         autonomous_schedule=autonomous_schedule,
         decision_traces=decision_traces,
     )
+    experiment_tracking_lineage_handoff = _build_experiment_tracking_lineage_handoff_proof(
+        episode=episode,
+        evolution_decision=evolution_decision,
+        case_upstream_artifacts=case_upstream_artifacts,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        lean_runtime_feedback=lean_runtime_feedback,
+    )
     evolved_strategy_packet_proof = _build_evolved_strategy_packet_proof(
         episode=episode,
         final_policy=generation_policies[-1],
@@ -7093,6 +7126,7 @@ def _build_operational_context(
             broker_adapter_followup["followup_id"],
             lean_packet_execution_projection["projection_id"],
             lean_runtime_feedback["feedback_id"],
+            experiment_tracking_lineage_handoff["proof_id"],
         ),
         "scenario": scenario,
         "market_friction": market_friction,
@@ -7108,6 +7142,7 @@ def _build_operational_context(
         "lean_handoff": lean_handoff,
         "lean_packet_execution_projection": lean_packet_execution_projection,
         "lean_runtime_feedback": lean_runtime_feedback,
+        "experiment_tracking_lineage_handoff": experiment_tracking_lineage_handoff,
         "evolved_strategy_packet_proof": evolved_strategy_packet_proof,
         "scheduler_conflict_ooda_proof": scheduler_conflict_ooda_proof,
     }
@@ -7715,6 +7750,8 @@ def _build_lean_object_store_packet_readback(
     first_target = loaded_targets[0] if loaded_targets else {}
     first_target_signal = first_target.get("signal") if isinstance(first_target.get("signal"), Mapping) else {}
     object_store_keys = set(result.get("object_store_keys", []))
+    tracking_provenance = dict(strategy_packet.get("experiment_tracking_provenance") or {})
+    loaded_tracking_provenance = dict(loaded_packet.get("experiment_tracking_provenance") or {})
     replay = {
         "replayable": True,
         "packet_present_in_object_store_artifact": bool(loaded_packet),
@@ -7763,6 +7800,23 @@ def _build_lean_object_store_packet_readback(
             any(key.endswith("/artifact.bin") for key in object_store_keys)
             and any(key.endswith("/metadata.json") for key in object_store_keys)
         ),
+        "tracking_provenance_present_in_packet": bool(
+            tracking_provenance.get("experiment_ref")
+            and tracking_provenance.get("reconciliation_ref")
+            and tracking_provenance.get("repair_ref")
+            and tracking_provenance.get("lineage_hash")
+        ),
+        "loaded_packet_preserves_tracking_provenance": (
+            loaded_tracking_provenance == tracking_provenance
+        ),
+        "loaded_tracking_ref_matches_packet": (
+            loaded_packet.get("normalized_experiment_ref") == tracking_provenance.get("experiment_ref")
+            and loaded_packet.get("tracking_reconciliation_ref")
+            == tracking_provenance.get("reconciliation_ref")
+            and loaded_packet.get("tracking_repair_ref") == tracking_provenance.get("repair_ref")
+            and loaded_packet.get("experiment_tracking_provenance_hash")
+            == tracking_provenance.get("lineage_hash")
+        ),
         "paper_only_guard_retained": result.get("broker_production_live_enabled") == "false",
     }
     return {
@@ -7780,6 +7834,12 @@ def _build_lean_object_store_packet_readback(
         "loaded_signal_id": loaded_signal.get("signal_id"),
         "loaded_signal_symbol": loaded_signal.get("symbol"),
         "loaded_signal_source_target_ref": first_target.get("target_ref"),
+        "experiment_tracking_provenance_hash": tracking_provenance.get("lineage_hash"),
+        "loaded_experiment_tracking_provenance_hash": loaded_tracking_provenance.get("lineage_hash"),
+        "tracking_reconciliation_ref": tracking_provenance.get("reconciliation_ref"),
+        "tracking_repair_ref": tracking_provenance.get("repair_ref"),
+        "normalized_experiment_ref": tracking_provenance.get("experiment_ref"),
+        "loaded_experiment_tracking_provenance": loaded_tracking_provenance,
         "object_store_keys": sorted(object_store_keys),
         "replay": replay,
         "input_hash": _stable_payload_hash(
@@ -7805,11 +7865,38 @@ def _run_lean_engine_replay(
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
     persona_conflict_resolution: Mapping[str, Any],
+    case_upstream_artifacts: Mapping[str, Any],
     generated_at: str,
 ) -> dict[str, Any]:
     artifact_id = f"reg-{SMOKE_STRATEGY_ID}-{SMOKE_VERSION}"
     final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
     packet_ref = f"lean-strategy-packet://{episode.case_id}/generation2"
+    tracker = case_upstream_artifacts["tracker"]
+    vectorbt = case_upstream_artifacts["vectorbt"]
+    tracking_reconciliation = case_upstream_artifacts["tracking_reconciliation"]
+    tracking_repair = tracking_reconciliation["repair"]
+    tracking_provenance_seed = {
+        "backend": tracker["backend"],
+        "request_id": tracker["request_id"],
+        "run_id": tracker["run_id"],
+        "artifact_uri": tracker["artifact_uri"],
+        "experiment_ref": tracking_repair["normalized_experiment_ref"],
+        "reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
+        "repair_ref": tracking_repair["repair_ref"],
+        "repair_action": tracking_repair["action"],
+        "divergence_type": tracking_reconciliation["divergence"]["divergence_type"],
+        "source_vectorbt_request_id": vectorbt["request_id"],
+        "source_vectorbt_run_id": vectorbt["run_id"],
+        "tracking_reconciliation_input_hash": tracking_reconciliation["input_hash"],
+    }
+    tracking_provenance = {
+        "model_id": PERSONA_TRACKING_RECONCILIATION_MODEL_ID,
+        **tracking_provenance_seed,
+        "lineage_hash": _stable_payload_hash(
+            "tracking-experiment-lineage",
+            tracking_provenance_seed,
+        ),
+    }
     strategy_packet = {
         "packet_ref": packet_ref,
         "policy_id": final_policy["policy_id"],
@@ -7824,6 +7911,11 @@ def _run_lean_engine_replay(
         "strict_oos_proof_ref": strict_oos_evolution_proof["proof_ref"],
         "no_leakage_protocol_ref": f"no-leakage://{no_leakage_protocol['protocol_id']}",
         "evolution_trajectory_ref": f"trajectory://{evolution_trajectory['trajectory_id']}",
+        "experiment_tracking_provenance": tracking_provenance,
+        "experiment_tracking_provenance_hash": tracking_provenance["lineage_hash"],
+        "normalized_experiment_ref": tracking_provenance["experiment_ref"],
+        "tracking_reconciliation_ref": tracking_provenance["reconciliation_ref"],
+        "tracking_repair_ref": tracking_provenance["repair_ref"],
         "future_holdout_score": final_evaluation["score"],
         "future_holdout_improvement": final_oos_step["score_improvement"],
         "validation_window_unseen_by_decision": final_oos_step[
@@ -8008,6 +8100,12 @@ def _build_lean_handoff_packet(
     strict_oos_ref = str(strategy_packet["strict_oos_proof_ref"])
     no_leakage_ref = str(strategy_packet["no_leakage_protocol_ref"])
     trajectory_ref = str(strategy_packet["evolution_trajectory_ref"])
+    tracking_provenance = copy.deepcopy(
+        dict(strategy_packet.get("experiment_tracking_provenance") or {})
+    )
+    experiment_ref = str(tracking_provenance.get("experiment_ref") or "")
+    tracking_reconciliation_ref = str(tracking_provenance.get("reconciliation_ref") or "")
+    tracking_repair_ref = str(tracking_provenance.get("repair_ref") or "")
     return {
         "packet_id": f"lean-packet-{episode.case_id}",
         "component": handoff["component"],
@@ -8023,6 +8121,11 @@ def _build_lean_handoff_packet(
         "strict_oos_evolution_proof_ref": strict_oos_ref,
         "no_leakage_protocol_ref": no_leakage_ref,
         "evolution_trajectory_ref": trajectory_ref,
+        "experiment_tracking_provenance": tracking_provenance,
+        "experiment_tracking_provenance_hash": tracking_provenance.get("lineage_hash"),
+        "normalized_experiment_ref": experiment_ref,
+        "tracking_reconciliation_ref": tracking_reconciliation_ref,
+        "tracking_repair_ref": tracking_repair_ref,
         "strategy_packet": strategy_packet,
         "strategy_packet_hash": _stable_payload_hash(
             "lean-strategy-packet",
@@ -8071,7 +8174,9 @@ def _build_lean_handoff_packet(
             trajectory_ref,
             f"oss://{handoff['component']}/{handoff['request_id']}",
             f"oss://vectorbt/{vectorbt['request_id']}",
-            f"experiment://{tracker['backend']}/{tracker['run_id']}",
+            experiment_ref,
+            tracking_reconciliation_ref,
+            tracking_repair_ref,
             conflict_ref,
             schedule_ref,
             *selected_oss_refs,
@@ -8367,6 +8472,9 @@ def _build_lean_runtime_feedback_response(
     strategy_packet_ref = str(lean_handoff.get("strategy_packet_ref", ""))
     strict_oos_ref = str(lean_handoff.get("strict_oos_evolution_proof_ref", ""))
     no_leakage_ref = str(lean_handoff.get("no_leakage_protocol_ref", ""))
+    experiment_ref = str(lean_handoff.get("normalized_experiment_ref", ""))
+    tracking_reconciliation_ref = str(lean_handoff.get("tracking_reconciliation_ref", ""))
+    tracking_repair_ref = str(lean_handoff.get("tracking_repair_ref", ""))
     projection_ref = str(lean_packet_execution_projection.get("projection_ref", ""))
     evidence_refs = [
         runtime_ref,
@@ -8375,6 +8483,9 @@ def _build_lean_runtime_feedback_response(
         strategy_packet_ref,
         strict_oos_ref,
         no_leakage_ref,
+        experiment_ref,
+        tracking_reconciliation_ref,
+        tracking_repair_ref,
         f"runtime-binding://{runtime_context.get('runtime_binding_id')}",
         f"object-store://{metadata_key}",
         f"reflection://{decision_traces[-1]['reflection_id']}",
@@ -8406,6 +8517,17 @@ def _build_lean_runtime_feedback_response(
             and bool(no_leakage_ref)
             and no_leakage_ref in lean_handoff.get("runtime_bundle_refs", [])
             and lean_handoff.get("strategy_packet_replay_passed") is True
+        ),
+        "experiment_tracking_lineage_bound": (
+            bool(experiment_ref)
+            and experiment_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and experiment_ref in evidence_refs
+            and bool(tracking_reconciliation_ref)
+            and tracking_reconciliation_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and tracking_reconciliation_ref in evidence_refs
+            and bool(tracking_repair_ref)
+            and tracking_repair_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and tracking_repair_ref in evidence_refs
         ),
         "lean_packet_execution_projection_consumed": (
             lean_packet_execution_projection.get("model_id") == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
@@ -8462,6 +8584,9 @@ def _build_lean_runtime_feedback_response(
             "bind_runtime_context": runtime_context.get("runtime_binding_id"),
             "verify_object_store_metadata": metadata_key,
             "bind_evolved_strategy_packet": strategy_packet_ref,
+            "bind_reconciled_experiment_ref": experiment_ref,
+            "bind_tracking_reconciliation_ref": tracking_reconciliation_ref,
+            "bind_tracking_repair_ref": tracking_repair_ref,
             "bind_lean_packet_execution_projection": projection_ref,
             "attach_to_handoff_packet": lean_handoff["packet_id"],
             "attach_to_decision_trace": decision_traces[-1]["reflection_id"],
@@ -8477,10 +8602,138 @@ def _build_lean_runtime_feedback_response(
                 "runtime_ref": runtime_ref,
                 "handoff_ref": handoff_ref,
                 "strategy_packet_ref": strategy_packet_ref,
+                "experiment_ref": experiment_ref,
+                "tracking_reconciliation_ref": tracking_reconciliation_ref,
+                "tracking_repair_ref": tracking_repair_ref,
                 "projection_ref": projection_ref,
                 "runtime_binding_id": runtime_context.get("runtime_binding_id"),
                 "metadata_key": metadata_key,
                 "fill_count": lean_engine_replay.get("fill_count"),
+            },
+        ),
+    }
+
+
+def _build_experiment_tracking_lineage_handoff_proof(
+    *,
+    episode: PortfolioEpisode,
+    evolution_decision: EvolutionDecision,
+    case_upstream_artifacts: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    lean_runtime_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    tracker = case_upstream_artifacts["tracker"]
+    reconciliation = case_upstream_artifacts["tracking_reconciliation"]
+    repair = reconciliation["repair"]
+    experiment_ref = str(repair["normalized_experiment_ref"])
+    reconciliation_ref = str(reconciliation["reconciliation_ref"])
+    repair_ref = str(repair["repair_ref"])
+    strategy_packet = lean_engine_replay["case_specific_strategy_packet"]
+    packet_provenance = dict(strategy_packet.get("experiment_tracking_provenance") or {})
+    readback = lean_engine_replay["lean_object_store_packet_readback"]
+    loaded_provenance = dict(readback.get("loaded_experiment_tracking_provenance") or {})
+    handoff_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    runtime_feedback_refs = set(
+        lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+    )
+    decision_evidence_refs = [
+        ref.to_dict() if isinstance(ref, EvidenceRef) else copy.deepcopy(dict(ref))
+        for ref in evolution_decision.evidence_refs
+    ]
+    decision_evidence_ref_ids = {str(ref.get("ref_id")) for ref in decision_evidence_refs}
+    decision_metadata = dict(evolution_decision.metadata or {})
+    lineage_hashes = {
+        "strategy_packet": str(strategy_packet.get("experiment_tracking_provenance_hash") or ""),
+        "packet_provenance": str(packet_provenance.get("lineage_hash") or ""),
+        "object_store_readback": str(readback.get("experiment_tracking_provenance_hash") or ""),
+        "loaded_object_store_readback": str(
+            readback.get("loaded_experiment_tracking_provenance_hash") or ""
+        ),
+        "lean_handoff": str(lean_handoff.get("experiment_tracking_provenance_hash") or ""),
+    }
+    replay = {
+        "replayable": True,
+        "tracker_readback_reconciled": _tracking_readback_reconciliation_is_usable(
+            reconciliation
+        ),
+        "evolution_decision_cites_reconciliation": reconciliation_ref
+        in decision_evidence_ref_ids,
+        "evolution_decision_metadata_carries_experiment_ref": (
+            decision_metadata.get("normalized_experiment_ref") == experiment_ref
+            and decision_metadata.get("tracking_reconciliation_ref") == reconciliation_ref
+            and decision_metadata.get("tracking_repair_ref") == repair_ref
+        ),
+        "strategy_packet_carries_tracking_provenance": (
+            packet_provenance.get("experiment_ref") == experiment_ref
+            and packet_provenance.get("backend") == tracker["backend"]
+            and packet_provenance.get("run_id") == tracker["run_id"]
+            and packet_provenance.get("reconciliation_ref") == reconciliation_ref
+            and packet_provenance.get("repair_ref") == repair_ref
+            and strategy_packet.get("normalized_experiment_ref") == experiment_ref
+            and strategy_packet.get("tracking_reconciliation_ref") == reconciliation_ref
+            and strategy_packet.get("tracking_repair_ref") == repair_ref
+        ),
+        "object_store_readback_preserves_tracking_provenance": (
+            readback.get("normalized_experiment_ref") == experiment_ref
+            and readback.get("tracking_reconciliation_ref") == reconciliation_ref
+            and readback.get("tracking_repair_ref") == repair_ref
+            and loaded_provenance == packet_provenance
+        ),
+        "handoff_runtime_bundle_contains_repaired_tracking_refs": {
+            experiment_ref,
+            reconciliation_ref,
+            repair_ref,
+        }.issubset(handoff_refs),
+        "runtime_feedback_cites_repaired_tracking_refs": {
+            experiment_ref,
+            reconciliation_ref,
+            repair_ref,
+        }.issubset(runtime_feedback_refs),
+        "lineage_hash_stable_across_packet_handoff_readback": (
+            bool(lineage_hashes["strategy_packet"])
+            and len(set(lineage_hashes.values())) == 1
+        ),
+    }
+    return {
+        "proof_id": f"tracking-experiment-lineage-handoff-{episode.case_id}",
+        "proof_ref": f"tracking-experiment-lineage://{episode.case_id}",
+        "model_id": PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "backend": tracker["backend"],
+        "tracker_request_id": tracker["request_id"],
+        "tracking_run_id": tracker["run_id"],
+        "experiment_ref": experiment_ref,
+        "tracking_reconciliation_ref": reconciliation_ref,
+        "tracking_repair_ref": repair_ref,
+        "tracking_repair_action": repair["action"],
+        "strategy_packet_ref": strategy_packet["packet_ref"],
+        "lean_handoff_ref": f"lean-handoff://{lean_handoff['packet_id']}",
+        "lean_runtime_feedback_ref": f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+        "object_store_readback_ref": readback["readback_id"],
+        "lineage_hashes": lineage_hashes,
+        "decision_evidence_refs": decision_evidence_refs,
+        "input_refs": [
+            experiment_ref,
+            reconciliation_ref,
+            repair_ref,
+            strategy_packet["packet_ref"],
+            f"lean-handoff://{lean_handoff['packet_id']}",
+            f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+            readback["readback_id"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "tracking-experiment-lineage-handoff",
+            {
+                "case_id": episode.case_id,
+                "experiment_ref": experiment_ref,
+                "reconciliation_ref": reconciliation_ref,
+                "repair_ref": repair_ref,
+                "lineage_hashes": lineage_hashes,
+                "replay": replay,
             },
         ),
     }
@@ -8994,6 +9247,14 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
         and packet.get("no_leakage_protocol_ref") in runtime_refs
         and packet.get("evolution_trajectory_ref", "").startswith("trajectory://")
         and packet.get("evolution_trajectory_ref") in runtime_refs
+        and packet.get("normalized_experiment_ref", "").startswith("experiment://")
+        and packet.get("normalized_experiment_ref") in runtime_refs
+        and packet.get("tracking_reconciliation_ref", "").startswith("tracking-reconciliation://")
+        and packet.get("tracking_reconciliation_ref") in runtime_refs
+        and packet.get("tracking_repair_ref", "").startswith(packet.get("tracking_reconciliation_ref", ""))
+        and packet.get("tracking_repair_ref") in runtime_refs
+        and packet.get("experiment_tracking_provenance_hash")
+        == packet.get("experiment_tracking_provenance", {}).get("lineage_hash")
         and packet.get("strategy_packet_replay_passed") is True
         and packet.get("strategy_packet_hash")
         and packet.get("received_by_lean_handoff")
@@ -9049,9 +9310,41 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("paper_runtime_guard_retained") is True
         and replay.get("case_runtime_refs_bound") is True
         and replay.get("evolved_strategy_packet_refs_bound") is True
+        and replay.get("experiment_tracking_lineage_bound") is True
         and replay.get("lean_packet_execution_projection_consumed") is True
         and replay.get("next_cycle_scheduled") is True
         and replay.get("drives_persona_next_ooda_step") is True
+    )
+
+
+def _experiment_tracking_lineage_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    lineage_hashes = proof.get("lineage_hashes", {})
+    return bool(
+        proof.get("model_id") == PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("tracking-experiment-lineage://")
+        and proof.get("experiment_ref", "").startswith("experiment://")
+        and proof.get("tracking_reconciliation_ref", "").startswith("tracking-reconciliation://")
+        and proof.get("tracking_repair_ref", "").startswith(proof.get("tracking_reconciliation_ref", ""))
+        and proof.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
+        and proof.get("object_store_readback_ref", "").startswith("lean-object-store-packet-readback-")
+        and proof.get("input_hash")
+        and lineage_hashes
+        and len({str(value) for value in lineage_hashes.values()}) == 1
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "tracker_readback_reconciled",
+            "evolution_decision_cites_reconciliation",
+            "evolution_decision_metadata_carries_experiment_ref",
+            "strategy_packet_carries_tracking_provenance",
+            "object_store_readback_preserves_tracking_provenance",
+            "handoff_runtime_bundle_contains_repaired_tracking_refs",
+            "runtime_feedback_cites_repaired_tracking_refs",
+            "lineage_hash_stable_across_packet_handoff_readback",
+        ))
     )
 
 
@@ -9194,12 +9487,22 @@ def _lean_engine_result_is_usable(
     loaded_targets = result.get("loaded_packet_targets", [])
     loaded_signal = result.get("loaded_signal", {})
     object_store_keys = set(result.get("object_store_keys", []))
+    tracking_provenance = loaded_packet.get("experiment_tracking_provenance", {})
     packet_readback_valid = True
     if loaded_packet:
         packet_readback_valid = bool(
             len(loaded_targets) == PORTFOLIO_LEG_COUNT
             and loaded_signal.get("signal_id") == loaded_targets[0].get("signal_id")
             and loaded_signal.get("symbol") == loaded_targets[0].get("execution_symbol")
+            and loaded_packet.get("normalized_experiment_ref", "").startswith("experiment://")
+            and loaded_packet.get("tracking_reconciliation_ref", "").startswith(
+                "tracking-reconciliation://"
+            )
+            and loaded_packet.get("tracking_repair_ref", "").startswith(
+                loaded_packet.get("tracking_reconciliation_ref", "")
+            )
+            and loaded_packet.get("experiment_tracking_provenance_hash")
+            == tracking_provenance.get("lineage_hash")
             and all(
                 target.get("signal", {}).get("metadata", {}).get("strategy_packet_ref")
                 == loaded_packet.get("packet_ref")
@@ -9241,6 +9544,11 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
         and len(target_signal_ids) == PORTFOLIO_LEG_COUNT
         and readback.get("loaded_signal_id") == first_signal_id
         and readback.get("loaded_signal_source_target_ref") == first_target_ref
+        and readback.get("normalized_experiment_ref", "").startswith("experiment://")
+        and readback.get("tracking_reconciliation_ref", "").startswith("tracking-reconciliation://")
+        and readback.get("tracking_repair_ref", "").startswith(readback.get("tracking_reconciliation_ref", ""))
+        and readback.get("experiment_tracking_provenance_hash")
+        == readback.get("loaded_experiment_tracking_provenance_hash")
         and all(replay.get(flag) is True for flag in (
             "replayable",
             "packet_present_in_object_store_artifact",
@@ -9255,6 +9563,9 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
             "loaded_signal_quantity_matches_first_target",
             "algorithm_executed_loaded_packet_signal",
             "object_store_keys_include_packet_artifact_and_metadata",
+            "tracking_provenance_present_in_packet",
+            "loaded_packet_preserves_tracking_provenance",
+            "loaded_tracking_ref_matches_packet",
             "paper_only_guard_retained",
         ))
     )
@@ -9264,6 +9575,7 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
     runtime_context = replay.get("runtime_context", {})
     loaded_metadata = replay.get("loaded_metadata", {})
     strategy_packet = replay.get("case_specific_strategy_packet", {})
+    tracking_provenance = strategy_packet.get("experiment_tracking_provenance", {})
     packet_targets = replay.get("case_specific_packet_targets", [])
     packet_readback = replay.get("lean_object_store_packet_readback", {})
     return bool(
@@ -9288,6 +9600,13 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
         and strategy_packet.get("strict_oos_proof_ref", "").startswith("strict-oos-evolution://")
         and strategy_packet.get("no_leakage_protocol_ref", "").startswith("no-leakage://")
         and strategy_packet.get("evolution_trajectory_ref", "").startswith("trajectory://")
+        and strategy_packet.get("normalized_experiment_ref", "").startswith("experiment://")
+        and strategy_packet.get("tracking_reconciliation_ref", "").startswith("tracking-reconciliation://")
+        and strategy_packet.get("tracking_repair_ref", "").startswith(
+            strategy_packet.get("tracking_reconciliation_ref", "")
+        )
+        and strategy_packet.get("experiment_tracking_provenance_hash")
+        == tracking_provenance.get("lineage_hash")
         and strategy_packet.get("strict_oos_replay_passed") is True
         and strategy_packet.get("no_leakage_replay_passed") is True
         and len(packet_targets) == PORTFOLIO_LEG_COUNT
@@ -11131,6 +11450,9 @@ def _build_usability_dimensions(
     lean_runtime_feedback = 1.0 if _lean_runtime_feedback_is_usable(
         operational_context["lean_runtime_feedback"]
     ) else 0.0
+    experiment_tracking_lineage_handoff = 1.0 if _experiment_tracking_lineage_handoff_is_usable(
+        operational_context["experiment_tracking_lineage_handoff"]
+    ) else 0.0
     evolved_strategy_packet = 1.0 if _evolved_strategy_packet_proof_is_usable(
         operational_context["evolved_strategy_packet_proof"]
     ) else 0.0
@@ -11226,6 +11548,7 @@ def _build_usability_dimensions(
         "lean_handoff_packet": lean_handoff,
         "lean_packet_execution_projection": lean_packet_execution_projection,
         "lean_runtime_feedback": lean_runtime_feedback,
+        "experiment_tracking_lineage_handoff": experiment_tracking_lineage_handoff,
         "evolved_strategy_packet_handoff": evolved_strategy_packet,
         "scheduler_conflict_ooda_dispatch": scheduler_conflict_ooda,
     }
@@ -11741,6 +12064,28 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "tracking_experiment_lineage_reaches_evolution_and_lean_packet",
+            _experiment_tracking_lineage_handoff_is_usable(
+                operational_context["experiment_tracking_lineage_handoff"]
+            ),
+            {
+                "proof_id": operational_context["experiment_tracking_lineage_handoff"]["proof_id"],
+                "backend": operational_context["experiment_tracking_lineage_handoff"]["backend"],
+                "experiment_ref": operational_context["experiment_tracking_lineage_handoff"][
+                    "experiment_ref"
+                ],
+                "tracking_reconciliation_ref": operational_context[
+                    "experiment_tracking_lineage_handoff"
+                ]["tracking_reconciliation_ref"],
+                "lineage_hashes": copy.deepcopy(
+                    dict(operational_context["experiment_tracking_lineage_handoff"]["lineage_hashes"])
+                ),
+                "replay": copy.deepcopy(
+                    dict(operational_context["experiment_tracking_lineage_handoff"]["replay"])
+                ),
+            },
+        ),
+        _diagnostic_check(
             "case_specific_upstream_artifacts_drive_persona_decision",
             _case_upstream_artifacts_are_usable(
                 episode=episode,
@@ -12104,6 +12449,11 @@ def _build_case_result(
             "decision_id": evolution_decision.decision_id,
             "decision_state": _enum_value(evolution_decision.decision_state),
             "action_type": _enum_value(evolution_decision.action_type),
+            "evidence_refs": [
+                ref.to_dict() if isinstance(ref, EvidenceRef) else copy.deepcopy(dict(ref))
+                for ref in evolution_decision.evidence_refs
+            ],
+            "metadata": copy.deepcopy(dict(evolution_decision.metadata or {})),
             "review_steps": [_enum_value(step.step_type) for step in evolution_decision.review_chain],
             "execution_status": _enum_value(evolution_decision.execution_result.status)
             if evolution_decision.execution_result
@@ -12171,6 +12521,9 @@ def _build_case_result(
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
             "lean_engine_replay_uses_runtime_binding": usability_dimensions["lean_engine_replay"] == 1.0,
             "lean_runtime_feedback_drives_ooda": usability_dimensions["lean_runtime_feedback"] == 1.0,
+            "experiment_tracking_lineage_reaches_lean_handoff": usability_dimensions[
+                "experiment_tracking_lineage_handoff"
+            ] == 1.0,
             "lean_packet_execution_projection_replayed": usability_dimensions[
                 "lean_packet_execution_projection"
             ] == 1.0,
@@ -12276,6 +12629,10 @@ def _build_summary(
     ]
     lean_runtime_feedbacks = [
         case["operational_context"]["lean_runtime_feedback"] for case in cases
+    ]
+    experiment_tracking_lineage_handoffs = [
+        case["operational_context"]["experiment_tracking_lineage_handoff"]
+        for case in cases
     ]
     evolved_strategy_packet_proofs = [
         case["operational_context"]["evolved_strategy_packet_proof"] for case in cases
@@ -12423,6 +12780,18 @@ def _build_summary(
             flag
             for feedback in lean_runtime_feedbacks
             for flag, value in feedback["replay"].items()
+            if value is True
+        }),
+        "experiment_tracking_lineage_handoff_models": sorted({
+            proof["model_id"] for proof in experiment_tracking_lineage_handoffs
+        }),
+        "experiment_tracking_lineage_handoff_backends": sorted({
+            proof["backend"] for proof in experiment_tracking_lineage_handoffs
+        }),
+        "experiment_tracking_lineage_handoff_replay_flags": sorted({
+            flag
+            for proof in experiment_tracking_lineage_handoffs
+            for flag, value in proof["replay"].items()
             if value is True
         }),
         "evolved_strategy_packet_models": sorted({
@@ -13184,6 +13553,17 @@ def _build_summary(
         "lean_runtime_feedback_drives_ooda_count": sum(
             1 for item in usable if item["lean_runtime_feedback_drives_ooda"]
         ),
+        "experiment_tracking_lineage_handoff_count": len(experiment_tracking_lineage_handoffs),
+        "experiment_tracking_lineage_handoff_pass_count": sum(
+            1
+            for proof in experiment_tracking_lineage_handoffs
+            if _experiment_tracking_lineage_handoff_is_usable(proof)
+        ),
+        "experiment_tracking_lineage_handoff_drives_lean_count": sum(
+            1
+            for item in usable
+            if item["experiment_tracking_lineage_reaches_lean_handoff"]
+        ),
         "evolved_strategy_packet_proof_count": len(evolved_strategy_packet_proofs),
         "evolved_strategy_packet_proof_pass_count": sum(
             1
@@ -13256,6 +13636,7 @@ def _build_summary(
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
             "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case reconciles experiment-tracker readback divergence and routes the repaired tracking ref into persona reasoning, scorer adjustments, and selected candidate evidence.",
+            "Every case carries the repaired MLflow/W&B experiment lineage from evolution decision evidence into the LEAN strategy packet, Object Store readback, handoff bundle, and runtime feedback.",
             "Every persona decision emits a replayable request-response artifact covering candidate generation, scoring, risk checks, and rejected alternatives.",
             "Every persona decision first emits a structured reasoning response whose candidate blueprints drive the scored candidates.",
             "Every case records a multi-generation evolution trajectory proving gen0->gen1->gen2 lineage, two distinct unseen-window improvements, and bounded turnover.",
