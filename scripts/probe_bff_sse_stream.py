@@ -36,6 +36,8 @@ DEFAULT_BASE_URL = os.getenv("PANTHEON_BFF_BASE_URL", "http://127.0.0.1:8000")
 DEFAULT_OUTPUT = "support/evidence/BFF-CONSOL-011-sse-replay-smoke.json"
 DEFAULT_CHANNEL = "approval"
 DEFAULT_COOKIE_NAME = "pantheon_session"
+STRICT_LIVE_SOAK_MIN_SECONDS = 75.0
+STRICT_LIVE_SOAK_MIN_HEARTBEATS = 1
 SSE_HEADER_KEYS = (
     "Content-Type",
     "Cache-Control",
@@ -668,6 +670,27 @@ def replay_unavailable(
         }
 
 
+def apply_strict_live_evidence(args: argparse.Namespace) -> None:
+    if not args.strict_live_evidence:
+        return
+
+    if not os.getenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "").strip():
+        raise SystemExit(
+            "--strict-live-evidence requires PANTHEON_BFF_SMOKE_BEARER_TOKEN; "
+            "dev/staging minted JWTs are not accepted as final live SSE evidence"
+        )
+    if args.soak_seconds < STRICT_LIVE_SOAK_MIN_SECONDS:
+        raise SystemExit(
+            "--strict-live-evidence requires "
+            f"--soak-seconds >= {STRICT_LIVE_SOAK_MIN_SECONDS:g}"
+        )
+    if args.soak_min_heartbeats < STRICT_LIVE_SOAK_MIN_HEARTBEATS:
+        raise SystemExit(
+            "--strict-live-evidence requires "
+            f"--soak-min-heartbeats >= {STRICT_LIVE_SOAK_MIN_HEARTBEATS}"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
@@ -687,11 +710,13 @@ def parse_args() -> argparse.Namespace:
         help="Optional long-running SSE soak duration. Use >=35s to observe server heartbeat.",
     )
     parser.add_argument("--soak-min-heartbeats", type=int, default=1)
+    parser.add_argument("--strict-live-evidence", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    apply_strict_live_evidence(args)
     base_url = args.base_url.rstrip("/")
     token, auth_source = make_token(args)
     generated_at = utc_now()
@@ -833,6 +858,13 @@ def main() -> int:
         assertions["bearer_soak_observed_heartbeat_without_duplicate_replay"] = bool(
             soak_results.get(BEARER_MODE.name, {}).get("ok")
         )
+    if args.strict_live_evidence:
+        assertions["strict_live_sse_soak_evidence"] = bool(
+            auth_source.get("kind") == "provided_bearer"
+            and args.soak_seconds >= STRICT_LIVE_SOAK_MIN_SECONDS
+            and args.soak_min_heartbeats >= STRICT_LIVE_SOAK_MIN_HEARTBEATS
+            and soak_results.get(BEARER_MODE.name, {}).get("ok")
+        )
     failed_assertions = [name for name, ok in assertions.items() if not ok]
 
     evidence = {
@@ -841,6 +873,12 @@ def main() -> int:
         "target_url": base_url,
         "channel": args.channel,
         "auth_source": auth_source,
+        "strict_live_evidence": args.strict_live_evidence,
+        "strict_live_evidence_requirements": {
+            "provided_bearer_env": "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+            "min_soak_seconds": STRICT_LIVE_SOAK_MIN_SECONDS,
+            "min_heartbeats": STRICT_LIVE_SOAK_MIN_HEARTBEATS,
+        },
         "client_modes": {
             COOKIE_MODE.name: {
                 "browser_client": COOKIE_MODE.browser_client,
@@ -855,9 +893,9 @@ def main() -> int:
             },
         },
         "commands": [
-            "PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> "
-            "PANTHEON_BFF_JWT_SECRET=<redacted> "
-            "scripts/probe_bff_sse_stream.py --base-url <bff-url> --soak-seconds 75 --soak-min-heartbeats 1"
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> "
+            "scripts/probe_bff_sse_stream.py --base-url <bff-url> "
+            "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 1"
         ],
         "publish": [first_publish, second_publish],
         "open_transcripts": {

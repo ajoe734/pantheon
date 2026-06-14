@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import sys
@@ -111,3 +112,50 @@ def test_stream_soak_fails_duplicate_replay_ids(monkeypatch) -> None:
 
     assert result["ok"] is False
     assert result["blocks"]["duplicate_event_ids"] == ["evt-duplicate"]
+
+
+def test_strict_live_evidence_accepts_real_bearer_long_soak(monkeypatch) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "live-sse-token")
+    args = argparse.Namespace(
+        strict_live_evidence=True,
+        soak_seconds=75.0,
+        soak_min_heartbeats=1,
+    )
+
+    probe.apply_strict_live_evidence(args)
+
+
+def test_strict_live_evidence_rejects_dev_jwt_only(monkeypatch) -> None:
+    probe = _load_probe_module()
+    monkeypatch.delenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_SMOKE_JWT_SECRET", "dev-secret-must-not-count")
+    args = argparse.Namespace(
+        strict_live_evidence=True,
+        soak_seconds=75.0,
+        soak_min_heartbeats=1,
+    )
+
+    try:
+        probe.apply_strict_live_evidence(args)
+    except SystemExit as exc:
+        assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in str(exc)
+    else:
+        raise AssertionError("strict SSE live evidence must reject dev JWT-only auth")
+
+
+def test_strict_live_evidence_rejects_short_soak(monkeypatch) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "live-sse-token")
+    args = argparse.Namespace(
+        strict_live_evidence=True,
+        soak_seconds=30.0,
+        soak_min_heartbeats=1,
+    )
+
+    try:
+        probe.apply_strict_live_evidence(args)
+    except SystemExit as exc:
+        assert "--soak-seconds >= 75" in str(exc)
+    else:
+        raise AssertionError("strict SSE live evidence must reject short soak windows")
