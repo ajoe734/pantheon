@@ -340,6 +340,57 @@ def read_first_sse_event(response: Any) -> dict[str, Any]:
     }
 
 
+def read_sse_blocks_until(
+    response: Any,
+    *,
+    seconds: float,
+    max_blocks: int,
+) -> list[dict[str, Any]]:
+    deadline = time.monotonic() + max(0.0, seconds)
+    blocks: list[dict[str, Any]] = []
+    lines: list[str] = []
+    while len(blocks) < max_blocks and time.monotonic() < deadline:
+        try:
+            raw = response.readline()
+        except TimeoutError:
+            break
+        if raw == b"":
+            break
+        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+        if line == "":
+            if not lines:
+                continue
+            blocks.append(parse_sse_block(lines))
+            lines = []
+            continue
+        lines.append(line)
+    if lines and len(blocks) < max_blocks:
+        blocks.append(parse_sse_block(lines))
+    return blocks
+
+
+def summarize_sse_blocks(blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    event_ids = [str(block.get("id")) for block in blocks if block.get("id")]
+    duplicate_event_ids = sorted(
+        event_id for event_id in set(event_ids) if event_ids.count(event_id) > 1
+    )
+    heartbeat_blocks = [
+        block
+        for block in blocks
+        if block.get("comments") and not block.get("id") and not block.get("data")
+    ]
+    data_events = [block for block in blocks if block.get("id")]
+    return {
+        "block_count": len(blocks),
+        "event_count": len(data_events),
+        "heartbeat_count": len(heartbeat_blocks),
+        "event_ids": event_ids,
+        "duplicate_event_ids": duplicate_event_ids,
+        "events": [summarize_event(block) for block in data_events[:10]],
+        "heartbeats": [block.get("comments") for block in heartbeat_blocks[:10]],
+    }
+
+
 def event_shape_checks(parsed_event: dict[str, Any]) -> dict[str, bool]:
     data = parsed_event.get("data")
     return {
@@ -456,6 +507,87 @@ def stream_first_event(
         }
 
 
+def stream_soak(
+    *,
+    base_url: str,
+    mode: AuthMode,
+    token: str,
+    timeout: float,
+    channel: str,
+    cookie_name: str,
+    seconds: float,
+    min_heartbeats: int,
+    last_event_id: str | None = None,
+    expected_event_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    query = urllib.parse.urlencode({"channel": channel})
+    url = f"{base_url.rstrip('/')}/bff/events/stream?{query}"
+    headers = auth_headers(
+        mode=mode,
+        token=token,
+        cookie_name=cookie_name,
+        last_event_id=last_event_id,
+    )
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    started = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=max(timeout, seconds + 5.0)) as response:
+            response_headers = dict(response.headers.items())
+            blocks = read_sse_blocks_until(
+                response,
+                seconds=seconds,
+                max_blocks=max(10, min_heartbeats + len(expected_event_ids or set()) + 10),
+            )
+            block_summary = summarize_sse_blocks(blocks)
+            observed_ids = set(block_summary["event_ids"])
+            expected_ids = set(expected_event_ids or set())
+            ok = (
+                int(response.status) == 200
+                and header_value(response_headers, "X-SSE-Channel") == channel
+                and header_value(response_headers, "X-SSE-Replay-Supported") == "true"
+                and block_summary["heartbeat_count"] >= min_heartbeats
+                and not block_summary["duplicate_event_ids"]
+                and expected_ids.issubset(observed_ids)
+            )
+            return {
+                "mode": mode.name,
+                "browser_client": mode.browser_client,
+                "transport": mode.transport,
+                "with_credentials": mode.with_credentials,
+                "status": int(response.status),
+                "ok": ok,
+                "duration_ms": round((time.time() - started) * 1000),
+                "soak_seconds": seconds,
+                "min_heartbeats": min_heartbeats,
+                "expected_event_ids": sorted(expected_ids),
+                "missing_expected_event_ids": sorted(expected_ids - observed_ids),
+                "url_path": f"/bff/events/stream?{query}",
+                "request_headers": redacted_request_headers(headers),
+                "response_headers": selected_headers(response_headers),
+                "blocks": block_summary,
+            }
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        return {
+            "mode": mode.name,
+            "status": int(exc.code),
+            "ok": False,
+            "duration_ms": round((time.time() - started) * 1000),
+            "request_headers": redacted_request_headers(headers),
+            "response_headers": selected_headers(dict(exc.headers.items())),
+            "error_body_prefix": raw[:500],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "mode": mode.name,
+            "status": 0,
+            "ok": False,
+            "duration_ms": round((time.time() - started) * 1000),
+            "request_headers": redacted_request_headers(headers),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def replay_unavailable(
     *,
     base_url: str,
@@ -548,6 +680,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--issuer", default=os.getenv("PANTHEON_BFF_JWT_ISSUER", "pantheon-dev") or "pantheon-dev")
     parser.add_argument("--audience", default=os.getenv("PANTHEON_BFF_JWT_AUDIENCE", "bff-operators") or "bff-operators")
     parser.add_argument("--ttl-seconds", type=int, default=3600)
+    parser.add_argument(
+        "--soak-seconds",
+        type=float,
+        default=0.0,
+        help="Optional long-running SSE soak duration. Use >=35s to observe server heartbeat.",
+    )
+    parser.add_argument("--soak-min-heartbeats", type=int, default=1)
     return parser.parse_args()
 
 
@@ -638,6 +777,31 @@ def main() -> int:
         missing_event_id=missing_event_id,
     )
 
+    soak_results: dict[str, Any] = {"enabled": False}
+    if args.soak_seconds > 0:
+        expected_replay_ids = {
+            str(event_id)
+            for event_id in (second_publish.get("event_id"),)
+            if event_id
+        }
+        soak_results = {
+            "enabled": True,
+            "seconds": args.soak_seconds,
+            "min_heartbeats": args.soak_min_heartbeats,
+            BEARER_MODE.name: stream_soak(
+                base_url=base_url,
+                mode=BEARER_MODE,
+                token=token,
+                timeout=args.timeout,
+                channel=args.channel,
+                cookie_name=args.cookie_name,
+                seconds=args.soak_seconds,
+                min_heartbeats=args.soak_min_heartbeats,
+                last_event_id=replay_last_event_id or None,
+                expected_event_ids=expected_replay_ids,
+            ),
+        }
+
     mock_generator_check = {
         "enabled": False,
         "live_mode_closed": True,
@@ -665,6 +829,10 @@ def main() -> int:
         ),
         "mock_generator_closed_in_live_mode": bool(mock_generator_check.get("passed")),
     }
+    if args.soak_seconds > 0:
+        assertions["bearer_soak_observed_heartbeat_without_duplicate_replay"] = bool(
+            soak_results.get(BEARER_MODE.name, {}).get("ok")
+        )
     failed_assertions = [name for name, ok in assertions.items() if not ok]
 
     evidence = {
@@ -689,7 +857,7 @@ def main() -> int:
         "commands": [
             "PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> "
             "PANTHEON_BFF_JWT_SECRET=<redacted> "
-            "scripts/probe_bff_sse_stream.py --base-url <bff-url>"
+            "scripts/probe_bff_sse_stream.py --base-url <bff-url> --soak-seconds 75 --soak-min-heartbeats 1"
         ],
         "publish": [first_publish, second_publish],
         "open_transcripts": {
@@ -702,6 +870,7 @@ def main() -> int:
             BEARER_MODE.name: bearer_replay,
         },
         "replay_unavailable": unavailable,
+        "soak": soak_results,
         "mock_generator_live_mode": mock_generator_check,
         "assertions": assertions,
         "summary": {
@@ -713,6 +882,9 @@ def main() -> int:
                 "first_event_contains_id_type_timestamp": assertions["first_event_has_id_type_timestamp"],
                 "last_event_id_replay": bool(cookie_replay.get("ok") and bearer_replay.get("ok")),
                 "replay_unavailable_409_with_resync_routes": bool(unavailable.get("ok")),
+                "bearer_soak_heartbeat_duplicate_replay": bool(
+                    not args.soak_seconds or soak_results.get(BEARER_MODE.name, {}).get("ok")
+                ),
                 "mock_generator_live_mode_closed": bool(mock_generator_check.get("passed")),
             },
         },
