@@ -1232,6 +1232,40 @@ services:
       retries: 10
       start_period: 5s
 
+  pantheon-paper-runtime:
+    build:
+      context: .
+      dockerfile: services/execution/lean_runtime/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    environment:
+      PORT: "8010"
+      PANTHEON_RUNTIME_ROLE: pantheon-paper-execution-runtime
+      PANTHEON_RUNTIME_MODE: paper
+      PANTHEON_RUNTIME_ID: ${PANTHEON_PAPER_RUNTIME_ID:-rt-devloop-l0-001}
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      SIGNAL_STORE_URL: redis://signal-store:6379
+      PANTHEON_SIGNAL_QUEUE_KEY: ${PANTHEON_PAPER_SIGNAL_QUEUE_KEY:-pantheon:signals:pending}
+      PANTHEON_STRATEGY_ID: ${PANTHEON_PAPER_STRATEGY_ID:-strategy-devloop-l0-001}
+      PANTHEON_PAPER_SYNTHETIC_MARKET_DATA: ${PANTHEON_PAPER_SYNTHETIC_MARKET_DATA:-true}
+    depends_on:
+      signal-store:
+        condition: service_healthy
+      runtime-manager:
+        condition: service_healthy
+      telemetry:
+        condition: service_healthy
+    ports:
+      - "${PAPER_RUNTIME_PORT:-18010}:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   smoke-stack:
     profiles: ["smoke"]
     build:
