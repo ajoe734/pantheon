@@ -44,6 +44,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
     PERSONA_MEMORY_INFLUENCE_MODEL_ID,
+    PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID,
     PERSONA_OSS_OODA_LEDGER_MODEL_ID,
     PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
     PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
@@ -138,6 +139,15 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["persisted_cycle_resume_cold_start_count"] == summary["persona_count"]
     assert summary["persisted_cycle_resume_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["persisted_cycle_resume_drives_next_case_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_cycle_lineage_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_cycle_lineage_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_cycle_lineage_cold_start_count"] == summary["persona_count"]
+    assert summary["multi_cycle_lineage_single_prior_count"] == summary["persona_count"]
+    assert summary["multi_cycle_lineage_applied_count"] == (
+        DEFAULT_CASE_COUNT - summary["persona_count"] * 2
+    )
+    assert summary["multi_cycle_lineage_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["multi_cycle_lineage_drives_next_case_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_drives_decision_count"] == DEFAULT_CASE_COUNT
@@ -345,6 +355,40 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "scheduler_feedback_due_at_preserved",
         "scorer_applies_after_resume_adjustment",
         "selected_candidate_cites_persisted_resume_refs",
+    }
+    assert coverage["multi_cycle_lineage_models"] == [
+        PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID
+    ]
+    assert set(coverage["multi_cycle_lineage_statuses"]) == {
+        "cold_start",
+        "lineage_applied",
+        "single_prior",
+    }
+    assert coverage["multi_cycle_lineage_depths"] == [0, 1, 2]
+    assert set(coverage["multi_cycle_lineage_trend_signals"]) == {
+        "cold_start_no_prior_cycle",
+        "latest_runtime_feedback_supersedes_older_cycle_trend",
+        "single_prior_runtime_feedback_bootstraps_lineage",
+    }
+    assert set(coverage["multi_cycle_lineage_score_adjusted_actions"]) == {
+        "feedback-adapt",
+        "risk-off",
+    }
+    assert set(coverage["multi_cycle_lineage_replay_flags"]) == {
+        "candidate_generation_consumes_lineage_refs",
+        "cold_start_or_lineage_bound",
+        "cross_cycle_runtime_feedback_bound",
+        "decision_artifact_replays_lineage",
+        "latest_prior_cycle_bound",
+        "lineage_depth_matches_history",
+        "no_future_current_case_artifact_used_as_prior",
+        "older_prior_cycle_bound",
+        "persisted_resume_bound",
+        "reasoning_consumes_lineage_refs",
+        "replayable",
+        "same_persona_lineage",
+        "scorer_applies_lineage_adjustment",
+        "selected_candidate_cites_lineage_refs",
     }
     assert coverage["shioaji_sandbox_models"] == [SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID]
     assert coverage["shioaji_sandbox_run_modes"] == ["mock_api_replay"]
@@ -596,7 +640,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     combo_signatures: set[str] = set()
     portfolio_window_signatures: set[str] = set()
     latest_case_by_persona: dict[str, dict] = {}
+    case_history_by_persona: dict[str, list[dict]] = {}
     for case in cases:
+        persona_case_history = list(case_history_by_persona.get(case["persona_id"], []))
         assert not case["case_id"].startswith("agent-usability-")
         _assert_unique_planned_validation_cycle(
             case,
@@ -613,11 +659,13 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_persona_oss_ooda_causal_ledger(case)
         _assert_cross_cycle_runtime_carryover(case, latest_case_by_persona)
         _assert_persisted_cycle_resume_carryover(case, latest_case_by_persona)
+        _assert_multi_cycle_lineage_carryover(case, persona_case_history)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
         _assert_evolution_and_scores(case)
         assert all(case["usable"].values())
         latest_case_by_persona[case["persona_id"]] = case
+        case_history_by_persona.setdefault(case["persona_id"], []).append(case)
 
 
 def _assert_unique_planned_validation_cycle(
@@ -1729,6 +1777,207 @@ def _assert_persisted_cycle_resume_carryover(case: dict, latest_case_by_persona:
             assert persisted_refs.issubset(set(reasoning_request["input_refs"]))
             assert persisted_refs.issubset(set(candidate_request["input_refs"]))
             assert persisted_refs.issubset(set(trace["selected_candidate"]["evidence_refs"]))
+
+
+def _assert_multi_cycle_lineage_carryover(case: dict, persona_case_history: list[dict]) -> None:
+    proof = case["cross_cycle"]["multi_cycle_lineage"]
+    traces = case["reflection"]["agent_decision_traces"]
+    lineage_cases = persona_case_history[-2:]
+
+    assert proof["model_id"] == PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == f"multi-cycle-lineage://{case['case_id']}"
+    assert proof["source_cross_cycle_proof_ref"] == case["cross_cycle"]["runtime_feedback_carryover"]["proof_ref"]
+    assert proof["source_persisted_cycle_resume_ref"] == case["cross_cycle"]["persisted_cycle_resume"]["proof_ref"]
+    assert proof["input_hash"]
+    assert len(proof["trace_bindings"]) == len(traces) == 2
+    assert all(proof["replay"].values())
+    assert case["usability_dimensions"]["multi_cycle_lineage_carryover"] == 1.0
+    assert case["usable"]["multi_cycle_lineage_drives_next_case"] is True
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["multi_cycle_lineage_drives_persona_next_case_decision"]["status"] == "passed"
+
+    def lineage_state(previous_case: dict) -> dict:
+        feedback = previous_case["operational_context"]["lean_runtime_feedback"]
+        recovery = previous_case["operational_context"]["restart_recovery"]
+        schedule = previous_case["operational_context"]["autonomous_schedule"]
+        ledger = previous_case["oss_feedback"]["ooda_causal_ledger"]
+        selected_event = next(
+            event
+            for event in ledger["events"]
+            if event["event_type"] == "selected_action"
+        )
+        runtime_readback = feedback["runtime_feedback"]
+        state_ref = f"multi-cycle-runtime://{previous_case['case_id']}->{case['case_id']}"
+        runtime_feedback_ref = f"lean-runtime-feedback://{feedback['feedback_id']}"
+        checkpoint_ref = f"checkpoint://{recovery['checkpoint_id']}"
+        schedule_ref = f"schedule://{schedule['schedule_id']}"
+        metadata_ref = f"object-store://{runtime_readback['object_store_metadata_key']}"
+        artifact_ref = f"object-store://{runtime_readback['object_store_artifact_key']}"
+        return {
+            "case_id": previous_case["case_id"],
+            "state_ref": state_ref,
+            "runtime_feedback_ref": runtime_feedback_ref,
+            "checkpoint_ref": checkpoint_ref,
+            "schedule_ref": schedule_ref,
+            "metadata_ref": metadata_ref,
+            "artifact_ref": artifact_ref,
+            "ledger_ref": ledger["ledger_ref"],
+            "selected_action_ref": selected_event["output_ref"],
+            "next_ooda_step": feedback["persona_ooda_followup"]["ooda_step"],
+            "next_scheduler_phase": feedback["persona_ooda_followup"]["next_scheduler_phase"],
+            "refs": [
+                state_ref,
+                runtime_feedback_ref,
+                checkpoint_ref,
+                schedule_ref,
+                metadata_ref,
+                artifact_ref,
+                ledger["ledger_ref"],
+                selected_event["output_ref"],
+            ],
+        }
+
+    if not lineage_cases:
+        assert proof["lineage_status"] == "cold_start"
+        assert proof["lineage_ref"] is None
+        assert proof["lineage_depth"] == 0
+        assert proof["lineage_case_ids"] == []
+        assert proof["latest_case_id"] is None
+        assert proof["older_case_id"] is None
+        assert proof["latest_runtime_feedback_ref"] is None
+        assert proof["older_runtime_feedback_ref"] is None
+        assert proof["lineage_refs"] == []
+        assert proof["trend_signal"] == "cold_start_no_prior_cycle"
+        assert all(float(value) == 0.0 for value in proof["score_adjustments"].values())
+        expected_refs: list[str] = []
+    else:
+        latest = lineage_state(lineage_cases[-1])
+        older = lineage_state(lineage_cases[-2]) if len(lineage_cases) == 2 else None
+        expected_status = "lineage_applied" if older else "single_prior"
+        expected_case_ids = [previous_case["case_id"] for previous_case in lineage_cases]
+        expected_lineage_ref = f"multi-cycle-lineage://{'->'.join(expected_case_ids)}->{case['case_id']}"
+        expected_refs = list(dict.fromkeys([
+            expected_lineage_ref,
+            *latest["refs"],
+            *(older["refs"] if older else []),
+        ]))
+
+        assert proof["lineage_status"] == expected_status
+        assert proof["lineage_ref"] == expected_lineage_ref
+        assert proof["lineage_depth"] == len(lineage_cases)
+        assert proof["lineage_case_ids"] == expected_case_ids
+        assert proof["latest_case_id"] == latest["case_id"]
+        assert proof["older_case_id"] == (older["case_id"] if older else None)
+        assert proof["latest_state_ref"] == latest["state_ref"]
+        assert proof["older_state_ref"] == (older["state_ref"] if older else None)
+        assert proof["latest_runtime_feedback_ref"] == latest["runtime_feedback_ref"]
+        assert proof["older_runtime_feedback_ref"] == (older["runtime_feedback_ref"] if older else None)
+        assert proof["latest_restart_checkpoint_ref"] == latest["checkpoint_ref"]
+        assert proof["older_restart_checkpoint_ref"] == (older["checkpoint_ref"] if older else None)
+        assert proof["latest_schedule_ref"] == latest["schedule_ref"]
+        assert proof["older_schedule_ref"] == (older["schedule_ref"] if older else None)
+        assert proof["latest_object_store_metadata_ref"] == latest["metadata_ref"]
+        assert proof["older_object_store_metadata_ref"] == (older["metadata_ref"] if older else None)
+        assert proof["latest_object_store_artifact_ref"] == latest["artifact_ref"]
+        assert proof["older_object_store_artifact_ref"] == (older["artifact_ref"] if older else None)
+        assert proof["latest_next_ooda_step"] == latest["next_ooda_step"]
+        assert proof["older_next_ooda_step"] == (older["next_ooda_step"] if older else None)
+        assert proof["latest_next_scheduler_phase"] == latest["next_scheduler_phase"]
+        assert proof["older_next_scheduler_phase"] == (older["next_scheduler_phase"] if older else None)
+        assert proof["lineage_refs"] == expected_refs
+        assert proof["score_adjustments"]["feedback-adapt"] > 0.0
+        assert proof["score_adjustments"]["risk-off"] > 0.0
+        assert proof["score_adjustments"]["retain-observe"] == 0.0
+        assert proof["score_adjustments"]["contrarian-check"] == 0.0
+        if older:
+            assert proof["trend_signal"] == "latest_runtime_feedback_supersedes_older_cycle_trend"
+        else:
+            assert proof["trend_signal"] == "single_prior_runtime_feedback_bootstraps_lineage"
+
+    binding_by_trace = {
+        binding["trace_id"]: binding
+        for binding in proof["trace_bindings"]
+    }
+    assert set(binding_by_trace) == {trace["reflection_id"] for trace in traces}
+    for trace in traces:
+        binding = binding_by_trace[trace["reflection_id"]]
+        artifact = trace["agent_decision_artifact"]
+        reasoning = artifact["persona_reasoning"]
+        reasoning_request = reasoning["request"]
+        reasoning_response = reasoning["response"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scorer_inputs = artifact["scorer"]["scoring_inputs"]
+        scorecards = artifact["scorer"]["scorecards"]
+        selected_id = trace["selected_candidate_id"]
+        selected_action = _candidate_action_from_id(selected_id)
+        selected_card = scorecards[selected_id]
+
+        assert binding["generation"] == artifact["generation"]
+        assert binding["trace_id"] == trace["reflection_id"]
+        assert binding["selected_action"] == selected_action
+        assert trace["decision_inputs"]["multi_cycle_lineage_status"] == proof["lineage_status"]
+        assert trace["decision_inputs"]["multi_cycle_lineage_ref"] == proof["lineage_ref"]
+        assert trace["decision_inputs"]["multi_cycle_latest_runtime_feedback_ref"] == proof["latest_runtime_feedback_ref"]
+        assert trace["decision_inputs"]["multi_cycle_older_runtime_feedback_ref"] == proof["older_runtime_feedback_ref"]
+        assert artifact["input_context"]["multi_cycle_lineage_status"] == proof["lineage_status"]
+        assert artifact["input_context"]["multi_cycle_lineage_ref"] == proof["lineage_ref"]
+        assert artifact["input_context"]["multi_cycle_lineage_depth"] == proof["lineage_depth"]
+        assert artifact["input_context"]["multi_cycle_lineage_case_ids"] == proof["lineage_case_ids"]
+        assert artifact["input_context"]["multi_cycle_latest_case_id"] == proof["latest_case_id"]
+        assert artifact["input_context"]["multi_cycle_older_case_id"] == proof["older_case_id"]
+        assert reasoning_request["multi_cycle_lineage_status"] == proof["lineage_status"]
+        assert reasoning_request["multi_cycle_lineage_ref"] == proof["lineage_ref"]
+        assert reasoning_request["multi_cycle_latest_runtime_feedback_ref"] == proof["latest_runtime_feedback_ref"]
+        assert reasoning_request["multi_cycle_older_runtime_feedback_ref"] == proof["older_runtime_feedback_ref"]
+        assert reasoning_response["multi_cycle_lineage_usage"]["status"] == proof["lineage_status"]
+        assert reasoning_response["multi_cycle_lineage_usage"]["lineage_ref"] == proof["lineage_ref"]
+        assert reasoning_response["multi_cycle_lineage_usage"]["lineage_depth"] == proof["lineage_depth"]
+        assert reasoning_response["multi_cycle_lineage_usage"]["lineage_case_ids"] == proof["lineage_case_ids"]
+        assert reasoning_response["multi_cycle_lineage_usage"]["latest_runtime_feedback_ref"] == proof[
+            "latest_runtime_feedback_ref"
+        ]
+        assert reasoning_response["multi_cycle_lineage_usage"]["older_runtime_feedback_ref"] == proof[
+            "older_runtime_feedback_ref"
+        ]
+        assert reasoning_response["multi_cycle_lineage_usage"]["trend_signal"] == proof["trend_signal"]
+        assert reasoning_response["multi_cycle_lineage_usage"]["candidate_score_adjustments"] == proof[
+            "score_adjustments"
+        ]
+        assert scorer_inputs["multi_cycle_lineage_context"]["status"] == proof["lineage_status"]
+        assert scorer_inputs["multi_cycle_lineage_context"].get("lineage_ref") == proof["lineage_ref"]
+        assert scorer_inputs["multi_cycle_lineage_context"].get("lineage_case_ids") == proof["lineage_case_ids"]
+        assert scorer_inputs["multi_cycle_lineage_score_adjustments"] == proof["score_adjustments"]
+        assert selected_card["components"]["multi_cycle_lineage_adjustment"] == proof[
+            "score_adjustments"
+        ][selected_action]
+        assert artifact["replay"]["uses_multi_cycle_lineage_or_declares_cold_start"] is True
+
+        if proof["lineage_status"] == "cold_start":
+            assert binding["decision_input_lineage_ref"] is None
+            assert binding["reasoning_consumes_lineage_refs"] is False
+            assert binding["candidate_request_consumes_lineage_refs"] is False
+            assert binding["selected_candidate_cites_lineage_refs"] is False
+            assert binding["scorer_multi_cycle_lineage_adjustment"] == 0.0
+            assert selected_card["components"]["multi_cycle_lineage_adjustment"] == 0.0
+        else:
+            expected_ref_set = set(expected_refs)
+            assert binding["decision_input_lineage_ref"] == proof["lineage_ref"]
+            assert binding["reasoning_consumes_lineage_refs"] is True
+            assert binding["candidate_request_consumes_lineage_refs"] is True
+            assert binding["selected_candidate_cites_lineage_refs"] is True
+            assert binding["scorer_multi_cycle_lineage_adjustment"] == proof["score_adjustments"][selected_action]
+            assert binding["scorer_multi_cycle_lineage_adjustment"] > 0.0
+            assert binding["decision_replay_uses_lineage"] is True
+            assert expected_ref_set.issubset(set(reasoning_request["input_refs"]))
+            assert expected_ref_set.issubset(set(candidate_request["input_refs"]))
+            assert expected_ref_set.issubset(set(trace["selected_candidate"]["evidence_refs"]))
 
 
 def _assert_case_specific_upstream_artifacts(case: dict) -> None:
