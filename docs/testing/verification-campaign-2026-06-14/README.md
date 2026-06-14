@@ -36,8 +36,9 @@ The campaign deliberately goes **deeper and broader** each round.
 
 | # | Theme | Plan | Results | Fix |
 |---|---|---|---|---|
-| 1 | Live dev stack reachability & control-plane health | [round-01-plan.md](round-01-plan.md) | [round-01-results.md](round-01-results.md) | OODA card false-green when source missing (this branch) |
-| 2 | _(planned at end of round 1, deeper/broader)_ | — | — | — |
+| 1 | Live dev stack reachability & control-plane health | [round-01-plan.md](round-01-plan.md) | [round-01-results.md](round-01-results.md) | OODA card false-green when source missing (PR #1540) |
+| 2 | Contract-surface conformance breadth & ghost-route audit | [round-02-plan.md](round-02-plan.md) | [round-02-results.md](round-02-results.md) | `/api/v1/incidents/stream` SSE route un-shadowed |
+| 3 | _(planned at end of round 2, deeper/broader)_ | — | — | — |
 
 ## Environment under test
 
