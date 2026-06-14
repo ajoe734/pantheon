@@ -234,7 +234,7 @@ def test_control_mode_activation_requires_kernel_capability(monkeypatch) -> None
     )
 
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"]["details"]["field"] == "capabilities"
+    assert resp.json()["error"]["details"]["field"] == "capabilities"
     assert store.status_for_actor("op-security")["active"] is False
 
 
@@ -258,7 +258,7 @@ def test_control_mode_activation_rejects_invalid_ttl_and_idle_timeout(monkeypatc
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert ttl_resp.status_code == 422
-    assert ttl_resp.json()["detail"]["error"]["details"]["field"] == "ttlSeconds"
+    assert ttl_resp.json()["error"]["details"]["field"] == "ttlSeconds"
 
     idle_resp = client.post(
         "/bff/assistant/control-mode/activate",
@@ -271,7 +271,7 @@ def test_control_mode_activation_rejects_invalid_ttl_and_idle_timeout(monkeypatc
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert idle_resp.status_code == 422
-    assert idle_resp.json()["detail"]["error"]["details"]["field"] == "idleTtlSeconds"
+    assert idle_resp.json()["error"]["details"]["field"] == "idleTtlSeconds"
     assert store.status_for_actor("op-security")["active"] is False
 
 
@@ -330,7 +330,7 @@ def test_control_mode_passphrase_change_requires_admin_plus_mfa() -> None:
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert operator_resp.status_code == 403
-    assert operator_resp.json()["detail"]["error"]["details"]["field"] == "roles"
+    assert operator_resp.json()["error"]["details"]["field"] == "roles"
 
     mfa_resp = admin_without_mfa_client.post(
         "/bff/assistant/control-mode/passphrase",
@@ -338,7 +338,7 @@ def test_control_mode_passphrase_change_requires_admin_plus_mfa() -> None:
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert mfa_resp.status_code == 403
-    assert mfa_resp.json()["detail"]["error"]["details"]["field"] == "mfa"
+    assert mfa_resp.json()["error"]["details"]["field"] == "mfa"
     assert store.configured() is False
 
 
@@ -366,7 +366,7 @@ def test_repair_worktree_prepare_requires_active_kernel_repair(monkeypatch) -> N
     )
 
     assert resp.status_code == 409
-    assert resp.json()["detail"]["error"]["details"]["reason"] == "not_active"
+    assert resp.json()["error"]["details"]["reason"] == "not_active"
     assert calls == []
 
     activate_resp = client.post(
@@ -387,7 +387,7 @@ def test_repair_worktree_prepare_requires_active_kernel_repair(monkeypatch) -> N
     )
 
     assert debug_resp.status_code == 409
-    assert debug_resp.json()["detail"]["error"]["details"]["reason"] == "kernel_repair_required"
+    assert debug_resp.json()["error"]["details"]["reason"] == "kernel_repair_required"
     assert calls == []
 
 
@@ -483,7 +483,7 @@ def test_provider_reauth_requires_active_kernel_debug_or_repair(monkeypatch) -> 
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert inactive_resp.status_code == 409
-    assert inactive_resp.json()["detail"]["error"]["details"]["reason"] == "not_active"
+    assert inactive_resp.json()["error"]["details"]["reason"] == "not_active"
 
     observe_resp = client.post(
         "/bff/assistant/control-mode/activate",
@@ -502,7 +502,7 @@ def test_provider_reauth_requires_active_kernel_debug_or_repair(monkeypatch) -> 
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert denied_resp.status_code == 409
-    assert denied_resp.json()["detail"]["error"]["details"]["reason"] == "kernel_debug_or_repair_required"
+    assert denied_resp.json()["error"]["details"]["reason"] == "kernel_debug_or_repair_required"
     assert calls == []
 
 

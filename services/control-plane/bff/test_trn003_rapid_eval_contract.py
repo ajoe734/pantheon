@@ -203,7 +203,7 @@ def test_trn003_post_completed_session_returns_409() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 409, resp.text
-        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "status"
+        assert resp.json()["error"]["details"]["precondition_failed"] == "status"
 
 
 # ------------------------------------------------------------------ #
@@ -211,7 +211,7 @@ def test_trn003_post_completed_session_returns_409() -> None:
 # ------------------------------------------------------------------ #
 
 def _precondition_failed(resp) -> str:
-    return resp.json()["detail"]["error"]["details"]["precondition_failed"]
+    return resp.json()["error"]["details"]["precondition_failed"]
 
 
 def test_trn003_post_missing_eval_scope_returns_422() -> None:

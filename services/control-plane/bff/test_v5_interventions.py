@@ -390,7 +390,7 @@ def test_decide_v5_intervention_invalid_decision_returns_422_without_store() -> 
             json={"decision": "not-a-decision"},
         )
         assert response.status_code == 422, response.text
-        error = response.json()["detail"]["error"]
+        error = response.json()["error"]
         assert error["code"] == "INVALID_PARAMS"
         assert error["details"]["precondition_failed"] == "decision"
         assert bff_main.command_store._get_all_commands() == []
@@ -404,7 +404,7 @@ def test_decide_v5_intervention_body_idempotency_key_rejected_before_store() -> 
             json={"decision": "defer", "idempotencyKey": "body-key-not-allowed"},
         )
         assert response.status_code in {400, 422}, response.text
-        error = response.json()["detail"]["error"]
+        error = response.json()["error"]
         assert error["code"] == "INVALID_REQUEST"
         assert bff_main.command_store._get_all_commands() == []
 
@@ -511,7 +511,7 @@ def test_remediate_v5_intervention_insufficient_role_returns_403() -> None:
             },
         )
         assert response.status_code == 403, response.text
-        error = response.json()["detail"]["error"]
+        error = response.json()["error"]
         assert error["code"] == "INSUFFICIENT_ROLE"
         assert error["details"]["precondition_failed"] == "role_check"
 
@@ -535,7 +535,7 @@ def test_remediate_v5_intervention_viewer_role_returns_403() -> None:
             },
         )
         assert response.status_code == 403, response.text
-        error = response.json()["detail"]["error"]
+        error = response.json()["error"]
         assert error["code"] == "INSUFFICIENT_ROLE"
 
 
@@ -563,7 +563,7 @@ def test_bff_v1_commands_remediate_sentinel_insufficient_role_returns_403() -> N
             },
         )
         assert response.status_code == 403, response.text
-        error = response.json()["detail"]["error"]
+        error = response.json()["error"]
         assert error["code"] == "INSUFFICIENT_ROLE"
         assert error["details"]["precondition_failed"] == "role_check"
 
@@ -591,7 +591,7 @@ def test_remediate_v5_intervention_invalid_action_returns_422() -> None:
             },
         )
         assert response.status_code == 422, response.text
-        error = response.json()["detail"]["error"]
+        error = response.json()["error"]
         assert error["code"] == "INVALID_PARAMS"
 
 
@@ -619,7 +619,7 @@ def test_bff_v1_commands_remediate_sentinel_invalid_action_returns_422() -> None
             },
         )
         assert response.status_code == 422, response.text
-        error = response.json()["detail"]["error"]
+        error = response.json()["error"]
         assert error["code"] == "INVALID_PARAMS"
 
 

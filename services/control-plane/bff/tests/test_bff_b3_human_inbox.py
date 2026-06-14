@@ -125,7 +125,7 @@ def test_human_inbox_detail_unknown_returns_404() -> None:
             resp = client.get("/bff/management/human-inbox/missing-item", headers=OPERATOR_HEADERS)
 
             assert resp.status_code == 404, resp.text
-            assert resp.json()["detail"]["error"]["code"] == "OBJECT_NOT_FOUND"
+            assert resp.json()["error"]["code"] == "OBJECT_NOT_FOUND"
         finally:
             bff_main.read_store = original_store
 
@@ -138,6 +138,6 @@ def test_human_inbox_requires_authentication() -> None:
             resp = client.get("/bff/management/human-inbox")
 
             assert resp.status_code == 401, resp.text
-            assert resp.json()["detail"]["error"]["code"] == "INVALID_TOKEN"
+            assert resp.json()["error"]["code"] == "INVALID_TOKEN"
         finally:
             bff_main.read_store = original_store

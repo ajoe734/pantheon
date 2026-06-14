@@ -119,4 +119,4 @@ def test_management_readiness_requires_authentication() -> None:
         response = client.get("/bff/management/readiness/ep5")
 
         assert response.status_code == 401, response.text
-        assert response.json()["detail"]["error"]["code"] == "INVALID_TOKEN"
+        assert response.json()["error"]["code"] == "INVALID_TOKEN"

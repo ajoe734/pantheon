@@ -168,4 +168,4 @@ def test_rw05_compare_rejects_invalid_cardinality() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 400, response.text
-        assert response.json()["detail"]["error"]["code"] == "INVALID_PARAMS"
+        assert response.json()["error"]["code"] == "INVALID_PARAMS"

@@ -279,7 +279,7 @@ def test_repair_worktree_prepare_route_requires_kernel_repair_and_delegates(tmp_
         headers=HEADERS,
     )
     assert denied.status_code == 409, denied.text
-    assert denied.json()["detail"]["error"]["details"]["reason"] == "kernel_repair_required"
+    assert denied.json()["error"]["details"]["reason"] == "kernel_repair_required"
     assert calls == []
 
     client, _ = _make_client(

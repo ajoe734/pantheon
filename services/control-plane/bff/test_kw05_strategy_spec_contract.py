@@ -468,14 +468,14 @@ def test_kw05_compare_rejects_missing_duplicate_and_noncomparable_versions() -> 
             headers={"Authorization": OPERATOR_TOKEN},
         )
         assert missing_response.status_code == 400, missing_response.text
-        assert missing_response.json()["detail"]["error"]["details"]["precondition_failed"] == "left_version"
+        assert missing_response.json()["error"]["details"]["precondition_failed"] == "left_version"
 
         duplicate_response = client.get(
             f"/api/v1/knowledge/strategy-specs/{SERVICE_STRATEGY_ID}/compare?left_version=v2&right_version=v2",
             headers={"Authorization": OPERATOR_TOKEN},
         )
         assert duplicate_response.status_code == 422, duplicate_response.text
-        assert duplicate_response.json()["detail"]["error"]["code"] == "INVALID_PARAMS"
+        assert duplicate_response.json()["error"]["code"] == "INVALID_PARAMS"
 
         noncomparable_response = client.get(
             f"/api/v1/knowledge/strategy-specs/{DRAFT_STRATEGY_ID}/compare?left_version=v1&right_version=v2",
@@ -483,5 +483,5 @@ def test_kw05_compare_rejects_missing_duplicate_and_noncomparable_versions() -> 
         )
         assert noncomparable_response.status_code == 422, noncomparable_response.text
         payload = noncomparable_response.json()
-        assert payload["detail"]["error"]["code"] == "INVALID_STATE"
-        assert payload["detail"]["error"]["details"]["precondition_failed"] == "lifecycle_state"
+        assert payload["error"]["code"] == "INVALID_STATE"
+        assert payload["error"]["details"]["precondition_failed"] == "lifecycle_state"

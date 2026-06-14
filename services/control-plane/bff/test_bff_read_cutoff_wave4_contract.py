@@ -69,7 +69,7 @@ def test_prod_catalog_read_does_not_mask_cutoff_with_local_snapshot(monkeypatch)
 
         detail_response = client.get("/api/v1/deployment-plans/plan-F-042", headers=AUTH)
         assert detail_response.status_code == 503
-        assert detail_response.json()["detail"]["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
+        assert detail_response.json()["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
 
 
 def test_dev_catalog_snapshot_fallback_is_explicitly_degraded(monkeypatch) -> None:
