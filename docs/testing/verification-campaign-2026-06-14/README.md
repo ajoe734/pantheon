@@ -44,7 +44,8 @@ The campaign deliberately goes **deeper and broader** each round.
 | 6 | Authorization depth (RBAC) audit of write surface | [round-06-plan.md](round-06-plan.md) | [round-06-results.md](round-06-results.md) | PASS (133/136 write-gated); F7 read-gated creates flagged for product decision (PR #1549) |
 | 7 | Test-suite import/collection & execution health | [round-07-plan.md](round-07-plan.md) | [round-07-results.md](round-07-results.md) | PASS (~1,150 tests green, 0 failures) (PR #1550) |
 | 8 | Write-method robustness + orchestrator archive integrity | [round-08-plan.md](round-08-plan.md) | [round-08-results.md](round-08-results.md) | F8: archive indexer silently dropped legacy-id files — fixed |
-| 9 | _(planned at end of round 8, deeper/broader)_ | — | — | — |
+| 9 | Systematic route-resolution audit (shadowing + dup registration) | [round-09-plan.md](round-09-plan.md) | [round-09-results.md](round-09-results.md) | PASS; F9 dup-registration hazard locked by guard test |
+| 10 | _(final round + campaign summary)_ | — | — | — |
 
 ## Environment under test
 
