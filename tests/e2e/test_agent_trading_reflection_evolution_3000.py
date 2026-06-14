@@ -46,6 +46,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_MEMORY_INFLUENCE_MODEL_ID,
     PERSONA_OSS_OODA_LEDGER_MODEL_ID,
     PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
+    PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
     PERSONA_REASONING_EVALUATOR_MODEL_ID,
     PERSONA_REASONING_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
@@ -129,6 +130,14 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["cross_cycle_runtime_feedback_cold_start_count"] == summary["persona_count"]
     assert summary["cross_cycle_carryover_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["cross_cycle_runtime_feedback_drives_next_case_count"] == DEFAULT_CASE_COUNT
+    assert summary["persisted_cycle_resume_count"] == DEFAULT_CASE_COUNT
+    assert summary["persisted_cycle_resume_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["persisted_cycle_resume_applied_count"] == (
+        DEFAULT_CASE_COUNT - summary["persona_count"]
+    )
+    assert summary["persisted_cycle_resume_cold_start_count"] == summary["persona_count"]
+    assert summary["persisted_cycle_resume_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["persisted_cycle_resume_drives_next_case_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_drives_decision_count"] == DEFAULT_CASE_COUNT
@@ -311,6 +320,31 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "same_persona_cycle_carryover",
         "scorer_applies_cross_cycle_adjustment",
         "selected_candidate_cites_cross_cycle_state",
+    }
+    assert coverage["persisted_cycle_resume_models"] == [
+        PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID
+    ]
+    assert set(coverage["persisted_cycle_resume_statuses"]) == {"applied", "cold_start"}
+    assert coverage["persisted_cycle_resume_steps"] == ["execute_generation2_future_holdout"]
+    assert set(coverage["persisted_cycle_resume_next_scheduler_phases"]) == {"evolve", "reflect"}
+    assert set(coverage["persisted_cycle_resume_score_adjusted_actions"]) == {
+        "feedback-adapt",
+        "risk-off",
+    }
+    assert set(coverage["persisted_cycle_resume_replay_flags"]) == {
+        "candidate_generation_consumes_persisted_resume_refs",
+        "cold_start_or_persisted_state_bound",
+        "cross_cycle_runtime_feedback_bound",
+        "no_future_current_case_artifact_used_as_prior",
+        "prior_autonomous_schedule_available",
+        "prior_restart_checkpoint_available",
+        "prior_runtime_object_store_readback_available",
+        "reasoning_consumes_persisted_resume_refs",
+        "replayable",
+        "same_persona_resume_carryover",
+        "scheduler_feedback_due_at_preserved",
+        "scorer_applies_after_resume_adjustment",
+        "selected_candidate_cites_persisted_resume_refs",
     }
     assert coverage["shioaji_sandbox_models"] == [SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID]
     assert coverage["shioaji_sandbox_run_modes"] == ["mock_api_replay"]
@@ -578,6 +612,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_multi_oss_closed_loop_proof(case)
         _assert_persona_oss_ooda_causal_ledger(case)
         _assert_cross_cycle_runtime_carryover(case, latest_case_by_persona)
+        _assert_persisted_cycle_resume_carryover(case, latest_case_by_persona)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
         _assert_evolution_and_scores(case)
@@ -1467,6 +1502,8 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
         assert all(float(value) == 0.0 for value in proof["score_adjustments"].values())
     else:
         previous_feedback = previous_case["operational_context"]["lean_runtime_feedback"]
+        previous_recovery = previous_case["operational_context"]["restart_recovery"]
+        previous_schedule = previous_case["operational_context"]["autonomous_schedule"]
         previous_ledger = previous_case["oss_feedback"]["ooda_causal_ledger"]
         previous_selected_event = next(
             event
@@ -1474,8 +1511,13 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
             if event["event_type"] == "selected_action"
         )
         previous_followup = previous_feedback["persona_ooda_followup"]
+        previous_runtime_readback = previous_feedback["runtime_feedback"]
         expected_runtime_feedback_ref = f"lean-runtime-feedback://{previous_feedback['feedback_id']}"
         expected_state_ref = f"cross-cycle-runtime://{previous_case['case_id']}->{case['case_id']}"
+        expected_checkpoint_ref = f"checkpoint://{previous_recovery['checkpoint_id']}"
+        expected_schedule_ref = f"schedule://{previous_schedule['schedule_id']}"
+        expected_metadata_ref = f"object-store://{previous_runtime_readback['object_store_metadata_key']}"
+        expected_artifact_ref = f"object-store://{previous_runtime_readback['object_store_artifact_key']}"
         expected_evidence_refs = [
             expected_state_ref,
             expected_runtime_feedback_ref,
@@ -1483,6 +1525,10 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
             previous_feedback["source_handoff_ref"],
             previous_ledger["ledger_ref"],
             previous_selected_event["output_ref"],
+            expected_checkpoint_ref,
+            expected_schedule_ref,
+            expected_metadata_ref,
+            expected_artifact_ref,
         ]
 
         assert proof["carryover_status"] == "applied"
@@ -1574,6 +1620,115 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
             assert proof["previous_ooda_ledger_ref"] in reasoning_request["input_refs"]
             assert proof["previous_ooda_ledger_ref"] in candidate_request["input_refs"]
             assert proof["source_handoff_ref"] in candidate_request["input_refs"]
+
+
+def _assert_persisted_cycle_resume_carryover(case: dict, latest_case_by_persona: dict[str, dict]) -> None:
+    proof = case["cross_cycle"]["persisted_cycle_resume"]
+    traces = case["reflection"]["agent_decision_traces"]
+    previous_case = latest_case_by_persona.get(case["persona_id"])
+
+    assert proof["model_id"] == PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == f"persisted-cycle-resume://{case['case_id']}"
+    assert proof["source_cross_cycle_proof_ref"] == case["cross_cycle"]["runtime_feedback_carryover"]["proof_ref"]
+    assert proof["input_hash"]
+    assert len(proof["trace_bindings"]) == len(traces) == 2
+    assert all(proof["replay"].values())
+    assert case["usability_dimensions"]["persisted_cycle_resume_carryover"] == 1.0
+    assert case["usable"]["persisted_cycle_resume_drives_next_case"] is True
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["persisted_cycle_resume_replays_after_restart_and_schedule"]["status"] == "passed"
+
+    if previous_case is None:
+        assert proof["resume_status"] == "cold_start"
+        assert proof["previous_case_id"] is None
+        assert proof["state_ref"] is None
+        assert proof["runtime_feedback_ref"] is None
+        assert proof["restart_checkpoint_ref"] is None
+        assert proof["schedule_ref"] is None
+        assert proof["object_store_metadata_ref"] is None
+        assert proof["object_store_artifact_ref"] is None
+        assert proof["resume_step"] is None
+        assert proof["persisted_refs"] == []
+        assert all(float(value) == 0.0 for value in proof["score_adjustments"].values())
+    else:
+        previous_feedback = previous_case["operational_context"]["lean_runtime_feedback"]
+        previous_recovery = previous_case["operational_context"]["restart_recovery"]
+        previous_schedule = previous_case["operational_context"]["autonomous_schedule"]
+        previous_runtime_readback = previous_feedback["runtime_feedback"]
+        expected_checkpoint_ref = f"checkpoint://{previous_recovery['checkpoint_id']}"
+        expected_schedule_ref = f"schedule://{previous_schedule['schedule_id']}"
+        expected_metadata_ref = f"object-store://{previous_runtime_readback['object_store_metadata_key']}"
+        expected_artifact_ref = f"object-store://{previous_runtime_readback['object_store_artifact_key']}"
+
+        assert proof["resume_status"] == "applied"
+        assert proof["previous_case_id"] == previous_case["case_id"]
+        assert proof["state_ref"] == f"cross-cycle-runtime://{previous_case['case_id']}->{case['case_id']}"
+        assert proof["runtime_feedback_ref"] == f"lean-runtime-feedback://{previous_feedback['feedback_id']}"
+        assert proof["restart_checkpoint_ref"] == expected_checkpoint_ref
+        assert proof["schedule_ref"] == expected_schedule_ref
+        assert proof["next_cycle_due_at"] == previous_schedule["next_cycle_due_at"]
+        assert proof["feedback_scheduled_cycle_due_at"] == previous_feedback["state_updates"][
+            "schedule_next_cycle_after_feedback"
+        ]
+        assert proof["next_cycle_due_at"] == proof["feedback_scheduled_cycle_due_at"]
+        assert proof["object_store_metadata_ref"] == expected_metadata_ref
+        assert proof["object_store_artifact_ref"] == expected_artifact_ref
+        assert proof["resume_step"] == previous_recovery["resume_step"]
+        assert proof["next_ooda_step"] == previous_feedback["persona_ooda_followup"]["ooda_step"]
+        assert proof["next_scheduler_phase"] == previous_feedback["persona_ooda_followup"]["next_scheduler_phase"]
+        assert proof["persisted_refs"] == [
+            expected_checkpoint_ref,
+            expected_schedule_ref,
+            expected_metadata_ref,
+            expected_artifact_ref,
+        ]
+        assert proof["score_adjustments"]["feedback-adapt"] > 0.0
+        assert proof["score_adjustments"]["risk-off"] > 0.0
+
+    binding_by_trace = {
+        binding["trace_id"]: binding
+        for binding in proof["trace_bindings"]
+    }
+    assert set(binding_by_trace) == {trace["reflection_id"] for trace in traces}
+    for trace in traces:
+        binding = binding_by_trace[trace["reflection_id"]]
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scorecards = artifact["scorer"]["scorecards"]
+        selected_id = trace["selected_candidate_id"]
+        selected_action = _candidate_action_from_id(selected_id)
+        selected_card = scorecards[selected_id]
+
+        assert binding["generation"] == artifact["generation"]
+        assert binding["trace_id"] == trace["reflection_id"]
+        assert binding["selected_action"] == selected_action
+        assert binding["decision_input_state_ref"] == proof["state_ref"]
+        assert selected_card["components"]["cross_cycle_adjustment"] == proof["score_adjustments"][selected_action]
+
+        if proof["resume_status"] == "cold_start":
+            assert binding["reasoning_consumes_persisted_refs"] is False
+            assert binding["candidate_request_consumes_persisted_refs"] is False
+            assert binding["selected_candidate_cites_persisted_refs"] is False
+            assert binding["scorer_cross_cycle_adjustment"] == 0.0
+            assert selected_card["components"]["cross_cycle_adjustment"] == 0.0
+        else:
+            persisted_refs = set(proof["persisted_refs"])
+            assert binding["reasoning_consumes_persisted_refs"] is True
+            assert binding["candidate_request_consumes_persisted_refs"] is True
+            assert binding["selected_candidate_cites_persisted_refs"] is True
+            assert binding["scorer_cross_cycle_adjustment"] == proof["score_adjustments"][selected_action]
+            assert binding["scorer_cross_cycle_adjustment"] > 0.0
+            assert persisted_refs.issubset(set(reasoning_request["input_refs"]))
+            assert persisted_refs.issubset(set(candidate_request["input_refs"]))
+            assert persisted_refs.issubset(set(trace["selected_candidate"]["evidence_refs"]))
 
 
 def _assert_case_specific_upstream_artifacts(case: dict) -> None:

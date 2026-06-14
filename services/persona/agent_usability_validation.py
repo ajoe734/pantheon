@@ -154,6 +154,7 @@ PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID = "persona_memory_counterfactual_decision
 MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID = "persona_multi_oss_closed_loop_proof_v1"
 PERSONA_OSS_OODA_LEDGER_MODEL_ID = "persona_oss_ooda_causal_ledger_v1"
 PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID = "persona_cross_cycle_runtime_carryover_v1"
+PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID = "persona_persisted_cycle_resume_carryover_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
 PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
@@ -706,6 +707,12 @@ def run_agent_usability_validations(
             decision_traces=(decision_trace0, decision_trace1),
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
         )
+        persisted_cycle_resume = _build_persisted_cycle_resume_proof(
+            episode=episode,
+            cross_cycle_context=cross_cycle_context,
+            decision_traces=(decision_trace0, decision_trace1),
+            cross_cycle_carryover=cross_cycle_carryover,
+        )
         usability_dimensions = _build_usability_dimensions(
             episode=episode,
             executions=(generation0_exec, generation1_exec, generation2_exec),
@@ -726,6 +733,7 @@ def run_agent_usability_validations(
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
+            persisted_cycle_resume=persisted_cycle_resume,
             oss_followup_loop=oss_followup_loop,
         )
         validation_diagnostics = _diagnose_validation_execution(
@@ -749,6 +757,7 @@ def run_agent_usability_validations(
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
+            persisted_cycle_resume=persisted_cycle_resume,
             oss_followup_loop=oss_followup_loop,
         )
         validation_repair = _repair_validation_deficiencies(
@@ -773,6 +782,7 @@ def run_agent_usability_validations(
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
+            persisted_cycle_resume=persisted_cycle_resume,
             oss_followup_loop=oss_followup_loop,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
@@ -3391,8 +3401,16 @@ def _cross_cycle_context_for_episode(
             "source_handoff_ref": None,
             "previous_ooda_ledger_ref": None,
             "previous_selected_action_ref": None,
+            "previous_restart_checkpoint_ref": None,
+            "previous_schedule_ref": None,
+            "previous_next_cycle_due_at": None,
+            "previous_feedback_scheduled_cycle_due_at": None,
+            "previous_object_store_metadata_ref": None,
+            "previous_object_store_artifact_ref": None,
+            "previous_resume_step": None,
             "next_ooda_step": None,
             "next_ooda_action": None,
+            "next_scheduler_phase": None,
             "prior_case_completed_before_current_case": False,
             "evidence_refs": [],
             "candidate_score_adjustments": _cross_cycle_score_adjustments({"status": "cold_start"}),
@@ -3400,6 +3418,10 @@ def _cross_cycle_context_for_episode(
     previous_case_id = str(prior_cycle_state["case_id"])
     state_ref = f"cross-cycle-runtime://{previous_case_id}->{episode.case_id}"
     runtime_feedback_ref = str(prior_cycle_state["runtime_feedback_ref"])
+    restart_checkpoint_ref = str(prior_cycle_state["restart_checkpoint_ref"])
+    schedule_ref = str(prior_cycle_state["schedule_ref"])
+    object_store_metadata_ref = str(prior_cycle_state["object_store_metadata_ref"])
+    object_store_artifact_ref = str(prior_cycle_state["object_store_artifact_ref"])
     return {
         "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
         "status": "applied",
@@ -3412,6 +3434,13 @@ def _cross_cycle_context_for_episode(
         "source_handoff_ref": prior_cycle_state["source_handoff_ref"],
         "previous_ooda_ledger_ref": prior_cycle_state["ooda_ledger_ref"],
         "previous_selected_action_ref": prior_cycle_state["selected_action_ref"],
+        "previous_restart_checkpoint_ref": restart_checkpoint_ref,
+        "previous_schedule_ref": schedule_ref,
+        "previous_next_cycle_due_at": prior_cycle_state["next_cycle_due_at"],
+        "previous_feedback_scheduled_cycle_due_at": prior_cycle_state["feedback_scheduled_cycle_due_at"],
+        "previous_object_store_metadata_ref": object_store_metadata_ref,
+        "previous_object_store_artifact_ref": object_store_artifact_ref,
+        "previous_resume_step": prior_cycle_state["resume_step"],
         "next_ooda_step": prior_cycle_state["next_ooda_step"],
         "next_ooda_action": prior_cycle_state["next_ooda_action"],
         "next_scheduler_phase": prior_cycle_state["next_scheduler_phase"],
@@ -3423,6 +3452,10 @@ def _cross_cycle_context_for_episode(
             str(prior_cycle_state["source_handoff_ref"]),
             str(prior_cycle_state["ooda_ledger_ref"]),
             str(prior_cycle_state["selected_action_ref"]),
+            restart_checkpoint_ref,
+            schedule_ref,
+            object_store_metadata_ref,
+            object_store_artifact_ref,
         ],
         "candidate_score_adjustments": _cross_cycle_score_adjustments({"status": "applied"}),
     }
@@ -3430,6 +3463,8 @@ def _cross_cycle_context_for_episode(
 
 def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
     feedback = case["operational_context"]["lean_runtime_feedback"]
+    recovery = case["operational_context"]["restart_recovery"]
+    schedule = case["operational_context"]["autonomous_schedule"]
     ledger = case["oss_feedback"]["ooda_causal_ledger"]
     selected_event = next(
         event
@@ -3437,6 +3472,7 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
         if event["event_type"] == "selected_action"
     )
     persona_followup = feedback["persona_ooda_followup"]
+    runtime_readback = feedback["runtime_feedback"]
     return {
         "case_id": case["case_id"],
         "persona_id": case["persona_id"],
@@ -3445,6 +3481,13 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
         "source_handoff_ref": feedback["source_handoff_ref"],
         "ooda_ledger_ref": ledger["ledger_ref"],
         "selected_action_ref": selected_event["output_ref"],
+        "restart_checkpoint_ref": f"checkpoint://{recovery['checkpoint_id']}",
+        "schedule_ref": f"schedule://{schedule['schedule_id']}",
+        "next_cycle_due_at": schedule["next_cycle_due_at"],
+        "feedback_scheduled_cycle_due_at": feedback["state_updates"]["schedule_next_cycle_after_feedback"],
+        "object_store_metadata_ref": f"object-store://{runtime_readback['object_store_metadata_key']}",
+        "object_store_artifact_ref": f"object-store://{runtime_readback['object_store_artifact_key']}",
+        "resume_step": recovery["resume_step"],
         "next_ooda_step": persona_followup["ooda_step"],
         "next_ooda_action": persona_followup["action"],
         "next_scheduler_phase": persona_followup["next_scheduler_phase"],
@@ -3594,6 +3637,169 @@ def _cross_cycle_carryover_is_usable(proof: Mapping[str, Any]) -> bool:
                 and proof.get("previous_case_id")
                 and proof.get("runtime_feedback_ref")
                 and proof.get("state_ref")
+                and float(proof.get("score_adjustments", {}).get("feedback-adapt", 0.0)) > 0.0
+                and all(binding.get("scorer_cross_cycle_adjustment", 0.0) > 0.0 for binding in trace_bindings)
+            )
+        )
+    )
+
+
+def _build_persisted_cycle_resume_proof(
+    *,
+    episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    cross_cycle_carryover: Mapping[str, Any],
+) -> dict[str, Any]:
+    checkpoint_ref = cross_cycle_context.get("previous_restart_checkpoint_ref")
+    schedule_ref = cross_cycle_context.get("previous_schedule_ref")
+    metadata_ref = cross_cycle_context.get("previous_object_store_metadata_ref")
+    artifact_ref = cross_cycle_context.get("previous_object_store_artifact_ref")
+    persisted_refs = [
+        str(ref)
+        for ref in (checkpoint_ref, schedule_ref, metadata_ref, artifact_ref)
+        if ref
+    ]
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_action = _candidate_action_key(str(trace["selected_candidate_id"]))
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_action": selected_action,
+                "decision_input_state_ref": trace["decision_inputs"].get("cross_cycle_state_ref"),
+                "reasoning_consumes_persisted_refs": bool(persisted_refs)
+                and set(persisted_refs).issubset(set(reasoning_request["input_refs"])),
+                "candidate_request_consumes_persisted_refs": bool(persisted_refs)
+                and set(persisted_refs).issubset(set(candidate_request["input_refs"])),
+                "selected_candidate_cites_persisted_refs": bool(persisted_refs)
+                and set(persisted_refs).issubset(set(selected_candidate["evidence_refs"])),
+                "scorer_cross_cycle_adjustment": float(
+                    scoring_inputs["cross_cycle_score_adjustments"].get(selected_action, 0.0)
+                ),
+            }
+        )
+
+    status = str(cross_cycle_context["status"])
+    cold_start = status == "cold_start"
+    applied = status == "applied"
+    replay = {
+        "replayable": True,
+        "cold_start_or_persisted_state_bound": cold_start
+        or (
+            applied
+            and cross_cycle_context.get("previous_case_id")
+            and cross_cycle_context.get("prior_case_completed_before_current_case") is True
+        ),
+        "prior_restart_checkpoint_available": cold_start or bool(checkpoint_ref),
+        "prior_autonomous_schedule_available": cold_start or bool(schedule_ref),
+        "prior_runtime_object_store_readback_available": cold_start
+        or (bool(metadata_ref) and bool(artifact_ref)),
+        "scheduler_feedback_due_at_preserved": cold_start
+        or (
+            cross_cycle_context.get("previous_next_cycle_due_at")
+            == cross_cycle_context.get("previous_feedback_scheduled_cycle_due_at")
+        ),
+        "reasoning_consumes_persisted_resume_refs": cold_start
+        or all(binding["reasoning_consumes_persisted_refs"] for binding in trace_bindings),
+        "candidate_generation_consumes_persisted_resume_refs": cold_start
+        or all(binding["candidate_request_consumes_persisted_refs"] for binding in trace_bindings),
+        "selected_candidate_cites_persisted_resume_refs": cold_start
+        or all(binding["selected_candidate_cites_persisted_refs"] for binding in trace_bindings),
+        "scorer_applies_after_resume_adjustment": cold_start
+        or all(binding["scorer_cross_cycle_adjustment"] > 0.0 for binding in trace_bindings),
+        "same_persona_resume_carryover": cold_start
+        or cross_cycle_context.get("persona_id") == _persona_id(episode.persona),
+        "cross_cycle_runtime_feedback_bound": _cross_cycle_carryover_is_usable(cross_cycle_carryover),
+        "no_future_current_case_artifact_used_as_prior": cold_start
+        or str(cross_cycle_context.get("previous_case_id")) != episode.case_id,
+    }
+    return {
+        "proof_id": f"persisted-cycle-resume-{episode.case_id}",
+        "proof_ref": f"persisted-cycle-resume://{episode.case_id}",
+        "model_id": PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "resume_status": status,
+        "previous_case_id": cross_cycle_context.get("previous_case_id"),
+        "state_ref": cross_cycle_context.get("state_ref"),
+        "runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+        "restart_checkpoint_ref": checkpoint_ref,
+        "schedule_ref": schedule_ref,
+        "next_cycle_due_at": cross_cycle_context.get("previous_next_cycle_due_at"),
+        "feedback_scheduled_cycle_due_at": cross_cycle_context.get(
+            "previous_feedback_scheduled_cycle_due_at"
+        ),
+        "object_store_metadata_ref": metadata_ref,
+        "object_store_artifact_ref": artifact_ref,
+        "resume_step": cross_cycle_context.get("previous_resume_step"),
+        "next_ooda_step": cross_cycle_context.get("next_ooda_step"),
+        "next_scheduler_phase": cross_cycle_context.get("next_scheduler_phase"),
+        "persisted_refs": persisted_refs,
+        "score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
+        "trace_bindings": trace_bindings,
+        "source_cross_cycle_proof_ref": cross_cycle_carryover.get("proof_ref"),
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "persisted-cycle-resume-proof",
+            {
+                "case_id": episode.case_id,
+                "cross_cycle_context": cross_cycle_context,
+                "persisted_refs": persisted_refs,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _persisted_cycle_resume_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("resume_status")
+    trace_bindings = list(proof.get("trace_bindings", []))
+    return bool(
+        proof.get("model_id") == PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("persisted-cycle-resume://")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_persisted_state_bound",
+            "prior_restart_checkpoint_available",
+            "prior_autonomous_schedule_available",
+            "prior_runtime_object_store_readback_available",
+            "scheduler_feedback_due_at_preserved",
+            "reasoning_consumes_persisted_resume_refs",
+            "candidate_generation_consumes_persisted_resume_refs",
+            "selected_candidate_cites_persisted_resume_refs",
+            "scorer_applies_after_resume_adjustment",
+            "same_persona_resume_carryover",
+            "cross_cycle_runtime_feedback_bound",
+            "no_future_current_case_artifact_used_as_prior",
+        ))
+        and (
+            (
+                status == "cold_start"
+                and proof.get("previous_case_id") is None
+                and proof.get("persisted_refs") == []
+                and all(float(value) == 0.0 for value in proof.get("score_adjustments", {}).values())
+            )
+            or (
+                status == "applied"
+                and proof.get("previous_case_id")
+                and proof.get("restart_checkpoint_ref")
+                and proof.get("schedule_ref")
+                and proof.get("object_store_metadata_ref")
+                and proof.get("object_store_artifact_ref")
+                and proof.get("next_cycle_due_at") == proof.get("feedback_scheduled_cycle_due_at")
                 and float(proof.get("score_adjustments", {}).get("feedback-adapt", 0.0)) > 0.0
                 and all(binding.get("scorer_cross_cycle_adjustment", 0.0) > 0.0 for binding in trace_bindings)
             )
@@ -7917,6 +8123,7 @@ def _build_usability_dimensions(
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
+    persisted_cycle_resume: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
@@ -8013,6 +8220,9 @@ def _build_usability_dimensions(
     cross_cycle_runtime_carryover = 1.0 if _cross_cycle_carryover_is_usable(
         cross_cycle_carryover
     ) else 0.0
+    persisted_cycle_resume_carryover = 1.0 if _persisted_cycle_resume_is_usable(
+        persisted_cycle_resume
+    ) else 0.0
     oss_disagreement_arbitration = 1.0 if all(
         _trace_oss_disagreement_arbitration_is_usable(trace)
         for trace in decision_traces
@@ -8045,6 +8255,7 @@ def _build_usability_dimensions(
         "multi_oss_closed_loop": multi_oss_closed_loop,
         "persona_oss_ooda_causality": persona_oss_ooda_causality,
         "cross_cycle_runtime_carryover": cross_cycle_runtime_carryover,
+        "persisted_cycle_resume_carryover": persisted_cycle_resume_carryover,
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
         "tracking_reconciliation": tracking_reconciliation,
         "alpha_seed_revision": alpha_seed_revision,
@@ -8089,6 +8300,7 @@ def _diagnose_validation_execution(
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
+    persisted_cycle_resume: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
@@ -8311,6 +8523,19 @@ def _diagnose_validation_execution(
                 "runtime_feedback_ref": cross_cycle_carryover.get("runtime_feedback_ref"),
                 "trace_binding_count": len(cross_cycle_carryover["trace_bindings"]),
                 "replay": copy.deepcopy(dict(cross_cycle_carryover["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "persisted_cycle_resume_replays_after_restart_and_schedule",
+            _persisted_cycle_resume_is_usable(persisted_cycle_resume),
+            {
+                "proof_id": persisted_cycle_resume["proof_id"],
+                "resume_status": persisted_cycle_resume["resume_status"],
+                "previous_case_id": persisted_cycle_resume.get("previous_case_id"),
+                "restart_checkpoint_ref": persisted_cycle_resume.get("restart_checkpoint_ref"),
+                "schedule_ref": persisted_cycle_resume.get("schedule_ref"),
+                "trace_binding_count": len(persisted_cycle_resume["trace_bindings"]),
+                "replay": copy.deepcopy(dict(persisted_cycle_resume["replay"])),
             },
         ),
         _diagnostic_check(
@@ -8688,6 +8913,7 @@ def _build_case_result(
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
+    persisted_cycle_resume: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
@@ -8782,6 +9008,7 @@ def _build_case_result(
         "operational_context": dict(operational_context),
         "cross_cycle": {
             "runtime_feedback_carryover": copy.deepcopy(dict(cross_cycle_carryover)),
+            "persisted_cycle_resume": copy.deepcopy(dict(persisted_cycle_resume)),
         },
         "validation_cycle": {
             "planning": dict(validation_plan),
@@ -8817,6 +9044,9 @@ def _build_case_result(
             ] == 1.0,
             "cross_cycle_runtime_feedback_drives_next_case": usability_dimensions[
                 "cross_cycle_runtime_carryover"
+            ] == 1.0,
+            "persisted_cycle_resume_drives_next_case": usability_dimensions[
+                "persisted_cycle_resume_carryover"
             ] == 1.0,
             "oss_response_followup_loop_drives_decision": usability_dimensions[
                 "oss_response_followup_loop"
@@ -8900,6 +9130,9 @@ def _build_summary(
     ]
     cross_cycle_carryovers = [
         case["cross_cycle"]["runtime_feedback_carryover"] for case in cases
+    ]
+    persisted_cycle_resumes = [
+        case["cross_cycle"]["persisted_cycle_resume"] for case in cases
     ]
     oss_disagreement_arbitrations = [
         case["case_upstream_artifacts"]["oss_disagreement_arbitration"] for case in cases
@@ -9136,6 +9369,34 @@ def _build_summary(
         "cross_cycle_carryover_replay_flags": sorted({
             flag
             for proof in cross_cycle_carryovers
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "persisted_cycle_resume_models": sorted({
+            proof["model_id"] for proof in persisted_cycle_resumes
+        }),
+        "persisted_cycle_resume_statuses": sorted({
+            proof["resume_status"] for proof in persisted_cycle_resumes
+        }),
+        "persisted_cycle_resume_steps": sorted({
+            str(proof["resume_step"])
+            for proof in persisted_cycle_resumes
+            if proof.get("resume_step")
+        }),
+        "persisted_cycle_resume_next_scheduler_phases": sorted({
+            str(proof["next_scheduler_phase"])
+            for proof in persisted_cycle_resumes
+            if proof.get("next_scheduler_phase")
+        }),
+        "persisted_cycle_resume_score_adjusted_actions": sorted({
+            action
+            for proof in persisted_cycle_resumes
+            for action, value in proof["score_adjustments"].items()
+            if float(value) > 0.0
+        }),
+        "persisted_cycle_resume_replay_flags": sorted({
+            flag
+            for proof in persisted_cycle_resumes
             for flag, value in proof["replay"].items()
             if value is True
         }),
@@ -9418,6 +9679,22 @@ def _build_summary(
         "cross_cycle_runtime_feedback_drives_next_case_count": sum(
             1 for item in usable if item["cross_cycle_runtime_feedback_drives_next_case"]
         ),
+        "persisted_cycle_resume_count": len(persisted_cycle_resumes),
+        "persisted_cycle_resume_pass_count": sum(
+            1 for proof in persisted_cycle_resumes if _persisted_cycle_resume_is_usable(proof)
+        ),
+        "persisted_cycle_resume_applied_count": sum(
+            1 for proof in persisted_cycle_resumes if proof["resume_status"] == "applied"
+        ),
+        "persisted_cycle_resume_cold_start_count": sum(
+            1 for proof in persisted_cycle_resumes if proof["resume_status"] == "cold_start"
+        ),
+        "persisted_cycle_resume_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in persisted_cycle_resumes
+        ),
+        "persisted_cycle_resume_drives_next_case_count": sum(
+            1 for item in usable if item["persisted_cycle_resume_drives_next_case"]
+        ),
         "oss_response_followup_loop_count": len(oss_followup_loops),
         "oss_response_followup_loop_pass_count": sum(
             1 for loop in oss_followup_loops if _oss_response_followup_loop_is_usable(loop)
@@ -9542,6 +9819,7 @@ def _build_summary(
             "Every case emits a multi-OSS closed-loop proof replaying each role from OSS response through persona follow-up, reasoning inputs, candidate generation, scorer adjustments, and selected evidence.",
             "Every case emits an OODA causal ledger proving OSS responses, persona follow-up outputs, candidate generation, scorer output, selected action, and LEAN handoff occur in replayable temporal order without future artifact references.",
             "Every non-cold-start persona case consumes the prior autonomous cycle's LEAN runtime feedback in reasoning, candidate generation, selected evidence, and scorer adjustments.",
+            "Every non-cold-start persona case resumes that prior autonomous cycle through persisted checkpoint, schedule, and object-store readback refs before using the runtime feedback.",
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
             "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case reconciles experiment-tracker readback divergence and routes the repaired tracking ref into persona reasoning, scorer adjustments, and selected candidate evidence.",
