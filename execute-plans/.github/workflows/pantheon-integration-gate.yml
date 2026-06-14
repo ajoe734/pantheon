@@ -21,7 +21,7 @@ jobs:
       VITE_BFF_MODE: live
       VITE_BFF_FALLBACK: strict
       PANTHEON_E2E_STRICT: "1"
-      PANTHEON_AUDIT_OUT_DIR: .lovable/audits
+      PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run
 
     steps:
       - uses: actions/checkout@v4
@@ -101,6 +101,6 @@ jobs:
         with:
           name: pantheon-integration-evidence
           path: |
-            .lovable/audits/*.md
+            .lovable/audits/current-run
             playwright-report
             test-results
