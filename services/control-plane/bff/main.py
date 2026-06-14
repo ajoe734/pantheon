@@ -18790,15 +18790,37 @@ async def list_telemetry(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    events = read_store.list_telemetry_events(
+    snapshot_at = utc_now()
+    source, events = read_store.list_telemetry_events_with_source(
         pool_id=pool_id, artifact_id=artifact_id, time_range=time_range,
     )
+    has_surface_data = source != "missing"
+    surface = _dataset_surface_status(
+        "telemetry_events",
+        snapshot_at=snapshot_at,
+        source=source,
+        has_data=has_surface_data,
+        missing_message="Telemetry events are unavailable.",
+    )
+    if source == "telemetry_summary_fallback":
+        surface["status"] = "degraded"
+        surface["note"] = (
+            "Telemetry event store is empty; served synthesized telemetry summary fallback."
+        )
+        surface["staleness"] = {
+            "served_from": "telemetry_summary_fallback",
+            "last_known_at": snapshot_at,
+        }
+
     return {
         "data": events,
-        "meta": {
-            "total": len(events),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "telemetry_events",
+            "telemetry",
+            snapshot_at=snapshot_at,
+            total=len(events),
+            surface=surface,
+        ),
     }
 
 
