@@ -3998,6 +3998,12 @@ def _persona_reasoning_candidate_blueprints(
     memory_ref = memory_influence.get("influence_ref")
     memory_refs = [str(memory_ref)] if memory_ref else []
     cross_cycle_refs = list(cross_cycle_context.get("evidence_refs", []))
+    cross_cycle_score_adjustments = _cross_cycle_score_adjustments(cross_cycle_context)
+    risk_cross_cycle_refs = (
+        cross_cycle_refs
+        if float(cross_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0
+        else []
+    )
     feedback_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "feedback-adapt")
     risk_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "risk-off")
     retain_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "retain-observe")
@@ -4072,8 +4078,12 @@ def _persona_reasoning_candidate_blueprints(
                 *risk_tracking_refs,
                 *risk_alpha_refs,
                 *memory_refs,
+                *risk_cross_cycle_refs,
             ]
-            if float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
+            if (
+                float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
+                or risk_cross_cycle_refs
+            )
             else [*risk_followup_refs, *risk_arbitration_refs, *risk_tracking_refs, *risk_alpha_refs],
             "memory_adjustment_key": "risk-off",
             "rationale": "Use feedback direction but reduce exposure when the risk interpretation asks for caution.",
@@ -4402,6 +4412,8 @@ def _score_agent_candidates(
         if float(memory_score_adjustments.get("risk-off", 0.0)) > 0:
             risk_off_evidence_refs.append(str(memory_ref))
     feedback_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
+    if float(cross_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0:
+        risk_off_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
     action_context = {
         "feedback-adapt": {
             "directions": feedback_directions,
@@ -4445,6 +4457,7 @@ def _score_agent_candidates(
                 + float(disagreement_score_adjustments["risk-off"])
                 + float(tracking_score_adjustments["risk-off"])
                 + float(alpha_seed_score_adjustments["risk-off"])
+                + float(cross_cycle_score_adjustments["risk-off"])
                 + max(0.0, risk_penalty)
             ),
             "fallback_evidence_refs": tuple(risk_off_evidence_refs),
