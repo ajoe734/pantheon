@@ -79,6 +79,8 @@ from models import (  # type: ignore
     ApproveRequest,
     BoundaryResponse,
     CancelRequest,
+    DailySweepRequest,
+    DailySweepResponse,
     DecisionResponse,
     DispatchCommandResponse,
     ExecuteRequest,
@@ -92,6 +94,7 @@ from models import (  # type: ignore
     ThresholdEvalRequest,
     ThresholdEvalResponse,
 )
+from sweep import run_daily_sweep  # type: ignore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -542,6 +545,32 @@ def propose_from_incident(body: ProposeFromIncidentRequest):
     remain separate gated steps.
     """
     return propose(_proposal_request_from_incident(body))
+
+
+# --- Daily sweep -------------------------------------------------------------
+
+@app.post("/api/evolution/daily-sweep", response_model=DailySweepResponse)
+def daily_sweep(body: DailySweepRequest):
+    """
+    Run one scheduler-safe evolution sweep over incident threshold triggers.
+
+    The sweep is proposal-only: it reads IncidentCase evidence, derives
+    EvolutionDecision proposals, and relies on the existing single-active-rule
+    to block repeated triggers while cooldown/observation is active.
+    """
+    try:
+        result = run_daily_sweep(
+            incident_store=incident_store,
+            decision_store=store,
+            incident_ids=body.incident_ids or None,
+            include_closed=body.include_closed,
+            max_incidents=body.max_incidents,
+            sweep_id=body.sweep_id,
+            evaluator=evaluator,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return result.to_dict()
 
 
 # --- List / filter -----------------------------------------------------------

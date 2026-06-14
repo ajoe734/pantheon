@@ -1099,6 +1099,21 @@ services:
       retries: 10
       start_period: 5s
 
+  evolution-daily-sweep-scheduler:
+    profiles: ["evolution-daily-sweep-scheduler"]
+    build:
+      context: .
+      dockerfile: services/evolution/Dockerfile
+    command: ["python", "-m", "services.evolution.scheduler_worker"]
+    environment:
+      EVOLUTION_API_URL: http://evolution:8093
+      EVOLUTION_SCHEDULER_INTERVAL_SECONDS: ${EVOLUTION_SCHEDULER_INTERVAL_SECONDS:-86400}
+      EVOLUTION_SCHEDULER_MAX_TICKS: ${EVOLUTION_SCHEDULER_MAX_TICKS:-0}
+      EVOLUTION_SWEEP_MAX_INCIDENTS: ${EVOLUTION_SWEEP_MAX_INCIDENTS:-}
+    depends_on:
+      evolution:
+        condition: service_healthy
+
   lineage-read:
     build:
       context: .
