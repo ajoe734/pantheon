@@ -134,6 +134,7 @@ BROKER_LIFECYCLE_TERMINAL_STATUS = "filled"
 MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
 LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
 LEAN_RUNTIME_FEEDBACK_MODEL_ID = "persona_lean_runtime_feedback_v1"
+LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID = "lean_evolved_strategy_packet_provenance_v1"
 SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
 BROKER_ADAPTER_LIFECYCLE_MODEL_ID = "persona_broker_adapter_lifecycle_v1"
 BROKER_ADAPTER_FOLLOWUP_MODEL_ID = "persona_broker_adapter_followup_v1"
@@ -722,6 +723,9 @@ def run_agent_usability_validations(
             decision_traces=(decision_trace0, decision_trace1),
             memory_contexts=(current_memory0, current_memory1),
             evolution_decision=evolution_decision,
+            evolution_trajectory=evolution_trajectory,
+            no_leakage_protocol=no_leakage_protocol,
+            strict_oos_evolution_proof=strict_oos_evolution_proof,
             oss_inputs=oss_inputs,
             case_upstream_artifacts=case_upstream_artifacts,
             generated_at=generated_at,
@@ -6948,6 +6952,9 @@ def _build_operational_context(
     decision_traces: Sequence[Mapping[str, Any]],
     memory_contexts: Sequence[Mapping[str, Any]],
     evolution_decision: EvolutionDecision,
+    evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     case_upstream_artifacts: Mapping[str, Any],
     generated_at: str,
@@ -7006,12 +7013,20 @@ def _build_operational_context(
     lean_engine_replay = _run_lean_engine_replay(
         episode=episode,
         final_policy=generation_policies[-1],
+        final_evaluation=evaluations[-1],
         evolution_decision=evolution_decision,
+        evolution_trajectory=evolution_trajectory,
+        no_leakage_protocol=no_leakage_protocol,
+        strict_oos_evolution_proof=strict_oos_evolution_proof,
     )
     lean_handoff = _build_lean_handoff_packet(
         episode=episode,
         final_policy=generation_policies[-1],
+        final_evaluation=evaluations[-1],
         evolution_decision=evolution_decision,
+        evolution_trajectory=evolution_trajectory,
+        no_leakage_protocol=no_leakage_protocol,
+        strict_oos_evolution_proof=strict_oos_evolution_proof,
         oss_inputs=oss_inputs,
         market_friction=market_friction,
         broker_lifecycle=broker_lifecycle,
@@ -7028,6 +7043,17 @@ def _build_operational_context(
         lean_handoff=lean_handoff,
         autonomous_schedule=autonomous_schedule,
         decision_traces=decision_traces,
+    )
+    evolved_strategy_packet_proof = _build_evolved_strategy_packet_proof(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        final_evaluation=evaluations[-1],
+        evolution_trajectory=evolution_trajectory,
+        no_leakage_protocol=no_leakage_protocol,
+        strict_oos_evolution_proof=strict_oos_evolution_proof,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        lean_runtime_feedback=lean_runtime_feedback,
     )
     scheduler_conflict_ooda_proof = _build_scheduler_conflict_ooda_proof(
         episode=episode,
@@ -7064,6 +7090,7 @@ def _build_operational_context(
         "case_upstream_artifacts": _case_upstream_artifacts_case_summary(case_upstream_artifacts),
         "lean_handoff": lean_handoff,
         "lean_runtime_feedback": lean_runtime_feedback,
+        "evolved_strategy_packet_proof": evolved_strategy_packet_proof,
         "scheduler_conflict_ooda_proof": scheduler_conflict_ooda_proof,
     }
 
@@ -7604,9 +7631,15 @@ def _run_lean_engine_replay(
     *,
     episode: PortfolioEpisode,
     final_policy: Mapping[str, Any],
+    final_evaluation: Mapping[str, Any],
     evolution_decision: EvolutionDecision,
+    evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
 ) -> dict[str, Any]:
     artifact_id = f"reg-{SMOKE_STRATEGY_ID}-{SMOKE_VERSION}"
+    final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
+    packet_ref = f"lean-strategy-packet://{episode.case_id}/generation2"
     plan = {
         "plan_id": f"lean-plan-{episode.case_id}",
         "approval_decision_id": f"lean-approval-{episode.case_id}",
@@ -7638,10 +7671,31 @@ def _run_lean_engine_replay(
         "algorithm_module": "pantheon_algo.smoke_loader_test",
         "case_specific_runtime_binding": True,
         "case_specific_strategy_packet": {
+            "packet_ref": packet_ref,
             "policy_id": final_policy["policy_id"],
+            "policy_version": final_policy["policy_version"],
+            "generation": final_policy["generation"],
             "evolution_decision_id": evolution_decision.decision_id,
             "portfolio_instruments": [window.instrument for window in episode.windows],
             "validation_signature": episode.validation_signature,
+            "source_outcome_window": final_oos_step["source_outcome_window"],
+            "validation_window": final_oos_step["validation_window"],
+            "decision_trace_ref": final_oos_step["decision_trace_ref"],
+            "strict_oos_proof_ref": strict_oos_evolution_proof["proof_ref"],
+            "no_leakage_protocol_ref": f"no-leakage://{no_leakage_protocol['protocol_id']}",
+            "evolution_trajectory_ref": f"trajectory://{evolution_trajectory['trajectory_id']}",
+            "future_holdout_score": final_evaluation["score"],
+            "future_holdout_improvement": final_oos_step["score_improvement"],
+            "validation_window_unseen_by_decision": final_oos_step[
+                "validation_window_unseen_by_decision"
+            ],
+            "future_window_hidden": final_oos_step["future_window_hidden"],
+            "strict_oos_replay_passed": strict_oos_evolution_proof["status"] == "passed"
+            and all(strict_oos_evolution_proof["replay"].values()),
+            "no_leakage_replay_passed": no_leakage_protocol["replay"][
+                "future_holdout_hidden_until_evaluation"
+            ]
+            and all(no_leakage_protocol["replay"].values()),
         },
         "plan": {
             "plan_id": plan["plan_id"],
@@ -7723,7 +7777,11 @@ def _build_lean_handoff_packet(
     *,
     episode: PortfolioEpisode,
     final_policy: Mapping[str, Any],
+    final_evaluation: Mapping[str, Any],
     evolution_decision: EvolutionDecision,
+    evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     market_friction: Mapping[str, Any],
     broker_lifecycle: Mapping[str, Any],
@@ -7743,6 +7801,12 @@ def _build_lean_handoff_packet(
     conflict_ref = str(persona_conflict_resolution["resolution_ref"])
     schedule_ref = str(autonomous_schedule["schedule_ref"])
     resolved_allocation = persona_conflict_resolution["resolved_allocation"]
+    final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
+    strategy_packet = copy.deepcopy(dict(lean_engine_replay["case_specific_strategy_packet"]))
+    strategy_packet_ref = str(strategy_packet["packet_ref"])
+    strict_oos_ref = str(strategy_packet["strict_oos_proof_ref"])
+    no_leakage_ref = str(strategy_packet["no_leakage_protocol_ref"])
+    trajectory_ref = str(strategy_packet["evolution_trajectory_ref"])
     return {
         "packet_id": f"lean-packet-{episode.case_id}",
         "component": handoff["component"],
@@ -7751,7 +7815,29 @@ def _build_lean_handoff_packet(
         "packet_type": "LeanPaperStrategyPacket",
         "target_stage": "paper",
         "policy_id": final_policy["policy_id"],
+        "policy_version": final_policy["policy_version"],
+        "policy_generation": final_policy["generation"],
         "evolution_decision_id": evolution_decision.decision_id,
+        "strategy_packet_ref": strategy_packet_ref,
+        "strict_oos_evolution_proof_ref": strict_oos_ref,
+        "no_leakage_protocol_ref": no_leakage_ref,
+        "evolution_trajectory_ref": trajectory_ref,
+        "strategy_packet": strategy_packet,
+        "strategy_packet_hash": _stable_payload_hash(
+            "lean-strategy-packet",
+            strategy_packet,
+        ),
+        "strategy_packet_validation_window": final_oos_step["validation_window"],
+        "strategy_packet_source_outcome_window": final_oos_step["source_outcome_window"],
+        "future_holdout_score": final_evaluation["score"],
+        "future_holdout_improvement": final_oos_step["score_improvement"],
+        "strategy_packet_replay_passed": (
+            strategy_packet.get("generation") == 2
+            and strategy_packet.get("policy_id") == final_policy["policy_id"]
+            and strategy_packet.get("validation_window") == "future_holdout"
+            and strategy_packet.get("strict_oos_replay_passed") is True
+            and strategy_packet.get("no_leakage_replay_passed") is True
+        ),
         "portfolio_instruments": [window.instrument for window in episode.windows],
         "market_friction_model_id": market_friction["model_id"],
         "broker_lifecycle_model": broker_lifecycle["lifecycle_model"],
@@ -7776,8 +7862,12 @@ def _build_lean_handoff_packet(
         "case_tracking_backend": tracker["backend"],
         "case_tracking_run_id": tracker["run_id"],
         "runtime_bundle_refs": [
+            strategy_packet_ref,
             f"strategy://{episode.seed_key}-agent-usability-hardening/{final_policy['policy_id']}",
             f"evolution://{evolution_decision.decision_id}",
+            strict_oos_ref,
+            no_leakage_ref,
+            trajectory_ref,
             f"oss://{handoff['component']}/{handoff['request_id']}",
             f"oss://vectorbt/{vectorbt['request_id']}",
             f"experiment://{tracker['backend']}/{tracker['run_id']}",
@@ -7817,9 +7907,15 @@ def _build_lean_runtime_feedback_response(
     loaded_metadata = lean_engine_replay.get("loaded_metadata", {})
     binding = lean_engine_replay.get("binding", {})
     plan = lean_engine_replay.get("plan", {})
+    strategy_packet_ref = str(lean_handoff.get("strategy_packet_ref", ""))
+    strict_oos_ref = str(lean_handoff.get("strict_oos_evolution_proof_ref", ""))
+    no_leakage_ref = str(lean_handoff.get("no_leakage_protocol_ref", ""))
     evidence_refs = [
         runtime_ref,
         handoff_ref,
+        strategy_packet_ref,
+        strict_oos_ref,
+        no_leakage_ref,
         f"runtime-binding://{runtime_context.get('runtime_binding_id')}",
         f"object-store://{metadata_key}",
         f"reflection://{decision_traces[-1]['reflection_id']}",
@@ -7843,6 +7939,15 @@ def _build_lean_runtime_feedback_response(
         "case_runtime_refs_bound": bool(lean_handoff.get("case_vectorbt_request_id"))
         and bool(lean_handoff.get("case_tracking_run_id"))
         and runtime_ref in lean_handoff.get("runtime_bundle_refs", []),
+        "evolved_strategy_packet_refs_bound": (
+            bool(strategy_packet_ref)
+            and strategy_packet_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and bool(strict_oos_ref)
+            and strict_oos_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and bool(no_leakage_ref)
+            and no_leakage_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and lean_handoff.get("strategy_packet_replay_passed") is True
+        ),
         "next_cycle_scheduled": autonomous_schedule.get("phase_order_valid") is True
         and bool(autonomous_schedule.get("next_cycle_due_at")),
         "drives_persona_next_ooda_step": True,
@@ -7887,6 +7992,7 @@ def _build_lean_runtime_feedback_response(
             "mark_runtime_feedback_seen": True,
             "bind_runtime_context": runtime_context.get("runtime_binding_id"),
             "verify_object_store_metadata": metadata_key,
+            "bind_evolved_strategy_packet": strategy_packet_ref,
             "attach_to_handoff_packet": lean_handoff["packet_id"],
             "attach_to_decision_trace": decision_traces[-1]["reflection_id"],
             "schedule_next_cycle_after_feedback": autonomous_schedule["next_cycle_due_at"],
@@ -7900,9 +8006,136 @@ def _build_lean_runtime_feedback_response(
                 "action": action,
                 "runtime_ref": runtime_ref,
                 "handoff_ref": handoff_ref,
+                "strategy_packet_ref": strategy_packet_ref,
                 "runtime_binding_id": runtime_context.get("runtime_binding_id"),
                 "metadata_key": metadata_key,
                 "fill_count": lean_engine_replay.get("fill_count"),
+            },
+        ),
+    }
+
+
+def _build_evolved_strategy_packet_proof(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    final_evaluation: Mapping[str, Any],
+    evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    lean_runtime_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    strategy_packet = lean_handoff["strategy_packet"]
+    final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
+    strategy_packet_ref = str(strategy_packet["packet_ref"])
+    handoff_ref = f"lean-handoff://{lean_handoff['packet_id']}"
+    runtime_feedback_ref = f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}"
+    runtime_bundle_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    lineage_refs = [
+        strategy_packet_ref,
+        str(strategy_packet["strict_oos_proof_ref"]),
+        str(strategy_packet["no_leakage_protocol_ref"]),
+        str(strategy_packet["evolution_trajectory_ref"]),
+        f"lean-engine://{lean_engine_replay['replay_id']}",
+        handoff_ref,
+        runtime_feedback_ref,
+    ]
+    replay = {
+        "replayable": True,
+        "strategy_packet_is_generation2": (
+            strategy_packet.get("generation") == 2
+            and final_policy.get("generation") == 2
+            and strategy_packet.get("policy_id") == final_policy.get("policy_id")
+        ),
+        "strategy_packet_declares_future_holdout_validation": (
+            strategy_packet.get("validation_window") == "future_holdout"
+            and strategy_packet.get("source_outcome_window") == "holdout"
+            and strategy_packet.get("future_holdout_score") == final_evaluation.get("score")
+        ),
+        "strict_oos_generation2_step_matches_packet": (
+            final_oos_step.get("candidate_policy_id") == strategy_packet.get("policy_id")
+            and final_oos_step.get("validation_window") == strategy_packet.get("validation_window")
+            and final_oos_step.get("source_outcome_window") == strategy_packet.get("source_outcome_window")
+            and final_oos_step.get("score_improvement") == strategy_packet.get("future_holdout_improvement")
+        ),
+        "packet_binds_strict_oos_proof": (
+            strategy_packet.get("strict_oos_proof_ref") == strict_oos_evolution_proof.get("proof_ref")
+            and strict_oos_evolution_proof.get("status") == "passed"
+            and all(strict_oos_evolution_proof.get("replay", {}).values())
+        ),
+        "packet_binds_no_leakage_protocol": (
+            strategy_packet.get("no_leakage_protocol_ref")
+            == f"no-leakage://{no_leakage_protocol['protocol_id']}"
+            and no_leakage_protocol.get("replay", {}).get("future_holdout_hidden_until_evaluation") is True
+            and all(no_leakage_protocol.get("replay", {}).values())
+        ),
+        "packet_binds_evolution_trajectory": (
+            strategy_packet.get("evolution_trajectory_ref")
+            == f"trajectory://{evolution_trajectory['trajectory_id']}"
+            and [comparison["evaluation_window"] for comparison in evolution_trajectory.get("comparisons", [])]
+            == ["holdout", "future_holdout"]
+        ),
+        "lean_engine_replay_reads_same_packet": (
+            lean_engine_replay.get("case_specific_strategy_packet", {}).get("packet_ref")
+            == strategy_packet_ref
+            and lean_engine_replay.get("case_specific_strategy_packet", {}).get("policy_id")
+            == final_policy.get("policy_id")
+        ),
+        "handoff_consumes_same_packet": (
+            lean_handoff.get("strategy_packet_ref") == strategy_packet_ref
+            and lean_handoff.get("strategy_packet_hash")
+            == _stable_payload_hash("lean-strategy-packet", strategy_packet)
+            and lean_handoff.get("strategy_packet_replay_passed") is True
+        ),
+        "handoff_runtime_bundle_contains_packet_and_proofs": all(
+            ref in runtime_bundle_refs for ref in lineage_refs[:5]
+        ),
+        "runtime_feedback_consumes_handoff_with_packet": (
+            lean_runtime_feedback.get("source_handoff_ref") == handoff_ref
+            and strategy_packet_ref
+            in lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+            and lean_runtime_feedback.get("state_updates", {}).get("bind_evolved_strategy_packet")
+            == strategy_packet_ref
+            and lean_runtime_feedback.get("replay", {}).get("evolved_strategy_packet_refs_bound") is True
+        ),
+        "paper_only_guard_retained": (
+            lean_handoff.get("target_stage") == "paper"
+            and lean_handoff.get("broker_live_submitted") is False
+            and lean_runtime_feedback.get("persona_ooda_followup", {}).get("paper_only") is True
+        ),
+    }
+    return {
+        "proof_id": f"evolved-strategy-packet-{episode.case_id}",
+        "proof_ref": f"evolved-strategy-packet://{episode.case_id}",
+        "model_id": LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "strategy_packet_ref": strategy_packet_ref,
+        "policy_id": final_policy["policy_id"],
+        "policy_version": final_policy["policy_version"],
+        "generation": final_policy["generation"],
+        "source_outcome_window": strategy_packet["source_outcome_window"],
+        "validation_window": strategy_packet["validation_window"],
+        "strict_oos_proof_ref": strategy_packet["strict_oos_proof_ref"],
+        "no_leakage_protocol_ref": strategy_packet["no_leakage_protocol_ref"],
+        "evolution_trajectory_ref": strategy_packet["evolution_trajectory_ref"],
+        "lean_engine_replay_ref": f"lean-engine://{lean_engine_replay['replay_id']}",
+        "lean_handoff_ref": handoff_ref,
+        "lean_runtime_feedback_ref": runtime_feedback_ref,
+        "future_holdout_score": final_evaluation["score"],
+        "future_holdout_improvement": strategy_packet["future_holdout_improvement"],
+        "lineage_refs": lineage_refs,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "evolved-strategy-packet-proof",
+            {
+                "case_id": episode.case_id,
+                "strategy_packet": strategy_packet,
+                "lineage_refs": lineage_refs,
+                "replay": replay,
             },
         ),
     }
@@ -8252,6 +8485,19 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
     return bool(
         packet.get("component") == "lean_handoff"
         and packet.get("strategy_packet_materialized")
+        and packet.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and packet.get("strategy_packet_ref") in runtime_refs
+        and packet.get("policy_generation") == 2
+        and packet.get("strategy_packet_validation_window") == "future_holdout"
+        and packet.get("strategy_packet_source_outcome_window") == "holdout"
+        and packet.get("strict_oos_evolution_proof_ref", "").startswith("strict-oos-evolution://")
+        and packet.get("strict_oos_evolution_proof_ref") in runtime_refs
+        and packet.get("no_leakage_protocol_ref", "").startswith("no-leakage://")
+        and packet.get("no_leakage_protocol_ref") in runtime_refs
+        and packet.get("evolution_trajectory_ref", "").startswith("trajectory://")
+        and packet.get("evolution_trajectory_ref") in runtime_refs
+        and packet.get("strategy_packet_replay_passed") is True
+        and packet.get("strategy_packet_hash")
         and packet.get("received_by_lean_handoff")
         and packet.get("target_stage") == "paper"
         and packet.get("persona_conflict_resolution_ref", "").startswith("persona-conflict://")
@@ -8304,8 +8550,44 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("fills_drive_next_ooda") is True
         and replay.get("paper_runtime_guard_retained") is True
         and replay.get("case_runtime_refs_bound") is True
+        and replay.get("evolved_strategy_packet_refs_bound") is True
         and replay.get("next_cycle_scheduled") is True
         and replay.get("drives_persona_next_ooda_step") is True
+    )
+
+
+def _evolved_strategy_packet_proof_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    return bool(
+        proof.get("model_id") == LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("evolved-strategy-packet://")
+        and proof.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and proof.get("generation") == 2
+        and proof.get("source_outcome_window") == "holdout"
+        and proof.get("validation_window") == "future_holdout"
+        and proof.get("strict_oos_proof_ref", "").startswith("strict-oos-evolution://")
+        and proof.get("no_leakage_protocol_ref", "").startswith("no-leakage://")
+        and proof.get("evolution_trajectory_ref", "").startswith("trajectory://")
+        and proof.get("lean_engine_replay_ref", "").startswith("lean-engine://")
+        and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
+        and float(proof.get("future_holdout_improvement", 0.0)) > 0.0
+        and proof.get("input_hash")
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "strategy_packet_is_generation2",
+            "strategy_packet_declares_future_holdout_validation",
+            "strict_oos_generation2_step_matches_packet",
+            "packet_binds_strict_oos_proof",
+            "packet_binds_no_leakage_protocol",
+            "packet_binds_evolution_trajectory",
+            "lean_engine_replay_reads_same_packet",
+            "handoff_consumes_same_packet",
+            "handoff_runtime_bundle_contains_packet_and_proofs",
+            "runtime_feedback_consumes_handoff_with_packet",
+            "paper_only_guard_retained",
+        ))
     )
 
 
@@ -8385,6 +8667,7 @@ def _lean_engine_result_is_usable(
 def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
     runtime_context = replay.get("runtime_context", {})
     loaded_metadata = replay.get("loaded_metadata", {})
+    strategy_packet = replay.get("case_specific_strategy_packet", {})
     return bool(
         replay.get("model_id") == LEAN_ENGINE_REPLAY_MODEL_ID
         and replay.get("status") == "passed"
@@ -8399,7 +8682,16 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
         and int(replay.get("executed_on_data_callbacks", 0)) >= 1
         and int(replay.get("fill_count", 0)) >= 1
         and replay.get("broker_production_live_enabled") == "false"
-        and replay.get("case_specific_strategy_packet", {}).get("validation_signature")
+        and strategy_packet.get("validation_signature")
+        and strategy_packet.get("packet_ref", "").startswith("lean-strategy-packet://")
+        and strategy_packet.get("generation") == 2
+        and strategy_packet.get("validation_window") == "future_holdout"
+        and strategy_packet.get("source_outcome_window") == "holdout"
+        and strategy_packet.get("strict_oos_proof_ref", "").startswith("strict-oos-evolution://")
+        and strategy_packet.get("no_leakage_protocol_ref", "").startswith("no-leakage://")
+        and strategy_packet.get("evolution_trajectory_ref", "").startswith("trajectory://")
+        and strategy_packet.get("strict_oos_replay_passed") is True
+        and strategy_packet.get("no_leakage_replay_passed") is True
     )
 
 
@@ -10236,6 +10528,9 @@ def _build_usability_dimensions(
     lean_runtime_feedback = 1.0 if _lean_runtime_feedback_is_usable(
         operational_context["lean_runtime_feedback"]
     ) else 0.0
+    evolved_strategy_packet = 1.0 if _evolved_strategy_packet_proof_is_usable(
+        operational_context["evolved_strategy_packet_proof"]
+    ) else 0.0
     scheduler_conflict_ooda = 1.0 if _scheduler_conflict_ooda_proof_is_usable(
         operational_context["scheduler_conflict_ooda_proof"]
     ) else 0.0
@@ -10327,6 +10622,7 @@ def _build_usability_dimensions(
         "case_specific_upstream_artifact_feedback": case_upstream_feedback,
         "lean_handoff_packet": lean_handoff,
         "lean_runtime_feedback": lean_runtime_feedback,
+        "evolved_strategy_packet_handoff": evolved_strategy_packet,
         "scheduler_conflict_ooda_dispatch": scheduler_conflict_ooda,
     }
 
@@ -10785,6 +11081,27 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "evolved_strategy_packet_reaches_lean_handoff",
+            _evolved_strategy_packet_proof_is_usable(
+                operational_context["evolved_strategy_packet_proof"]
+            ),
+            {
+                "proof_id": operational_context["evolved_strategy_packet_proof"]["proof_id"],
+                "strategy_packet_ref": operational_context["evolved_strategy_packet_proof"][
+                    "strategy_packet_ref"
+                ],
+                "strict_oos_proof_ref": operational_context["evolved_strategy_packet_proof"][
+                    "strict_oos_proof_ref"
+                ],
+                "validation_window": operational_context["evolved_strategy_packet_proof"][
+                    "validation_window"
+                ],
+                "replay": copy.deepcopy(
+                    dict(operational_context["evolved_strategy_packet_proof"]["replay"])
+                ),
+            },
+        ),
+        _diagnostic_check(
             "lean_runtime_feedback_drives_persona_ooda",
             _lean_runtime_feedback_is_usable(operational_context["lean_runtime_feedback"]),
             {
@@ -11221,6 +11538,9 @@ def _build_case_result(
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
             "lean_engine_replay_uses_runtime_binding": usability_dimensions["lean_engine_replay"] == 1.0,
             "lean_runtime_feedback_drives_ooda": usability_dimensions["lean_runtime_feedback"] == 1.0,
+            "evolved_strategy_packet_reaches_lean_handoff": usability_dimensions[
+                "evolved_strategy_packet_handoff"
+            ] == 1.0,
             "scheduler_conflict_ooda_dispatch_replayed": usability_dimensions[
                 "scheduler_conflict_ooda_dispatch"
             ] == 1.0,
@@ -11314,6 +11634,9 @@ def _build_summary(
     lean_runtime_feedbacks = [
         case["operational_context"]["lean_runtime_feedback"] for case in cases
     ]
+    evolved_strategy_packet_proofs = [
+        case["operational_context"]["evolved_strategy_packet_proof"] for case in cases
+    ]
     scheduler_conflict_ooda_proofs = [
         case["operational_context"]["scheduler_conflict_ooda_proof"] for case in cases
     ]
@@ -11405,6 +11728,22 @@ def _build_summary(
             flag
             for feedback in lean_runtime_feedbacks
             for flag, value in feedback["replay"].items()
+            if value is True
+        }),
+        "evolved_strategy_packet_models": sorted({
+            proof["model_id"] for proof in evolved_strategy_packet_proofs
+        }),
+        "evolved_strategy_packet_generations": sorted({
+            proof["generation"] for proof in evolved_strategy_packet_proofs
+        }),
+        "evolved_strategy_packet_source_to_validation_paths": sorted({
+            f"{proof['source_outcome_window']}:{proof['validation_window']}"
+            for proof in evolved_strategy_packet_proofs
+        }),
+        "evolved_strategy_packet_replay_flags": sorted({
+            flag
+            for proof in evolved_strategy_packet_proofs
+            for flag, value in proof["replay"].items()
             if value is True
         }),
         "scheduler_conflict_ooda_models": sorted({
@@ -12107,6 +12446,15 @@ def _build_summary(
         "lean_runtime_feedback_drives_ooda_count": sum(
             1 for item in usable if item["lean_runtime_feedback_drives_ooda"]
         ),
+        "evolved_strategy_packet_proof_count": len(evolved_strategy_packet_proofs),
+        "evolved_strategy_packet_proof_pass_count": sum(
+            1
+            for proof in evolved_strategy_packet_proofs
+            if _evolved_strategy_packet_proof_is_usable(proof)
+        ),
+        "evolved_strategy_packet_handoff_count": sum(
+            1 for item in usable if item["evolved_strategy_packet_reaches_lean_handoff"]
+        ),
         "scheduler_conflict_ooda_proof_count": len(scheduler_conflict_ooda_proofs),
         "scheduler_conflict_ooda_proof_pass_count": sum(
             1
@@ -12179,6 +12527,7 @@ def _build_summary(
             "Every case emits a persona-visible broker adapter lifecycle packet tying paper order status paths, Shioaji sandbox place/cancel/readback, live-disabled rejection, and restart recovery into a replayable response.",
             "Every broker adapter response triggers a scenario-specific persona follow-up action before the next autonomous paper cycle.",
             "Every LEAN runtime response is consumed by the persona and drives a scenario-specific next OODA action with runtime binding, object-store readback, and handoff refs.",
+            "Every case proves the generation-2 strict-OOS evolved strategy packet reaches LEAN handoff, runtime bundle refs, and runtime feedback with future-holdout provenance intact.",
             "Every case replays scheduler and multi-persona conflict causality from recovered schedule tick through resolved allocation, LEAN handoff, adapter/runtime feedback, and next-cycle dispatch.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
