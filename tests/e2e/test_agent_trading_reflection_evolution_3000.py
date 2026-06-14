@@ -30,6 +30,7 @@ from services.persona.agent_usability_validation import (
     NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID,
     OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
+    PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID,
     STRICT_OOS_EVOLUTION_PROOF_MODEL_ID,
     ALPHA_SEED_REVISION_ACTION_BY_COMPONENT,
     OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE,
@@ -97,6 +98,13 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["portfolio_trade_generation_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["portfolio_trade_generation_fill_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["memory_retrieval_drives_next_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["memory_counterfactual_proof_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["memory_counterfactual_proof_pass_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["memory_counterfactual_retrieved_material_count"] == (
+        DEFAULT_CASE_COUNT * 2 - summary["persona_count"]
+    )
+    assert summary["memory_counterfactual_cold_start_count"] == summary["persona_count"]
+    assert summary["memory_counterfactual_drives_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["intra_case_memory_influence_count"] == DEFAULT_CASE_COUNT
     assert summary["cross_case_memory_influence_count"] == DEFAULT_CASE_COUNT - summary["persona_count"]
     assert summary["multi_oss_feedback_drives_decision_count"] == DEFAULT_CASE_COUNT
@@ -383,6 +391,26 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert coverage["agent_memory_influence_models"] == [PERSONA_MEMORY_INFLUENCE_MODEL_ID]
     assert coverage["agent_memory_influence_statuses"] == ["applied", "cold_start"]
     assert "feedback-adapt" in coverage["agent_memory_selected_action_hints"]
+    assert coverage["agent_memory_counterfactual_models"] == [
+        PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID
+    ]
+    assert coverage["agent_memory_counterfactual_outcomes"] == [
+        "cold_start_declared",
+        "memory_material_to_selected_score",
+    ]
+    assert set(coverage["agent_memory_counterfactual_replay_flags"]) == {
+        "actual_selection_replayed",
+        "candidate_request_includes_memory_when_retrieved",
+        "cold_start_zero_memory_adjustments",
+        "counterfactual_scores_recomputed",
+        "memory_changes_selected_score_when_retrieved",
+        "memory_improves_selected_margin_when_retrieved",
+        "retrieved_memory_ref_bound",
+        "replayable",
+        "score_delta_equals_selected_memory_adjustment",
+        "selected_action_matches_memory_hint_when_retrieved",
+        "selected_candidate_cites_memory_when_retrieved",
+    }
     assert coverage["agent_persona_reasoning_models"] == [PERSONA_REASONING_MODEL_ID]
     assert coverage["agent_persona_reasoning_evaluator_models"] == [PERSONA_REASONING_EVALUATOR_MODEL_ID]
     assert "feedback-adapt" in coverage["agent_persona_reasoning_preferred_actions"]
@@ -716,12 +744,14 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert replay["no_forbidden_window_sources"] is True
         assert replay["uses_memory_or_declares_cold_start"] is True
         assert replay["uses_memory_in_scoring_or_declares_cold_start"] is True
+        assert replay["memory_counterfactual_replays_score_delta"] is True
         assert replay["uses_selected_oss_feedback"] is True
         assert replay["uses_oss_response_followup_loop"] is True
         assert replay["input_hash"]
         assert replay["candidate_hash"]
         assert replay["score_hash"]
         assert replay["selection_hash"]
+        _assert_memory_counterfactual_proof(case, trace)
 
     check_by_name = {
         check["check"]: check
@@ -730,7 +760,64 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
     assert check_by_name["persona_decision_artifact_replays_candidate_selection"]["status"] == "passed"
     assert check_by_name["persona_reasoning_response_drives_candidate_generation"]["status"] == "passed"
     assert check_by_name["retrieved_memory_influences_persona_candidate_scoring"]["status"] == "passed"
+    assert check_by_name["memory_counterfactual_proves_retrieval_materiality"]["status"] == "passed"
     assert check_by_name["oss_response_followup_loop_drives_persona_scoring"]["status"] == "passed"
+
+
+def _assert_memory_counterfactual_proof(case: dict, trace: dict) -> None:
+    artifact = trace["agent_decision_artifact"]
+    proof = artifact["memory_counterfactual"]
+    memory_influence = artifact["memory_influence"]
+    scorecards = artifact["scorer"]["scorecards"]
+    selected_id = trace["selected_candidate_id"]
+    selected_card = scorecards[selected_id]
+
+    assert proof["model_id"] == PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["generation"] == artifact["generation"]
+    assert proof["decision_trace_ref"] == trace["reflection_id"]
+    assert proof["proof_ref"] == f"memory-counterfactual://{case['case_id']}/gen{artifact['generation']}"
+    assert proof["input_hash"]
+    assert proof["selected_candidate_id"] == selected_id
+    assert proof["selected_action"] == _candidate_action_from_id(selected_id)
+    assert proof["actual_winner_id"] == selected_id
+    assert proof["selected_actual_score"] == selected_card["candidate_score"]
+    assert proof["selected_memory_adjustment"] == selected_card["components"]["memory_adjustment"]
+    assert proof["selected_score_delta_from_memory"] == proof["selected_memory_adjustment"]
+
+    for candidate_id, card in scorecards.items():
+        expected_counterfactual = round(
+            card["candidate_score"] - card["components"].get("memory_adjustment", 0.0),
+            10,
+        )
+        assert proof["actual_scores"][candidate_id] == card["candidate_score"]
+        assert proof["counterfactual_without_memory_scores"][candidate_id] == expected_counterfactual
+
+    replay = proof["replay"]
+    assert all(replay.values())
+    memory_ref = memory_influence["influence_ref"]
+    if memory_ref:
+        assert proof["memory_status"] == "retrieved"
+        assert proof["outcome"] == "memory_material_to_selected_score"
+        assert proof["memory_ref"] == memory_ref
+        assert proof["memory_id"] == memory_influence["memory_id"]
+        assert proof["memory_source_event_id"] == memory_influence["source_event_id"]
+        assert proof["selected_action_hint"] == memory_influence["selected_action_hint"]
+        assert proof["selected_action"] == memory_influence["selected_action_hint"]
+        assert memory_ref in trace["selected_candidate"]["evidence_refs"]
+        assert memory_ref in artifact["candidate_generation"]["request"]["input_refs"]
+        assert proof["selected_score_delta_from_memory"] > 0
+        assert proof["actual_margin_to_runner_up"] > proof["counterfactual_margin_to_runner_up"]
+        assert proof["memory_margin_lift"] > 0
+    else:
+        assert proof["memory_status"] == "cold_start_declared"
+        assert proof["outcome"] == "cold_start_declared"
+        assert proof["memory_id"] is None
+        assert proof["selected_score_delta_from_memory"] == 0.0
+        assert proof["actual_margin_to_runner_up"] == proof["counterfactual_margin_to_runner_up"]
+        assert proof["memory_margin_lift"] == 0.0
 
 
 def _assert_no_leakage_temporal_protocol(case: dict) -> None:
