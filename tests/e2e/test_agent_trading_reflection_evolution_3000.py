@@ -49,6 +49,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_OSS_OODA_LEDGER_MODEL_ID,
     PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
     PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
+    PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID,
     PERSONA_REASONING_EVALUATOR_MODEL_ID,
     PERSONA_REASONING_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
@@ -120,6 +121,10 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["intra_case_memory_influence_count"] == DEFAULT_CASE_COUNT
     assert summary["cross_case_memory_influence_count"] == DEFAULT_CASE_COUNT - summary["persona_count"]
     assert summary["multi_oss_feedback_drives_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["policy_candidate_materiality_count"] == DEFAULT_CASE_COUNT
+    assert summary["policy_candidate_materiality_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["policy_candidate_materiality_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["policy_candidate_oss_materiality_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_closed_loop_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_closed_loop_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_closed_loop_role_binding_count"] == DEFAULT_CASE_COUNT * 8
@@ -428,6 +433,45 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "rl_policy",
         "vectorbt_backtest",
     }
+    assert coverage["policy_candidate_materiality_models"] == [
+        PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID
+    ]
+    assert set(coverage["policy_candidate_materiality_components"]) == {
+        "finrl",
+        "ray_tune",
+        "rllib",
+    }
+    assert set(coverage["policy_candidate_materiality_artifact_families"]) == {
+        "optimizer_result",
+        "rl_policy",
+    }
+    assert {
+        "best_trial_score",
+        "eval_reward_mean",
+        "mean_reward_proxy",
+        "sharpe",
+        "validation_sharpe_proxy",
+    }.issubset(set(coverage["policy_candidate_materiality_metric_signal_keys"]))
+    assert set(coverage["policy_candidate_materiality_replay_flags"]) == {
+        "artifact_family_matches_component",
+        "candidate_generation_consumes_policy_oss",
+        "component_is_policy_learning_oss",
+        "decision_artifact_replays_policy_materiality",
+        "evolved_policy_lineage_bound",
+        "feedback_scorecard_replays_policy_quality",
+        "metrics_drive_nonzero_policy_quality",
+        "no_holdout_or_future_leakage_in_policy_artifact",
+        "policy_hint_risk_is_recomputed_from_oss_metrics",
+        "policy_material_to_selected_score",
+        "policy_oss_role_completed",
+        "policy_quality_is_recomputed_from_oss_metrics",
+        "reasoning_consumes_policy_oss",
+        "registry_and_producer_bound",
+        "replayable",
+        "selected_candidate_cites_policy_oss",
+        "selected_policy_uses_policy_hint_risk",
+        "selected_scorecard_replays_policy_quality",
+    }
     assert coverage["oss_response_followup_loop_models"] == [OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID]
     assert coverage["oss_response_followup_roles"] == [
         "alpha_model",
@@ -691,6 +735,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_strict_oos_evolution_proof(case)
         _assert_memory_and_oss_closed_loop(case)
         _assert_institutional_memory_lineage(case, institutional_writes_by_id)
+        _assert_policy_candidate_materiality(case)
         _assert_multi_oss_closed_loop_proof(case)
         _assert_persona_oss_ooda_causal_ledger(case)
         _assert_cross_cycle_runtime_carryover(case, latest_case_by_persona)
@@ -988,6 +1033,7 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert replay["uses_memory_in_scoring_or_declares_cold_start"] is True
         assert replay["memory_counterfactual_replays_score_delta"] is True
         assert replay["uses_selected_oss_feedback"] is True
+        assert replay["uses_policy_candidate_oss_metrics"] is True
         assert replay["uses_oss_response_followup_loop"] is True
         assert replay["input_hash"]
         assert replay["candidate_hash"]
@@ -1473,6 +1519,94 @@ def _assert_institutional_memory_lineage(
             assert expected_refs.issubset(set(reasoning_request["input_refs"]))
             assert expected_refs.issubset(set(candidate_request["input_refs"]))
             assert expected_refs.issubset(set(trace["selected_candidate"]["evidence_refs"]))
+
+
+def _assert_policy_candidate_materiality(case: dict) -> None:
+    proof = case["oss_feedback"]["policy_candidate_materiality"]
+    policy_entry = case["case_upstream_artifacts"]["selected_oss"]["policy_candidate"]
+    source_ref = f"oss://{policy_entry['component']}/{policy_entry['request_id']}"
+    expected_artifact_family = (
+        "rl_policy"
+        if policy_entry["component"] in {"finrl", "rllib"}
+        else "optimizer_result"
+    )
+
+    assert proof["model_id"] == PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["proof_ref"] == f"policy-materiality://{case['case_id']}"
+    assert proof["component"] == policy_entry["component"]
+    assert proof["request_id"] == policy_entry["request_id"]
+    assert proof["source_oss_ref"] == source_ref
+    assert proof["artifact_family"] == expected_artifact_family
+    assert proof["expected_artifact_family"] == expected_artifact_family
+    assert proof["registry_id"] == policy_entry["registry_id"]
+    assert proof["registry_artifact_type"] == policy_entry["registry_artifact_type"]
+    assert proof["producer_run_id"] == policy_entry["producer_run_id"]
+    assert proof["metric_signal_keys"]
+    assert proof["policy_quality"] > 0
+    assert set(policy_entry["primary_output_keys"]).issubset(set(proof["primary_output_keys"]))
+    assert source_ref in proof["evidence_refs"]
+    assert f"registry://{policy_entry['registry_id']}" in proof["evidence_refs"]
+
+    trace_bindings = proof["trace_bindings"]
+    traces = case["reflection"]["agent_decision_traces"]
+    assert len(trace_bindings) == 2
+    assert [binding["generation"] for binding in trace_bindings] == [1, 2]
+    for binding, trace in zip(trace_bindings, traces):
+        artifact = trace["agent_decision_artifact"]
+        generation = artifact["generation"]
+        selected_id = trace["selected_candidate_id"]
+        selected_action = _candidate_action_from_id(selected_id)
+        selected_candidate = trace["selected_candidate"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_scorecard = artifact["scorer"]["scorecards"][selected_id]
+
+        assert binding["generation"] == generation
+        assert binding["trace_id"] == trace["reflection_id"]
+        assert binding["policy_id"] == case["generation_results"][generation]["policy_id"]
+        assert binding["selected_candidate_id"] == selected_id
+        assert binding["selected_action"] == selected_action
+        assert binding["source_oss_ref"] == source_ref
+        assert binding["scoring_input_component"] == policy_entry["component"]
+        assert binding["scoring_input_request_id"] == policy_entry["request_id"]
+        assert binding["reasoning_consumes_policy_oss"] is True
+        assert binding["candidate_generation_consumes_policy_oss"] is True
+        assert binding["selected_candidate_cites_policy_oss"] is True
+        assert binding["policy_ref_in_decision_evidence"] is True
+        assert binding["policy_hint_risk_replay_match"] is True
+        assert binding["policy_quality_replay_match"] is True
+        assert binding["feedback_scorecard_replays_policy_quality"] is True
+        assert binding["selected_scorecard_replays_policy_quality"] is True
+        assert binding["selected_candidate_uses_policy_hint_risk"] is True
+        assert binding["evolved_policy_uses_policy_hint_risk"] is True
+        assert binding["selected_candidate_is_feedback_adapt_policy_candidate"] is True
+        assert binding["decision_replay_uses_policy_candidate_oss_metrics"] is True
+        assert binding["no_forbidden_window_policy_sources"] is True
+        assert source_ref in artifact["persona_reasoning"]["request"]["input_refs"]
+        assert source_ref in artifact["candidate_generation"]["request"]["input_refs"]
+        assert source_ref in selected_candidate["evidence_refs"]
+        assert source_ref in trace["evidence_refs"]
+        assert scoring_inputs["policy_quality"] == binding["scoring_policy_quality"]
+        assert scoring_inputs["policy_hint_risk"] == binding["scoring_policy_hint_risk"]
+        assert selected_scorecard["components"]["policy_quality"] == binding[
+            "selected_scorecard_policy_quality"
+        ]
+        assert selected_scorecard["components"]["policy_quality"] == proof["policy_quality"]
+        assert selected_scorecard["components"]["policy_quality"] > 0
+        assert selected_candidate["risk_multiplier"] == binding["selected_candidate_risk_multiplier"]
+        assert selected_candidate["risk_multiplier"] == scoring_inputs["policy_hint_risk"]
+        assert selected_action == "feedback-adapt"
+        assert artifact["replay"]["uses_policy_candidate_oss_metrics"] is True
+
+    replay = proof["replay"]
+    assert all(replay.values())
+    assert case["usable"]["policy_candidate_oss_materiality"] is True
+    assert case["usability_dimensions"]["policy_candidate_oss_materiality"] == 1.0
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["policy_candidate_oss_materiality_drives_evolved_policy"]["status"] == "passed"
 
 
 def _assert_multi_oss_closed_loop_proof(case: dict) -> None:
