@@ -201,7 +201,7 @@ def test_conflict_log_unknown_id_and_missing_source(monkeypatch) -> None:
         unknown = client.get("/bff/synthesis/conflict-logs/not-a-log", headers=HEADERS)
 
     assert unknown.status_code == 404, unknown.text
-    assert unknown.json()["detail"]["error"]["code"] == "OBJECT_NOT_FOUND"
+    assert unknown.json()["error"]["code"] == "OBJECT_NOT_FOUND"
 
     with _conflict_log_client(monkeypatch, payload=None) as client:
         listed = client.get("/bff/synthesis/conflict-logs", headers=HEADERS)
@@ -223,6 +223,6 @@ def test_conflict_log_feature_flag_and_openapi_route_registration(monkeypatch) -
         openapi = client.get("/openapi.json")
 
     assert disabled.status_code == 503, disabled.text
-    assert disabled.json()["detail"]["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
+    assert disabled.json()["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
     assert "/bff/synthesis/conflict-logs" in openapi.json()["paths"]
     assert "/bff/synthesis/conflict-logs/{log_id}" in openapi.json()["paths"]

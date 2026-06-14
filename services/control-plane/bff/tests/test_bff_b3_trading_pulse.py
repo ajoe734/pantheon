@@ -290,6 +290,6 @@ def test_trading_pulse_routes_require_read_authentication() -> None:
                 resp = client.get(path)
 
                 assert resp.status_code == 401, resp.text
-                assert resp.json()["detail"]["error"]["code"] == "INVALID_TOKEN"
+                assert resp.json()["error"]["code"] == "INVALID_TOKEN"
         finally:
             bff_main.read_store = original_store

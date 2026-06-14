@@ -152,7 +152,7 @@ def test_dev_docs_generate_requires_active_control_mode(tmp_path, monkeypatch) -
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"]["error"]["details"]["field"] == "control_mode"
+    assert response.json()["error"]["details"]["field"] == "control_mode"
 
 
 def test_dev_docs_generate_requires_openclaw_skill_authorizer(tmp_path, monkeypatch) -> None:
@@ -171,7 +171,7 @@ def test_dev_docs_generate_requires_openclaw_skill_authorizer(tmp_path, monkeypa
     )
 
     assert response.status_code == 503
-    details = response.json()["detail"]["error"]["details"]
+    details = response.json()["error"]["details"]
     assert details["field"] == "openclaw_skill_authorizer"
     assert details["required_skill"] == "assistant.sa_sd.generate"
 

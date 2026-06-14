@@ -226,8 +226,8 @@ def test_rw01_patch_rejects_invalid_transition() -> None:
         )
         assert response.status_code == 409, response.text
         payload = response.json()
-        assert payload["detail"]["error"]["code"] == "INVALID_STATE"
-        assert payload["detail"]["error"]["details"]["precondition_failed"] in {
+        assert payload["error"]["code"] == "INVALID_STATE"
+        assert payload["error"]["details"]["precondition_failed"] in {
             "allowedActions.canArchive",
             "status_transition",
         }

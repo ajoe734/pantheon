@@ -588,7 +588,7 @@ class TestCreateSessionRoute:
         )
 
         assert resp.status_code == 422
-        details = resp.json()["detail"]["error"]["details"]
+        details = resp.json()["error"]["details"]
         assert details["field"] == "capabilities"
 
 

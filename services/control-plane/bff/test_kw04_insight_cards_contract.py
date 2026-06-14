@@ -363,4 +363,4 @@ def test_kw04_list_rejects_linked_entity_ref_without_type() -> None:
         )
         assert response.status_code == 400, response.text
         payload = response.json()
-        assert payload["detail"]["error"]["details"]["precondition_failed"] == "linked_entity_ref"
+        assert payload["error"]["details"]["precondition_failed"] == "linked_entity_ref"
