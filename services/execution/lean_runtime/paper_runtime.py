@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import sys
@@ -490,6 +491,52 @@ class PaperExecutionAlgorithm:
         return float(portfolio_value - self._initial_cash)
 
 
+
+class SyntheticMarketData:
+    """Opt-in deterministic synthetic price source for PAPER runtimes only.
+
+    Paper fills are marked at the fill price, so without any market-data feed a
+    position's PnL stays flat at 0 and the telemetry -> reconcile -> evolution
+    feedback half never has a signal to react to. When
+    ``PANTHEON_PAPER_SYNTHETIC_MARKET_DATA`` is enabled this nudges held-symbol
+    prices along a bounded, deterministic path (anchored at each symbol's first
+    observed price) so paper PnL moves and the right half lights up.
+
+    Paper-only by construction: it only calls ``algo.SetSecurityPrice`` on the
+    in-process simulated book. It never connects a broker, never touches a real
+    market-data feed, and is never wired for canary/live.
+    """
+
+    def __init__(self, *, amplitude: float = 0.05, freq: float = 0.5) -> None:
+        self._amplitude = float(amplitude)
+        self._freq = float(freq)
+        self._step = 0
+        self._anchor: dict[str, float] = {}
+
+    @staticmethod
+    def _phase_offset(symbol: str) -> float:
+        return (sum(ord(c) for c in symbol) % 360) * math.pi / 180.0
+
+    def advance(self, algo: Any) -> dict[str, float]:
+        """Move every held symbol's price one bounded step; return new prices."""
+        self._step += 1
+        updated: dict[str, float] = {}
+        portfolio = getattr(algo, "Portfolio", {}) or {}
+        for symbol in list(portfolio.keys()):
+            try:
+                current = float(algo._security(symbol).Price)
+            except Exception:  # noqa: BLE001
+                current = 100.0
+            anchor = self._anchor.setdefault(symbol, current if current else 100.0)
+            price = round(
+                anchor * (1.0 + self._amplitude * math.sin(self._step * self._freq + self._phase_offset(symbol))),
+                4,
+            )
+            algo.SetSecurityPrice(symbol, price)
+            updated[symbol] = price
+        return updated
+
+
 class RuntimeBindingResolver:
     """Resolve the current binding context for this runtime id."""
 
@@ -855,6 +902,11 @@ class PaperRuntimeService:
         self._shutdown = threading.Event()
         self._thread: threading.Thread | None = None
         self._started_at = _iso_now()
+        self._synthetic_market = (
+            SyntheticMarketData()
+            if _as_bool(os.getenv("PANTHEON_PAPER_SYNTHETIC_MARKET_DATA"))
+            else None
+        )
         self._last_poll_at: str | None = None
         self._last_drain_at: str | None = None
         self._last_error: str | None = None
@@ -899,6 +951,8 @@ class PaperRuntimeService:
             self._poll_count += 1
             if self._last_error is None:
                 self._maybe_emit_heartbeat()
+                if self._synthetic_market is not None:
+                    self._synthetic_market.advance(self._algo)
                 self._maybe_emit_pnl_snapshot()
             return self.snapshot()
 

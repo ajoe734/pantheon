@@ -201,3 +201,57 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _fill_event(*, symbol="AAPL.US", qty=7.0, price=100.0, created_at="2026-05-01T00:01:00Z", stage="paper"):
+    ev = _event(event_type="paper_fill_simulated", created_at=created_at, stage=stage)
+    ev["event_id"] = f"evt-fill-{created_at}"
+    ev["metrics"] = {
+        "fill_quantity": qty,
+        "fill_price": price,
+        "action": "market_order",
+        "submitted_to_broker": False,
+    }
+    ev["metadata"]["symbol"] = symbol
+    ev["metadata"]["sim_fill_flag"] = True
+    return ev
+
+
+class TestFillProjection(unittest.TestCase):
+    def _store(self):
+        tmp = tempfile.mkdtemp()
+        return RuntimeSummaryProjectionStore(path=str(Path(tmp) / "summaries.json"))
+
+    def test_paper_fill_projects_trade_count_last_fill_and_positions(self):
+        store = self._store()
+        summary = store.project_event(_fill_event())
+        self.assertEqual(summary["executed_trade_count"], 1)
+        self.assertEqual(summary["total_trades"], 1)
+        self.assertEqual(summary["last_fill"]["symbol"], "AAPL.US")
+        self.assertEqual(summary["last_fill"]["quantity"], 7.0)
+        self.assertEqual(summary["last_fill"]["fill_price"], 100.0)
+        self.assertEqual(summary["position_count"], 1)
+        self.assertEqual(summary["positions"], [{"symbol": "AAPL.US", "quantity": 7.0}])
+
+    def test_multiple_fills_accumulate_count_and_positions(self):
+        store = self._store()
+        store.project_event(_fill_event(qty=7.0, created_at="2026-05-01T00:01:00Z"))
+        store.project_event(_fill_event(qty=3.0, created_at="2026-05-01T00:02:00Z"))
+        summary = store.project_event(_fill_event(symbol="MSFT.US", qty=5.0, created_at="2026-05-01T00:03:00Z"))
+        self.assertEqual(summary["executed_trade_count"], 3)
+        self.assertEqual(summary["total_trades"], 3)
+        self.assertEqual(summary["last_fill"]["symbol"], "MSFT.US")
+        positions = {p["symbol"]: p["quantity"] for p in summary["positions"]}
+        self.assertEqual(positions, {"AAPL.US": 10.0, "MSFT.US": 5.0})
+
+    def test_total_trades_metric_does_not_regress_below_executed_count(self):
+        store = self._store()
+        store.project_event(_fill_event())
+        store.project_event(_fill_event(created_at="2026-05-01T00:02:00Z"))
+        # a later heartbeat carrying a stale/zero total_trades metric must not lower it
+        hb = _event(event_type="heartbeat", created_at="2026-05-01T00:03:00Z")
+        hb["metrics"] = {"heartbeat": 1, "total_trades": 0}
+        summary = store.project_event(hb)
+        # a stale total_trades=0 metric must NOT wipe the executed fill count
+        self.assertEqual(summary["executed_trade_count"], 2)
+        self.assertEqual(summary["total_trades"], 2)
