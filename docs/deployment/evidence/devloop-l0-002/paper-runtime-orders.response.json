@@ -1,0 +1,78 @@
+{
+  "orders": [
+    {
+      "event_type": "paper_fill_simulated",
+      "symbol": "AAPL",
+      "quantity": 7.0,
+      "fill_price": 100.0,
+      "action": "market_order",
+      "submitted_to_broker": false,
+      "created_at": "2026-06-14T11:35:37Z",
+      "metadata": {
+        "signal_id": "sig-righthalf-verify-1",
+        "strategy_id": "strategy-rescue-0260531-1715d8d2",
+        "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+        "quantity_type": "SHARES",
+        "order_type": "MARKET",
+        "requested_quantity": 7.0
+      }
+    },
+    {
+      "event_type": "paper_fill_simulated",
+      "symbol": "AAPL",
+      "quantity": 2.0,
+      "fill_price": 102.7408,
+      "action": "market_order",
+      "submitted_to_broker": false,
+      "created_at": "2026-06-14T15:10:18Z",
+      "metadata": {
+        "signal_id": "8b73e9cd-b215-44bc-95da-2e9272573188",
+        "strategy_id": "strategy-rescue-0260531-1715d8d2",
+        "source_worker": "DEVLOOP-L0-002",
+        "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+        "quantity_type": "SHARES",
+        "order_type": "MARKET",
+        "confidence_score": 1.0,
+        "requested_quantity": 2.0
+      }
+    },
+    {
+      "event_type": "paper_fill_simulated",
+      "symbol": "MSFT",
+      "quantity": 3.0,
+      "fill_price": 100.0,
+      "action": "market_order",
+      "submitted_to_broker": false,
+      "created_at": "2026-06-14T15:10:18Z",
+      "metadata": {
+        "signal_id": "ba8781b7-8678-427e-92b4-ea8a79398563",
+        "strategy_id": "strategy-rescue-0260531-1715d8d2",
+        "source_worker": "DEVLOOP-L0-002",
+        "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+        "quantity_type": "SHARES",
+        "order_type": "MARKET",
+        "confidence_score": 1.0,
+        "requested_quantity": 3.0
+      }
+    },
+    {
+      "event_type": "paper_fill_simulated",
+      "symbol": "NVDA",
+      "quantity": 4.0,
+      "fill_price": 100.0,
+      "action": "market_order",
+      "submitted_to_broker": false,
+      "created_at": "2026-06-14T15:10:18Z",
+      "metadata": {
+        "signal_id": "55fa204b-831e-4e6b-965f-e281eaa96154",
+        "strategy_id": "strategy-rescue-0260531-1715d8d2",
+        "source_worker": "DEVLOOP-L0-002",
+        "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+        "quantity_type": "SHARES",
+        "order_type": "MARKET",
+        "confidence_score": 1.0,
+        "requested_quantity": 4.0
+      }
+    }
+  ]
+}
