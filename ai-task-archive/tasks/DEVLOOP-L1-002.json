@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "task_id": "DEVLOOP-L1-002",
+  "archived_at": "2026-06-14T14:14:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "DEVLOOP-L1-002",
+    "title": "Wire producer to 15 active bindings; organic loop-run/trade",
+    "summary_zh": "把 producer 接到現有 15 個 active paper binding;不手動種子的情況下,每個 binding 至少跑出一條 organic loop-run 並有 trade;驗證右半開始有真實資料流。",
+    "phase": "Layer 1 / real loop closure",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "DEVLOOP-L1-001"
+    ],
+    "artifacts": [
+      "services/runtime-manager/service.py",
+      "services/telemetry/main.py"
+    ],
+    "acceptance": [
+      "15 個 active binding 中至少多數產生 loop-run>0 與 trades>0(非手動 seed);BFF telemetry 顯示真實 pnl 變動"
+    ],
+    "next": "Recreated as WIRE depending on DEVLOOP-PRODUCER + DEVLOOP-L0-003.",
+    "last_update": "2026-06-14T14:14:08Z",
+    "auto_created_by": "dispatch_devloop_rightside_2026-06-14",
+    "terminal_outcome": "superseded",
+    "superseded_by": "DEVLOOP-WIRE"
+  },
+  "handoffs": [],
+  "blockers": []
+}
