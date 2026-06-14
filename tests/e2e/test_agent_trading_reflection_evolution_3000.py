@@ -51,6 +51,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
     PERSONA_MEMORY_INFLUENCE_MODEL_ID,
     PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID,
+    PERSONA_OPENCLAW_SESSION_HANDOFF_MODEL_ID,
     PERSONA_OSS_OODA_LEDGER_MODEL_ID,
     PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
     PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
@@ -234,6 +235,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["reflection_oss_lineage_handoff_count"] == DEFAULT_CASE_COUNT
     assert summary["reflection_oss_lineage_handoff_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["reflection_oss_lineage_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
+    assert summary["openclaw_session_handoff_count"] == DEFAULT_CASE_COUNT
+    assert summary["openclaw_session_handoff_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["openclaw_session_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_handoff_count"] == DEFAULT_CASE_COUNT
@@ -426,6 +430,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "lean_packet_execution_projection_consumed",
         "next_cycle_scheduled",
         "object_store_readback_verified",
+        "openclaw_session_context_bound",
         "paper_runtime_guard_retained",
         "policy_oss_lineage_bound",
         "reflection_oss_lineage_bound",
@@ -495,6 +500,23 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "replayable",
         "runtime_feedback_cites_reflection_oss_lineage",
         "strategy_packet_carries_reflection_oss_lineage",
+    }
+    assert coverage["openclaw_session_handoff_models"] == [
+        PERSONA_OPENCLAW_SESSION_HANDOFF_MODEL_ID
+    ]
+    assert coverage["openclaw_session_handoff_components"] == ["openclaw"]
+    assert coverage["openclaw_session_handoff_artifact_families"] == ["openclaw_session"]
+    assert coverage["openclaw_session_handoff_session_states"] == ["active"]
+    assert set(coverage["openclaw_session_handoff_replay_flags"]) == {
+        "handoff_carries_openclaw_session_context",
+        "handoff_runtime_bundle_contains_openclaw_session_refs",
+        "openclaw_context_hash_stable_across_handoff",
+        "openclaw_session_response_completed",
+        "persona_reasoning_consumes_openclaw_session_source",
+        "replayable",
+        "runtime_feedback_cites_openclaw_session",
+        "runtime_feedback_state_binds_openclaw_session",
+        "selected_candidates_cite_openclaw_session_followup",
     }
     assert coverage["evolved_strategy_packet_models"] == [
         LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID
@@ -1025,6 +1047,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_experiment_tracking_lineage_handoff(case)
         _assert_policy_oss_lineage_handoff(case)
         _assert_reflection_oss_lineage_handoff(case)
+        _assert_openclaw_session_handoff(case)
         _assert_lean_packet_execution_projection(case)
         _assert_evolved_strategy_packet_proof(case)
         _assert_scheduler_conflict_ooda_proof(case)
@@ -3195,6 +3218,8 @@ def _assert_operational_context(case: dict) -> None:
     assert replay["case_specific_strategy_packet"]["policy_oss_request_id"] == policy_entry["request_id"]
     reflection_entry = case["case_upstream_artifacts"]["selected_oss"]["reflection_artifact"]
     reflection_oss_ref = f"oss://{reflection_entry['component']}/{reflection_entry['request_id']}"
+    openclaw_session_request_id = case["oss_feedback"]["request_ids"]["session"]
+    openclaw_source_ref = f"oss://openclaw/{openclaw_session_request_id}"
     packet_reflection_lineage = replay["case_specific_strategy_packet"]["reflection_oss_lineage"]
     assert packet_reflection_lineage["model_id"] == PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID
     assert packet_reflection_lineage["component"] == reflection_entry["component"]
@@ -3468,6 +3493,31 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["reflection_oss_registry_ref"] == packet_reflection_lineage["registry_ref"]
     assert handoff["reflection_oss_component"] == reflection_entry["component"]
     assert handoff["reflection_oss_request_id"] == reflection_entry["request_id"]
+    openclaw_context = handoff["openclaw_session_context"]
+    assert openclaw_context["model_id"] == PERSONA_OPENCLAW_SESSION_HANDOFF_MODEL_ID
+    assert openclaw_context["component"] == "openclaw"
+    assert openclaw_context["request_id"] == openclaw_session_request_id
+    assert openclaw_context["source_oss_ref"] == openclaw_source_ref
+    assert openclaw_context["artifact_family"] == "openclaw_session"
+    assert openclaw_context["session_state"] == "active"
+    assert openclaw_context["session_ref"].startswith("openclaw-session://")
+    assert openclaw_context["upstream_session_ref"].startswith(
+        "openclaw-upstream-session://"
+    )
+    assert openclaw_context["context_ref"] == handoff["openclaw_session_context_ref"]
+    assert openclaw_context["context_hash"] == handoff["openclaw_session_context_hash"]
+    assert openclaw_context["input_hash"] == handoff["openclaw_session_context_hash"]
+    assert handoff["openclaw_session_ref"] == openclaw_context["session_ref"]
+    assert handoff["openclaw_source_oss_ref"] == openclaw_source_ref
+    assert handoff["openclaw_upstream_session_ref"] == openclaw_context[
+        "upstream_session_ref"
+    ]
+    assert handoff["openclaw_session_id"] == openclaw_context["session_id"]
+    assert handoff["openclaw_upstream_session_id"] == openclaw_context[
+        "upstream_session_id"
+    ]
+    assert handoff["openclaw_session_state"] == "active"
+    assert handoff["openclaw_session_artifact_family"] == "openclaw_session"
     assert handoff["target_stage"] == "paper"
     assert handoff["broker_live_submitted"] is False
     assert set(handoff["portfolio_instruments"]) == set(case["portfolio"]["instruments"])
@@ -3492,6 +3542,10 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["reflection_oss_lineage_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["reflection_oss_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["reflection_oss_registry_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["openclaw_session_context_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["openclaw_session_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["openclaw_source_oss_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["openclaw_upstream_session_ref"] in handoff["runtime_bundle_refs"]
     assert conflict["resolution_ref"] in handoff["runtime_bundle_refs"]
     assert schedule["schedule_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["runtime_bundle_refs"]
@@ -3549,6 +3603,10 @@ def _assert_operational_context(case: dict) -> None:
         handoff["reflection_oss_lineage_ref"],
         handoff["reflection_oss_ref"],
         handoff["reflection_oss_registry_ref"],
+        handoff["openclaw_session_context_ref"],
+        handoff["openclaw_session_ref"],
+        handoff["openclaw_source_oss_ref"],
+        handoff["openclaw_upstream_session_ref"],
         f"runtime-binding://{runtime_readback['runtime_binding_id']}",
         f"object-store://{runtime_readback['object_store_metadata_key']}",
         f"reflection://{case['reflection']['agent_decision_traces'][-1]['reflection_id']}",
@@ -3568,6 +3626,18 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["state_updates"]["bind_reflection_oss_registry_ref"] == handoff[
         "reflection_oss_registry_ref"
     ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_session_context_ref"] == handoff[
+        "openclaw_session_context_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_session_ref"] == handoff[
+        "openclaw_session_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_source_oss_ref"] == handoff[
+        "openclaw_source_oss_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_upstream_session_ref"] == handoff[
+        "openclaw_upstream_session_ref"
+    ]
     assert runtime_feedback["state_updates"]["bind_lean_packet_execution_projection"] == projection["projection_ref"]
     assert runtime_feedback["state_updates"]["attach_to_handoff_packet"] == handoff["packet_id"]
     assert runtime_feedback["state_updates"]["attach_to_decision_trace"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
@@ -3579,17 +3649,20 @@ def _assert_operational_context(case: dict) -> None:
     assert case["usability_dimensions"]["experiment_tracking_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["policy_oss_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["reflection_oss_lineage_handoff"] == 1.0
+    assert case["usability_dimensions"]["openclaw_session_handoff"] == 1.0
     assert case["usability_dimensions"]["evolved_strategy_packet_handoff"] == 1.0
     assert case["usable"]["lean_packet_execution_projection_replayed"] is True
     assert case["usable"]["experiment_tracking_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["policy_oss_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["reflection_oss_lineage_reaches_lean_handoff"] is True
+    assert case["usable"]["openclaw_session_reaches_lean_handoff"] is True
     assert case["usable"]["evolved_strategy_packet_reaches_lean_handoff"] is True
     assert check_by_name["lean_packet_execution_projection_replays_packet_legs"]["status"] == "passed"
     assert check_by_name["lean_runtime_feedback_drives_persona_ooda"]["status"] == "passed"
     assert check_by_name["tracking_experiment_lineage_reaches_evolution_and_lean_packet"]["status"] == "passed"
     assert check_by_name["policy_oss_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
     assert check_by_name["reflection_oss_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
+    assert check_by_name["openclaw_session_context_reaches_lean_handoff"]["status"] == "passed"
     assert check_by_name["evolved_strategy_packet_reaches_lean_handoff"]["status"] == "passed"
     assert case["usability_dimensions"]["scheduler_conflict_ooda_dispatch"] == 1.0
     assert case["usable"]["scheduler_conflict_ooda_dispatch_replayed"] is True
@@ -3752,6 +3825,71 @@ def _assert_reflection_oss_lineage_handoff(case: dict) -> None:
     assert lineage_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
     assert registry_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
     assert packet_readback["loaded_reflection_oss_lineage"] == packet_reflection_lineage
+    assert all(proof["replay"].values())
+    assert proof["input_hash"]
+
+
+def _assert_openclaw_session_handoff(case: dict) -> None:
+    operational = case["operational_context"]
+    proof = operational["openclaw_session_handoff"]
+    handoff = operational["lean_handoff"]
+    runtime_feedback = operational["lean_runtime_feedback"]
+    session_request_id = case["oss_feedback"]["request_ids"]["session"]
+    source_ref = f"oss://openclaw/{session_request_id}"
+
+    assert proof["proof_id"] == f"openclaw-session-handoff-{case['case_id']}"
+    assert proof["proof_ref"] == f"openclaw-session-handoff://{case['case_id']}"
+    assert proof["model_id"] == PERSONA_OPENCLAW_SESSION_HANDOFF_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["component"] == "openclaw"
+    assert proof["request_id"] == session_request_id
+    assert proof["source_oss_ref"] == source_ref
+    assert proof["artifact_family"] == "openclaw_session"
+    assert proof["context_ref"] == handoff["openclaw_session_context_ref"]
+    assert proof["context_hash"] == handoff["openclaw_session_context_hash"]
+    assert proof["session_ref"] == handoff["openclaw_session_ref"]
+    assert proof["session_id"] == handoff["openclaw_session_id"]
+    assert proof["upstream_session_ref"] == handoff["openclaw_upstream_session_ref"]
+    assert proof["upstream_session_id"] == handoff["openclaw_upstream_session_id"]
+    assert proof["session_state"] == "active"
+    assert proof["strategy_packet_ref"] == handoff["strategy_packet_ref"]
+    assert proof["lean_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert proof["lean_runtime_feedback_ref"] == (
+        f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
+    )
+    assert set(proof["input_refs"]) == {
+        source_ref,
+        proof["context_ref"],
+        proof["session_ref"],
+        proof["upstream_session_ref"],
+        proof["strategy_packet_ref"],
+        proof["lean_handoff_ref"],
+        proof["lean_runtime_feedback_ref"],
+    }
+    assert len(proof["trace_bindings"]) == 2
+    assert all(binding["reasoning_consumes_openclaw_source_ref"] for binding in proof["trace_bindings"])
+    assert all(binding["selected_candidate_cites_openclaw_followup"] for binding in proof["trace_bindings"])
+    assert source_ref in handoff["runtime_bundle_refs"]
+    assert proof["context_ref"] in handoff["runtime_bundle_refs"]
+    assert proof["session_ref"] in handoff["runtime_bundle_refs"]
+    assert proof["upstream_session_ref"] in handoff["runtime_bundle_refs"]
+    evidence_refs = runtime_feedback["persona_ooda_followup"]["evidence_refs"]
+    assert source_ref in evidence_refs
+    assert proof["context_ref"] in evidence_refs
+    assert proof["session_ref"] in evidence_refs
+    assert proof["upstream_session_ref"] in evidence_refs
+    assert runtime_feedback["state_updates"]["bind_openclaw_session_context_ref"] == proof[
+        "context_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_session_ref"] == proof[
+        "session_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_source_oss_ref"] == source_ref
+    assert runtime_feedback["state_updates"]["bind_openclaw_upstream_session_ref"] == proof[
+        "upstream_session_ref"
+    ]
     assert all(proof["replay"].values())
     assert proof["input_hash"]
 
