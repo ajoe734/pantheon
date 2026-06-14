@@ -75,6 +75,11 @@ def test_integration_gate_uploads_only_current_run_audits() -> None:
     assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
     assert ".lovable/audits/current-run" in text
     assert ".lovable/audits/*.md" not in text
+    assert "Strict SSE live soak" in text
+    assert "scripts/probe_bff_sse_stream.py" in text
+    assert "--strict-live-evidence" in text
+    assert "--soak-seconds 75" in text
+    assert "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json" in text
 
 
 def test_release_gate_accepts_authenticated_approval_race_evidence(tmp_path: Path) -> None:
