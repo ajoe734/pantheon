@@ -1,0 +1,110 @@
+{
+  "status": "ok",
+  "runtime_package": "paper_execution_runtime",
+  "runtime_id": "rt-rescue-0260531-1715d8d2",
+  "runtime_binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+  "signal_store": {
+    "kind": "redis_pending_signal_store",
+    "queue_depth": 0,
+    "batch_size": 100
+  },
+  "binding_lookup": {
+    "resolved": true,
+    "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+    "status": "active",
+    "deployment_mode": "paper",
+    "source": "runtime_manager"
+  },
+  "telemetry": {
+    "enabled": true,
+    "url": "http://telemetry:8083",
+    "sent": 870,
+    "failed": 0,
+    "last_error": null
+  },
+  "paper_state": {
+    "last_poll_at": "2026-06-14T15:10:18Z",
+    "last_drain_at": "2026-06-14T15:10:18Z",
+    "processed_signal_count": 4,
+    "execution_event_count": 4,
+    "positions": [
+      {
+        "symbol": "AAPL",
+        "quantity": 9.0,
+        "price": 104.4102
+      },
+      {
+        "symbol": "MSFT",
+        "quantity": 3.0,
+        "price": 105.0
+      },
+      {
+        "symbol": "NVDA",
+        "quantity": 4.0,
+        "price": 104.7787
+      }
+    ],
+    "recent_devloop_order_events": [
+      {
+        "event_type": "paper_fill_simulated",
+        "symbol": "AAPL",
+        "quantity": 2.0,
+        "fill_price": 102.7408,
+        "action": "market_order",
+        "submitted_to_broker": false,
+        "created_at": "2026-06-14T15:10:18Z",
+        "metadata": {
+          "signal_id": "8b73e9cd-b215-44bc-95da-2e9272573188",
+          "strategy_id": "strategy-rescue-0260531-1715d8d2",
+          "source_worker": "DEVLOOP-L0-002",
+          "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+          "quantity_type": "SHARES",
+          "order_type": "MARKET",
+          "confidence_score": 1.0,
+          "requested_quantity": 2.0
+        }
+      },
+      {
+        "event_type": "paper_fill_simulated",
+        "symbol": "MSFT",
+        "quantity": 3.0,
+        "fill_price": 100.0,
+        "action": "market_order",
+        "submitted_to_broker": false,
+        "created_at": "2026-06-14T15:10:18Z",
+        "metadata": {
+          "signal_id": "ba8781b7-8678-427e-92b4-ea8a79398563",
+          "strategy_id": "strategy-rescue-0260531-1715d8d2",
+          "source_worker": "DEVLOOP-L0-002",
+          "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+          "quantity_type": "SHARES",
+          "order_type": "MARKET",
+          "confidence_score": 1.0,
+          "requested_quantity": 3.0
+        }
+      },
+      {
+        "event_type": "paper_fill_simulated",
+        "symbol": "NVDA",
+        "quantity": 4.0,
+        "fill_price": 100.0,
+        "action": "market_order",
+        "submitted_to_broker": false,
+        "created_at": "2026-06-14T15:10:18Z",
+        "metadata": {
+          "signal_id": "55fa204b-831e-4e6b-965f-e281eaa96154",
+          "strategy_id": "strategy-rescue-0260531-1715d8d2",
+          "source_worker": "DEVLOOP-L0-002",
+          "binding_id": "rb-016ccb04e393494ba03de50ccf481d71",
+          "quantity_type": "SHARES",
+          "order_type": "MARKET",
+          "confidence_score": 1.0,
+          "requested_quantity": 4.0
+        }
+      }
+    ],
+    "last_error": null
+  },
+  "stub_mode": false,
+  "redis_llen_after_drain": 0
+}

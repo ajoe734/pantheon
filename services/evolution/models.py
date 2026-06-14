@@ -157,6 +157,39 @@ class ThresholdEvalResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Daily sweep
+# ---------------------------------------------------------------------------
+
+class DailySweepRequest(BaseModel):
+    incident_ids: List[str] = Field(default_factory=list)
+    include_closed: bool = False
+    max_incidents: Optional[int] = None
+    sweep_id: str = "daily"
+
+
+class DailySweepItemResponse(BaseModel):
+    incident_id: str
+    status: str
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    decision_id: Optional[str] = None
+    action_type: Optional[str] = None
+    active_decision_id: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class DailySweepResponse(BaseModel):
+    sweep_id: str
+    scanned_incidents: int
+    created_decisions: int
+    existing_decisions: int
+    cooldown_blocked: int
+    skipped_incidents: int
+    items: List[DailySweepItemResponse]
+    scheduler_attach: Dict[str, str]
+
+
+# ---------------------------------------------------------------------------
 # Decision response
 # ---------------------------------------------------------------------------
 
