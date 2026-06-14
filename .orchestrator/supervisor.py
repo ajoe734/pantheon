@@ -87,6 +87,16 @@ BLOCKED_OWNER_RESCUE_KEYWORDS = (
     "push",
     "pr push",
 )
+STICKY_AUTH_FAILURE_MARKERS = (
+    "refresh-token-revoked",
+    "refresh_token_revoked",
+    "refresh token revoked",
+    "refresh token has been revoked",
+    "token has been revoked",
+    "token revoked",
+    "invalid_grant",
+)
+STICKY_AUTH_BLOCKED_UNTIL = "9999-12-31T23:59:59Z"
 
 
 SESSION_ID_PATTERNS = [
@@ -4727,6 +4737,8 @@ def current_provider_dispatch_pause(
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         now = datetime.now(timezone.utc)
         if blocked_until is not None and blocked_until <= now:
+            if is_sticky_auth_dispatch_pause(entry):
+                return entry
             bucket.pop(pause_id, None)
             continue
         return entry
@@ -4757,6 +4769,26 @@ def is_retryable_capacity_failure_kind(kind: str | None) -> bool:
 
 def is_auth_failure_kind(kind: str | None) -> bool:
     return str(kind or "").strip().lower() == "auth"
+
+
+def is_sticky_auth_failure_reason(reason: str | None) -> bool:
+    normalized = str(reason or "").strip().lower()
+    return bool(normalized) and any(marker in normalized for marker in STICKY_AUTH_FAILURE_MARKERS)
+
+
+def is_sticky_auth_dispatch_pause(entry: dict[str, Any] | None) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    pause_kind = str(entry.get("pause_kind") or entry.get("failure_kind") or "").strip().lower()
+    if pause_kind != "auth":
+        return False
+    if entry.get("sticky_until_auth_probe") is True:
+        return True
+    text = " ".join(
+        str(entry.get(key) or "")
+        for key in ("reason", "summary", "detail", "raw_ref", "auth_status", "failure_status")
+    )
+    return is_sticky_auth_failure_reason(text)
 
 
 def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
@@ -4795,9 +4827,12 @@ def mark_provider_dispatch_paused(
             return False
         pause_seconds_key = "quota_terminal_pause_seconds" if effective_pause_kind == "quota_terminal" else "capacity_pause_seconds"
     pause_seconds = max(60, int(settings.get(pause_seconds_key, 900)))
+    sticky_auth_pause = effective_pause_kind == "auth" and is_sticky_auth_failure_reason(reason)
     blocked_until = (now + timedelta(seconds=pause_seconds)).replace(microsecond=0)
     hinted_blocked_until: str | None = None
     hint_capped = False
+    if sticky_auth_pause:
+        blocked_until = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
     if effective_pause_kind == "quota_terminal":
         hinted = parse_quota_retry_hint(reason, now=now)
         if hinted is not None and hinted > blocked_until:
@@ -4813,7 +4848,11 @@ def mark_provider_dispatch_paused(
                     blocked_until = hinted
             else:
                 blocked_until = hinted
-    blocked_until_iso = blocked_until.isoformat().replace("+00:00", "Z")
+    blocked_until_iso = (
+        STICKY_AUTH_BLOCKED_UNTIL
+        if sticky_auth_pause
+        else blocked_until.isoformat().replace("+00:00", "Z")
+    )
     actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
     bucket = _dispatch_pause_bucket(state)
     previous = bucket.get(pause_provider_id)
@@ -4839,6 +4878,9 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
+    if sticky_auth_pause:
+        bucket[pause_provider_id]["sticky_until_auth_probe"] = True
+        bucket[pause_provider_id]["sticky_reason"] = "refresh_token_revoked"
     if hinted_blocked_until:
         bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
         bucket[pause_provider_id]["hint_capped"] = hint_capped
@@ -4902,6 +4944,8 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     expired: list[tuple[str, dict[str, Any]]] = []
     for provider_id, entry in list(bucket.items()):
         if not isinstance(entry, dict):
+            continue
+        if is_sticky_auth_dispatch_pause(entry):
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
@@ -5019,6 +5063,31 @@ def _provider_auth_identity_ids(config: dict[str, Any], provider: str | None) ->
     return ids
 
 
+def provider_has_sticky_auth_dispatch_pause(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider: str | None,
+) -> bool:
+    ids = _provider_auth_identity_ids(config, provider)
+    if not ids:
+        return False
+    for pause_id, entry in _dispatch_pause_bucket(state).items():
+        if normalize_agent_id(str(pause_id)) not in ids:
+            continue
+        if is_sticky_auth_dispatch_pause(entry if isinstance(entry, dict) else None):
+            return True
+    return False
+
+
+def provider_auth_report_is_live_success(report: dict[str, Any]) -> bool:
+    if not isinstance(report, dict) or report.get("auth_ready") is not True:
+        return False
+    probe = report.get("auth_probe")
+    if not isinstance(probe, dict):
+        return False
+    return probe.get("ready") is True and str(probe.get("source") or "").strip().lower() == "live"
+
+
 def _is_auth_failure_streak(config: dict[str, Any], record: dict[str, Any]) -> bool:
     if is_auth_failure_kind(str(record.get("last_failure_kind") or "")):
         return True
@@ -5086,7 +5155,10 @@ def reconcile_provider_auth_recovery(
         if not isinstance(current, dict) or current.get("auth_ready") is not True:
             continue
         previous = _provider_report_entry(previous_report, str(provider_id))
-        if previous.get("auth_ready") is not False:
+        sticky_auth_pause = provider_has_sticky_auth_dispatch_pause(config, state, str(provider_id))
+        if previous.get("auth_ready") is not False and not sticky_auth_pause:
+            continue
+        if sticky_auth_pause and not provider_auth_report_is_live_success(current):
             continue
         cleared_streaks = clear_auth_failure_streaks_for_provider(config, state, str(provider_id))
         cleared_pauses = clear_auth_dispatch_pauses_for_provider(config, state, str(provider_id))

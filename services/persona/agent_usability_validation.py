@@ -134,17 +134,27 @@ BROKER_LIFECYCLE_TERMINAL_STATUS = "filled"
 MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
 LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
 LEAN_RUNTIME_FEEDBACK_MODEL_ID = "persona_lean_runtime_feedback_v1"
+LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID = "lean_evolved_strategy_packet_provenance_v1"
+LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID = "lean_evolved_packet_multi_asset_execution_projection_v1"
+LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID = "lean_object_store_evolved_packet_readback_v1"
 SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
 BROKER_ADAPTER_LIFECYCLE_MODEL_ID = "persona_broker_adapter_lifecycle_v1"
 BROKER_ADAPTER_FOLLOWUP_MODEL_ID = "persona_broker_adapter_followup_v1"
 CASE_UPSTREAM_VECTORBT_MODEL_ID = "case_specific_vectorbt_feedback_v1"
 CASE_UPSTREAM_TRACKING_MODEL_ID = "case_specific_tracking_artifact_roundtrip_v1"
 CASE_SELECTED_OSS_MODEL_ID = "case_specific_selected_oss_feedback_v1"
+PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID = "persona_policy_candidate_oss_materiality_v1"
+PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID = "persona_policy_oss_lineage_handoff_v1"
+PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID = "persona_reflection_artifact_oss_materiality_v1"
+PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID = "persona_reflection_oss_lineage_handoff_v1"
+PERSONA_CONFLICT_RESOLUTION_MODEL_ID = "persona_multi_persona_conflict_resolution_v1"
+PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID = "persona_scheduler_conflict_ooda_dispatch_v1"
 PERSONA_DECISION_ARTIFACT_MODEL_ID = "persona_replayable_candidate_decision_v1"
 PERSONA_CANDIDATE_GENERATOR_MODEL_ID = "persona_candidate_generation_from_oss_feedback_v1"
 PERSONA_CANDIDATE_SCORER_MODEL_ID = "persona_multi_factor_candidate_scorer_v1"
 PERSONA_RISK_EVALUATOR_MODEL_ID = "persona_oss_risk_turnover_evaluator_v1"
 PERSONA_MEMORY_INFLUENCE_MODEL_ID = "persona_retrieved_lesson_influence_v1"
+PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID = "persona_cross_persona_institutional_memory_lineage_v1"
 PERSONA_REASONING_MODEL_ID = "persona_structured_reasoning_candidate_generator_v1"
 PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
 EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v1"
@@ -153,9 +163,15 @@ STRICT_OOS_EVOLUTION_PROOF_MODEL_ID = "persona_strict_oos_evolution_proof_v1"
 PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID = "persona_memory_counterfactual_decision_proof_v1"
 MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID = "persona_multi_oss_closed_loop_proof_v1"
 PERSONA_OSS_OODA_LEDGER_MODEL_ID = "persona_oss_ooda_causal_ledger_v1"
+PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID = "persona_cross_cycle_runtime_carryover_v1"
+PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID = "persona_persisted_cycle_resume_carryover_v1"
+PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID = "persona_multi_cycle_lineage_carryover_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
 PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
+PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID = (
+    "persona_experiment_tracking_lineage_handoff_v1"
+)
 PERSONA_ALPHA_SEED_REVISION_MODEL_ID = "persona_alpha_seed_revision_from_oss_v1"
 ALPHA_SEED_REVISION_ACTION_BY_COMPONENT: dict[str, str] = {
     "qlib": "apply_qlib_alpha_seed_update",
@@ -440,9 +456,19 @@ def run_agent_usability_validations(
     persona_store = PersonaMemoryStore()
     institutional_store = InstitutionalMemoryStore()
     cases: list[dict[str, Any]] = []
+    cycle_state_history_by_persona: dict[str, list[dict[str, Any]]] = {}
 
     for index, episode in enumerate(episodes):
         persona_id = _persona_id(episode.persona)
+        prior_cycle_history = list(cycle_state_history_by_persona.get(persona_id, []))
+        cross_cycle_context = _cross_cycle_context_for_episode(
+            episode=episode,
+            prior_cycle_state=prior_cycle_history[-1] if prior_cycle_history else None,
+        )
+        multi_cycle_context = _multi_cycle_context_for_episode(
+            episode=episode,
+            prior_cycle_states=prior_cycle_history,
+        )
         oss_inputs = _oss_inputs_for_episode(episode, oss_by_component)
         case_upstream_artifacts = _build_case_upstream_artifact_feedback(
             episode=episode,
@@ -482,6 +508,10 @@ def run_agent_usability_validations(
             "next_tracking_reconciliation_action"
         ] = tracking_reconciliation["repair"]["action"]
         prior_memory = _retrieve_prior_lesson(persona_store, persona_id)
+        prior_institutional_memory = _retrieve_cross_persona_institutional_lesson(
+            institutional_store,
+            persona_id,
+        )
         validation_plan = _build_validation_planning_step(
             episode=episode,
             prior_cases=cases,
@@ -523,6 +553,9 @@ def run_agent_usability_validations(
             oss_disagreement_arbitration=oss_disagreement_arbitration,
             tracking_reconciliation=tracking_reconciliation,
             alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
+            cross_cycle_context=cross_cycle_context,
+            multi_cycle_context=multi_cycle_context,
+            institutional_memory_context=prior_institutional_memory,
         )
         memory_write0 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -543,6 +576,8 @@ def run_agent_usability_validations(
             generation=1,
             decision_trace=decision_trace0,
             memory_context=current_memory0,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
         )
         generation1_exec = _execute_signals(
             _build_signals(
@@ -584,6 +619,9 @@ def run_agent_usability_validations(
             oss_disagreement_arbitration=oss_disagreement_arbitration,
             tracking_reconciliation=tracking_reconciliation,
             alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
+            cross_cycle_context=cross_cycle_context,
+            multi_cycle_context=multi_cycle_context,
+            institutional_memory_context=prior_institutional_memory,
         )
         memory_write1 = _write_learn_memory(
             feedback_adapter=feedback_adapter,
@@ -604,6 +642,8 @@ def run_agent_usability_validations(
             generation=2,
             decision_trace=decision_trace1,
             memory_context=current_memory1,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
         )
         generation2_exec = _execute_signals(
             _build_signals(
@@ -630,6 +670,7 @@ def run_agent_usability_validations(
             evolved_policy=generation2_policy,
             baseline_eval=baseline_holdout_counterfactual,
             evolved_eval=generation2_eval,
+            tracking_reconciliation=tracking_reconciliation,
             generated_at=generated_at,
         )
         decision_errors = validate_evolution_decision(evolution_decision)
@@ -666,6 +707,19 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
         )
+        policy_candidate_materiality = _build_policy_candidate_materiality_proof(
+            episode=episode,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
+            generation_policies=(generation0_policy, generation1_policy, generation2_policy),
+            decision_traces=(decision_trace0, decision_trace1),
+        )
+        reflection_artifact_materiality = _build_reflection_artifact_materiality_proof(
+            episode=episode,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
+            decision_traces=(decision_trace0, decision_trace1),
+        )
         multi_oss_closed_loop_proof = _build_multi_oss_closed_loop_proof(
             episode=episode,
             oss_inputs=oss_inputs,
@@ -681,6 +735,11 @@ def run_agent_usability_validations(
             decision_traces=(decision_trace0, decision_trace1),
             memory_contexts=(current_memory0, current_memory1),
             evolution_decision=evolution_decision,
+            evolution_trajectory=evolution_trajectory,
+            no_leakage_protocol=no_leakage_protocol,
+            strict_oos_evolution_proof=strict_oos_evolution_proof,
+            policy_candidate_materiality=policy_candidate_materiality,
+            reflection_artifact_materiality=reflection_artifact_materiality,
             oss_inputs=oss_inputs,
             case_upstream_artifacts=case_upstream_artifacts,
             generated_at=generated_at,
@@ -691,6 +750,30 @@ def run_agent_usability_validations(
             oss_followup_loop=oss_followup_loop,
             decision_traces=(decision_trace0, decision_trace1),
             operational_context=operational_context,
+        )
+        cross_cycle_carryover = _build_cross_cycle_carryover_proof(
+            episode=episode,
+            cross_cycle_context=cross_cycle_context,
+            decision_traces=(decision_trace0, decision_trace1),
+            persona_oss_ooda_ledger=persona_oss_ooda_ledger,
+        )
+        persisted_cycle_resume = _build_persisted_cycle_resume_proof(
+            episode=episode,
+            cross_cycle_context=cross_cycle_context,
+            decision_traces=(decision_trace0, decision_trace1),
+            cross_cycle_carryover=cross_cycle_carryover,
+        )
+        multi_cycle_lineage = _build_multi_cycle_lineage_proof(
+            episode=episode,
+            multi_cycle_context=multi_cycle_context,
+            decision_traces=(decision_trace0, decision_trace1),
+            cross_cycle_carryover=cross_cycle_carryover,
+            persisted_cycle_resume=persisted_cycle_resume,
+        )
+        institutional_memory_lineage = _build_institutional_memory_lineage_proof(
+            episode=episode,
+            institutional_memory_context=prior_institutional_memory,
+            decision_traces=(decision_trace0, decision_trace1),
         )
         usability_dimensions = _build_usability_dimensions(
             episode=episode,
@@ -709,8 +792,14 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            policy_candidate_materiality=policy_candidate_materiality,
+            reflection_artifact_materiality=reflection_artifact_materiality,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
+            cross_cycle_carryover=cross_cycle_carryover,
+            persisted_cycle_resume=persisted_cycle_resume,
+            multi_cycle_lineage=multi_cycle_lineage,
+            institutional_memory_lineage=institutional_memory_lineage,
             oss_followup_loop=oss_followup_loop,
         )
         validation_diagnostics = _diagnose_validation_execution(
@@ -731,8 +820,14 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            policy_candidate_materiality=policy_candidate_materiality,
+            reflection_artifact_materiality=reflection_artifact_materiality,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
+            cross_cycle_carryover=cross_cycle_carryover,
+            persisted_cycle_resume=persisted_cycle_resume,
+            multi_cycle_lineage=multi_cycle_lineage,
+            institutional_memory_lineage=institutional_memory_lineage,
             oss_followup_loop=oss_followup_loop,
         )
         validation_repair = _repair_validation_deficiencies(
@@ -754,8 +849,14 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            policy_candidate_materiality=policy_candidate_materiality,
+            reflection_artifact_materiality=reflection_artifact_materiality,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
+            cross_cycle_carryover=cross_cycle_carryover,
+            persisted_cycle_resume=persisted_cycle_resume,
+            multi_cycle_lineage=multi_cycle_lineage,
+            institutional_memory_lineage=institutional_memory_lineage,
             oss_followup_loop=oss_followup_loop,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
@@ -764,8 +865,12 @@ def run_agent_usability_validations(
             validation_plan=validation_plan,
             validation_diagnostics=validation_diagnostics,
             validation_repair=validation_repair,
+            prior_institutional_memory=prior_institutional_memory,
         )
         cases.append(case)
+        cycle_state_history_by_persona.setdefault(persona_id, []).append(
+            _cross_cycle_state_from_case(case)
+        )
 
     summary = _build_summary(
         dataset=dataset,
@@ -3303,6 +3408,47 @@ def _memory_influence_profile(memory: Mapping[str, Any] | None) -> dict[str, Any
     }
 
 
+def _institutional_memory_influence_profile(
+    memory: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if not memory:
+        return {
+            "model_id": PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
+            "status": "cold_start",
+            "entry_id": None,
+            "entry_ref": None,
+            "source_event_id": None,
+            "reuse_count": 0,
+            "content_summary": None,
+            "contributing_persona_ids": [],
+            "sponsor_persona_id": None,
+            "cited_proposal_ids": [],
+            "cited_evidence_refs": [],
+            "retrieval_tags": [],
+            "selected_action_hint": "none",
+            "candidate_score_adjustments": _institutional_memory_score_adjustments("none"),
+            "influence_applied": False,
+        }
+    selected_action_hint = _memory_action_from_context(memory)
+    return {
+        "model_id": PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
+        "status": "applied",
+        "entry_id": memory["entry_id"],
+        "entry_ref": memory["entry_ref"],
+        "source_event_id": memory["source_event_id"],
+        "reuse_count": memory["reuse_count"],
+        "content_summary": memory.get("content_summary"),
+        "contributing_persona_ids": list(memory.get("contributing_persona_ids", [])),
+        "sponsor_persona_id": memory.get("sponsor_persona_id"),
+        "cited_proposal_ids": list(memory.get("proposal_ids", [])),
+        "cited_evidence_refs": list(memory.get("evidence_refs", [])),
+        "retrieval_tags": list(memory.get("tags", [])),
+        "selected_action_hint": selected_action_hint,
+        "candidate_score_adjustments": _institutional_memory_score_adjustments(selected_action_hint),
+        "influence_applied": True,
+    }
+
+
 def _memory_action_from_context(memory: Mapping[str, Any]) -> str:
     tags = {str(tag).lower() for tag in memory.get("tags", [])}
     for action in ("feedback-adapt", "risk-off", "retain-observe", "contrarian-check"):
@@ -3335,11 +3481,812 @@ def _memory_score_adjustments(selected_action_hint: str) -> dict[str, float]:
     return adjustments
 
 
+def _institutional_memory_score_adjustments(selected_action_hint: str) -> dict[str, float]:
+    adjustments = {
+        "feedback-adapt": 0.0,
+        "risk-off": 0.0,
+        "retain-observe": 0.0,
+        "contrarian-check": 0.0,
+    }
+    if selected_action_hint == "feedback-adapt":
+        adjustments["feedback-adapt"] = 0.11
+        adjustments["risk-off"] = 0.02
+    elif selected_action_hint == "risk-off":
+        adjustments["risk-off"] = 0.09
+    elif selected_action_hint == "retain-observe":
+        adjustments["retain-observe"] = 0.05
+    elif selected_action_hint == "contrarian-check":
+        adjustments["contrarian-check"] = 0.04
+    return adjustments
+
+
 def _candidate_action_key(candidate_id: str) -> str:
     for action in ("feedback-adapt", "retain-observe", "risk-off", "contrarian-check"):
         if candidate_id.endswith(f"-{action}"):
             return action
     return "unknown"
+
+
+def _cross_cycle_score_adjustments(context: Mapping[str, Any]) -> dict[str, float]:
+    adjustments = {
+        "feedback-adapt": 0.0,
+        "retain-observe": 0.0,
+        "risk-off": 0.0,
+        "contrarian-check": 0.0,
+    }
+    if context.get("status") == "applied":
+        adjustments["feedback-adapt"] = 0.18
+        adjustments["risk-off"] = 0.03
+    return adjustments
+
+
+def _multi_cycle_lineage_score_adjustments(context: Mapping[str, Any]) -> dict[str, float]:
+    adjustments = {
+        "feedback-adapt": 0.0,
+        "retain-observe": 0.0,
+        "risk-off": 0.0,
+        "contrarian-check": 0.0,
+    }
+    if context.get("status") == "single_prior":
+        adjustments["feedback-adapt"] = 0.04
+        adjustments["risk-off"] = 0.01
+    elif context.get("status") == "lineage_applied":
+        adjustments["feedback-adapt"] = 0.07
+        adjustments["risk-off"] = 0.02
+    return adjustments
+
+
+def _cross_cycle_context_for_episode(
+    *,
+    episode: PortfolioEpisode,
+    prior_cycle_state: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if not prior_cycle_state:
+        return {
+            "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
+            "status": "cold_start",
+            "case_id": episode.case_id,
+            "persona_id": _persona_id(episode.persona),
+            "previous_case_id": None,
+            "state_ref": None,
+            "runtime_feedback_ref": None,
+            "source_runtime_ref": None,
+            "source_handoff_ref": None,
+            "previous_ooda_ledger_ref": None,
+            "previous_selected_action_ref": None,
+            "previous_restart_checkpoint_ref": None,
+            "previous_schedule_ref": None,
+            "previous_next_cycle_due_at": None,
+            "previous_feedback_scheduled_cycle_due_at": None,
+            "previous_object_store_metadata_ref": None,
+            "previous_object_store_artifact_ref": None,
+            "previous_resume_step": None,
+            "next_ooda_step": None,
+            "next_ooda_action": None,
+            "next_scheduler_phase": None,
+            "prior_case_completed_before_current_case": False,
+            "evidence_refs": [],
+            "candidate_score_adjustments": _cross_cycle_score_adjustments({"status": "cold_start"}),
+        }
+    previous_case_id = str(prior_cycle_state["case_id"])
+    state_ref = f"cross-cycle-runtime://{previous_case_id}->{episode.case_id}"
+    runtime_feedback_ref = str(prior_cycle_state["runtime_feedback_ref"])
+    restart_checkpoint_ref = str(prior_cycle_state["restart_checkpoint_ref"])
+    schedule_ref = str(prior_cycle_state["schedule_ref"])
+    object_store_metadata_ref = str(prior_cycle_state["object_store_metadata_ref"])
+    object_store_artifact_ref = str(prior_cycle_state["object_store_artifact_ref"])
+    return {
+        "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
+        "status": "applied",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "previous_case_id": previous_case_id,
+        "state_ref": state_ref,
+        "runtime_feedback_ref": runtime_feedback_ref,
+        "source_runtime_ref": prior_cycle_state["source_runtime_ref"],
+        "source_handoff_ref": prior_cycle_state["source_handoff_ref"],
+        "previous_ooda_ledger_ref": prior_cycle_state["ooda_ledger_ref"],
+        "previous_selected_action_ref": prior_cycle_state["selected_action_ref"],
+        "previous_restart_checkpoint_ref": restart_checkpoint_ref,
+        "previous_schedule_ref": schedule_ref,
+        "previous_next_cycle_due_at": prior_cycle_state["next_cycle_due_at"],
+        "previous_feedback_scheduled_cycle_due_at": prior_cycle_state["feedback_scheduled_cycle_due_at"],
+        "previous_object_store_metadata_ref": object_store_metadata_ref,
+        "previous_object_store_artifact_ref": object_store_artifact_ref,
+        "previous_resume_step": prior_cycle_state["resume_step"],
+        "next_ooda_step": prior_cycle_state["next_ooda_step"],
+        "next_ooda_action": prior_cycle_state["next_ooda_action"],
+        "next_scheduler_phase": prior_cycle_state["next_scheduler_phase"],
+        "prior_case_completed_before_current_case": True,
+        "evidence_refs": [
+            state_ref,
+            runtime_feedback_ref,
+            str(prior_cycle_state["source_runtime_ref"]),
+            str(prior_cycle_state["source_handoff_ref"]),
+            str(prior_cycle_state["ooda_ledger_ref"]),
+            str(prior_cycle_state["selected_action_ref"]),
+            restart_checkpoint_ref,
+            schedule_ref,
+            object_store_metadata_ref,
+            object_store_artifact_ref,
+        ],
+        "candidate_score_adjustments": _cross_cycle_score_adjustments({"status": "applied"}),
+    }
+
+
+def _multi_cycle_context_for_episode(
+    *,
+    episode: PortfolioEpisode,
+    prior_cycle_states: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    persona_id = _persona_id(episode.persona)
+    lineage_states = [dict(state) for state in prior_cycle_states[-2:]]
+    if not lineage_states:
+        return {
+            "model_id": PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID,
+            "status": "cold_start",
+            "case_id": episode.case_id,
+            "persona_id": persona_id,
+            "lineage_ref": None,
+            "lineage_depth": 0,
+            "lineage_case_ids": [],
+            "latest_case_id": None,
+            "older_case_id": None,
+            "latest_state_ref": None,
+            "older_state_ref": None,
+            "latest_runtime_feedback_ref": None,
+            "older_runtime_feedback_ref": None,
+            "latest_restart_checkpoint_ref": None,
+            "older_restart_checkpoint_ref": None,
+            "latest_schedule_ref": None,
+            "older_schedule_ref": None,
+            "latest_object_store_metadata_ref": None,
+            "older_object_store_metadata_ref": None,
+            "latest_object_store_artifact_ref": None,
+            "older_object_store_artifact_ref": None,
+            "latest_next_ooda_step": None,
+            "older_next_ooda_step": None,
+            "latest_next_scheduler_phase": None,
+            "older_next_scheduler_phase": None,
+            "trend_signal": "cold_start_no_prior_cycle",
+            "prior_cases_completed_before_current_case": False,
+            "evidence_refs": [],
+            "candidate_score_adjustments": _multi_cycle_lineage_score_adjustments(
+                {"status": "cold_start"}
+            ),
+        }
+
+    latest_state = lineage_states[-1]
+    older_state = lineage_states[-2] if len(lineage_states) > 1 else None
+    latest_case_id = str(latest_state["case_id"])
+    older_case_id = str(older_state["case_id"]) if older_state else None
+    lineage_case_ids = [str(state["case_id"]) for state in lineage_states]
+    lineage_ref = f"multi-cycle-lineage://{'->'.join(lineage_case_ids)}->{episode.case_id}"
+    latest_state_ref = f"multi-cycle-runtime://{latest_case_id}->{episode.case_id}"
+    older_state_ref = (
+        f"multi-cycle-runtime://{older_case_id}->{episode.case_id}"
+        if older_case_id
+        else None
+    )
+    latest_refs = [
+        latest_state_ref,
+        str(latest_state["runtime_feedback_ref"]),
+        str(latest_state["restart_checkpoint_ref"]),
+        str(latest_state["schedule_ref"]),
+        str(latest_state["object_store_metadata_ref"]),
+        str(latest_state["object_store_artifact_ref"]),
+        str(latest_state["ooda_ledger_ref"]),
+        str(latest_state["selected_action_ref"]),
+    ]
+    older_refs = [
+        ref
+        for ref in (
+            older_state_ref,
+            str(older_state["runtime_feedback_ref"]) if older_state else None,
+            str(older_state["restart_checkpoint_ref"]) if older_state else None,
+            str(older_state["schedule_ref"]) if older_state else None,
+            str(older_state["object_store_metadata_ref"]) if older_state else None,
+            str(older_state["object_store_artifact_ref"]) if older_state else None,
+            str(older_state["ooda_ledger_ref"]) if older_state else None,
+            str(older_state["selected_action_ref"]) if older_state else None,
+        )
+        if ref
+    ]
+    status = "lineage_applied" if older_state else "single_prior"
+    trend_signal = (
+        "latest_runtime_feedback_supersedes_older_cycle_trend"
+        if older_state
+        else "single_prior_runtime_feedback_bootstraps_lineage"
+    )
+    context = {
+        "model_id": PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID,
+        "status": status,
+        "case_id": episode.case_id,
+        "persona_id": persona_id,
+        "lineage_ref": lineage_ref,
+        "lineage_depth": len(lineage_states),
+        "lineage_case_ids": lineage_case_ids,
+        "latest_case_id": latest_case_id,
+        "older_case_id": older_case_id,
+        "latest_state_ref": latest_state_ref,
+        "older_state_ref": older_state_ref,
+        "latest_runtime_feedback_ref": str(latest_state["runtime_feedback_ref"]),
+        "older_runtime_feedback_ref": str(older_state["runtime_feedback_ref"]) if older_state else None,
+        "latest_restart_checkpoint_ref": str(latest_state["restart_checkpoint_ref"]),
+        "older_restart_checkpoint_ref": str(older_state["restart_checkpoint_ref"]) if older_state else None,
+        "latest_schedule_ref": str(latest_state["schedule_ref"]),
+        "older_schedule_ref": str(older_state["schedule_ref"]) if older_state else None,
+        "latest_object_store_metadata_ref": str(latest_state["object_store_metadata_ref"]),
+        "older_object_store_metadata_ref": str(older_state["object_store_metadata_ref"]) if older_state else None,
+        "latest_object_store_artifact_ref": str(latest_state["object_store_artifact_ref"]),
+        "older_object_store_artifact_ref": str(older_state["object_store_artifact_ref"]) if older_state else None,
+        "latest_next_ooda_step": latest_state["next_ooda_step"],
+        "older_next_ooda_step": older_state["next_ooda_step"] if older_state else None,
+        "latest_next_scheduler_phase": latest_state["next_scheduler_phase"],
+        "older_next_scheduler_phase": older_state["next_scheduler_phase"] if older_state else None,
+        "trend_signal": trend_signal,
+        "prior_cases_completed_before_current_case": True,
+        "evidence_refs": list(dict.fromkeys([lineage_ref, *latest_refs, *older_refs])),
+    }
+    context["candidate_score_adjustments"] = _multi_cycle_lineage_score_adjustments(context)
+    return context
+
+
+def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
+    feedback = case["operational_context"]["lean_runtime_feedback"]
+    recovery = case["operational_context"]["restart_recovery"]
+    schedule = case["operational_context"]["autonomous_schedule"]
+    ledger = case["oss_feedback"]["ooda_causal_ledger"]
+    selected_event = next(
+        event
+        for event in ledger["events"]
+        if event["event_type"] == "selected_action"
+    )
+    persona_followup = feedback["persona_ooda_followup"]
+    runtime_readback = feedback["runtime_feedback"]
+    return {
+        "case_id": case["case_id"],
+        "persona_id": case["persona_id"],
+        "runtime_feedback_ref": f"lean-runtime-feedback://{feedback['feedback_id']}",
+        "source_runtime_ref": feedback["source_runtime_ref"],
+        "source_handoff_ref": feedback["source_handoff_ref"],
+        "ooda_ledger_ref": ledger["ledger_ref"],
+        "selected_action_ref": selected_event["output_ref"],
+        "restart_checkpoint_ref": f"checkpoint://{recovery['checkpoint_id']}",
+        "schedule_ref": f"schedule://{schedule['schedule_id']}",
+        "next_cycle_due_at": schedule["next_cycle_due_at"],
+        "feedback_scheduled_cycle_due_at": feedback["state_updates"]["schedule_next_cycle_after_feedback"],
+        "object_store_metadata_ref": f"object-store://{runtime_readback['object_store_metadata_key']}",
+        "object_store_artifact_ref": f"object-store://{runtime_readback['object_store_artifact_key']}",
+        "resume_step": recovery["resume_step"],
+        "next_ooda_step": persona_followup["ooda_step"],
+        "next_ooda_action": persona_followup["action"],
+        "next_scheduler_phase": persona_followup["next_scheduler_phase"],
+    }
+
+
+def _build_cross_cycle_carryover_proof(
+    *,
+    episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    persona_oss_ooda_ledger: Mapping[str, Any],
+) -> dict[str, Any]:
+    state_ref = cross_cycle_context.get("state_ref")
+    runtime_feedback_ref = cross_cycle_context.get("runtime_feedback_ref")
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_action = _candidate_action_key(str(trace["selected_candidate_id"]))
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_action": selected_action,
+                "decision_input_state_ref": trace["decision_inputs"].get("cross_cycle_state_ref"),
+                "reasoning_consumes_state_ref": (
+                    state_ref is not None and state_ref in reasoning_request["input_refs"]
+                ),
+                "reasoning_consumes_runtime_feedback_ref": (
+                    runtime_feedback_ref is not None
+                    and runtime_feedback_ref in reasoning_request["input_refs"]
+                ),
+                "candidate_request_consumes_state_ref": (
+                    state_ref is not None and state_ref in candidate_request["input_refs"]
+                ),
+                "candidate_request_consumes_runtime_feedback_ref": (
+                    runtime_feedback_ref is not None
+                    and runtime_feedback_ref in candidate_request["input_refs"]
+                ),
+                "selected_candidate_cites_state_ref": (
+                    state_ref is not None and state_ref in selected_candidate["evidence_refs"]
+                ),
+                "scorer_cross_cycle_adjustment": float(
+                    scoring_inputs["cross_cycle_score_adjustments"].get(selected_action, 0.0)
+                ),
+            }
+        )
+
+    status = str(cross_cycle_context["status"])
+    applied = status == "applied"
+    cold_start = status == "cold_start"
+    replay = {
+        "replayable": True,
+        "cold_start_or_prior_cycle_bound": cold_start
+        or (
+            applied
+            and cross_cycle_context.get("previous_case_id")
+            and cross_cycle_context.get("prior_case_completed_before_current_case") is True
+        ),
+        "runtime_feedback_ref_available": cold_start or bool(runtime_feedback_ref),
+        "previous_lean_handoff_ref_available": cold_start or bool(cross_cycle_context.get("source_handoff_ref")),
+        "previous_ooda_ledger_ref_available": cold_start or bool(cross_cycle_context.get("previous_ooda_ledger_ref")),
+        "reasoning_consumes_prior_runtime_feedback": cold_start
+        or all(binding["reasoning_consumes_runtime_feedback_ref"] for binding in trace_bindings),
+        "candidate_generation_consumes_prior_runtime_feedback": cold_start
+        or all(binding["candidate_request_consumes_runtime_feedback_ref"] for binding in trace_bindings),
+        "selected_candidate_cites_cross_cycle_state": cold_start
+        or all(binding["selected_candidate_cites_state_ref"] for binding in trace_bindings),
+        "scorer_applies_cross_cycle_adjustment": cold_start
+        or all(binding["scorer_cross_cycle_adjustment"] > 0.0 for binding in trace_bindings),
+        "same_persona_cycle_carryover": cold_start
+        or cross_cycle_context.get("persona_id") == _persona_id(episode.persona),
+        "current_ooda_ledger_available": _persona_oss_ooda_causal_ledger_is_usable(persona_oss_ooda_ledger),
+        "no_future_current_case_artifact_used_as_prior": cold_start
+        or str(cross_cycle_context.get("previous_case_id")) != episode.case_id,
+    }
+    return {
+        "proof_id": f"cross-cycle-carryover-{episode.case_id}",
+        "proof_ref": f"cross-cycle-carryover://{episode.case_id}",
+        "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "carryover_status": status,
+        "previous_case_id": cross_cycle_context.get("previous_case_id"),
+        "state_ref": state_ref,
+        "runtime_feedback_ref": runtime_feedback_ref,
+        "source_runtime_ref": cross_cycle_context.get("source_runtime_ref"),
+        "source_handoff_ref": cross_cycle_context.get("source_handoff_ref"),
+        "previous_ooda_ledger_ref": cross_cycle_context.get("previous_ooda_ledger_ref"),
+        "current_ooda_ledger_ref": persona_oss_ooda_ledger["ledger_ref"],
+        "next_ooda_step": cross_cycle_context.get("next_ooda_step"),
+        "next_ooda_action": cross_cycle_context.get("next_ooda_action"),
+        "score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
+        "trace_bindings": trace_bindings,
+        "evidence_refs": list(cross_cycle_context.get("evidence_refs", [])),
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "cross-cycle-carryover-proof",
+            {
+                "case_id": episode.case_id,
+                "cross_cycle_context": cross_cycle_context,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _cross_cycle_carryover_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("carryover_status")
+    trace_bindings = list(proof.get("trace_bindings", []))
+    return bool(
+        proof.get("model_id") == PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("cross-cycle-carryover://")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_prior_cycle_bound",
+            "runtime_feedback_ref_available",
+            "previous_lean_handoff_ref_available",
+            "previous_ooda_ledger_ref_available",
+            "reasoning_consumes_prior_runtime_feedback",
+            "candidate_generation_consumes_prior_runtime_feedback",
+            "selected_candidate_cites_cross_cycle_state",
+            "scorer_applies_cross_cycle_adjustment",
+            "same_persona_cycle_carryover",
+            "current_ooda_ledger_available",
+            "no_future_current_case_artifact_used_as_prior",
+        ))
+        and (
+            (
+                status == "cold_start"
+                and proof.get("previous_case_id") is None
+                and proof.get("runtime_feedback_ref") is None
+                and all(float(value) == 0.0 for value in proof.get("score_adjustments", {}).values())
+            )
+            or (
+                status == "applied"
+                and proof.get("previous_case_id")
+                and proof.get("runtime_feedback_ref")
+                and proof.get("state_ref")
+                and float(proof.get("score_adjustments", {}).get("feedback-adapt", 0.0)) > 0.0
+                and all(binding.get("scorer_cross_cycle_adjustment", 0.0) > 0.0 for binding in trace_bindings)
+            )
+        )
+    )
+
+
+def _build_persisted_cycle_resume_proof(
+    *,
+    episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    cross_cycle_carryover: Mapping[str, Any],
+) -> dict[str, Any]:
+    checkpoint_ref = cross_cycle_context.get("previous_restart_checkpoint_ref")
+    schedule_ref = cross_cycle_context.get("previous_schedule_ref")
+    metadata_ref = cross_cycle_context.get("previous_object_store_metadata_ref")
+    artifact_ref = cross_cycle_context.get("previous_object_store_artifact_ref")
+    persisted_refs = [
+        str(ref)
+        for ref in (checkpoint_ref, schedule_ref, metadata_ref, artifact_ref)
+        if ref
+    ]
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_action = _candidate_action_key(str(trace["selected_candidate_id"]))
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_action": selected_action,
+                "decision_input_state_ref": trace["decision_inputs"].get("cross_cycle_state_ref"),
+                "reasoning_consumes_persisted_refs": bool(persisted_refs)
+                and set(persisted_refs).issubset(set(reasoning_request["input_refs"])),
+                "candidate_request_consumes_persisted_refs": bool(persisted_refs)
+                and set(persisted_refs).issubset(set(candidate_request["input_refs"])),
+                "selected_candidate_cites_persisted_refs": bool(persisted_refs)
+                and set(persisted_refs).issubset(set(selected_candidate["evidence_refs"])),
+                "scorer_cross_cycle_adjustment": float(
+                    scoring_inputs["cross_cycle_score_adjustments"].get(selected_action, 0.0)
+                ),
+            }
+        )
+
+    status = str(cross_cycle_context["status"])
+    cold_start = status == "cold_start"
+    applied = status == "applied"
+    replay = {
+        "replayable": True,
+        "cold_start_or_persisted_state_bound": cold_start
+        or (
+            applied
+            and cross_cycle_context.get("previous_case_id")
+            and cross_cycle_context.get("prior_case_completed_before_current_case") is True
+        ),
+        "prior_restart_checkpoint_available": cold_start or bool(checkpoint_ref),
+        "prior_autonomous_schedule_available": cold_start or bool(schedule_ref),
+        "prior_runtime_object_store_readback_available": cold_start
+        or (bool(metadata_ref) and bool(artifact_ref)),
+        "scheduler_feedback_due_at_preserved": cold_start
+        or (
+            cross_cycle_context.get("previous_next_cycle_due_at")
+            == cross_cycle_context.get("previous_feedback_scheduled_cycle_due_at")
+        ),
+        "reasoning_consumes_persisted_resume_refs": cold_start
+        or all(binding["reasoning_consumes_persisted_refs"] for binding in trace_bindings),
+        "candidate_generation_consumes_persisted_resume_refs": cold_start
+        or all(binding["candidate_request_consumes_persisted_refs"] for binding in trace_bindings),
+        "selected_candidate_cites_persisted_resume_refs": cold_start
+        or all(binding["selected_candidate_cites_persisted_refs"] for binding in trace_bindings),
+        "scorer_applies_after_resume_adjustment": cold_start
+        or all(binding["scorer_cross_cycle_adjustment"] > 0.0 for binding in trace_bindings),
+        "same_persona_resume_carryover": cold_start
+        or cross_cycle_context.get("persona_id") == _persona_id(episode.persona),
+        "cross_cycle_runtime_feedback_bound": _cross_cycle_carryover_is_usable(cross_cycle_carryover),
+        "no_future_current_case_artifact_used_as_prior": cold_start
+        or str(cross_cycle_context.get("previous_case_id")) != episode.case_id,
+    }
+    return {
+        "proof_id": f"persisted-cycle-resume-{episode.case_id}",
+        "proof_ref": f"persisted-cycle-resume://{episode.case_id}",
+        "model_id": PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "resume_status": status,
+        "previous_case_id": cross_cycle_context.get("previous_case_id"),
+        "state_ref": cross_cycle_context.get("state_ref"),
+        "runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+        "restart_checkpoint_ref": checkpoint_ref,
+        "schedule_ref": schedule_ref,
+        "next_cycle_due_at": cross_cycle_context.get("previous_next_cycle_due_at"),
+        "feedback_scheduled_cycle_due_at": cross_cycle_context.get(
+            "previous_feedback_scheduled_cycle_due_at"
+        ),
+        "object_store_metadata_ref": metadata_ref,
+        "object_store_artifact_ref": artifact_ref,
+        "resume_step": cross_cycle_context.get("previous_resume_step"),
+        "next_ooda_step": cross_cycle_context.get("next_ooda_step"),
+        "next_scheduler_phase": cross_cycle_context.get("next_scheduler_phase"),
+        "persisted_refs": persisted_refs,
+        "score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
+        "trace_bindings": trace_bindings,
+        "source_cross_cycle_proof_ref": cross_cycle_carryover.get("proof_ref"),
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "persisted-cycle-resume-proof",
+            {
+                "case_id": episode.case_id,
+                "cross_cycle_context": cross_cycle_context,
+                "persisted_refs": persisted_refs,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _persisted_cycle_resume_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("resume_status")
+    trace_bindings = list(proof.get("trace_bindings", []))
+    return bool(
+        proof.get("model_id") == PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("persisted-cycle-resume://")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_persisted_state_bound",
+            "prior_restart_checkpoint_available",
+            "prior_autonomous_schedule_available",
+            "prior_runtime_object_store_readback_available",
+            "scheduler_feedback_due_at_preserved",
+            "reasoning_consumes_persisted_resume_refs",
+            "candidate_generation_consumes_persisted_resume_refs",
+            "selected_candidate_cites_persisted_resume_refs",
+            "scorer_applies_after_resume_adjustment",
+            "same_persona_resume_carryover",
+            "cross_cycle_runtime_feedback_bound",
+            "no_future_current_case_artifact_used_as_prior",
+        ))
+        and (
+            (
+                status == "cold_start"
+                and proof.get("previous_case_id") is None
+                and proof.get("persisted_refs") == []
+                and all(float(value) == 0.0 for value in proof.get("score_adjustments", {}).values())
+            )
+            or (
+                status == "applied"
+                and proof.get("previous_case_id")
+                and proof.get("restart_checkpoint_ref")
+                and proof.get("schedule_ref")
+                and proof.get("object_store_metadata_ref")
+                and proof.get("object_store_artifact_ref")
+                and proof.get("next_cycle_due_at") == proof.get("feedback_scheduled_cycle_due_at")
+                and float(proof.get("score_adjustments", {}).get("feedback-adapt", 0.0)) > 0.0
+                and all(binding.get("scorer_cross_cycle_adjustment", 0.0) > 0.0 for binding in trace_bindings)
+            )
+        )
+    )
+
+
+def _build_multi_cycle_lineage_proof(
+    *,
+    episode: PortfolioEpisode,
+    multi_cycle_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    cross_cycle_carryover: Mapping[str, Any],
+    persisted_cycle_resume: Mapping[str, Any],
+) -> dict[str, Any]:
+    lineage_ref = multi_cycle_context.get("lineage_ref")
+    latest_runtime_feedback_ref = multi_cycle_context.get("latest_runtime_feedback_ref")
+    older_runtime_feedback_ref = multi_cycle_context.get("older_runtime_feedback_ref")
+    lineage_refs = [str(ref) for ref in multi_cycle_context.get("evidence_refs", []) if ref]
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_action = _candidate_action_key(str(trace["selected_candidate_id"]))
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_action": selected_action,
+                "decision_input_lineage_ref": trace["decision_inputs"].get("multi_cycle_lineage_ref"),
+                "reasoning_consumes_lineage_refs": bool(lineage_refs)
+                and set(lineage_refs).issubset(set(reasoning_request["input_refs"])),
+                "candidate_request_consumes_lineage_refs": bool(lineage_refs)
+                and set(lineage_refs).issubset(set(candidate_request["input_refs"])),
+                "selected_candidate_cites_lineage_refs": bool(lineage_refs)
+                and set(lineage_refs).issubset(set(selected_candidate["evidence_refs"])),
+                "scorer_multi_cycle_lineage_adjustment": float(
+                    scoring_inputs["multi_cycle_lineage_score_adjustments"].get(selected_action, 0.0)
+                ),
+                "decision_replay_uses_lineage": (
+                    artifact["replay"].get("uses_multi_cycle_lineage_or_declares_cold_start") is True
+                ),
+            }
+        )
+
+    status = str(multi_cycle_context["status"])
+    cold_start = status == "cold_start"
+    single_prior = status == "single_prior"
+    lineage_applied = status == "lineage_applied"
+    replay = {
+        "replayable": True,
+        "cold_start_or_lineage_bound": cold_start
+        or bool(
+            status in {"single_prior", "lineage_applied"}
+            and multi_cycle_context.get("prior_cases_completed_before_current_case") is True
+            and multi_cycle_context.get("lineage_ref")
+        ),
+        "lineage_depth_matches_history": (
+            (cold_start and int(multi_cycle_context.get("lineage_depth", -1)) == 0)
+            or (single_prior and int(multi_cycle_context.get("lineage_depth", 0)) == 1)
+            or (lineage_applied and int(multi_cycle_context.get("lineage_depth", 0)) == 2)
+        ),
+        "latest_prior_cycle_bound": cold_start
+        or bool(
+            multi_cycle_context.get("latest_case_id")
+            and latest_runtime_feedback_ref
+            and multi_cycle_context.get("latest_restart_checkpoint_ref")
+            and multi_cycle_context.get("latest_schedule_ref")
+        ),
+        "older_prior_cycle_bound": cold_start
+        or single_prior
+        or bool(
+            multi_cycle_context.get("older_case_id")
+            and older_runtime_feedback_ref
+            and multi_cycle_context.get("older_restart_checkpoint_ref")
+            and multi_cycle_context.get("older_schedule_ref")
+        ),
+        "reasoning_consumes_lineage_refs": cold_start
+        or all(binding["reasoning_consumes_lineage_refs"] for binding in trace_bindings),
+        "candidate_generation_consumes_lineage_refs": cold_start
+        or all(binding["candidate_request_consumes_lineage_refs"] for binding in trace_bindings),
+        "selected_candidate_cites_lineage_refs": cold_start
+        or all(binding["selected_candidate_cites_lineage_refs"] for binding in trace_bindings),
+        "scorer_applies_lineage_adjustment": cold_start
+        or all(binding["scorer_multi_cycle_lineage_adjustment"] > 0.0 for binding in trace_bindings),
+        "decision_artifact_replays_lineage": all(
+            binding["decision_replay_uses_lineage"] for binding in trace_bindings
+        ),
+        "same_persona_lineage": cold_start
+        or multi_cycle_context.get("persona_id") == _persona_id(episode.persona),
+        "cross_cycle_runtime_feedback_bound": _cross_cycle_carryover_is_usable(cross_cycle_carryover),
+        "persisted_resume_bound": _persisted_cycle_resume_is_usable(persisted_cycle_resume),
+        "no_future_current_case_artifact_used_as_prior": cold_start
+        or (
+            str(multi_cycle_context.get("latest_case_id")) != episode.case_id
+            and str(multi_cycle_context.get("older_case_id")) != episode.case_id
+        ),
+    }
+    return {
+        "proof_id": f"multi-cycle-lineage-{episode.case_id}",
+        "proof_ref": f"multi-cycle-lineage://{episode.case_id}",
+        "model_id": PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "lineage_status": status,
+        "lineage_ref": lineage_ref,
+        "lineage_depth": int(multi_cycle_context.get("lineage_depth", 0)),
+        "lineage_case_ids": list(multi_cycle_context.get("lineage_case_ids", [])),
+        "latest_case_id": multi_cycle_context.get("latest_case_id"),
+        "older_case_id": multi_cycle_context.get("older_case_id"),
+        "latest_state_ref": multi_cycle_context.get("latest_state_ref"),
+        "older_state_ref": multi_cycle_context.get("older_state_ref"),
+        "latest_runtime_feedback_ref": latest_runtime_feedback_ref,
+        "older_runtime_feedback_ref": older_runtime_feedback_ref,
+        "latest_restart_checkpoint_ref": multi_cycle_context.get("latest_restart_checkpoint_ref"),
+        "older_restart_checkpoint_ref": multi_cycle_context.get("older_restart_checkpoint_ref"),
+        "latest_schedule_ref": multi_cycle_context.get("latest_schedule_ref"),
+        "older_schedule_ref": multi_cycle_context.get("older_schedule_ref"),
+        "latest_object_store_metadata_ref": multi_cycle_context.get("latest_object_store_metadata_ref"),
+        "older_object_store_metadata_ref": multi_cycle_context.get("older_object_store_metadata_ref"),
+        "latest_object_store_artifact_ref": multi_cycle_context.get("latest_object_store_artifact_ref"),
+        "older_object_store_artifact_ref": multi_cycle_context.get("older_object_store_artifact_ref"),
+        "latest_next_ooda_step": multi_cycle_context.get("latest_next_ooda_step"),
+        "older_next_ooda_step": multi_cycle_context.get("older_next_ooda_step"),
+        "latest_next_scheduler_phase": multi_cycle_context.get("latest_next_scheduler_phase"),
+        "older_next_scheduler_phase": multi_cycle_context.get("older_next_scheduler_phase"),
+        "trend_signal": multi_cycle_context.get("trend_signal"),
+        "lineage_refs": lineage_refs,
+        "score_adjustments": _multi_cycle_lineage_score_adjustments(multi_cycle_context),
+        "trace_bindings": trace_bindings,
+        "source_cross_cycle_proof_ref": cross_cycle_carryover.get("proof_ref"),
+        "source_persisted_cycle_resume_ref": persisted_cycle_resume.get("proof_ref"),
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "multi-cycle-lineage-proof",
+            {
+                "case_id": episode.case_id,
+                "multi_cycle_context": multi_cycle_context,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _multi_cycle_lineage_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("lineage_status")
+    trace_bindings = list(proof.get("trace_bindings", []))
+    score_adjustments = proof.get("score_adjustments", {})
+    return bool(
+        proof.get("model_id") == PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("multi-cycle-lineage://")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_lineage_bound",
+            "lineage_depth_matches_history",
+            "latest_prior_cycle_bound",
+            "older_prior_cycle_bound",
+            "reasoning_consumes_lineage_refs",
+            "candidate_generation_consumes_lineage_refs",
+            "selected_candidate_cites_lineage_refs",
+            "scorer_applies_lineage_adjustment",
+            "decision_artifact_replays_lineage",
+            "same_persona_lineage",
+            "cross_cycle_runtime_feedback_bound",
+            "persisted_resume_bound",
+            "no_future_current_case_artifact_used_as_prior",
+        ))
+        and (
+            (
+                status == "cold_start"
+                and proof.get("lineage_ref") is None
+                and proof.get("lineage_depth") == 0
+                and proof.get("lineage_case_ids") == []
+                and proof.get("lineage_refs") == []
+                and all(float(value) == 0.0 for value in score_adjustments.values())
+            )
+            or (
+                status == "single_prior"
+                and proof.get("lineage_ref")
+                and proof.get("lineage_depth") == 1
+                and proof.get("latest_case_id")
+                and proof.get("latest_runtime_feedback_ref")
+                and proof.get("older_case_id") is None
+                and proof.get("older_runtime_feedback_ref") is None
+                and float(score_adjustments.get("feedback-adapt", 0.0)) > 0.0
+                and all(
+                    binding.get("scorer_multi_cycle_lineage_adjustment", 0.0) > 0.0
+                    for binding in trace_bindings
+                )
+            )
+            or (
+                status == "lineage_applied"
+                and proof.get("lineage_ref")
+                and proof.get("lineage_depth") == 2
+                and proof.get("latest_case_id")
+                and proof.get("older_case_id")
+                and proof.get("latest_case_id") != proof.get("older_case_id")
+                and proof.get("latest_runtime_feedback_ref")
+                and proof.get("older_runtime_feedback_ref")
+                and float(score_adjustments.get("feedback-adapt", 0.0)) > 0.0
+                and all(
+                    binding.get("scorer_multi_cycle_lineage_adjustment", 0.0) > 0.0
+                    for binding in trace_bindings
+                )
+            )
+        )
+    )
 
 
 def _memory_influence_applied_to_selected_candidate(
@@ -3551,6 +4498,193 @@ def _memory_counterfactual_proof_is_usable(proof: Mapping[str, Any]) -> bool:
     )
 
 
+def _build_institutional_memory_lineage_proof(
+    *,
+    episode: PortfolioEpisode,
+    institutional_memory_context: Mapping[str, Any] | None,
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    influence = _institutional_memory_influence_profile(institutional_memory_context)
+    entry_ref = influence.get("entry_ref")
+    cited_evidence_refs = [str(ref) for ref in influence.get("cited_evidence_refs", [])]
+    institutional_refs = [
+        str(ref)
+        for ref in (entry_ref, *cited_evidence_refs)
+        if ref
+    ]
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_action = _candidate_action_key(str(trace["selected_candidate_id"]))
+        selected_scorecard = artifact["scorer"]["scorecards"][trace["selected_candidate_id"]]
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_action": selected_action,
+                "decision_input_entry_ref": trace["decision_inputs"].get("institutional_memory_entry_ref"),
+                "private_memory_ref": trace["decision_inputs"].get("memory_influence_ref"),
+                "reasoning_consumes_entry_ref": entry_ref is not None
+                and str(entry_ref) in reasoning_request["input_refs"],
+                "candidate_request_consumes_entry_ref": entry_ref is not None
+                and str(entry_ref) in candidate_request["input_refs"],
+                "selected_candidate_cites_entry_ref": entry_ref is not None
+                and str(entry_ref) in selected_candidate["evidence_refs"],
+                "reasoning_consumes_cited_evidence_refs": bool(cited_evidence_refs)
+                and set(cited_evidence_refs).issubset(set(reasoning_request["input_refs"])),
+                "candidate_request_consumes_cited_evidence_refs": bool(cited_evidence_refs)
+                and set(cited_evidence_refs).issubset(set(candidate_request["input_refs"])),
+                "selected_candidate_cites_cited_evidence_refs": bool(cited_evidence_refs)
+                and set(cited_evidence_refs).issubset(set(selected_candidate["evidence_refs"])),
+                "scorer_institutional_memory_adjustment": float(
+                    scoring_inputs["institutional_memory_score_adjustments"].get(selected_action, 0.0)
+                ),
+                "scorecard_institutional_memory_adjustment": float(
+                    selected_scorecard["components"].get("institutional_memory_adjustment", 0.0)
+                ),
+                "decision_replay_uses_institutional_memory": artifact["replay"].get(
+                    "uses_cross_persona_institutional_memory_or_declares_cold_start"
+                )
+                is True,
+            }
+        )
+
+    status = str(influence["status"])
+    cold_start = status == "cold_start"
+    applied = status == "applied"
+    current_persona_id = _persona_id(episode.persona)
+    contributing_persona_ids = set(str(item) for item in influence.get("contributing_persona_ids", []))
+    replay = {
+        "replayable": True,
+        "cold_start_or_cross_persona_entry_bound": cold_start
+        or bool(applied and influence.get("entry_id") and entry_ref),
+        "source_persona_differs_from_current_persona": cold_start
+        or current_persona_id not in contributing_persona_ids,
+        "institutional_entry_ref_available": cold_start or bool(entry_ref),
+        "reasoning_consumes_institutional_memory": cold_start
+        or all(binding["reasoning_consumes_entry_ref"] for binding in trace_bindings),
+        "candidate_generation_consumes_institutional_memory": cold_start
+        or all(binding["candidate_request_consumes_entry_ref"] for binding in trace_bindings),
+        "selected_candidate_cites_institutional_memory": cold_start
+        or all(binding["selected_candidate_cites_entry_ref"] for binding in trace_bindings),
+        "reasoning_consumes_institutional_source_evidence": cold_start
+        or all(binding["reasoning_consumes_cited_evidence_refs"] for binding in trace_bindings),
+        "candidate_generation_consumes_institutional_source_evidence": cold_start
+        or all(binding["candidate_request_consumes_cited_evidence_refs"] for binding in trace_bindings),
+        "selected_candidate_cites_institutional_source_evidence": cold_start
+        or all(binding["selected_candidate_cites_cited_evidence_refs"] for binding in trace_bindings),
+        "scorer_applies_institutional_memory_adjustment": cold_start
+        or all(binding["scorer_institutional_memory_adjustment"] > 0.0 for binding in trace_bindings),
+        "scorecard_replays_institutional_memory_adjustment": cold_start
+        or all(
+            binding["scorecard_institutional_memory_adjustment"]
+            == binding["scorer_institutional_memory_adjustment"]
+            for binding in trace_bindings
+        ),
+        "decision_artifact_replays_institutional_memory": all(
+            binding["decision_replay_uses_institutional_memory"] for binding in trace_bindings
+        ),
+        "private_persona_memory_not_reused_as_institutional_memory": cold_start
+        or all(
+            binding["decision_input_entry_ref"]
+            and not str(binding["decision_input_entry_ref"]).startswith("memory://")
+            and binding["decision_input_entry_ref"] != binding["private_memory_ref"]
+            for binding in trace_bindings
+        ),
+    }
+    return {
+        "proof_id": f"institutional-memory-lineage-{episode.case_id}",
+        "proof_ref": f"institutional-memory-lineage://{episode.case_id}",
+        "model_id": PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": current_persona_id,
+        "lineage_status": status,
+        "entry_id": influence.get("entry_id"),
+        "entry_ref": entry_ref,
+        "source_event_id": influence.get("source_event_id"),
+        "reuse_count": influence.get("reuse_count"),
+        "contributing_persona_ids": list(influence.get("contributing_persona_ids", [])),
+        "sponsor_persona_id": influence.get("sponsor_persona_id"),
+        "selected_action_hint": influence.get("selected_action_hint"),
+        "score_adjustments": copy.deepcopy(dict(influence["candidate_score_adjustments"])),
+        "cited_proposal_ids": list(influence.get("cited_proposal_ids", [])),
+        "cited_evidence_refs": cited_evidence_refs,
+        "institutional_refs": institutional_refs,
+        "trace_bindings": trace_bindings,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "institutional-memory-lineage-proof",
+            {
+                "case_id": episode.case_id,
+                "institutional_memory_context": institutional_memory_context,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _institutional_memory_lineage_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("lineage_status")
+    trace_bindings = list(proof.get("trace_bindings", []))
+    score_adjustments = proof.get("score_adjustments", {})
+    return bool(
+        proof.get("model_id") == PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("institutional-memory-lineage://")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_cross_persona_entry_bound",
+            "source_persona_differs_from_current_persona",
+            "institutional_entry_ref_available",
+            "reasoning_consumes_institutional_memory",
+            "candidate_generation_consumes_institutional_memory",
+            "selected_candidate_cites_institutional_memory",
+            "reasoning_consumes_institutional_source_evidence",
+            "candidate_generation_consumes_institutional_source_evidence",
+            "selected_candidate_cites_institutional_source_evidence",
+            "scorer_applies_institutional_memory_adjustment",
+            "scorecard_replays_institutional_memory_adjustment",
+            "decision_artifact_replays_institutional_memory",
+            "private_persona_memory_not_reused_as_institutional_memory",
+        ))
+        and (
+            (
+                status == "cold_start"
+                and proof.get("entry_id") is None
+                and proof.get("entry_ref") is None
+                and proof.get("contributing_persona_ids") == []
+                and all(float(value) == 0.0 for value in score_adjustments.values())
+                and all(
+                    binding.get("scorer_institutional_memory_adjustment", 0.0) == 0.0
+                    for binding in trace_bindings
+                )
+            )
+            or (
+                status == "applied"
+                and proof.get("entry_id")
+                and proof.get("entry_ref")
+                and proof.get("source_event_id")
+                and proof.get("contributing_persona_ids")
+                and proof.get("persona_id") not in proof.get("contributing_persona_ids", [])
+                and float(score_adjustments.get("feedback-adapt", 0.0)) > 0.0
+                and all(
+                    binding.get("scorer_institutional_memory_adjustment", 0.0) > 0.0
+                    for binding in trace_bindings
+                )
+            )
+        )
+    )
+
+
 def _build_persona_reasoning_response(
     *,
     episode: PortfolioEpisode,
@@ -3560,14 +4694,21 @@ def _build_persona_reasoning_response(
     latest_evaluation: Mapping[str, Any],
     telemetry_event: Mapping[str, Any],
     memory_influence: Mapping[str, Any],
+    institutional_memory_influence: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
+    multi_cycle_context: Mapping[str, Any],
 ) -> dict[str, Any]:
     allowed_windows = ["observe", "feedback"] if generation == 1 else ["observe", "feedback", "holdout"]
     forbidden_windows = ["holdout", "future_holdout"] if generation == 1 else ["future_holdout"]
+    reflection_result = oss_inputs["reflection_artifact"]
+    reflection_artifact_ref = (
+        f"oss://{reflection_result['component']}/{reflection_result['request_id']}"
+    )
     reasoning_request = {
         "request_id": f"persona-reasoning-request-{episode.case_id}-gen{generation}",
         "model_id": PERSONA_REASONING_MODEL_ID,
@@ -3587,7 +4728,15 @@ def _build_persona_reasoning_response(
             str(oss_disagreement_arbitration["arbitration_ref"]),
             str(tracking_reconciliation["reconciliation_ref"]),
             str(alpha_seed_revision["revision_ref"]),
+            *list(cross_cycle_context.get("evidence_refs", [])),
+            *list(multi_cycle_context.get("evidence_refs", [])),
             *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
+            *(
+                [str(institutional_memory_influence["entry_ref"])]
+                if institutional_memory_influence["entry_ref"]
+                else []
+            ),
+            *list(institutional_memory_influence.get("cited_evidence_refs", [])),
         ],
         "portfolio_instruments": [window.instrument for window in episode.windows],
         "baseline_risk_multiplier": float(baseline_policy["risk_multiplier"]),
@@ -3598,13 +4747,30 @@ def _build_persona_reasoning_response(
             "turnover": latest_evaluation["turnover"],
         },
         "memory_influence": copy.deepcopy(dict(memory_influence)),
+        "institutional_memory_influence": copy.deepcopy(dict(institutional_memory_influence)),
         "oss_components_by_role": {
             role: result["component"] for role, result in sorted(oss_inputs.items())
         },
+        "reflection_artifact_ref": reflection_artifact_ref,
+        "reflection_artifact_component": reflection_result["component"],
+        "reflection_artifact_request_id": reflection_result["request_id"],
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
         "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
         "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
+        "cross_cycle_status": cross_cycle_context["status"],
+        "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
+        "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+        "multi_cycle_lineage_status": multi_cycle_context["status"],
+        "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
+        "multi_cycle_latest_runtime_feedback_ref": multi_cycle_context.get("latest_runtime_feedback_ref"),
+        "multi_cycle_older_runtime_feedback_ref": multi_cycle_context.get("older_runtime_feedback_ref"),
+        "institutional_memory_status": institutional_memory_influence["status"],
+        "institutional_memory_entry_ref": institutional_memory_influence["entry_ref"],
+        "institutional_memory_source_event_id": institutional_memory_influence["source_event_id"],
+        "institutional_memory_contributing_persona_ids": list(
+            institutional_memory_influence["contributing_persona_ids"]
+        ),
         "oss_followup_request_ids": [
             followup["request"]["request_id"]
             for followup in oss_followup_loop["followups"]
@@ -3614,11 +4780,14 @@ def _build_persona_reasoning_response(
         generation=generation,
         allowed_windows=allowed_windows,
         memory_influence=memory_influence,
+        institutional_memory_influence=institutional_memory_influence,
         oss_inputs=oss_inputs,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        cross_cycle_context=cross_cycle_context,
+        multi_cycle_context=multi_cycle_context,
     )
     reasoning_response = {
         "response_id": f"persona-reasoning-response-{episode.case_id}-gen{generation}",
@@ -3645,7 +4814,34 @@ def _build_persona_reasoning_response(
             "selected_action_hint": memory_influence["selected_action_hint"],
             "score_adjustments": copy.deepcopy(dict(memory_influence["candidate_score_adjustments"])),
         },
+        "institutional_memory_usage": {
+            "model_id": institutional_memory_influence["model_id"],
+            "status": institutional_memory_influence["status"],
+            "entry_id": institutional_memory_influence["entry_id"],
+            "entry_ref": institutional_memory_influence["entry_ref"],
+            "source_event_id": institutional_memory_influence["source_event_id"],
+            "contributing_persona_ids": list(
+                institutional_memory_influence["contributing_persona_ids"]
+            ),
+            "selected_action_hint": institutional_memory_influence["selected_action_hint"],
+            "candidate_score_adjustments": copy.deepcopy(
+                dict(institutional_memory_influence["candidate_score_adjustments"])
+            ),
+        },
         "preferred_action_hint": _persona_reasoning_preferred_action(memory_influence),
+        "reflection_artifact_usage": {
+            "source_oss_ref": reflection_artifact_ref,
+            "component": reflection_result["component"],
+            "request_id": reflection_result["request_id"],
+            "artifact_family": reflection_result.get("artifact_family"),
+            "materiality_model_id": PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID,
+            "reflection_quality": _reflection_quality_from_oss(oss_inputs),
+            "drives_candidate_blueprint_actions": [
+                "feedback-adapt",
+                "contrarian-check",
+            ],
+            "drives_persona_step": reflection_result.get("drives_persona_step"),
+        },
         "oss_followup_usage": {
             "loop_ref": oss_followup_loop["loop_ref"],
             "model_id": oss_followup_loop["model_id"],
@@ -3682,6 +4878,28 @@ def _build_persona_reasoning_response(
                 dict(alpha_seed_revision["candidate_score_adjustments"])
             ),
         },
+        "cross_cycle_usage": {
+            "model_id": cross_cycle_context["model_id"],
+            "status": cross_cycle_context["status"],
+            "state_ref": cross_cycle_context.get("state_ref"),
+            "runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+            "previous_case_id": cross_cycle_context.get("previous_case_id"),
+            "next_ooda_step": cross_cycle_context.get("next_ooda_step"),
+            "candidate_score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
+        },
+        "multi_cycle_lineage_usage": {
+            "model_id": multi_cycle_context["model_id"],
+            "status": multi_cycle_context["status"],
+            "lineage_ref": multi_cycle_context.get("lineage_ref"),
+            "lineage_depth": multi_cycle_context.get("lineage_depth"),
+            "lineage_case_ids": list(multi_cycle_context.get("lineage_case_ids", [])),
+            "latest_runtime_feedback_ref": multi_cycle_context.get("latest_runtime_feedback_ref"),
+            "older_runtime_feedback_ref": multi_cycle_context.get("older_runtime_feedback_ref"),
+            "trend_signal": multi_cycle_context.get("trend_signal"),
+            "candidate_score_adjustments": _multi_cycle_lineage_score_adjustments(
+                multi_cycle_context
+            ),
+        },
         "candidate_blueprints": candidate_blueprints,
         "forbidden_windows_not_used": forbidden_windows,
         "output_contract": {
@@ -3711,17 +4929,47 @@ def _persona_reasoning_candidate_blueprints(
     generation: int,
     allowed_windows: Sequence[str],
     memory_influence: Mapping[str, Any],
+    institutional_memory_influence: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
+    multi_cycle_context: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     del oss_inputs
     shared_windows = list(allowed_windows)
     feedback_windows = ["observe", "feedback"] if generation == 1 else shared_windows
     memory_ref = memory_influence.get("influence_ref")
     memory_refs = [str(memory_ref)] if memory_ref else []
+    institutional_memory_ref = institutional_memory_influence.get("entry_ref")
+    institutional_memory_refs = [str(institutional_memory_ref)] if institutional_memory_ref else []
+    institutional_memory_refs.extend(
+        str(ref) for ref in institutional_memory_influence.get("cited_evidence_refs", [])
+    )
+    institutional_memory_score_adjustments = dict(
+        institutional_memory_influence["candidate_score_adjustments"]
+    )
+    risk_institutional_memory_refs = (
+        institutional_memory_refs
+        if float(institutional_memory_score_adjustments.get("risk-off", 0.0)) > 0.0
+        else []
+    )
+    cross_cycle_refs = list(cross_cycle_context.get("evidence_refs", []))
+    cross_cycle_score_adjustments = _cross_cycle_score_adjustments(cross_cycle_context)
+    risk_cross_cycle_refs = (
+        cross_cycle_refs
+        if float(cross_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0
+        else []
+    )
+    multi_cycle_refs = list(multi_cycle_context.get("evidence_refs", []))
+    multi_cycle_score_adjustments = _multi_cycle_lineage_score_adjustments(multi_cycle_context)
+    risk_multi_cycle_refs = (
+        multi_cycle_refs
+        if float(multi_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0
+        else []
+    )
     feedback_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "feedback-adapt")
     risk_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "risk-off")
     retain_followup_refs = _oss_followup_refs_for_action(oss_followup_loop, "retain-observe")
@@ -3759,6 +5007,9 @@ def _persona_reasoning_candidate_blueprints(
                 *feedback_tracking_refs,
                 *feedback_alpha_refs,
                 *memory_refs,
+                *institutional_memory_refs,
+                *cross_cycle_refs,
+                *multi_cycle_refs,
             ],
             "memory_adjustment_key": "feedback-adapt",
             "rationale": (
@@ -3795,8 +5046,16 @@ def _persona_reasoning_candidate_blueprints(
                 *risk_tracking_refs,
                 *risk_alpha_refs,
                 *memory_refs,
+                *risk_institutional_memory_refs,
+                *risk_cross_cycle_refs,
+                *risk_multi_cycle_refs,
             ]
-            if float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
+            if (
+                float(memory_influence.get("candidate_score_adjustments", {}).get("risk-off", 0.0)) > 0
+                or risk_institutional_memory_refs
+                or risk_cross_cycle_refs
+                or risk_multi_cycle_refs
+            )
             else [*risk_followup_refs, *risk_arbitration_refs, *risk_tracking_refs, *risk_alpha_refs],
             "memory_adjustment_key": "risk-off",
             "rationale": "Use feedback direction but reduce exposure when the risk interpretation asks for caution.",
@@ -3859,6 +5118,37 @@ def _evaluate_persona_reasoning_response(
             {"memory_usage": copy.deepcopy(dict(response.get("memory_usage", {})))},
         ),
         _persona_risk_check(
+            "reasoning_uses_cross_persona_institutional_memory_or_declares_cold_start",
+            (
+                request.get("institutional_memory_status") == "cold_start"
+                and response.get("institutional_memory_usage", {}).get("status") == "cold_start"
+                and request.get("institutional_memory_entry_ref") is None
+            )
+            or (
+                request.get("institutional_memory_status") == "applied"
+                and response.get("institutional_memory_usage", {}).get("status") == "applied"
+                and request.get("institutional_memory_entry_ref")
+                == response.get("institutional_memory_usage", {}).get("entry_ref")
+                and request.get("institutional_memory_entry_ref") in request.get("input_refs", [])
+                and request.get("persona_id")
+                not in set(request.get("institutional_memory_contributing_persona_ids", []))
+                and float(
+                    response.get("institutional_memory_usage", {})
+                    .get("candidate_score_adjustments", {})
+                    .get("feedback-adapt", 0.0)
+                )
+                > 0.0
+            ),
+            {
+                "institutional_memory_status": request.get("institutional_memory_status"),
+                "institutional_memory_entry_ref": request.get("institutional_memory_entry_ref"),
+                "contributing_persona_ids": list(
+                    request.get("institutional_memory_contributing_persona_ids", [])
+                ),
+                "usage": copy.deepcopy(dict(response.get("institutional_memory_usage", {}))),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_uses_oss_followup_loop",
             request.get("oss_followup_loop_ref") == response.get("oss_followup_usage", {}).get("loop_ref")
             and request.get("oss_followup_loop_ref") in request.get("input_refs", [])
@@ -3866,6 +5156,31 @@ def _evaluate_persona_reasoning_response(
             {
                 "oss_followup_loop_ref": request.get("oss_followup_loop_ref"),
                 "followup_count": response.get("oss_followup_usage", {}).get("followup_count"),
+            },
+        ),
+        _persona_risk_check(
+            "reasoning_uses_reflection_artifact_for_blueprints",
+            request.get("reflection_artifact_ref")
+            == response.get("reflection_artifact_usage", {}).get("source_oss_ref")
+            and request.get("reflection_artifact_ref") in request.get("input_refs", [])
+            and response.get("reflection_artifact_usage", {}).get("materiality_model_id")
+            == PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID
+            and float(response.get("reflection_artifact_usage", {}).get("reflection_quality", 0.0))
+            > 0.0
+            and {
+                "feedback-adapt",
+                "contrarian-check",
+            }.issubset(
+                set(
+                    response.get("reflection_artifact_usage", {}).get(
+                        "drives_candidate_blueprint_actions",
+                        [],
+                    )
+                )
+            ),
+            {
+                "reflection_artifact_ref": request.get("reflection_artifact_ref"),
+                "usage": copy.deepcopy(dict(response.get("reflection_artifact_usage", {}))),
             },
         ),
         _persona_risk_check(
@@ -3905,6 +5220,76 @@ def _evaluate_persona_reasoning_response(
             },
         ),
         _persona_risk_check(
+            "reasoning_uses_cross_cycle_runtime_feedback_or_declares_cold_start",
+            (
+                request.get("cross_cycle_status") == "cold_start"
+                and response.get("cross_cycle_usage", {}).get("status") == "cold_start"
+                and request.get("cross_cycle_state_ref") is None
+            )
+            or (
+                request.get("cross_cycle_status") == "applied"
+                and response.get("cross_cycle_usage", {}).get("status") == "applied"
+                and request.get("cross_cycle_state_ref")
+                == response.get("cross_cycle_usage", {}).get("state_ref")
+                and request.get("cross_cycle_runtime_feedback_ref")
+                == response.get("cross_cycle_usage", {}).get("runtime_feedback_ref")
+                and request.get("cross_cycle_state_ref") in request.get("input_refs", [])
+                and request.get("cross_cycle_runtime_feedback_ref") in request.get("input_refs", [])
+                and float(
+                    response.get("cross_cycle_usage", {})
+                    .get("candidate_score_adjustments", {})
+                    .get("feedback-adapt", 0.0)
+                )
+                > 0.0
+            ),
+            {
+                "cross_cycle_status": request.get("cross_cycle_status"),
+                "cross_cycle_state_ref": request.get("cross_cycle_state_ref"),
+                "usage": copy.deepcopy(dict(response.get("cross_cycle_usage", {}))),
+            },
+        ),
+        _persona_risk_check(
+            "reasoning_uses_multi_cycle_lineage_or_declares_cold_start",
+            (
+                request.get("multi_cycle_lineage_status") == "cold_start"
+                and response.get("multi_cycle_lineage_usage", {}).get("status") == "cold_start"
+                and request.get("multi_cycle_lineage_ref") is None
+            )
+            or (
+                request.get("multi_cycle_lineage_status") == "single_prior"
+                and response.get("multi_cycle_lineage_usage", {}).get("status") == "single_prior"
+                and request.get("multi_cycle_lineage_ref")
+                == response.get("multi_cycle_lineage_usage", {}).get("lineage_ref")
+                and request.get("multi_cycle_latest_runtime_feedback_ref") in request.get("input_refs", [])
+                and request.get("multi_cycle_older_runtime_feedback_ref") is None
+                and float(
+                    response.get("multi_cycle_lineage_usage", {})
+                    .get("candidate_score_adjustments", {})
+                    .get("feedback-adapt", 0.0)
+                )
+                > 0.0
+            )
+            or (
+                request.get("multi_cycle_lineage_status") == "lineage_applied"
+                and response.get("multi_cycle_lineage_usage", {}).get("status") == "lineage_applied"
+                and request.get("multi_cycle_lineage_ref")
+                == response.get("multi_cycle_lineage_usage", {}).get("lineage_ref")
+                and request.get("multi_cycle_latest_runtime_feedback_ref") in request.get("input_refs", [])
+                and request.get("multi_cycle_older_runtime_feedback_ref") in request.get("input_refs", [])
+                and float(
+                    response.get("multi_cycle_lineage_usage", {})
+                    .get("candidate_score_adjustments", {})
+                    .get("feedback-adapt", 0.0)
+                )
+                > 0.0
+            ),
+            {
+                "multi_cycle_lineage_status": request.get("multi_cycle_lineage_status"),
+                "multi_cycle_lineage_ref": request.get("multi_cycle_lineage_ref"),
+                "usage": copy.deepcopy(dict(response.get("multi_cycle_lineage_usage", {}))),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_routes_to_scorer_and_risk_evaluator",
             response.get("output_contract", {}).get("scorer_required") is True
             and response.get("output_contract", {}).get("risk_evaluator_required") is True,
@@ -3931,8 +5316,14 @@ def _build_agent_decision_trace(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
+    multi_cycle_context: Mapping[str, Any],
+    institutional_memory_context: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     memory_influence = _memory_influence_profile(prior_memory)
+    institutional_memory_influence = _institutional_memory_influence_profile(
+        institutional_memory_context
+    )
     trigger = (
         "holdout_generation_refinement"
         if generation == 2
@@ -3946,11 +5337,14 @@ def _build_agent_decision_trace(
         latest_evaluation=latest_evaluation,
         telemetry_event=telemetry_event,
         memory_influence=memory_influence,
+        institutional_memory_influence=institutional_memory_influence,
         oss_inputs=oss_inputs,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        cross_cycle_context=cross_cycle_context,
+        multi_cycle_context=multi_cycle_context,
     )
     candidates = _score_agent_candidates(
         episode=episode,
@@ -3960,11 +5354,14 @@ def _build_agent_decision_trace(
         prior_memory=prior_memory,
         oss_inputs=oss_inputs,
         memory_influence=memory_influence,
+        institutional_memory_influence=institutional_memory_influence,
         persona_reasoning=persona_reasoning,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        cross_cycle_context=cross_cycle_context,
+        multi_cycle_context=multi_cycle_context,
     )
     selected = max(candidates, key=lambda item: item.score)
     candidate_dicts = [_candidate_to_dict(candidate) for candidate in candidates]
@@ -3975,11 +5372,23 @@ def _build_agent_decision_trace(
         "telemetry_event_id": telemetry_event["event_id"],
         "memory_ref": prior_memory.get("memory_id") if prior_memory else None,
         "memory_influence_ref": memory_influence["influence_ref"],
+        "institutional_memory_entry_ref": institutional_memory_influence["entry_ref"],
+        "institutional_memory_source_event_id": institutional_memory_influence["source_event_id"],
+        "institutional_memory_contributing_persona_ids": list(
+            institutional_memory_influence["contributing_persona_ids"]
+        ),
         "oss_components": _oss_components_used(oss_inputs),
         "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
         "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
         "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
+        "cross_cycle_status": cross_cycle_context["status"],
+        "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
+        "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+        "multi_cycle_lineage_status": multi_cycle_context["status"],
+        "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
+        "multi_cycle_latest_runtime_feedback_ref": multi_cycle_context.get("latest_runtime_feedback_ref"),
+        "multi_cycle_older_runtime_feedback_ref": multi_cycle_context.get("older_runtime_feedback_ref"),
     }
     evidence_refs = [
         f"telemetry-event://{telemetry_event['event_id']}",
@@ -3991,6 +5400,14 @@ def _build_agent_decision_trace(
         str(oss_disagreement_arbitration["arbitration_ref"]),
         str(tracking_reconciliation["reconciliation_ref"]),
         str(alpha_seed_revision["revision_ref"]),
+        *list(cross_cycle_context.get("evidence_refs", [])),
+        *list(multi_cycle_context.get("evidence_refs", [])),
+        *(
+            [str(institutional_memory_influence["entry_ref"])]
+            if institutional_memory_influence["entry_ref"]
+            else []
+        ),
+        *list(institutional_memory_influence.get("cited_evidence_refs", [])),
     ]
     agent_decision_artifact = _build_persona_decision_artifact(
         episode=episode,
@@ -4002,11 +5419,14 @@ def _build_agent_decision_trace(
         prior_memory=prior_memory,
         oss_inputs=oss_inputs,
         memory_influence=memory_influence,
+        institutional_memory_influence=institutional_memory_influence,
         persona_reasoning=persona_reasoning,
         oss_followup_loop=oss_followup_loop,
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        cross_cycle_context=cross_cycle_context,
+        multi_cycle_context=multi_cycle_context,
         decision_inputs=decision_inputs,
         evidence_refs=evidence_refs,
         candidates=candidate_dicts,
@@ -4042,11 +5462,14 @@ def _score_agent_candidates(
     prior_memory: Mapping[str, Any] | None,
     oss_inputs: Mapping[str, Mapping[str, Any]],
     memory_influence: Mapping[str, Any],
+    institutional_memory_influence: Mapping[str, Any],
     persona_reasoning: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
+    multi_cycle_context: Mapping[str, Any],
 ) -> list[PolicyCandidate]:
     del prior_memory
     feedback_directions = {
@@ -4066,9 +5489,15 @@ def _score_agent_candidates(
     disagreement_score_adjustments = dict(oss_disagreement_arbitration["candidate_score_adjustments"])
     tracking_score_adjustments = dict(tracking_reconciliation["candidate_score_adjustments"])
     alpha_seed_score_adjustments = dict(alpha_seed_revision["candidate_score_adjustments"])
+    cross_cycle_score_adjustments = _cross_cycle_score_adjustments(cross_cycle_context)
+    multi_cycle_lineage_score_adjustments = _multi_cycle_lineage_score_adjustments(multi_cycle_context)
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_score_adjustments = dict(memory_influence["candidate_score_adjustments"])
+    institutional_memory_score_adjustments = dict(
+        institutional_memory_influence["candidate_score_adjustments"]
+    )
     memory_ref = memory_influence.get("influence_ref")
+    institutional_memory_ref = institutional_memory_influence.get("entry_ref")
     feedback_score = float(latest_evaluation["signed_return"]) - abs(float(latest_evaluation["drawdown"])) * 0.1
     feedback_evidence_refs = [
         f"oss://{oss_inputs['alpha_model']['component']}/{oss_inputs['alpha_model']['request_id']}",
@@ -4085,6 +5514,22 @@ def _score_agent_candidates(
         feedback_evidence_refs.append(str(memory_ref))
         if float(memory_score_adjustments.get("risk-off", 0.0)) > 0:
             risk_off_evidence_refs.append(str(memory_ref))
+    if institutional_memory_ref:
+        feedback_evidence_refs.append(str(institutional_memory_ref))
+        feedback_evidence_refs.extend(
+            str(ref) for ref in institutional_memory_influence.get("cited_evidence_refs", [])
+        )
+        if float(institutional_memory_score_adjustments.get("risk-off", 0.0)) > 0:
+            risk_off_evidence_refs.append(str(institutional_memory_ref))
+            risk_off_evidence_refs.extend(
+                str(ref) for ref in institutional_memory_influence.get("cited_evidence_refs", [])
+            )
+    feedback_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
+    if float(cross_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0:
+        risk_off_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
+    feedback_evidence_refs.extend(str(ref) for ref in multi_cycle_context.get("evidence_refs", []))
+    if float(multi_cycle_lineage_score_adjustments.get("risk-off", 0.0)) > 0.0:
+        risk_off_evidence_refs.extend(str(ref) for ref in multi_cycle_context.get("evidence_refs", []))
     action_context = {
         "feedback-adapt": {
             "directions": feedback_directions,
@@ -4092,10 +5537,13 @@ def _score_agent_candidates(
             "score": (
                 3.0
                 + float(memory_score_adjustments["feedback-adapt"])
+                + float(institutional_memory_score_adjustments["feedback-adapt"])
                 + float(followup_score_adjustments["feedback-adapt"])
                 + float(disagreement_score_adjustments["feedback-adapt"])
                 + float(tracking_score_adjustments["feedback-adapt"])
                 + float(alpha_seed_score_adjustments["feedback-adapt"])
+                + float(cross_cycle_score_adjustments["feedback-adapt"])
+                + float(multi_cycle_lineage_score_adjustments["feedback-adapt"])
                 + feedback_score
                 + policy_quality
                 + reflection_quality
@@ -4109,6 +5557,7 @@ def _score_agent_candidates(
             "score": (
                 1.0
                 + float(memory_score_adjustments["retain-observe"])
+                + float(institutional_memory_score_adjustments["retain-observe"])
                 + float(followup_score_adjustments["retain-observe"])
                 + float(disagreement_score_adjustments["retain-observe"])
                 + float(tracking_score_adjustments["retain-observe"])
@@ -4123,10 +5572,13 @@ def _score_agent_candidates(
             "score": (
                 2.0
                 + float(memory_score_adjustments["risk-off"])
+                + float(institutional_memory_score_adjustments["risk-off"])
                 + float(followup_score_adjustments["risk-off"])
                 + float(disagreement_score_adjustments["risk-off"])
                 + float(tracking_score_adjustments["risk-off"])
                 + float(alpha_seed_score_adjustments["risk-off"])
+                + float(cross_cycle_score_adjustments["risk-off"])
+                + float(multi_cycle_lineage_score_adjustments["risk-off"])
                 + max(0.0, risk_penalty)
             ),
             "fallback_evidence_refs": tuple(risk_off_evidence_refs),
@@ -4137,6 +5589,7 @@ def _score_agent_candidates(
             "score": (
                 0.25
                 + float(memory_score_adjustments["contrarian-check"])
+                + float(institutional_memory_score_adjustments["contrarian-check"])
                 + float(followup_score_adjustments["contrarian-check"])
                 + float(disagreement_score_adjustments["contrarian-check"])
                 + float(tracking_score_adjustments["contrarian-check"])
@@ -4201,11 +5654,14 @@ def _build_persona_decision_artifact(
     prior_memory: Mapping[str, Any] | None,
     oss_inputs: Mapping[str, Mapping[str, Any]],
     memory_influence: Mapping[str, Any],
+    institutional_memory_influence: Mapping[str, Any],
     persona_reasoning: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    cross_cycle_context: Mapping[str, Any],
+    multi_cycle_context: Mapping[str, Any],
     decision_inputs: Mapping[str, Any],
     evidence_refs: Sequence[str],
     candidates: Sequence[Mapping[str, Any]],
@@ -4234,6 +5690,10 @@ def _build_persona_decision_artifact(
         "risk_penalty": _risk_penalty_from_oss(oss_inputs),
         "memory_influence": copy.deepcopy(dict(memory_influence)),
         "memory_score_adjustments": copy.deepcopy(dict(memory_influence["candidate_score_adjustments"])),
+        "institutional_memory_influence": copy.deepcopy(dict(institutional_memory_influence)),
+        "institutional_memory_score_adjustments": copy.deepcopy(
+            dict(institutional_memory_influence["candidate_score_adjustments"])
+        ),
         "oss_followup_loop": copy.deepcopy(dict(oss_followup_loop)),
         "oss_followup_score_adjustments": copy.deepcopy(
             dict(oss_followup_loop["candidate_score_adjustments"])
@@ -4249,6 +5709,12 @@ def _build_persona_decision_artifact(
         "alpha_seed_revision": copy.deepcopy(dict(alpha_seed_revision)),
         "alpha_seed_revision_score_adjustments": copy.deepcopy(
             dict(alpha_seed_revision["candidate_score_adjustments"])
+        ),
+        "cross_cycle_context": copy.deepcopy(dict(cross_cycle_context)),
+        "cross_cycle_score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
+        "multi_cycle_lineage_context": copy.deepcopy(dict(multi_cycle_context)),
+        "multi_cycle_lineage_score_adjustments": _multi_cycle_lineage_score_adjustments(
+            multi_cycle_context
         ),
         "persona_reasoning_ref": persona_reasoning["response"]["reasoning_ref"],
         "persona_reasoning_preferred_action": persona_reasoning["response"]["preferred_action_hint"],
@@ -4297,6 +5763,14 @@ def _build_persona_decision_artifact(
         "memory_status": "retrieved" if prior_memory else "cold_start_declared",
         "prior_memory_source_event_id": prior_memory.get("source_event_id") if prior_memory else None,
         "memory_influence": copy.deepcopy(dict(memory_influence)),
+        "institutional_memory_status": institutional_memory_influence["status"],
+        "institutional_memory_entry_id": institutional_memory_influence["entry_id"],
+        "institutional_memory_entry_ref": institutional_memory_influence["entry_ref"],
+        "institutional_memory_source_event_id": institutional_memory_influence["source_event_id"],
+        "institutional_memory_contributing_persona_ids": list(
+            institutional_memory_influence["contributing_persona_ids"]
+        ),
+        "institutional_memory_influence": copy.deepcopy(dict(institutional_memory_influence)),
         "required_oss_roles": sorted(required_roles),
         "oss_request_ids_by_role": {
             role: result["request_id"] for role, result in sorted(oss_inputs.items())
@@ -4324,6 +5798,19 @@ def _build_persona_decision_artifact(
         "alpha_seed_revision_action": alpha_seed_revision["revision"]["action"],
         "alpha_seed_revision_component": alpha_seed_revision["alpha_component"],
         "alpha_seed_revision_key": alpha_seed_revision["revision"]["revision_key"],
+        "cross_cycle_status": cross_cycle_context["status"],
+        "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
+        "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+        "cross_cycle_previous_case_id": cross_cycle_context.get("previous_case_id"),
+        "multi_cycle_lineage_status": multi_cycle_context["status"],
+        "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
+        "multi_cycle_lineage_depth": multi_cycle_context.get("lineage_depth"),
+        "multi_cycle_lineage_case_ids": list(multi_cycle_context.get("lineage_case_ids", [])),
+        "multi_cycle_latest_case_id": multi_cycle_context.get("latest_case_id"),
+        "multi_cycle_older_case_id": multi_cycle_context.get("older_case_id"),
+        "multi_cycle_latest_runtime_feedback_ref": multi_cycle_context.get("latest_runtime_feedback_ref"),
+        "multi_cycle_older_runtime_feedback_ref": multi_cycle_context.get("older_runtime_feedback_ref"),
+        "multi_cycle_trend_signal": multi_cycle_context.get("trend_signal"),
         "oss_followup_response_refs": [
             followup["response"]["output_ref"]
             for followup in oss_followup_loop["followups"]
@@ -4366,7 +5853,15 @@ def _build_persona_decision_artifact(
                 ],
                 *tracking_reconciliation["repair"]["evidence_refs"],
                 *alpha_seed_revision["persona_alpha_response"]["evidence_refs"],
+                *list(cross_cycle_context.get("evidence_refs", [])),
+                *list(multi_cycle_context.get("evidence_refs", [])),
                 *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
+                *(
+                    [str(institutional_memory_influence["entry_ref"])]
+                    if institutional_memory_influence["entry_ref"]
+                    else []
+                ),
+                *list(institutional_memory_influence.get("cited_evidence_refs", [])),
             ],
             "allowed_windows": list(decision_inputs["allowed_windows"]),
             "forbidden_windows_not_used": list(decision_inputs["forbidden_windows_not_used"]),
@@ -4416,6 +5911,31 @@ def _build_persona_decision_artifact(
             selected_candidate=selected_candidate,
         )
         or input_context["memory_status"] == "cold_start_declared",
+        "uses_cross_persona_institutional_memory_or_declares_cold_start": (
+            (
+                institutional_memory_influence["status"] == "cold_start"
+                and institutional_memory_influence["entry_ref"] is None
+                and all(
+                    float(value) == 0.0
+                    for value in scoring_inputs["institutional_memory_score_adjustments"].values()
+                )
+            )
+            or (
+                institutional_memory_influence["status"] == "applied"
+                and str(institutional_memory_influence["entry_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(institutional_memory_influence["entry_ref"])
+                in selected_candidate.get("evidence_refs", [])
+                and _persona_id(episode.persona)
+                not in set(institutional_memory_influence["contributing_persona_ids"])
+                and float(
+                    scoring_inputs["institutional_memory_score_adjustments"][
+                        _candidate_action_key(str(selected_candidate["candidate_id"]))
+                    ]
+                )
+                > 0.0
+            )
+        ),
         "memory_counterfactual_replays_score_delta": _memory_counterfactual_proof_is_usable(
             memory_counterfactual
         ),
@@ -4424,6 +5944,47 @@ def _build_persona_decision_artifact(
         and persona_reasoning["response"]["reasoning_ref"] in candidate_generation["request"]["input_refs"],
         "uses_selected_oss_feedback": set(selected_candidate.get("evidence_refs", [])).issuperset(
             _selected_persona_decision_oss_refs(oss_inputs)
+        ),
+        "uses_policy_candidate_oss_metrics": (
+            (
+                f"oss://{oss_inputs['policy_candidate']['component']}/"
+                f"{oss_inputs['policy_candidate']['request_id']}"
+            )
+            in candidate_generation["request"]["input_refs"]
+            and (
+                f"oss://{oss_inputs['policy_candidate']['component']}/"
+                f"{oss_inputs['policy_candidate']['request_id']}"
+            )
+            in selected_candidate.get("evidence_refs", [])
+            and float(scoring_inputs["policy_quality"]) > 0.0
+            and float(scorecards[selected_id]["components"].get("policy_quality", 0.0)) > 0.0
+            and float(selected_candidate["risk_multiplier"])
+            == float(scoring_inputs["policy_hint_risk"])
+        ),
+        "uses_reflection_artifact_oss_metrics": (
+            (
+                f"oss://{oss_inputs['reflection_artifact']['component']}/"
+                f"{oss_inputs['reflection_artifact']['request_id']}"
+            )
+            in candidate_generation["request"]["input_refs"]
+            and (
+                f"oss://{oss_inputs['reflection_artifact']['component']}/"
+                f"{oss_inputs['reflection_artifact']['request_id']}"
+            )
+            in selected_candidate.get("evidence_refs", [])
+            and (
+                f"oss://{oss_inputs['reflection_artifact']['component']}/"
+                f"{oss_inputs['reflection_artifact']['request_id']}"
+            )
+            in persona_reasoning["request"]["input_refs"]
+            and persona_reasoning["response"]["reflection_artifact_usage"]["source_oss_ref"]
+            == (
+                f"oss://{oss_inputs['reflection_artifact']['component']}/"
+                f"{oss_inputs['reflection_artifact']['request_id']}"
+            )
+            and float(scoring_inputs["reflection_quality"]) > 0.0
+            and float(scorecards[selected_id]["components"].get("reflection_quality", 0.0)) > 0.0
+            and "reflection" in str(selected_candidate.get("rationale", "")).lower()
         ),
         "uses_oss_response_followup_loop": (
             _oss_response_followup_loop_is_usable(oss_followup_loop)
@@ -4475,6 +6036,72 @@ def _build_persona_decision_artifact(
                 for value in scoring_inputs["alpha_seed_revision_score_adjustments"].values()
             )
         ),
+        "uses_cross_cycle_runtime_feedback_or_declares_cold_start": (
+            (
+                cross_cycle_context["status"] == "cold_start"
+                and not cross_cycle_context.get("state_ref")
+                and all(
+                    float(value) == 0.0
+                    for value in scoring_inputs["cross_cycle_score_adjustments"].values()
+                )
+            )
+            or (
+                cross_cycle_context["status"] == "applied"
+                and str(cross_cycle_context["state_ref"]) in candidate_generation["request"]["input_refs"]
+                and str(cross_cycle_context["runtime_feedback_ref"]) in candidate_generation["request"]["input_refs"]
+                and str(cross_cycle_context["state_ref"]) in selected_candidate.get("evidence_refs", [])
+                and float(
+                    scoring_inputs["cross_cycle_score_adjustments"][
+                        _candidate_action_key(str(selected_candidate["candidate_id"]))
+                    ]
+                )
+                > 0.0
+            )
+        ),
+        "uses_multi_cycle_lineage_or_declares_cold_start": (
+            (
+                multi_cycle_context["status"] == "cold_start"
+                and not multi_cycle_context.get("lineage_ref")
+                and all(
+                    float(value) == 0.0
+                    for value in scoring_inputs["multi_cycle_lineage_score_adjustments"].values()
+                )
+            )
+            or (
+                multi_cycle_context["status"] == "single_prior"
+                and str(multi_cycle_context["lineage_ref"]) in candidate_generation["request"]["input_refs"]
+                and str(multi_cycle_context["latest_runtime_feedback_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(multi_cycle_context["lineage_ref"]) in selected_candidate.get("evidence_refs", [])
+                and str(multi_cycle_context["latest_runtime_feedback_ref"])
+                in selected_candidate.get("evidence_refs", [])
+                and float(
+                    scoring_inputs["multi_cycle_lineage_score_adjustments"][
+                        _candidate_action_key(str(selected_candidate["candidate_id"]))
+                    ]
+                )
+                > 0.0
+            )
+            or (
+                multi_cycle_context["status"] == "lineage_applied"
+                and str(multi_cycle_context["lineage_ref"]) in candidate_generation["request"]["input_refs"]
+                and str(multi_cycle_context["latest_runtime_feedback_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(multi_cycle_context["older_runtime_feedback_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(multi_cycle_context["lineage_ref"]) in selected_candidate.get("evidence_refs", [])
+                and str(multi_cycle_context["latest_runtime_feedback_ref"])
+                in selected_candidate.get("evidence_refs", [])
+                and str(multi_cycle_context["older_runtime_feedback_ref"])
+                in selected_candidate.get("evidence_refs", [])
+                and float(
+                    scoring_inputs["multi_cycle_lineage_score_adjustments"][
+                        _candidate_action_key(str(selected_candidate["candidate_id"]))
+                    ]
+                )
+                > 0.0
+            )
+        ),
     }
     return {
         "artifact_id": f"persona-decision-artifact-{episode.case_id}-gen{generation}",
@@ -4511,24 +6138,37 @@ def _persona_candidate_scorecard(
     reflection_quality = float(scoring_inputs["reflection_quality"])
     risk_penalty = float(scoring_inputs["risk_penalty"])
     memory_score_adjustments = dict(scoring_inputs["memory_score_adjustments"])
+    institutional_memory_score_adjustments = dict(scoring_inputs["institutional_memory_score_adjustments"])
     followup_score_adjustments = dict(scoring_inputs["oss_followup_score_adjustments"])
     disagreement_score_adjustments = dict(scoring_inputs["oss_disagreement_score_adjustments"])
     tracking_reconciliation_score_adjustments = dict(scoring_inputs["tracking_reconciliation_score_adjustments"])
     alpha_seed_revision_score_adjustments = dict(scoring_inputs["alpha_seed_revision_score_adjustments"])
+    cross_cycle_score_adjustments = dict(scoring_inputs["cross_cycle_score_adjustments"])
+    multi_cycle_lineage_score_adjustments = dict(scoring_inputs["multi_cycle_lineage_score_adjustments"])
     if candidate_id.endswith("-feedback-adapt"):
         formula_id = "feedback_adapt_score_v1"
         memory_adjustment = float(memory_score_adjustments["feedback-adapt"])
+        institutional_memory_adjustment = float(
+            institutional_memory_score_adjustments["feedback-adapt"]
+        )
         followup_adjustment = float(followup_score_adjustments["feedback-adapt"])
         disagreement_adjustment = float(disagreement_score_adjustments["feedback-adapt"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["feedback-adapt"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["feedback-adapt"])
+        cross_cycle_adjustment = float(cross_cycle_score_adjustments["feedback-adapt"])
+        multi_cycle_lineage_adjustment = float(
+            multi_cycle_lineage_score_adjustments["feedback-adapt"]
+        )
         replayed_score = round(
             3.0
             + memory_adjustment
+            + institutional_memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + cross_cycle_adjustment
+            + multi_cycle_lineage_adjustment
             + feedback_score
             + policy_quality
             + reflection_quality
@@ -4538,10 +6178,13 @@ def _persona_candidate_scorecard(
         components = {
             "base": 3.0,
             "memory_adjustment": memory_adjustment,
+            "institutional_memory_adjustment": institutional_memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "cross_cycle_adjustment": cross_cycle_adjustment,
+            "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "feedback_score": feedback_score,
             "policy_quality": policy_quality,
             "reflection_quality": reflection_quality,
@@ -4550,78 +6193,117 @@ def _persona_candidate_scorecard(
     elif candidate_id.endswith("-retain-observe"):
         formula_id = "retain_observe_score_v1"
         memory_adjustment = float(memory_score_adjustments["retain-observe"])
+        institutional_memory_adjustment = float(
+            institutional_memory_score_adjustments["retain-observe"]
+        )
         followup_adjustment = float(followup_score_adjustments["retain-observe"])
         disagreement_adjustment = float(disagreement_score_adjustments["retain-observe"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["retain-observe"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["retain-observe"])
+        cross_cycle_adjustment = float(cross_cycle_score_adjustments["retain-observe"])
+        multi_cycle_lineage_adjustment = float(
+            multi_cycle_lineage_score_adjustments["retain-observe"]
+        )
         replayed_score = round(
             1.0
             + memory_adjustment
+            + institutional_memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + cross_cycle_adjustment
+            + multi_cycle_lineage_adjustment
             + max(feedback_score, 0.0),
             10,
         )
         components = {
             "base": 1.0,
             "memory_adjustment": memory_adjustment,
+            "institutional_memory_adjustment": institutional_memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "cross_cycle_adjustment": cross_cycle_adjustment,
+            "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "positive_feedback_score": round(max(feedback_score, 0.0), 10),
         }
     elif candidate_id.endswith("-risk-off"):
         formula_id = "risk_off_score_v1"
         memory_adjustment = float(memory_score_adjustments["risk-off"])
+        institutional_memory_adjustment = float(
+            institutional_memory_score_adjustments["risk-off"]
+        )
         followup_adjustment = float(followup_score_adjustments["risk-off"])
         disagreement_adjustment = float(disagreement_score_adjustments["risk-off"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["risk-off"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["risk-off"])
+        cross_cycle_adjustment = float(cross_cycle_score_adjustments["risk-off"])
+        multi_cycle_lineage_adjustment = float(
+            multi_cycle_lineage_score_adjustments["risk-off"]
+        )
         replayed_score = round(
             2.0
             + memory_adjustment
+            + institutional_memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + cross_cycle_adjustment
+            + multi_cycle_lineage_adjustment
             + max(0.0, risk_penalty),
             10,
         )
         components = {
             "base": 2.0,
             "memory_adjustment": memory_adjustment,
+            "institutional_memory_adjustment": institutional_memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "cross_cycle_adjustment": cross_cycle_adjustment,
+            "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
         }
     else:
         formula_id = "contrarian_control_score_v1"
         memory_adjustment = float(memory_score_adjustments["contrarian-check"])
+        institutional_memory_adjustment = float(
+            institutional_memory_score_adjustments["contrarian-check"]
+        )
         followup_adjustment = float(followup_score_adjustments["contrarian-check"])
         disagreement_adjustment = float(disagreement_score_adjustments["contrarian-check"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["contrarian-check"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["contrarian-check"])
+        cross_cycle_adjustment = float(cross_cycle_score_adjustments["contrarian-check"])
+        multi_cycle_lineage_adjustment = float(
+            multi_cycle_lineage_score_adjustments["contrarian-check"]
+        )
         replayed_score = round(
             0.25
             + memory_adjustment
+            + institutional_memory_adjustment
             + followup_adjustment
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
-            + alpha_seed_revision_adjustment,
+            + alpha_seed_revision_adjustment
+            + cross_cycle_adjustment
+            + multi_cycle_lineage_adjustment,
             10,
         )
         components = {
             "base": 0.25,
             "memory_adjustment": memory_adjustment,
+            "institutional_memory_adjustment": institutional_memory_adjustment,
             "oss_followup_adjustment": followup_adjustment,
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "cross_cycle_adjustment": cross_cycle_adjustment,
+            "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
         }
     candidate_score = round(float(candidate["score"]), 10)
     return {
@@ -4723,11 +6405,25 @@ def _policy_from_decision_trace(
     generation: int,
     decision_trace: Mapping[str, Any],
     memory_context: Mapping[str, Any],
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected = decision_trace["selected_candidate"]
     risk_multiplier = float(selected["risk_multiplier"])
     if generation == 2:
         risk_multiplier = max(risk_multiplier, 1.15)
+    policy_oss_lineage = _build_policy_oss_lineage(
+        episode=episode,
+        oss_inputs=oss_inputs,
+        case_upstream_artifacts=case_upstream_artifacts,
+        generation=generation,
+    )
+    reflection_oss_lineage = _build_reflection_oss_lineage(
+        episode=episode,
+        oss_inputs=oss_inputs,
+        case_upstream_artifacts=case_upstream_artifacts,
+        generation=generation,
+    )
     legs = {
         window.instrument: {
             "instrument": window.instrument,
@@ -4748,6 +6444,14 @@ def _policy_from_decision_trace(
         "risk_multiplier": risk_multiplier,
         "quantity_type": episode.order_profile["quantity_type"],
         "order_type": episode.order_profile["order_type"],
+        "policy_oss_ref": policy_oss_lineage["source_oss_ref"],
+        "policy_oss_lineage_ref": policy_oss_lineage["lineage_ref"],
+        "policy_oss_lineage_hash": policy_oss_lineage["lineage_hash"],
+        "policy_oss_lineage": policy_oss_lineage,
+        "reflection_oss_ref": reflection_oss_lineage["source_oss_ref"],
+        "reflection_oss_lineage_ref": reflection_oss_lineage["lineage_ref"],
+        "reflection_oss_lineage_hash": reflection_oss_lineage["lineage_hash"],
+        "reflection_oss_lineage": reflection_oss_lineage,
         "decision_inputs": {
             **dict(decision_trace["decision_inputs"]),
             "memory_reused": {
@@ -4759,6 +6463,141 @@ def _policy_from_decision_trace(
     }
 
 
+def _build_policy_oss_lineage(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    generation: int,
+) -> dict[str, Any]:
+    policy_entry = case_upstream_artifacts["selected_oss"]["policy_candidate"]
+    policy_input = oss_inputs["policy_candidate"]
+    component = str(policy_entry["component"])
+    request_id = str(policy_entry["request_id"])
+    metric_signal_keys = sorted(
+        key
+        for key, value in policy_entry.get("metrics", {}).items()
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    )
+    policy_quality = _policy_quality_from_oss(oss_inputs)
+    policy_hint_risk = _risk_hint_from_oss(oss_inputs, generation)
+    source_oss_ref = f"oss://{component}/{request_id}"
+    registry_ref = f"registry://{policy_entry.get('registry_id')}"
+    producer_ref = f"producer-run://{policy_entry.get('producer_run_id')}"
+    lineage_seed = {
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation": generation,
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_oss_ref,
+        "artifact_family": policy_entry.get("artifact_family"),
+        "expected_artifact_family": _policy_candidate_expected_artifact_family(component),
+        "registry_id": policy_entry.get("registry_id"),
+        "registry_artifact_type": policy_entry.get("registry_artifact_type"),
+        "producer_run_id": policy_entry.get("producer_run_id"),
+        "policy_input_status": policy_input.get("status"),
+        "metric_signal_keys": metric_signal_keys,
+        "metrics": copy.deepcopy(dict(policy_entry.get("metrics") or {})),
+        "primary_output_keys": sorted(policy_entry.get("primary_output", {})),
+        "policy_quality": policy_quality,
+        "policy_hint_risk": policy_hint_risk,
+    }
+    lineage_hash = _stable_payload_hash("policy-oss-lineage", lineage_seed)
+    return {
+        "model_id": PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID,
+        "lineage_ref": (
+            f"policy-oss-lineage://{episode.case_id}/generation{generation}/"
+            f"{component}/{request_id}"
+        ),
+        "lineage_hash": lineage_hash,
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation": generation,
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_oss_ref,
+        "registry_ref": registry_ref,
+        "producer_ref": producer_ref,
+        "artifact_family": policy_entry.get("artifact_family"),
+        "expected_artifact_family": _policy_candidate_expected_artifact_family(component),
+        "registry_id": policy_entry.get("registry_id"),
+        "registry_artifact_type": policy_entry.get("registry_artifact_type"),
+        "producer_run_id": policy_entry.get("producer_run_id"),
+        "metric_signal_keys": metric_signal_keys,
+        "primary_output_keys": sorted(policy_entry.get("primary_output", {})),
+        "policy_quality": policy_quality,
+        "policy_hint_risk": policy_hint_risk,
+        "input_hash": lineage_hash,
+    }
+
+
+def _build_reflection_oss_lineage(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    generation: int,
+) -> dict[str, Any]:
+    reflection_entry = case_upstream_artifacts["selected_oss"]["reflection_artifact"]
+    reflection_input = oss_inputs["reflection_artifact"]
+    component = str(reflection_entry["component"])
+    request_id = str(reflection_entry["request_id"])
+    metric_signal_keys = sorted(
+        key
+        for key, value in reflection_entry.get("metrics", {}).items()
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    )
+    reflection_quality = _reflection_quality_from_oss(oss_inputs)
+    source_oss_ref = f"oss://{component}/{request_id}"
+    registry_ref = f"registry://{reflection_entry.get('registry_id')}"
+    producer_ref = f"producer-run://{reflection_entry.get('producer_run_id')}"
+    lineage_seed = {
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation": generation,
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_oss_ref,
+        "artifact_family": reflection_entry.get("artifact_family"),
+        "expected_artifact_family": _reflection_artifact_expected_family(component),
+        "registry_id": reflection_entry.get("registry_id"),
+        "registry_artifact_type": reflection_entry.get("registry_artifact_type"),
+        "producer_run_id": reflection_entry.get("producer_run_id"),
+        "reflection_input_status": reflection_input.get("status"),
+        "metric_signal_keys": metric_signal_keys,
+        "metrics": copy.deepcopy(dict(reflection_entry.get("metrics") or {})),
+        "primary_output_keys": sorted(reflection_entry.get("primary_output", {})),
+        "reflection_quality": reflection_quality,
+    }
+    lineage_hash = _stable_payload_hash("reflection-oss-lineage", lineage_seed)
+    return {
+        "model_id": PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID,
+        "lineage_ref": (
+            f"reflection-oss-lineage://{episode.case_id}/generation{generation}/"
+            f"{component}/{request_id}"
+        ),
+        "lineage_hash": lineage_hash,
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation": generation,
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_oss_ref,
+        "registry_ref": registry_ref,
+        "producer_ref": producer_ref,
+        "artifact_family": reflection_entry.get("artifact_family"),
+        "expected_artifact_family": _reflection_artifact_expected_family(component),
+        "registry_id": reflection_entry.get("registry_id"),
+        "registry_artifact_type": reflection_entry.get("registry_artifact_type"),
+        "producer_run_id": reflection_entry.get("producer_run_id"),
+        "metric_signal_keys": metric_signal_keys,
+        "primary_output_keys": sorted(reflection_entry.get("primary_output", {})),
+        "reflection_quality": reflection_quality,
+        "input_hash": lineage_hash,
+    }
+
+
 def _build_signals(
     *,
     episode: PortfolioEpisode,
@@ -4767,6 +6606,8 @@ def _build_signals(
     generated_at: str,
 ) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
+    policy_oss_lineage = dict(policy.get("policy_oss_lineage") or {})
+    reflection_oss_lineage = dict(policy.get("reflection_oss_lineage") or {})
     for leg_index, window in enumerate(episode.windows):
         leg = policy["legs"][window.instrument]
         entry_row = _entry_row_for_generation(window, generation)
@@ -4804,6 +6645,16 @@ def _build_signals(
                 "seed_key": episode.seed_key,
                 "policy_id": policy["policy_id"],
                 "policy_generation": generation,
+                "policy_oss_ref": policy_oss_lineage.get("source_oss_ref"),
+                "policy_oss_lineage_ref": policy_oss_lineage.get("lineage_ref"),
+                "policy_oss_lineage_hash": policy_oss_lineage.get("lineage_hash"),
+                "policy_oss_component": policy_oss_lineage.get("component"),
+                "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+                "reflection_oss_ref": reflection_oss_lineage.get("source_oss_ref"),
+                "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+                "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+                "reflection_oss_component": reflection_oss_lineage.get("component"),
+                "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
                 "validation_signature": episode.validation_signature,
                 "historical_ohlcv_fixture": HISTORICAL_OHLCV_FIXTURE,
                 "market_data_ref": f"{HISTORICAL_OHLCV_DATASET_ID}/{window.instrument}/{entry_row['date']}",
@@ -5066,6 +6917,24 @@ def _retrieve_prior_lesson(
     return _memory_context_from_entry(entry)
 
 
+def _retrieve_cross_persona_institutional_lesson(
+    institutional_store: InstitutionalMemoryStore,
+    persona_id: str,
+) -> dict[str, Any] | None:
+    hits = institutional_store.retrieve(
+        query="agent usability hardening reflection selected_action",
+        tags=["agent_usability_hardening", "memory_influence_ready"],
+        limit=12,
+    )
+    for hit in hits:
+        contributing_persona_ids = {str(item) for item in hit.entry.contributing_persona_ids}
+        if persona_id in contributing_persona_ids:
+            continue
+        entry = institutional_store.mark_reused(hit.entry.entry_id)
+        return _institutional_memory_context_from_entry(entry)
+    return None
+
+
 def _retrieve_current_lesson(
     persona_store: PersonaMemoryStore,
     persona_id: str,
@@ -5082,6 +6951,51 @@ def _retrieve_current_lesson(
         raise AssertionError(f"missing current memory lesson for {reflection_id}")
     entry = persona_store.mark_reused(hits[0].entry.memory_id)
     return _memory_context_from_entry(entry)
+
+
+def _institutional_memory_context_from_entry(entry: Any) -> dict[str, Any]:
+    structured_payload = entry.content.get("structured_payload", {})
+    if not isinstance(structured_payload, Mapping):
+        structured_payload = {}
+    evidence_refs = _memory_evidence_ref_strings(
+        structured_payload.get("evidence_refs", [])
+    )
+    return {
+        "entry_id": entry.entry_id,
+        "entry_ref": f"institutional-memory://{entry.entry_id}",
+        "source_event_id": entry.source_event_id,
+        "reuse_count": entry.reuse_count,
+        "knowledge_type": entry.knowledge_type,
+        "scope": entry.scope,
+        "scope_filter": entry.scope_filter,
+        "content_summary": entry.content.get("body") or entry.content.get("headline"),
+        "headline": entry.content.get("headline"),
+        "proposal_ids": list(structured_payload.get("proposal_ids", [])),
+        "evidence_refs": evidence_refs,
+        "tags": list(entry.content.get("tags", []) or []),
+        "contributing_persona_ids": list(entry.contributing_persona_ids),
+        "sponsor_persona_id": structured_payload.get("sponsor_persona_id"),
+    }
+
+
+def _memory_evidence_ref_strings(raw_refs: Any) -> list[str]:
+    refs: list[str] = []
+    for raw_ref in raw_refs if isinstance(raw_refs, list) else []:
+        if isinstance(raw_ref, str):
+            refs.append(raw_ref)
+            continue
+        if not isinstance(raw_ref, Mapping):
+            refs.append(f"memory-evidence://{_stable_payload_hash('memory-evidence', raw_ref)}")
+            continue
+        ref_type = str(raw_ref.get("ref_type") or "memory-evidence").replace("_", "-")
+        ref_id = str(
+            raw_ref.get("ref_id")
+            or raw_ref.get("event_id")
+            or raw_ref.get("id")
+            or _stable_payload_hash("memory-evidence", raw_ref)
+        )
+        refs.append(f"{ref_type}://{ref_id}")
+    return list(dict.fromkeys(refs))
 
 
 def _memory_context_from_entry(entry: Any) -> dict[str, Any]:
@@ -5108,6 +7022,7 @@ def _build_evolution_decision(
     evolved_policy: Mapping[str, Any],
     baseline_eval: Mapping[str, Any],
     evolved_eval: Mapping[str, Any],
+    tracking_reconciliation: Mapping[str, Any],
     generated_at: str,
 ) -> EvolutionDecision:
     persona_id = _persona_id(episode.persona)
@@ -5127,6 +7042,19 @@ def _build_evolution_decision(
             "validation_signature": episode.validation_signature,
         },
         note="No-leakage holdout telemetry used for governed paper evolution.",
+    )
+    tracking_repair = tracking_reconciliation["repair"]
+    experiment_ref = str(tracking_repair["normalized_experiment_ref"])
+    tracking_evidence_ref = EvidenceRef(
+        ref_type=EvidenceRefType.AUDIT_LOG_ENTRY.value,
+        ref_id=str(tracking_reconciliation["reconciliation_ref"]),
+        storage_ref={
+            "backend": str(tracking_reconciliation["backend"]),
+            "run_id": str(tracking_reconciliation["run_id"]),
+            "experiment_ref": experiment_ref,
+            "repair_ref": str(tracking_repair["repair_ref"]),
+        },
+        note="Reconciled experiment-tracker readback used by persona scoring before evolution.",
     )
     threshold = ThresholdSnapshot(
         policy_source="agent_usability_validation.py#no-leakage-holdout-score",
@@ -5154,7 +7082,7 @@ def _build_evolution_decision(
         ),
         created_by_id="agent-usability-hardening-runtime",
         created_by_role=EvolutionActorRole.EVOLUTION_CONTROLLER,
-        evidence_refs=[evidence_ref],
+        evidence_refs=[evidence_ref, tracking_evidence_ref],
         threshold_snapshots=[threshold],
         capital_pool_id=f"pool-usability-{persona_id}",
         persona_id=persona_id,
@@ -5173,6 +7101,12 @@ def _build_evolution_decision(
                 "generation": evolved_policy["generation"],
             },
             "improvement": round(improvement, 10),
+            "tracking_reconciliation_ref": str(tracking_reconciliation["reconciliation_ref"]),
+            "tracking_repair_ref": str(tracking_repair["repair_ref"]),
+            "tracking_repair_action": str(tracking_repair["action"]),
+            "normalized_experiment_ref": experiment_ref,
+            "tracking_backend": str(tracking_reconciliation["backend"]),
+            "tracking_run_id": str(tracking_reconciliation["run_id"]),
             "proposal_only": False,
             "execution_plane": ExecutionPlane.RESEARCH.value,
         },
@@ -5221,6 +7155,11 @@ def _build_operational_context(
     decision_traces: Sequence[Mapping[str, Any]],
     memory_contexts: Sequence[Mapping[str, Any]],
     evolution_decision: EvolutionDecision,
+    evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
+    policy_candidate_materiality: Mapping[str, Any],
+    reflection_artifact_materiality: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     case_upstream_artifacts: Mapping[str, Any],
     generated_at: str,
@@ -5279,25 +7218,98 @@ def _build_operational_context(
     lean_engine_replay = _run_lean_engine_replay(
         episode=episode,
         final_policy=generation_policies[-1],
+        final_evaluation=evaluations[-1],
         evolution_decision=evolution_decision,
+        evolution_trajectory=evolution_trajectory,
+        no_leakage_protocol=no_leakage_protocol,
+        strict_oos_evolution_proof=strict_oos_evolution_proof,
+        persona_conflict_resolution=persona_conflict,
+        case_upstream_artifacts=case_upstream_artifacts,
+        generated_at=generated_at,
     )
     lean_handoff = _build_lean_handoff_packet(
         episode=episode,
         final_policy=generation_policies[-1],
+        final_evaluation=evaluations[-1],
         evolution_decision=evolution_decision,
+        evolution_trajectory=evolution_trajectory,
+        no_leakage_protocol=no_leakage_protocol,
+        strict_oos_evolution_proof=strict_oos_evolution_proof,
         oss_inputs=oss_inputs,
         market_friction=market_friction,
         broker_lifecycle=broker_lifecycle,
+        persona_conflict_resolution=persona_conflict,
+        autonomous_schedule=autonomous_schedule,
         lean_engine_replay=lean_engine_replay,
         shioaji_sandbox_lifecycle=shioaji_sandbox_lifecycle,
         case_upstream_artifacts=case_upstream_artifacts,
+    )
+    lean_packet_execution_projection = _build_lean_packet_execution_projection(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        executions=executions,
+        market_friction=market_friction,
+        broker_lifecycle=broker_lifecycle,
+        persona_conflict_resolution=persona_conflict,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
     )
     lean_runtime_feedback = _build_lean_runtime_feedback_response(
         episode=episode,
         scenario=scenario,
         lean_engine_replay=lean_engine_replay,
         lean_handoff=lean_handoff,
+        lean_packet_execution_projection=lean_packet_execution_projection,
         autonomous_schedule=autonomous_schedule,
+        decision_traces=decision_traces,
+    )
+    experiment_tracking_lineage_handoff = _build_experiment_tracking_lineage_handoff_proof(
+        episode=episode,
+        evolution_decision=evolution_decision,
+        case_upstream_artifacts=case_upstream_artifacts,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        lean_runtime_feedback=lean_runtime_feedback,
+    )
+    policy_oss_lineage_handoff = _build_policy_oss_lineage_handoff_proof(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        policy_candidate_materiality=policy_candidate_materiality,
+        case_upstream_artifacts=case_upstream_artifacts,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        lean_runtime_feedback=lean_runtime_feedback,
+    )
+    reflection_oss_lineage_handoff = _build_reflection_oss_lineage_handoff_proof(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        reflection_artifact_materiality=reflection_artifact_materiality,
+        case_upstream_artifacts=case_upstream_artifacts,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        lean_runtime_feedback=lean_runtime_feedback,
+    )
+    evolved_strategy_packet_proof = _build_evolved_strategy_packet_proof(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        final_evaluation=evaluations[-1],
+        evolution_trajectory=evolution_trajectory,
+        no_leakage_protocol=no_leakage_protocol,
+        strict_oos_evolution_proof=strict_oos_evolution_proof,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        lean_packet_execution_projection=lean_packet_execution_projection,
+        lean_runtime_feedback=lean_runtime_feedback,
+    )
+    scheduler_conflict_ooda_proof = _build_scheduler_conflict_ooda_proof(
+        episode=episode,
+        operational_context={
+            "persona_conflict_resolution": persona_conflict,
+            "autonomous_schedule": autonomous_schedule,
+            "broker_adapter_followup": broker_adapter_followup,
+            "lean_handoff": lean_handoff,
+            "lean_runtime_feedback": lean_runtime_feedback,
+        },
         decision_traces=decision_traces,
     )
     return {
@@ -5309,7 +7321,11 @@ def _build_operational_context(
             broker_lifecycle["lifecycle_model"],
             autonomous_schedule["schedule_id"],
             broker_adapter_followup["followup_id"],
+            lean_packet_execution_projection["projection_id"],
             lean_runtime_feedback["feedback_id"],
+            experiment_tracking_lineage_handoff["proof_id"],
+            policy_oss_lineage_handoff["proof_id"],
+            reflection_oss_lineage_handoff["proof_id"],
         ),
         "scenario": scenario,
         "market_friction": market_friction,
@@ -5323,7 +7339,13 @@ def _build_operational_context(
         "lean_engine_replay": lean_engine_replay,
         "case_upstream_artifacts": _case_upstream_artifacts_case_summary(case_upstream_artifacts),
         "lean_handoff": lean_handoff,
+        "lean_packet_execution_projection": lean_packet_execution_projection,
         "lean_runtime_feedback": lean_runtime_feedback,
+        "experiment_tracking_lineage_handoff": experiment_tracking_lineage_handoff,
+        "policy_oss_lineage_handoff": policy_oss_lineage_handoff,
+        "reflection_oss_lineage_handoff": reflection_oss_lineage_handoff,
+        "evolved_strategy_packet_proof": evolved_strategy_packet_proof,
+        "scheduler_conflict_ooda_proof": scheduler_conflict_ooda_proof,
     }
 
 
@@ -5518,8 +7540,15 @@ def _build_persona_conflict_resolution(
             instrument: round(weight / total_weight, 6)
             for instrument, weight in resolved_weights.items()
         }
+    resolution_ref = f"persona-conflict://{episode.case_id}"
+    selected_action_ref = (
+        f"selected-action://{episode.case_id}/{decision_traces[-1]['selected_candidate_id']}"
+    )
+    risk_oss_ref = f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}"
     return {
         "resolution_id": f"conflict-resolution-{episode.case_id}",
+        "resolution_ref": resolution_ref,
+        "model_id": PERSONA_CONFLICT_RESOLUTION_MODEL_ID,
         "council_votes": council_votes,
         "classified_conflicts": classified_conflicts,
         "conflict_types": sorted(conflict_types),
@@ -5531,7 +7560,17 @@ def _build_persona_conflict_resolution(
             "turnover_budget": 1.25,
         },
         "decision_trace_ref": decision_traces[-1]["reflection_id"],
-        "oss_risk_ref": f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}",
+        "selected_action_ref": selected_action_ref,
+        "oss_risk_ref": risk_oss_ref,
+        "evidence_refs": [
+            selected_action_ref,
+            f"reflection://{decision_traces[-1]['reflection_id']}",
+            risk_oss_ref,
+            *[
+                conflict["conflict_id"]
+                for conflict in classified_conflicts
+            ],
+        ],
     }
 
 
@@ -5807,6 +7846,7 @@ def _build_autonomous_schedule(
     generated_at: str,
     restart_recovery: Mapping[str, Any],
 ) -> dict[str, Any]:
+    schedule_id = f"schedule-{episode.case_id}"
     phases = []
     for phase_index, phase in enumerate(AUTONOMOUS_SCHEDULER_PHASES):
         phases.append(
@@ -5822,10 +7862,15 @@ def _build_autonomous_schedule(
             }
         )
     return {
-        "schedule_id": f"schedule-{episode.case_id}",
+        "schedule_id": schedule_id,
+        "schedule_ref": f"schedule://{schedule_id}",
         "trigger_mode": "autonomous_daily_paper_loop",
         "phases": phases,
         "phase_order_valid": [phase["phase"] for phase in phases] == list(AUTONOMOUS_SCHEDULER_PHASES),
+        "phase_due_at_ordered": all(
+            str(left["due_at"]) < str(right["due_at"])
+            for left, right in zip(phases, phases[1:])
+        ),
         "restart_checkpoint_ref": restart_recovery["checkpoint_id"],
         "missed_cycle_recovered": restart_recovery["recovered"],
         "next_cycle_due_at": _offset_timestamp(
@@ -5836,13 +7881,369 @@ def _build_autonomous_schedule(
     }
 
 
+def _build_lean_object_store_packet_targets(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    persona_conflict_resolution: Mapping[str, Any],
+    strategy_packet_ref: str,
+    generated_at: str,
+) -> list[dict[str, Any]]:
+    policy_oss_lineage = dict(final_policy.get("policy_oss_lineage") or {})
+    reflection_oss_lineage = dict(final_policy.get("reflection_oss_lineage") or {})
+    signals = _build_signals(
+        episode=episode,
+        policy=final_policy,
+        generation=int(final_policy["generation"]),
+        generated_at=generated_at,
+    )
+    allocation = persona_conflict_resolution["resolved_allocation"]
+    targets: list[dict[str, Any]] = []
+    for leg_index, (window, signal) in enumerate(zip(episode.windows, signals)):
+        leg = final_policy["legs"][window.instrument]
+        target_ref = f"lean-packet-target://{episode.case_id}/generation{final_policy['generation']}/leg{leg_index}"
+        signal_payload = copy.deepcopy(dict(signal))
+        signal_payload.setdefault("metadata", {})
+        signal_payload["metadata"] = {
+            **dict(signal_payload["metadata"]),
+            "strategy_packet_ref": strategy_packet_ref,
+            "packet_target_ref": target_ref,
+            "lean_object_store_readback_model_id": LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID,
+            "policy_oss_ref": policy_oss_lineage.get("source_oss_ref"),
+            "policy_oss_lineage_ref": policy_oss_lineage.get("lineage_ref"),
+            "policy_oss_lineage_hash": policy_oss_lineage.get("lineage_hash"),
+            "policy_oss_component": policy_oss_lineage.get("component"),
+            "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+            "reflection_oss_ref": reflection_oss_lineage.get("source_oss_ref"),
+            "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+            "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+            "reflection_oss_component": reflection_oss_lineage.get("component"),
+            "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
+        }
+        entry_row = _entry_row_for_generation(window, int(final_policy["generation"]))
+        targets.append(
+            {
+                "target_ref": target_ref,
+                "leg_index": leg_index,
+                "instrument": window.instrument,
+                "execution_symbol": window.execution_symbol,
+                "lean_symbol": _lean_symbol_for_execution_symbol(window.execution_symbol),
+                "policy_id": final_policy["policy_id"],
+                "policy_version": final_policy["policy_version"],
+                "policy_oss_ref": policy_oss_lineage.get("source_oss_ref"),
+                "policy_oss_lineage_ref": policy_oss_lineage.get("lineage_ref"),
+                "policy_oss_lineage_hash": policy_oss_lineage.get("lineage_hash"),
+                "policy_oss_component": policy_oss_lineage.get("component"),
+                "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+                "reflection_oss_ref": reflection_oss_lineage.get("source_oss_ref"),
+                "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+                "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+                "reflection_oss_component": reflection_oss_lineage.get("component"),
+                "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
+                "generation": final_policy["generation"],
+                "direction": int(leg["direction"]),
+                "action": signal_payload["action"],
+                "signal_id": signal_payload["signal_id"],
+                "target_weight": allocation["weight_by_instrument"][window.instrument],
+                "resolved_direction": allocation["direction_by_instrument"][window.instrument],
+                "quantity": signal_payload["quantity"],
+                "quantity_type": signal_payload["quantity_type"],
+                "order_type": signal_payload["order_type"],
+                "limit_price": signal_payload.get("limit_price"),
+                "market_data_ref": signal_payload["metadata"]["market_data_ref"],
+                "source_dataset_ref": signal_payload["metadata"]["source_dataset_ref"],
+                "entry_close": float(entry_row["close"]),
+                "signal": signal_payload,
+            }
+        )
+    return targets
+
+
+def _build_lean_object_store_packet_readback(
+    *,
+    episode: PortfolioEpisode,
+    strategy_packet: Mapping[str, Any],
+    packet_targets: Sequence[Mapping[str, Any]],
+    result: Mapping[str, Any],
+) -> dict[str, Any]:
+    loaded_packet = dict(result.get("loaded_strategy_packet") or {})
+    loaded_targets = [dict(target) for target in result.get("loaded_packet_targets") or []]
+    loaded_signal = dict(result.get("loaded_signal") or {})
+    fill_events = [dict(event) for event in result.get("fill_events") or []]
+    first_target = loaded_targets[0] if loaded_targets else {}
+    first_target_signal = first_target.get("signal") if isinstance(first_target.get("signal"), Mapping) else {}
+    object_store_keys = set(result.get("object_store_keys", []))
+    tracking_provenance = dict(strategy_packet.get("experiment_tracking_provenance") or {})
+    loaded_tracking_provenance = dict(loaded_packet.get("experiment_tracking_provenance") or {})
+    policy_oss_lineage = dict(strategy_packet.get("policy_oss_lineage") or {})
+    loaded_policy_oss_lineage = dict(loaded_packet.get("policy_oss_lineage") or {})
+    policy_oss_lineage_hash = str(policy_oss_lineage.get("lineage_hash") or "")
+    policy_oss_ref = str(policy_oss_lineage.get("source_oss_ref") or "")
+    reflection_oss_lineage = dict(strategy_packet.get("reflection_oss_lineage") or {})
+    loaded_reflection_oss_lineage = dict(loaded_packet.get("reflection_oss_lineage") or {})
+    reflection_oss_lineage_hash = str(reflection_oss_lineage.get("lineage_hash") or "")
+    reflection_oss_ref = str(reflection_oss_lineage.get("source_oss_ref") or "")
+    replay = {
+        "replayable": True,
+        "packet_present_in_object_store_artifact": bool(loaded_packet),
+        "packet_ref_matches_case_strategy_packet": (
+            loaded_packet.get("packet_ref") == strategy_packet.get("packet_ref")
+            and loaded_packet.get("policy_id") == strategy_packet.get("policy_id")
+        ),
+        "packet_hash_matches_persona_packet": (
+            _stable_payload_hash("lean-strategy-packet", loaded_packet)
+            == _stable_payload_hash("lean-strategy-packet", strategy_packet)
+        ),
+        "target_count_matches_portfolio": len(loaded_targets) == PORTFOLIO_LEG_COUNT,
+        "all_targets_have_signals": all(
+            isinstance(target.get("signal"), Mapping)
+            and target.get("signal_id") == target.get("signal", {}).get("signal_id")
+            for target in loaded_targets
+        ),
+        "all_targets_bind_strategy_packet_ref": all(
+            target.get("signal", {}).get("metadata", {}).get("strategy_packet_ref")
+            == strategy_packet.get("packet_ref")
+            for target in loaded_targets
+        ),
+        "target_refs_unique": (
+            len({target.get("target_ref") for target in loaded_targets}) == PORTFOLIO_LEG_COUNT
+        ),
+        "loaded_signal_from_first_packet_target": (
+            loaded_signal.get("signal_id")
+            == first_target.get("signal_id")
+            == first_target_signal.get("signal_id")
+        ),
+        "loaded_signal_symbol_matches_first_target": (
+            loaded_signal.get("symbol") == first_target.get("execution_symbol")
+            and str(loaded_signal.get("symbol", "")).split(".", 1)[0]
+            == first_target.get("lean_symbol")
+        ),
+        "loaded_signal_quantity_matches_first_target": (
+            loaded_signal.get("quantity") == first_target.get("quantity")
+            and loaded_signal.get("quantity_type") == first_target.get("quantity_type")
+            and loaded_signal.get("order_type") == first_target.get("order_type")
+        ),
+        "algorithm_executed_loaded_packet_signal": (
+            int(result.get("fill_count", 0)) >= 1
+            and any(event.get("signal_id") == loaded_signal.get("signal_id") for event in fill_events)
+        ),
+        "object_store_keys_include_packet_artifact_and_metadata": (
+            any(key.endswith("/artifact.bin") for key in object_store_keys)
+            and any(key.endswith("/metadata.json") for key in object_store_keys)
+        ),
+        "tracking_provenance_present_in_packet": bool(
+            tracking_provenance.get("experiment_ref")
+            and tracking_provenance.get("reconciliation_ref")
+            and tracking_provenance.get("repair_ref")
+            and tracking_provenance.get("lineage_hash")
+        ),
+        "loaded_packet_preserves_tracking_provenance": (
+            loaded_tracking_provenance == tracking_provenance
+        ),
+        "loaded_tracking_ref_matches_packet": (
+            loaded_packet.get("normalized_experiment_ref") == tracking_provenance.get("experiment_ref")
+            and loaded_packet.get("tracking_reconciliation_ref")
+            == tracking_provenance.get("reconciliation_ref")
+            and loaded_packet.get("tracking_repair_ref") == tracking_provenance.get("repair_ref")
+            and loaded_packet.get("experiment_tracking_provenance_hash")
+            == tracking_provenance.get("lineage_hash")
+        ),
+        "policy_oss_lineage_present_in_packet": bool(
+            policy_oss_lineage.get("lineage_ref")
+            and policy_oss_lineage_hash
+            and policy_oss_ref.startswith("oss://")
+        ),
+        "loaded_packet_preserves_policy_oss_lineage": (
+            loaded_policy_oss_lineage == policy_oss_lineage
+        ),
+        "loaded_policy_oss_ref_matches_packet": (
+            loaded_packet.get("policy_oss_ref") == policy_oss_ref
+            and loaded_packet.get("policy_oss_lineage_ref") == policy_oss_lineage.get("lineage_ref")
+            and loaded_packet.get("policy_oss_lineage_hash") == policy_oss_lineage_hash
+            and loaded_packet.get("policy_oss_registry_ref") == policy_oss_lineage.get("registry_ref")
+        ),
+        "all_targets_bind_policy_oss_lineage": all(
+            target.get("policy_oss_ref") == policy_oss_ref
+            and target.get("policy_oss_lineage_hash") == policy_oss_lineage_hash
+            and target.get("signal", {}).get("metadata", {}).get("policy_oss_ref") == policy_oss_ref
+            and target.get("signal", {}).get("metadata", {}).get("policy_oss_lineage_hash")
+            == policy_oss_lineage_hash
+            for target in loaded_targets
+        ),
+        "reflection_oss_lineage_present_in_packet": bool(
+            reflection_oss_lineage.get("lineage_ref")
+            and reflection_oss_lineage_hash
+            and reflection_oss_ref.startswith("oss://")
+        ),
+        "loaded_packet_preserves_reflection_oss_lineage": (
+            loaded_reflection_oss_lineage == reflection_oss_lineage
+        ),
+        "loaded_reflection_oss_ref_matches_packet": (
+            loaded_packet.get("reflection_oss_ref") == reflection_oss_ref
+            and loaded_packet.get("reflection_oss_lineage_ref")
+            == reflection_oss_lineage.get("lineage_ref")
+            and loaded_packet.get("reflection_oss_lineage_hash") == reflection_oss_lineage_hash
+            and loaded_packet.get("reflection_oss_registry_ref")
+            == reflection_oss_lineage.get("registry_ref")
+        ),
+        "all_targets_bind_reflection_oss_lineage": all(
+            target.get("reflection_oss_ref") == reflection_oss_ref
+            and target.get("reflection_oss_lineage_hash") == reflection_oss_lineage_hash
+            and target.get("signal", {}).get("metadata", {}).get("reflection_oss_ref")
+            == reflection_oss_ref
+            and target.get("signal", {}).get("metadata", {}).get("reflection_oss_lineage_hash")
+            == reflection_oss_lineage_hash
+            for target in loaded_targets
+        ),
+        "paper_only_guard_retained": result.get("broker_production_live_enabled") == "false",
+    }
+    return {
+        "readback_id": f"lean-object-store-packet-readback-{episode.case_id}",
+        "model_id": LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "packet_ref": strategy_packet["packet_ref"],
+        "packet_hash": _stable_payload_hash("lean-strategy-packet", loaded_packet),
+        "source_packet_hash": _stable_payload_hash("lean-strategy-packet", strategy_packet),
+        "artifact_payload_checksum": result.get("artifact_payload_checksum"),
+        "target_count": len(loaded_targets),
+        "target_refs": [target.get("target_ref") for target in loaded_targets],
+        "target_signal_ids": [target.get("signal_id") for target in loaded_targets],
+        "target_symbols": [target.get("execution_symbol") for target in loaded_targets],
+        "loaded_signal_id": loaded_signal.get("signal_id"),
+        "loaded_signal_symbol": loaded_signal.get("symbol"),
+        "loaded_signal_source_target_ref": first_target.get("target_ref"),
+        "experiment_tracking_provenance_hash": tracking_provenance.get("lineage_hash"),
+        "loaded_experiment_tracking_provenance_hash": loaded_tracking_provenance.get("lineage_hash"),
+        "tracking_reconciliation_ref": tracking_provenance.get("reconciliation_ref"),
+        "tracking_repair_ref": tracking_provenance.get("repair_ref"),
+        "normalized_experiment_ref": tracking_provenance.get("experiment_ref"),
+        "loaded_experiment_tracking_provenance": loaded_tracking_provenance,
+        "policy_oss_lineage_hash": policy_oss_lineage_hash,
+        "loaded_policy_oss_lineage_hash": loaded_policy_oss_lineage.get("lineage_hash"),
+        "policy_oss_ref": policy_oss_ref,
+        "loaded_policy_oss_ref": loaded_packet.get("policy_oss_ref"),
+        "policy_oss_lineage_ref": policy_oss_lineage.get("lineage_ref"),
+        "loaded_policy_oss_lineage_ref": loaded_packet.get("policy_oss_lineage_ref"),
+        "loaded_policy_oss_lineage": loaded_policy_oss_lineage,
+        "reflection_oss_lineage_hash": reflection_oss_lineage_hash,
+        "loaded_reflection_oss_lineage_hash": loaded_reflection_oss_lineage.get("lineage_hash"),
+        "reflection_oss_ref": reflection_oss_ref,
+        "loaded_reflection_oss_ref": loaded_packet.get("reflection_oss_ref"),
+        "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+        "loaded_reflection_oss_lineage_ref": loaded_packet.get("reflection_oss_lineage_ref"),
+        "loaded_reflection_oss_lineage": loaded_reflection_oss_lineage,
+        "object_store_keys": sorted(object_store_keys),
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "lean-object-store-packet-readback",
+            {
+                "case_id": episode.case_id,
+                "loaded_packet": loaded_packet,
+                "loaded_targets": loaded_targets,
+                "loaded_signal": loaded_signal,
+                "replay": replay,
+            },
+        ),
+    }
+
+
 def _run_lean_engine_replay(
     *,
     episode: PortfolioEpisode,
     final_policy: Mapping[str, Any],
+    final_evaluation: Mapping[str, Any],
     evolution_decision: EvolutionDecision,
+    evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
+    persona_conflict_resolution: Mapping[str, Any],
+    case_upstream_artifacts: Mapping[str, Any],
+    generated_at: str,
 ) -> dict[str, Any]:
     artifact_id = f"reg-{SMOKE_STRATEGY_ID}-{SMOKE_VERSION}"
+    final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
+    packet_ref = f"lean-strategy-packet://{episode.case_id}/generation2"
+    tracker = case_upstream_artifacts["tracker"]
+    vectorbt = case_upstream_artifacts["vectorbt"]
+    tracking_reconciliation = case_upstream_artifacts["tracking_reconciliation"]
+    tracking_repair = tracking_reconciliation["repair"]
+    policy_oss_lineage = copy.deepcopy(dict(final_policy.get("policy_oss_lineage") or {}))
+    reflection_oss_lineage = copy.deepcopy(dict(final_policy.get("reflection_oss_lineage") or {}))
+    tracking_provenance_seed = {
+        "backend": tracker["backend"],
+        "request_id": tracker["request_id"],
+        "run_id": tracker["run_id"],
+        "artifact_uri": tracker["artifact_uri"],
+        "experiment_ref": tracking_repair["normalized_experiment_ref"],
+        "reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
+        "repair_ref": tracking_repair["repair_ref"],
+        "repair_action": tracking_repair["action"],
+        "divergence_type": tracking_reconciliation["divergence"]["divergence_type"],
+        "source_vectorbt_request_id": vectorbt["request_id"],
+        "source_vectorbt_run_id": vectorbt["run_id"],
+        "tracking_reconciliation_input_hash": tracking_reconciliation["input_hash"],
+    }
+    tracking_provenance = {
+        "model_id": PERSONA_TRACKING_RECONCILIATION_MODEL_ID,
+        **tracking_provenance_seed,
+        "lineage_hash": _stable_payload_hash(
+            "tracking-experiment-lineage",
+            tracking_provenance_seed,
+        ),
+    }
+    strategy_packet = {
+        "packet_ref": packet_ref,
+        "policy_id": final_policy["policy_id"],
+        "policy_version": final_policy["policy_version"],
+        "generation": final_policy["generation"],
+        "evolution_decision_id": evolution_decision.decision_id,
+        "portfolio_instruments": [window.instrument for window in episode.windows],
+        "validation_signature": episode.validation_signature,
+        "source_outcome_window": final_oos_step["source_outcome_window"],
+        "validation_window": final_oos_step["validation_window"],
+        "decision_trace_ref": final_oos_step["decision_trace_ref"],
+        "strict_oos_proof_ref": strict_oos_evolution_proof["proof_ref"],
+        "no_leakage_protocol_ref": f"no-leakage://{no_leakage_protocol['protocol_id']}",
+        "evolution_trajectory_ref": f"trajectory://{evolution_trajectory['trajectory_id']}",
+        "experiment_tracking_provenance": tracking_provenance,
+        "experiment_tracking_provenance_hash": tracking_provenance["lineage_hash"],
+        "normalized_experiment_ref": tracking_provenance["experiment_ref"],
+        "tracking_reconciliation_ref": tracking_provenance["reconciliation_ref"],
+        "tracking_repair_ref": tracking_provenance["repair_ref"],
+        "policy_oss_lineage": policy_oss_lineage,
+        "policy_oss_lineage_hash": policy_oss_lineage.get("lineage_hash"),
+        "policy_oss_lineage_ref": policy_oss_lineage.get("lineage_ref"),
+        "policy_oss_ref": policy_oss_lineage.get("source_oss_ref"),
+        "policy_oss_registry_ref": policy_oss_lineage.get("registry_ref"),
+        "policy_oss_component": policy_oss_lineage.get("component"),
+        "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+        "reflection_oss_lineage": reflection_oss_lineage,
+        "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+        "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
+        "reflection_oss_ref": reflection_oss_lineage.get("source_oss_ref"),
+        "reflection_oss_registry_ref": reflection_oss_lineage.get("registry_ref"),
+        "reflection_oss_component": reflection_oss_lineage.get("component"),
+        "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
+        "future_holdout_score": final_evaluation["score"],
+        "future_holdout_improvement": final_oos_step["score_improvement"],
+        "validation_window_unseen_by_decision": final_oos_step[
+            "validation_window_unseen_by_decision"
+        ],
+        "future_window_hidden": final_oos_step["future_window_hidden"],
+        "strict_oos_replay_passed": strict_oos_evolution_proof["status"] == "passed"
+        and all(strict_oos_evolution_proof["replay"].values()),
+        "no_leakage_replay_passed": no_leakage_protocol["replay"][
+            "future_holdout_hidden_until_evaluation"
+        ]
+        and all(no_leakage_protocol["replay"].values()),
+    }
+    packet_targets = _build_lean_object_store_packet_targets(
+        episode=episode,
+        final_policy=final_policy,
+        persona_conflict_resolution=persona_conflict_resolution,
+        strategy_packet_ref=packet_ref,
+        generated_at=generated_at,
+    )
     plan = {
         "plan_id": f"lean-plan-{episode.case_id}",
         "approval_decision_id": f"lean-approval-{episode.case_id}",
@@ -5863,8 +8264,21 @@ def _run_lean_engine_replay(
         deployment_mode="paper",
         persona_capital_binding_id=f"pcb-usability-{_persona_id(episode.persona)}",
     )
-    result = run_algorithm_smoke_from_binding(plan, binding).to_dict()
+    result = run_algorithm_smoke_from_binding(
+        plan,
+        binding,
+        strategy_packet=strategy_packet,
+        packet_targets=packet_targets,
+    ).to_dict()
     runtime_context = dict(result["runtime_context"])
+    readback_targets = list(result.get("loaded_packet_targets", []))
+    loaded_signal = dict(result.get("loaded_signal", {}))
+    object_store_packet_readback = _build_lean_object_store_packet_readback(
+        episode=episode,
+        strategy_packet=strategy_packet,
+        packet_targets=packet_targets,
+        result=result,
+    )
     return {
         "replay_id": f"lean-engine-replay-{episode.case_id}",
         "model_id": LEAN_ENGINE_REPLAY_MODEL_ID,
@@ -5873,11 +8287,16 @@ def _run_lean_engine_replay(
         else "failed",
         "algorithm_module": "pantheon_algo.smoke_loader_test",
         "case_specific_runtime_binding": True,
-        "case_specific_strategy_packet": {
-            "policy_id": final_policy["policy_id"],
-            "evolution_decision_id": evolution_decision.decision_id,
-            "portfolio_instruments": [window.instrument for window in episode.windows],
-            "validation_signature": episode.validation_signature,
+        "case_specific_strategy_packet": strategy_packet,
+        "case_specific_packet_targets": packet_targets,
+        "lean_object_store_packet_readback": object_store_packet_readback,
+        "loaded_signal": {
+            "signal_id": loaded_signal.get("signal_id"),
+            "symbol": loaded_signal.get("symbol"),
+            "quantity": loaded_signal.get("quantity"),
+            "quantity_type": loaded_signal.get("quantity_type"),
+            "order_type": loaded_signal.get("order_type"),
+            "source_target_ref": readback_targets[0].get("target_ref") if readback_targets else None,
         },
         "plan": {
             "plan_id": plan["plan_id"],
@@ -5959,10 +8378,16 @@ def _build_lean_handoff_packet(
     *,
     episode: PortfolioEpisode,
     final_policy: Mapping[str, Any],
+    final_evaluation: Mapping[str, Any],
     evolution_decision: EvolutionDecision,
+    evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
     market_friction: Mapping[str, Any],
     broker_lifecycle: Mapping[str, Any],
+    persona_conflict_resolution: Mapping[str, Any],
+    autonomous_schedule: Mapping[str, Any],
     lean_engine_replay: Mapping[str, Any],
     shioaji_sandbox_lifecycle: Mapping[str, Any],
     case_upstream_artifacts: Mapping[str, Any],
@@ -5974,6 +8399,31 @@ def _build_lean_handoff_packet(
         f"oss://{entry['component']}/{entry['request_id']}"
         for entry in case_upstream_artifacts["selected_oss"].values()
     ]
+    conflict_ref = str(persona_conflict_resolution["resolution_ref"])
+    schedule_ref = str(autonomous_schedule["schedule_ref"])
+    resolved_allocation = persona_conflict_resolution["resolved_allocation"]
+    final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
+    strategy_packet = copy.deepcopy(dict(lean_engine_replay["case_specific_strategy_packet"]))
+    strategy_packet_ref = str(strategy_packet["packet_ref"])
+    strict_oos_ref = str(strategy_packet["strict_oos_proof_ref"])
+    no_leakage_ref = str(strategy_packet["no_leakage_protocol_ref"])
+    trajectory_ref = str(strategy_packet["evolution_trajectory_ref"])
+    tracking_provenance = copy.deepcopy(
+        dict(strategy_packet.get("experiment_tracking_provenance") or {})
+    )
+    experiment_ref = str(tracking_provenance.get("experiment_ref") or "")
+    tracking_reconciliation_ref = str(tracking_provenance.get("reconciliation_ref") or "")
+    tracking_repair_ref = str(tracking_provenance.get("repair_ref") or "")
+    policy_oss_lineage = copy.deepcopy(dict(strategy_packet.get("policy_oss_lineage") or {}))
+    policy_oss_ref = str(policy_oss_lineage.get("source_oss_ref") or "")
+    policy_oss_lineage_ref = str(policy_oss_lineage.get("lineage_ref") or "")
+    policy_oss_registry_ref = str(policy_oss_lineage.get("registry_ref") or "")
+    reflection_oss_lineage = copy.deepcopy(
+        dict(strategy_packet.get("reflection_oss_lineage") or {})
+    )
+    reflection_oss_ref = str(reflection_oss_lineage.get("source_oss_ref") or "")
+    reflection_oss_lineage_ref = str(reflection_oss_lineage.get("lineage_ref") or "")
+    reflection_oss_registry_ref = str(reflection_oss_lineage.get("registry_ref") or "")
     return {
         "packet_id": f"lean-packet-{episode.case_id}",
         "component": handoff["component"],
@@ -5982,10 +8432,61 @@ def _build_lean_handoff_packet(
         "packet_type": "LeanPaperStrategyPacket",
         "target_stage": "paper",
         "policy_id": final_policy["policy_id"],
+        "policy_version": final_policy["policy_version"],
+        "policy_generation": final_policy["generation"],
         "evolution_decision_id": evolution_decision.decision_id,
+        "strategy_packet_ref": strategy_packet_ref,
+        "strict_oos_evolution_proof_ref": strict_oos_ref,
+        "no_leakage_protocol_ref": no_leakage_ref,
+        "evolution_trajectory_ref": trajectory_ref,
+        "experiment_tracking_provenance": tracking_provenance,
+        "experiment_tracking_provenance_hash": tracking_provenance.get("lineage_hash"),
+        "normalized_experiment_ref": experiment_ref,
+        "tracking_reconciliation_ref": tracking_reconciliation_ref,
+        "tracking_repair_ref": tracking_repair_ref,
+        "policy_oss_lineage": policy_oss_lineage,
+        "policy_oss_lineage_hash": policy_oss_lineage.get("lineage_hash"),
+        "policy_oss_lineage_ref": policy_oss_lineage_ref,
+        "policy_oss_ref": policy_oss_ref,
+        "policy_oss_registry_ref": policy_oss_registry_ref,
+        "policy_oss_component": policy_oss_lineage.get("component"),
+        "policy_oss_request_id": policy_oss_lineage.get("request_id"),
+        "reflection_oss_lineage": reflection_oss_lineage,
+        "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
+        "reflection_oss_lineage_ref": reflection_oss_lineage_ref,
+        "reflection_oss_ref": reflection_oss_ref,
+        "reflection_oss_registry_ref": reflection_oss_registry_ref,
+        "reflection_oss_component": reflection_oss_lineage.get("component"),
+        "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
+        "strategy_packet": strategy_packet,
+        "strategy_packet_hash": _stable_payload_hash(
+            "lean-strategy-packet",
+            strategy_packet,
+        ),
+        "strategy_packet_validation_window": final_oos_step["validation_window"],
+        "strategy_packet_source_outcome_window": final_oos_step["source_outcome_window"],
+        "future_holdout_score": final_evaluation["score"],
+        "future_holdout_improvement": final_oos_step["score_improvement"],
+        "strategy_packet_replay_passed": (
+            strategy_packet.get("generation") == 2
+            and strategy_packet.get("policy_id") == final_policy["policy_id"]
+            and strategy_packet.get("validation_window") == "future_holdout"
+            and strategy_packet.get("strict_oos_replay_passed") is True
+            and strategy_packet.get("no_leakage_replay_passed") is True
+        ),
         "portfolio_instruments": [window.instrument for window in episode.windows],
         "market_friction_model_id": market_friction["model_id"],
         "broker_lifecycle_model": broker_lifecycle["lifecycle_model"],
+        "persona_conflict_resolution_ref": conflict_ref,
+        "resolved_capital_budget_pct": resolved_allocation["capital_budget_pct"],
+        "resolved_direction_by_instrument": copy.deepcopy(
+            dict(resolved_allocation["direction_by_instrument"])
+        ),
+        "resolved_weight_by_instrument": copy.deepcopy(
+            dict(resolved_allocation["weight_by_instrument"])
+        ),
+        "schedule_ref": schedule_ref,
+        "next_cycle_due_at": autonomous_schedule["next_cycle_due_at"],
         "lean_engine_replay_id": lean_engine_replay["replay_id"],
         "lean_engine_replay_status": lean_engine_replay["status"],
         "shioaji_sandbox_lifecycle_id": shioaji_sandbox_lifecycle["lifecycle_id"],
@@ -5997,11 +8498,25 @@ def _build_lean_handoff_packet(
         "case_tracking_backend": tracker["backend"],
         "case_tracking_run_id": tracker["run_id"],
         "runtime_bundle_refs": [
+            strategy_packet_ref,
             f"strategy://{episode.seed_key}-agent-usability-hardening/{final_policy['policy_id']}",
             f"evolution://{evolution_decision.decision_id}",
+            strict_oos_ref,
+            no_leakage_ref,
+            trajectory_ref,
             f"oss://{handoff['component']}/{handoff['request_id']}",
             f"oss://vectorbt/{vectorbt['request_id']}",
-            f"experiment://{tracker['backend']}/{tracker['run_id']}",
+            policy_oss_lineage_ref,
+            policy_oss_ref,
+            policy_oss_registry_ref,
+            reflection_oss_lineage_ref,
+            reflection_oss_ref,
+            reflection_oss_registry_ref,
+            experiment_ref,
+            tracking_reconciliation_ref,
+            tracking_repair_ref,
+            conflict_ref,
+            schedule_ref,
             *selected_oss_refs,
             f"lean-engine://{lean_engine_replay['replay_id']}",
             f"broker-sandbox://{shioaji_sandbox_lifecycle['lifecycle_id']}",
@@ -6011,12 +8526,268 @@ def _build_lean_handoff_packet(
     }
 
 
+def _lean_execution_call_for(quantity_type: str, order_type: str) -> str:
+    if quantity_type == "PERCENT_PORTFOLIO":
+        return "SetHoldings"
+    if order_type == "LIMIT":
+        return "LimitOrder"
+    return "MarketOrder"
+
+
+def _lean_symbol_for_execution_symbol(execution_symbol: str) -> str:
+    return str(execution_symbol).split(".", 1)[0]
+
+
+def _build_lean_packet_execution_projection(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    executions: Sequence[Mapping[str, Any]],
+    market_friction: Mapping[str, Any],
+    broker_lifecycle: Mapping[str, Any],
+    persona_conflict_resolution: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+) -> dict[str, Any]:
+    generation = int(final_policy["generation"])
+    execution = executions[generation]
+    fill_events = list(execution.get("fill_events", []))
+    fill_by_symbol = {
+        str(
+            fill.get("metadata", {}).get("symbol")
+            or fill.get("metadata", {}).get("signal_symbol")
+            or fill.get("metadata", {}).get("source_symbol")
+        ): fill
+        for fill in fill_events
+    }
+    orders = [
+        order for order in broker_lifecycle.get("orders", [])
+        if int(order.get("generation", -1)) == generation
+    ]
+    order_by_symbol = {str(order.get("symbol")): order for order in orders}
+    final_costs = market_friction["generation_costs"][generation]["leg_costs"]
+    cost_by_instrument = {str(cost["instrument"]): cost for cost in final_costs}
+    allocation = persona_conflict_resolution["resolved_allocation"]
+    strategy_packet = lean_handoff["strategy_packet"]
+    strategy_packet_ref = str(lean_handoff["strategy_packet_ref"])
+    handoff_ref = f"lean-handoff://{lean_handoff['packet_id']}"
+    projection_ref = f"lean-packet-execution://{episode.case_id}/generation{generation}"
+    leg_projections: list[dict[str, Any]] = []
+    for leg_index, window in enumerate(episode.windows):
+        leg = final_policy["legs"][window.instrument]
+        lean_symbol = _lean_symbol_for_execution_symbol(window.execution_symbol)
+        cost = cost_by_instrument.get(window.instrument, {})
+        order = order_by_symbol.get(lean_symbol, {})
+        fill = fill_by_symbol.get(lean_symbol, {})
+        fill_metrics = fill.get("metrics", {})
+        fill_metadata = fill.get("metadata", {})
+        entry_row = _entry_row_for_generation(window, generation)
+        direction = int(leg["direction"])
+        policy_weight = float(leg["weight"])
+        target_weight = float(allocation["weight_by_instrument"][window.instrument])
+        risk_weight = float(leg["risk_multiplier"]) * policy_weight
+        expected_quantity = _quantity_for(
+            str(final_policy["quantity_type"]),
+            float(entry_row["close"]),
+            risk_weight,
+            episode.ordinal + leg_index,
+        )
+        requested_quantity = _finite_float(fill_metadata.get("requested_quantity"), 0.0)
+        target_ref = f"{projection_ref}/leg/{leg_index}/target"
+        order_ref = f"paper-order://{order.get('order_id', '')}"
+        fill_ref = f"paper-fill://{order.get('fill_event_id', fill.get('event_id', ''))}"
+        readback_ref = f"{order_ref}/readback"
+        leg_projections.append(
+            {
+                "leg_index": leg_index,
+                "instrument": window.instrument,
+                "execution_symbol": window.execution_symbol,
+                "lean_symbol": lean_symbol,
+                "policy_id": final_policy["policy_id"],
+                "policy_version": final_policy["policy_version"],
+                "generation": generation,
+                "direction": direction,
+                "policy_weight": round(policy_weight, 6),
+                "target_weight": round(target_weight, 6),
+                "resolved_weight": round(target_weight, 6),
+                "capital_budget_pct": allocation["capital_budget_pct"],
+                "risk_multiplier": leg["risk_multiplier"],
+                "quantity_type": final_policy["quantity_type"],
+                "order_type": final_policy["order_type"],
+                "lean_order_call": _lean_execution_call_for(
+                    str(final_policy["quantity_type"]),
+                    str(final_policy["order_type"]),
+                ),
+                "target_ref": target_ref,
+                "order_ref": order_ref,
+                "fill_ref": fill_ref,
+                "readback_ref": readback_ref,
+                "signal_id": fill_metadata.get("signal_id"),
+                "expected_signal_id": _stable_id(
+                    "sig",
+                    episode.case_id,
+                    str(generation),
+                    window.instrument,
+                    str(window.start_index),
+                ),
+                "requested_quantity": requested_quantity,
+                "expected_requested_quantity": expected_quantity,
+                "fill_quantity": _finite_float(fill_metrics.get("fill_quantity"), 0.0),
+                "fill_price": _finite_float(fill_metrics.get("fill_price"), float(entry_row["close"])),
+                "market_data_ref": fill_metadata.get("market_data_ref"),
+                "source_dataset_ref": fill_metadata.get("source_dataset_ref"),
+                "market_friction_notional": cost.get("notional"),
+                "market_friction_total_cost_bps": cost.get("total_cost_bps"),
+                "within_liquidity_cap": cost.get("within_liquidity_cap"),
+                "broker_order_id": order.get("order_id"),
+                "broker_fill_event_id": order.get("fill_event_id"),
+                "broker_status_path": list(order.get("status_path", [])),
+                "broker_terminal_status": order.get("terminal_status"),
+                "broker_readback_status": order.get("readback_status"),
+                "broker_reconciled": order.get("reconciled") is True,
+                "live_broker_submitted": order.get("live_broker_submitted") is True,
+                "input_refs": [
+                    strategy_packet_ref,
+                    handoff_ref,
+                    lean_handoff["strict_oos_evolution_proof_ref"],
+                    lean_handoff["no_leakage_protocol_ref"],
+                    lean_handoff["evolution_trajectory_ref"],
+                    f"lean-engine://{lean_engine_replay['replay_id']}",
+                    persona_conflict_resolution["resolution_ref"],
+                    order_ref,
+                    fill_ref,
+                ],
+                "event_chain": [
+                    "packet_leg_target",
+                    "lean_target_order",
+                    "paper_fill_readback",
+                ],
+            }
+        )
+    replay = {
+        "replayable": True,
+        "strategy_packet_ref_bound": (
+            strategy_packet.get("packet_ref") == strategy_packet_ref
+            and strategy_packet_ref in lean_handoff.get("runtime_bundle_refs", [])
+        ),
+        "strategy_packet_generation2_bound": (
+            strategy_packet.get("generation") == generation
+            and strategy_packet.get("policy_id") == final_policy.get("policy_id")
+            and strategy_packet.get("validation_window") == "future_holdout"
+        ),
+        "handoff_allocation_bound": (
+            lean_handoff.get("resolved_weight_by_instrument")
+            == allocation.get("weight_by_instrument")
+            and lean_handoff.get("resolved_direction_by_instrument")
+            == allocation.get("direction_by_instrument")
+        ),
+        "all_packet_instruments_have_policy_legs": (
+            set(strategy_packet.get("portfolio_instruments", []))
+            == set(final_policy.get("legs", {}))
+            == {window.instrument for window in episode.windows}
+        ),
+        "all_leg_directions_match_policy_and_allocation": all(
+            leg["direction"] == int(final_policy["legs"][leg["instrument"]]["direction"])
+            and leg["direction"] == int(allocation["direction_by_instrument"][leg["instrument"]])
+            for leg in leg_projections
+        ),
+        "all_leg_weights_match_handoff_allocation": all(
+            abs(
+                float(leg["target_weight"])
+                - float(lean_handoff["resolved_weight_by_instrument"][leg["instrument"]])
+            ) <= 1e-9
+            for leg in leg_projections
+        ),
+        "all_leg_capital_within_budget": (
+            round(sum(float(leg["target_weight"]) for leg in leg_projections), 6)
+            == float(allocation["capital_budget_pct"])
+            and float(allocation["capital_budget_pct"]) <= 1.0
+        ),
+        "all_leg_expected_quantities_replay_signal_payload": all(
+            leg["signal_id"] == leg["expected_signal_id"]
+            and abs(float(leg["requested_quantity"]) - float(leg["expected_requested_quantity"])) <= 1e-6
+            for leg in leg_projections
+        ),
+        "all_leg_market_friction_notional_bound": all(
+            leg["market_friction_notional"] is not None
+            and float(leg["market_friction_notional"]) > 0.0
+            and leg["within_liquidity_cap"] is True
+            for leg in leg_projections
+        ),
+        "all_lean_targets_have_broker_orders": (
+            len(leg_projections) == PORTFOLIO_LEG_COUNT
+            and all(leg["broker_order_id"] for leg in leg_projections)
+        ),
+        "all_broker_orders_have_fill_readbacks": all(
+            leg["broker_fill_event_id"]
+            and leg["broker_terminal_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+            and leg["broker_readback_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+            and leg["broker_reconciled"] is True
+            for leg in leg_projections
+        ),
+        "all_fill_events_bind_signal_metadata": all(
+            leg["fill_quantity"] != 0.0
+            and leg["market_data_ref"]
+            and leg["source_dataset_ref"] == HISTORICAL_OHLCV_DATASET_ID
+            for leg in leg_projections
+        ),
+        "paper_only_guard_retained": (
+            lean_handoff.get("target_stage") == "paper"
+            and lean_handoff.get("broker_live_submitted") is False
+            and all(leg["live_broker_submitted"] is False for leg in leg_projections)
+        ),
+        "projection_ready_for_runtime_feedback": True,
+    }
+    return {
+        "projection_id": f"lean-packet-execution-{episode.case_id}",
+        "projection_ref": projection_ref,
+        "model_id": LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "strategy_packet_ref": strategy_packet_ref,
+        "source_handoff_ref": handoff_ref,
+        "source_runtime_ref": f"lean-engine://{lean_engine_replay['replay_id']}",
+        "policy_id": final_policy["policy_id"],
+        "policy_version": final_policy["policy_version"],
+        "generation": generation,
+        "target_stage": lean_handoff["target_stage"],
+        "portfolio_instruments": [window.instrument for window in episode.windows],
+        "capital_budget_pct": allocation["capital_budget_pct"],
+        "leg_count": len(leg_projections),
+        "order_count": len(orders),
+        "fill_count": len(fill_events),
+        "leg_projections": leg_projections,
+        "input_refs": [
+            strategy_packet_ref,
+            handoff_ref,
+            f"lean-engine://{lean_engine_replay['replay_id']}",
+            persona_conflict_resolution["resolution_ref"],
+            lean_handoff["strict_oos_evolution_proof_ref"],
+            lean_handoff["no_leakage_protocol_ref"],
+            lean_handoff["evolution_trajectory_ref"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "lean-packet-execution-projection",
+            {
+                "case_id": episode.case_id,
+                "strategy_packet_ref": strategy_packet_ref,
+                "handoff_ref": handoff_ref,
+                "leg_projections": leg_projections,
+                "replay": replay,
+            },
+        ),
+    }
+
+
 def _build_lean_runtime_feedback_response(
     *,
     episode: PortfolioEpisode,
     scenario: str,
     lean_engine_replay: Mapping[str, Any],
     lean_handoff: Mapping[str, Any],
+    lean_packet_execution_projection: Mapping[str, Any],
     autonomous_schedule: Mapping[str, Any],
     decision_traces: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -6036,9 +8807,35 @@ def _build_lean_runtime_feedback_response(
     loaded_metadata = lean_engine_replay.get("loaded_metadata", {})
     binding = lean_engine_replay.get("binding", {})
     plan = lean_engine_replay.get("plan", {})
+    strategy_packet_ref = str(lean_handoff.get("strategy_packet_ref", ""))
+    strict_oos_ref = str(lean_handoff.get("strict_oos_evolution_proof_ref", ""))
+    no_leakage_ref = str(lean_handoff.get("no_leakage_protocol_ref", ""))
+    experiment_ref = str(lean_handoff.get("normalized_experiment_ref", ""))
+    tracking_reconciliation_ref = str(lean_handoff.get("tracking_reconciliation_ref", ""))
+    tracking_repair_ref = str(lean_handoff.get("tracking_repair_ref", ""))
+    policy_oss_ref = str(lean_handoff.get("policy_oss_ref", ""))
+    policy_oss_lineage_ref = str(lean_handoff.get("policy_oss_lineage_ref", ""))
+    policy_oss_registry_ref = str(lean_handoff.get("policy_oss_registry_ref", ""))
+    reflection_oss_ref = str(lean_handoff.get("reflection_oss_ref", ""))
+    reflection_oss_lineage_ref = str(lean_handoff.get("reflection_oss_lineage_ref", ""))
+    reflection_oss_registry_ref = str(lean_handoff.get("reflection_oss_registry_ref", ""))
+    projection_ref = str(lean_packet_execution_projection.get("projection_ref", ""))
     evidence_refs = [
         runtime_ref,
         handoff_ref,
+        projection_ref,
+        strategy_packet_ref,
+        strict_oos_ref,
+        no_leakage_ref,
+        experiment_ref,
+        tracking_reconciliation_ref,
+        tracking_repair_ref,
+        policy_oss_lineage_ref,
+        policy_oss_ref,
+        policy_oss_registry_ref,
+        reflection_oss_lineage_ref,
+        reflection_oss_ref,
+        reflection_oss_registry_ref,
         f"runtime-binding://{runtime_context.get('runtime_binding_id')}",
         f"object-store://{metadata_key}",
         f"reflection://{decision_traces[-1]['reflection_id']}",
@@ -6062,6 +8859,61 @@ def _build_lean_runtime_feedback_response(
         "case_runtime_refs_bound": bool(lean_handoff.get("case_vectorbt_request_id"))
         and bool(lean_handoff.get("case_tracking_run_id"))
         and runtime_ref in lean_handoff.get("runtime_bundle_refs", []),
+        "evolved_strategy_packet_refs_bound": (
+            bool(strategy_packet_ref)
+            and strategy_packet_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and bool(strict_oos_ref)
+            and strict_oos_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and bool(no_leakage_ref)
+            and no_leakage_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and lean_handoff.get("strategy_packet_replay_passed") is True
+        ),
+        "experiment_tracking_lineage_bound": (
+            bool(experiment_ref)
+            and experiment_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and experiment_ref in evidence_refs
+            and bool(tracking_reconciliation_ref)
+            and tracking_reconciliation_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and tracking_reconciliation_ref in evidence_refs
+            and bool(tracking_repair_ref)
+            and tracking_repair_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and tracking_repair_ref in evidence_refs
+        ),
+        "policy_oss_lineage_bound": (
+            bool(policy_oss_lineage_ref)
+            and policy_oss_lineage_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and policy_oss_lineage_ref in evidence_refs
+            and bool(policy_oss_ref)
+            and policy_oss_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and policy_oss_ref in evidence_refs
+            and bool(policy_oss_registry_ref)
+            and policy_oss_registry_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and policy_oss_registry_ref in evidence_refs
+            and lean_handoff.get("policy_oss_lineage_hash")
+            == lean_handoff.get("policy_oss_lineage", {}).get("lineage_hash")
+        ),
+        "reflection_oss_lineage_bound": (
+            bool(reflection_oss_lineage_ref)
+            and reflection_oss_lineage_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and reflection_oss_lineage_ref in evidence_refs
+            and bool(reflection_oss_ref)
+            and reflection_oss_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and reflection_oss_ref in evidence_refs
+            and bool(reflection_oss_registry_ref)
+            and reflection_oss_registry_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and reflection_oss_registry_ref in evidence_refs
+            and lean_handoff.get("reflection_oss_lineage_hash")
+            == lean_handoff.get("reflection_oss_lineage", {}).get("lineage_hash")
+        ),
+        "lean_packet_execution_projection_consumed": (
+            lean_packet_execution_projection.get("model_id") == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
+            and lean_packet_execution_projection.get("status") == "passed"
+            and lean_packet_execution_projection.get("source_handoff_ref") == handoff_ref
+            and lean_packet_execution_projection.get("strategy_packet_ref") == strategy_packet_ref
+            and lean_packet_execution_projection.get("leg_count") == PORTFOLIO_LEG_COUNT
+            and projection_ref in evidence_refs
+            and all(lean_packet_execution_projection.get("replay", {}).values())
+        ),
         "next_cycle_scheduled": autonomous_schedule.get("phase_order_valid") is True
         and bool(autonomous_schedule.get("next_cycle_due_at")),
         "drives_persona_next_ooda_step": True,
@@ -6089,6 +8941,7 @@ def _build_lean_runtime_feedback_response(
         },
         "request_response_flow": [
             "persona_strategy_packet",
+            "lean_packet_execution_projection",
             "lean_runtime_replay_response",
             "persona_next_ooda_action",
         ],
@@ -6106,6 +8959,17 @@ def _build_lean_runtime_feedback_response(
             "mark_runtime_feedback_seen": True,
             "bind_runtime_context": runtime_context.get("runtime_binding_id"),
             "verify_object_store_metadata": metadata_key,
+            "bind_evolved_strategy_packet": strategy_packet_ref,
+            "bind_reconciled_experiment_ref": experiment_ref,
+            "bind_tracking_reconciliation_ref": tracking_reconciliation_ref,
+            "bind_tracking_repair_ref": tracking_repair_ref,
+            "bind_policy_oss_lineage_ref": policy_oss_lineage_ref,
+            "bind_policy_oss_ref": policy_oss_ref,
+            "bind_policy_oss_registry_ref": policy_oss_registry_ref,
+            "bind_reflection_oss_lineage_ref": reflection_oss_lineage_ref,
+            "bind_reflection_oss_ref": reflection_oss_ref,
+            "bind_reflection_oss_registry_ref": reflection_oss_registry_ref,
+            "bind_lean_packet_execution_projection": projection_ref,
             "attach_to_handoff_packet": lean_handoff["packet_id"],
             "attach_to_decision_trace": decision_traces[-1]["reflection_id"],
             "schedule_next_cycle_after_feedback": autonomous_schedule["next_cycle_due_at"],
@@ -6119,9 +8983,788 @@ def _build_lean_runtime_feedback_response(
                 "action": action,
                 "runtime_ref": runtime_ref,
                 "handoff_ref": handoff_ref,
+                "strategy_packet_ref": strategy_packet_ref,
+                "experiment_ref": experiment_ref,
+                "tracking_reconciliation_ref": tracking_reconciliation_ref,
+                "tracking_repair_ref": tracking_repair_ref,
+                "policy_oss_lineage_ref": policy_oss_lineage_ref,
+                "policy_oss_ref": policy_oss_ref,
+                "policy_oss_registry_ref": policy_oss_registry_ref,
+                "reflection_oss_lineage_ref": reflection_oss_lineage_ref,
+                "reflection_oss_ref": reflection_oss_ref,
+                "reflection_oss_registry_ref": reflection_oss_registry_ref,
+                "projection_ref": projection_ref,
                 "runtime_binding_id": runtime_context.get("runtime_binding_id"),
                 "metadata_key": metadata_key,
                 "fill_count": lean_engine_replay.get("fill_count"),
+            },
+        ),
+    }
+
+
+def _build_experiment_tracking_lineage_handoff_proof(
+    *,
+    episode: PortfolioEpisode,
+    evolution_decision: EvolutionDecision,
+    case_upstream_artifacts: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    lean_runtime_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    tracker = case_upstream_artifacts["tracker"]
+    reconciliation = case_upstream_artifacts["tracking_reconciliation"]
+    repair = reconciliation["repair"]
+    experiment_ref = str(repair["normalized_experiment_ref"])
+    reconciliation_ref = str(reconciliation["reconciliation_ref"])
+    repair_ref = str(repair["repair_ref"])
+    strategy_packet = lean_engine_replay["case_specific_strategy_packet"]
+    packet_provenance = dict(strategy_packet.get("experiment_tracking_provenance") or {})
+    readback = lean_engine_replay["lean_object_store_packet_readback"]
+    loaded_provenance = dict(readback.get("loaded_experiment_tracking_provenance") or {})
+    handoff_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    runtime_feedback_refs = set(
+        lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+    )
+    decision_evidence_refs = [
+        ref.to_dict() if isinstance(ref, EvidenceRef) else copy.deepcopy(dict(ref))
+        for ref in evolution_decision.evidence_refs
+    ]
+    decision_evidence_ref_ids = {str(ref.get("ref_id")) for ref in decision_evidence_refs}
+    decision_metadata = dict(evolution_decision.metadata or {})
+    lineage_hashes = {
+        "strategy_packet": str(strategy_packet.get("experiment_tracking_provenance_hash") or ""),
+        "packet_provenance": str(packet_provenance.get("lineage_hash") or ""),
+        "object_store_readback": str(readback.get("experiment_tracking_provenance_hash") or ""),
+        "loaded_object_store_readback": str(
+            readback.get("loaded_experiment_tracking_provenance_hash") or ""
+        ),
+        "lean_handoff": str(lean_handoff.get("experiment_tracking_provenance_hash") or ""),
+    }
+    replay = {
+        "replayable": True,
+        "tracker_readback_reconciled": _tracking_readback_reconciliation_is_usable(
+            reconciliation
+        ),
+        "evolution_decision_cites_reconciliation": reconciliation_ref
+        in decision_evidence_ref_ids,
+        "evolution_decision_metadata_carries_experiment_ref": (
+            decision_metadata.get("normalized_experiment_ref") == experiment_ref
+            and decision_metadata.get("tracking_reconciliation_ref") == reconciliation_ref
+            and decision_metadata.get("tracking_repair_ref") == repair_ref
+        ),
+        "strategy_packet_carries_tracking_provenance": (
+            packet_provenance.get("experiment_ref") == experiment_ref
+            and packet_provenance.get("backend") == tracker["backend"]
+            and packet_provenance.get("run_id") == tracker["run_id"]
+            and packet_provenance.get("reconciliation_ref") == reconciliation_ref
+            and packet_provenance.get("repair_ref") == repair_ref
+            and strategy_packet.get("normalized_experiment_ref") == experiment_ref
+            and strategy_packet.get("tracking_reconciliation_ref") == reconciliation_ref
+            and strategy_packet.get("tracking_repair_ref") == repair_ref
+        ),
+        "object_store_readback_preserves_tracking_provenance": (
+            readback.get("normalized_experiment_ref") == experiment_ref
+            and readback.get("tracking_reconciliation_ref") == reconciliation_ref
+            and readback.get("tracking_repair_ref") == repair_ref
+            and loaded_provenance == packet_provenance
+        ),
+        "handoff_runtime_bundle_contains_repaired_tracking_refs": {
+            experiment_ref,
+            reconciliation_ref,
+            repair_ref,
+        }.issubset(handoff_refs),
+        "runtime_feedback_cites_repaired_tracking_refs": {
+            experiment_ref,
+            reconciliation_ref,
+            repair_ref,
+        }.issubset(runtime_feedback_refs),
+        "lineage_hash_stable_across_packet_handoff_readback": (
+            bool(lineage_hashes["strategy_packet"])
+            and len(set(lineage_hashes.values())) == 1
+        ),
+    }
+    return {
+        "proof_id": f"tracking-experiment-lineage-handoff-{episode.case_id}",
+        "proof_ref": f"tracking-experiment-lineage://{episode.case_id}",
+        "model_id": PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "backend": tracker["backend"],
+        "tracker_request_id": tracker["request_id"],
+        "tracking_run_id": tracker["run_id"],
+        "experiment_ref": experiment_ref,
+        "tracking_reconciliation_ref": reconciliation_ref,
+        "tracking_repair_ref": repair_ref,
+        "tracking_repair_action": repair["action"],
+        "strategy_packet_ref": strategy_packet["packet_ref"],
+        "lean_handoff_ref": f"lean-handoff://{lean_handoff['packet_id']}",
+        "lean_runtime_feedback_ref": f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+        "object_store_readback_ref": readback["readback_id"],
+        "lineage_hashes": lineage_hashes,
+        "decision_evidence_refs": decision_evidence_refs,
+        "input_refs": [
+            experiment_ref,
+            reconciliation_ref,
+            repair_ref,
+            strategy_packet["packet_ref"],
+            f"lean-handoff://{lean_handoff['packet_id']}",
+            f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+            readback["readback_id"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "tracking-experiment-lineage-handoff",
+            {
+                "case_id": episode.case_id,
+                "experiment_ref": experiment_ref,
+                "reconciliation_ref": reconciliation_ref,
+                "repair_ref": repair_ref,
+                "lineage_hashes": lineage_hashes,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _build_policy_oss_lineage_handoff_proof(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    policy_candidate_materiality: Mapping[str, Any],
+    case_upstream_artifacts: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    lean_runtime_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    policy_entry = case_upstream_artifacts["selected_oss"]["policy_candidate"]
+    source_ref = f"oss://{policy_entry['component']}/{policy_entry['request_id']}"
+    final_policy_lineage = copy.deepcopy(dict(final_policy.get("policy_oss_lineage") or {}))
+    strategy_packet = lean_engine_replay["case_specific_strategy_packet"]
+    packet_lineage = copy.deepcopy(dict(strategy_packet.get("policy_oss_lineage") or {}))
+    readback = lean_engine_replay["lean_object_store_packet_readback"]
+    loaded_lineage = copy.deepcopy(dict(readback.get("loaded_policy_oss_lineage") or {}))
+    handoff_lineage = copy.deepcopy(dict(lean_handoff.get("policy_oss_lineage") or {}))
+    handoff_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    runtime_feedback_refs = set(
+        lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+    )
+    lineage_ref = str(final_policy_lineage.get("lineage_ref") or "")
+    registry_ref = str(final_policy_lineage.get("registry_ref") or "")
+    lineage_hashes = {
+        "final_policy": str(final_policy.get("policy_oss_lineage_hash") or ""),
+        "final_policy_lineage": str(final_policy_lineage.get("lineage_hash") or ""),
+        "strategy_packet": str(strategy_packet.get("policy_oss_lineage_hash") or ""),
+        "packet_lineage": str(packet_lineage.get("lineage_hash") or ""),
+        "object_store_readback": str(readback.get("policy_oss_lineage_hash") or ""),
+        "loaded_object_store_readback": str(readback.get("loaded_policy_oss_lineage_hash") or ""),
+        "handoff": str(lean_handoff.get("policy_oss_lineage_hash") or ""),
+    }
+    loaded_targets = list(lean_engine_replay.get("case_specific_packet_targets", []))
+    replay = {
+        "replayable": True,
+        "policy_candidate_materiality_passed": _policy_candidate_materiality_is_usable(
+            policy_candidate_materiality
+        ),
+        "materiality_source_matches_policy_lineage": (
+            policy_candidate_materiality.get("source_oss_ref") == source_ref
+            and final_policy_lineage.get("source_oss_ref") == source_ref
+            and final_policy_lineage.get("component") == policy_candidate_materiality.get("component")
+            and final_policy_lineage.get("request_id") == policy_candidate_materiality.get("request_id")
+        ),
+        "evolved_policy_carries_policy_oss_lineage": (
+            final_policy.get("generation") == 2
+            and final_policy.get("policy_oss_ref") == source_ref
+            and final_policy.get("policy_oss_lineage_ref") == lineage_ref
+            and final_policy.get("policy_oss_lineage_hash")
+            == final_policy_lineage.get("lineage_hash")
+            and final_policy_lineage.get("model_id") == PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID
+        ),
+        "strategy_packet_carries_policy_oss_lineage": (
+            packet_lineage == final_policy_lineage
+            and strategy_packet.get("policy_oss_ref") == source_ref
+            and strategy_packet.get("policy_oss_lineage_ref") == lineage_ref
+            and strategy_packet.get("policy_oss_lineage_hash")
+            == final_policy_lineage.get("lineage_hash")
+            and strategy_packet.get("policy_oss_registry_ref") == registry_ref
+        ),
+        "object_store_readback_preserves_policy_oss_lineage": (
+            readback.get("policy_oss_ref") == source_ref
+            and readback.get("loaded_policy_oss_ref") == source_ref
+            and readback.get("policy_oss_lineage_ref") == lineage_ref
+            and readback.get("loaded_policy_oss_lineage_ref") == lineage_ref
+            and loaded_lineage == final_policy_lineage
+        ),
+        "all_packet_targets_bind_policy_oss_lineage": (
+            len(loaded_targets) == PORTFOLIO_LEG_COUNT
+            and all(
+                target.get("policy_oss_ref") == source_ref
+                and target.get("policy_oss_lineage_ref") == lineage_ref
+                and target.get("policy_oss_lineage_hash")
+                == final_policy_lineage.get("lineage_hash")
+                and target.get("signal", {}).get("metadata", {}).get("policy_oss_ref")
+                == source_ref
+                and target.get("signal", {}).get("metadata", {}).get("policy_oss_lineage_ref")
+                == lineage_ref
+                for target in loaded_targets
+            )
+        ),
+        "handoff_runtime_bundle_contains_policy_oss_refs": {
+            source_ref,
+            lineage_ref,
+            registry_ref,
+        }.issubset(handoff_refs)
+        and handoff_lineage == final_policy_lineage,
+        "runtime_feedback_cites_policy_oss_lineage": {
+            source_ref,
+            lineage_ref,
+            registry_ref,
+        }.issubset(runtime_feedback_refs),
+        "lineage_hash_stable_across_policy_packet_readback_handoff": (
+            bool(lineage_hashes["final_policy"])
+            and len(set(lineage_hashes.values())) == 1
+        ),
+    }
+    return {
+        "proof_id": f"policy-oss-lineage-handoff-{episode.case_id}",
+        "proof_ref": f"policy-oss-lineage-handoff://{episode.case_id}",
+        "model_id": PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "component": policy_entry["component"],
+        "request_id": policy_entry["request_id"],
+        "source_oss_ref": source_ref,
+        "lineage_ref": lineage_ref,
+        "registry_ref": registry_ref,
+        "artifact_family": policy_entry["artifact_family"],
+        "policy_quality": final_policy_lineage.get("policy_quality"),
+        "policy_hint_risk": final_policy_lineage.get("policy_hint_risk"),
+        "strategy_packet_ref": strategy_packet["packet_ref"],
+        "lean_handoff_ref": f"lean-handoff://{lean_handoff['packet_id']}",
+        "lean_runtime_feedback_ref": f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+        "object_store_readback_ref": readback["readback_id"],
+        "lineage_hashes": lineage_hashes,
+        "input_refs": [
+            source_ref,
+            lineage_ref,
+            registry_ref,
+            strategy_packet["packet_ref"],
+            f"lean-handoff://{lean_handoff['packet_id']}",
+            f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+            readback["readback_id"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "policy-oss-lineage-handoff",
+            {
+                "case_id": episode.case_id,
+                "source_ref": source_ref,
+                "lineage_ref": lineage_ref,
+                "lineage_hashes": lineage_hashes,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _build_reflection_oss_lineage_handoff_proof(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    reflection_artifact_materiality: Mapping[str, Any],
+    case_upstream_artifacts: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    lean_runtime_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    reflection_entry = case_upstream_artifacts["selected_oss"]["reflection_artifact"]
+    source_ref = f"oss://{reflection_entry['component']}/{reflection_entry['request_id']}"
+    final_policy_lineage = copy.deepcopy(dict(final_policy.get("reflection_oss_lineage") or {}))
+    strategy_packet = lean_engine_replay["case_specific_strategy_packet"]
+    packet_lineage = copy.deepcopy(dict(strategy_packet.get("reflection_oss_lineage") or {}))
+    readback = lean_engine_replay["lean_object_store_packet_readback"]
+    loaded_lineage = copy.deepcopy(dict(readback.get("loaded_reflection_oss_lineage") or {}))
+    handoff_lineage = copy.deepcopy(dict(lean_handoff.get("reflection_oss_lineage") or {}))
+    handoff_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    runtime_feedback_refs = set(
+        lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+    )
+    lineage_ref = str(final_policy_lineage.get("lineage_ref") or "")
+    registry_ref = str(final_policy_lineage.get("registry_ref") or "")
+    lineage_hashes = {
+        "final_policy": str(final_policy.get("reflection_oss_lineage_hash") or ""),
+        "final_policy_lineage": str(final_policy_lineage.get("lineage_hash") or ""),
+        "strategy_packet": str(strategy_packet.get("reflection_oss_lineage_hash") or ""),
+        "packet_lineage": str(packet_lineage.get("lineage_hash") or ""),
+        "object_store_readback": str(readback.get("reflection_oss_lineage_hash") or ""),
+        "loaded_object_store_readback": str(
+            readback.get("loaded_reflection_oss_lineage_hash") or ""
+        ),
+        "handoff": str(lean_handoff.get("reflection_oss_lineage_hash") or ""),
+    }
+    loaded_targets = list(lean_engine_replay.get("case_specific_packet_targets", []))
+    replay = {
+        "replayable": True,
+        "reflection_artifact_materiality_passed": _reflection_artifact_materiality_is_usable(
+            reflection_artifact_materiality
+        ),
+        "materiality_source_matches_reflection_lineage": (
+            reflection_artifact_materiality.get("source_oss_ref") == source_ref
+            and final_policy_lineage.get("source_oss_ref") == source_ref
+            and final_policy_lineage.get("component")
+            == reflection_artifact_materiality.get("component")
+            and final_policy_lineage.get("request_id")
+            == reflection_artifact_materiality.get("request_id")
+        ),
+        "evolved_policy_carries_reflection_oss_lineage": (
+            final_policy.get("generation") == 2
+            and final_policy.get("reflection_oss_ref") == source_ref
+            and final_policy.get("reflection_oss_lineage_ref") == lineage_ref
+            and final_policy.get("reflection_oss_lineage_hash")
+            == final_policy_lineage.get("lineage_hash")
+            and final_policy_lineage.get("model_id")
+            == PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID
+        ),
+        "strategy_packet_carries_reflection_oss_lineage": (
+            packet_lineage == final_policy_lineage
+            and strategy_packet.get("reflection_oss_ref") == source_ref
+            and strategy_packet.get("reflection_oss_lineage_ref") == lineage_ref
+            and strategy_packet.get("reflection_oss_lineage_hash")
+            == final_policy_lineage.get("lineage_hash")
+            and strategy_packet.get("reflection_oss_registry_ref") == registry_ref
+        ),
+        "object_store_readback_preserves_reflection_oss_lineage": (
+            readback.get("reflection_oss_ref") == source_ref
+            and readback.get("loaded_reflection_oss_ref") == source_ref
+            and readback.get("reflection_oss_lineage_ref") == lineage_ref
+            and readback.get("loaded_reflection_oss_lineage_ref") == lineage_ref
+            and loaded_lineage == final_policy_lineage
+        ),
+        "all_packet_targets_bind_reflection_oss_lineage": (
+            len(loaded_targets) == PORTFOLIO_LEG_COUNT
+            and all(
+                target.get("reflection_oss_ref") == source_ref
+                and target.get("reflection_oss_lineage_ref") == lineage_ref
+                and target.get("reflection_oss_lineage_hash")
+                == final_policy_lineage.get("lineage_hash")
+                and target.get("signal", {}).get("metadata", {}).get("reflection_oss_ref")
+                == source_ref
+                and target.get("signal", {}).get("metadata", {}).get(
+                    "reflection_oss_lineage_ref"
+                )
+                == lineage_ref
+                for target in loaded_targets
+            )
+        ),
+        "handoff_runtime_bundle_contains_reflection_oss_refs": {
+            source_ref,
+            lineage_ref,
+            registry_ref,
+        }.issubset(handoff_refs)
+        and handoff_lineage == final_policy_lineage,
+        "runtime_feedback_cites_reflection_oss_lineage": {
+            source_ref,
+            lineage_ref,
+            registry_ref,
+        }.issubset(runtime_feedback_refs),
+        "lineage_hash_stable_across_reflection_policy_packet_readback_handoff": (
+            bool(lineage_hashes["final_policy"])
+            and len(set(lineage_hashes.values())) == 1
+        ),
+    }
+    return {
+        "proof_id": f"reflection-oss-lineage-handoff-{episode.case_id}",
+        "proof_ref": f"reflection-oss-lineage-handoff://{episode.case_id}",
+        "model_id": PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "component": reflection_entry["component"],
+        "request_id": reflection_entry["request_id"],
+        "source_oss_ref": source_ref,
+        "lineage_ref": lineage_ref,
+        "registry_ref": registry_ref,
+        "artifact_family": reflection_entry["artifact_family"],
+        "reflection_quality": final_policy_lineage.get("reflection_quality"),
+        "strategy_packet_ref": strategy_packet["packet_ref"],
+        "lean_handoff_ref": f"lean-handoff://{lean_handoff['packet_id']}",
+        "lean_runtime_feedback_ref": f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+        "object_store_readback_ref": readback["readback_id"],
+        "lineage_hashes": lineage_hashes,
+        "input_refs": [
+            source_ref,
+            lineage_ref,
+            registry_ref,
+            strategy_packet["packet_ref"],
+            f"lean-handoff://{lean_handoff['packet_id']}",
+            f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+            readback["readback_id"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "reflection-oss-lineage-handoff",
+            {
+                "case_id": episode.case_id,
+                "source_ref": source_ref,
+                "lineage_ref": lineage_ref,
+                "lineage_hashes": lineage_hashes,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _build_evolved_strategy_packet_proof(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    final_evaluation: Mapping[str, Any],
+    evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    lean_packet_execution_projection: Mapping[str, Any],
+    lean_runtime_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    strategy_packet = lean_handoff["strategy_packet"]
+    final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
+    strategy_packet_ref = str(strategy_packet["packet_ref"])
+    handoff_ref = f"lean-handoff://{lean_handoff['packet_id']}"
+    projection_ref = str(lean_packet_execution_projection["projection_ref"])
+    runtime_feedback_ref = f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}"
+    runtime_bundle_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    lineage_refs = [
+        strategy_packet_ref,
+        str(strategy_packet["strict_oos_proof_ref"]),
+        str(strategy_packet["no_leakage_protocol_ref"]),
+        str(strategy_packet["evolution_trajectory_ref"]),
+        f"lean-engine://{lean_engine_replay['replay_id']}",
+        handoff_ref,
+        projection_ref,
+        runtime_feedback_ref,
+    ]
+    replay = {
+        "replayable": True,
+        "strategy_packet_is_generation2": (
+            strategy_packet.get("generation") == 2
+            and final_policy.get("generation") == 2
+            and strategy_packet.get("policy_id") == final_policy.get("policy_id")
+        ),
+        "strategy_packet_declares_future_holdout_validation": (
+            strategy_packet.get("validation_window") == "future_holdout"
+            and strategy_packet.get("source_outcome_window") == "holdout"
+            and strategy_packet.get("future_holdout_score") == final_evaluation.get("score")
+        ),
+        "strict_oos_generation2_step_matches_packet": (
+            final_oos_step.get("candidate_policy_id") == strategy_packet.get("policy_id")
+            and final_oos_step.get("validation_window") == strategy_packet.get("validation_window")
+            and final_oos_step.get("source_outcome_window") == strategy_packet.get("source_outcome_window")
+            and final_oos_step.get("score_improvement") == strategy_packet.get("future_holdout_improvement")
+        ),
+        "packet_binds_strict_oos_proof": (
+            strategy_packet.get("strict_oos_proof_ref") == strict_oos_evolution_proof.get("proof_ref")
+            and strict_oos_evolution_proof.get("status") == "passed"
+            and all(strict_oos_evolution_proof.get("replay", {}).values())
+        ),
+        "packet_binds_no_leakage_protocol": (
+            strategy_packet.get("no_leakage_protocol_ref")
+            == f"no-leakage://{no_leakage_protocol['protocol_id']}"
+            and no_leakage_protocol.get("replay", {}).get("future_holdout_hidden_until_evaluation") is True
+            and all(no_leakage_protocol.get("replay", {}).values())
+        ),
+        "packet_binds_evolution_trajectory": (
+            strategy_packet.get("evolution_trajectory_ref")
+            == f"trajectory://{evolution_trajectory['trajectory_id']}"
+            and [comparison["evaluation_window"] for comparison in evolution_trajectory.get("comparisons", [])]
+            == ["holdout", "future_holdout"]
+        ),
+        "lean_engine_replay_reads_same_packet": (
+            lean_engine_replay.get("case_specific_strategy_packet", {}).get("packet_ref")
+            == strategy_packet_ref
+            and lean_engine_replay.get("case_specific_strategy_packet", {}).get("policy_id")
+            == final_policy.get("policy_id")
+            and lean_engine_replay.get("lean_object_store_packet_readback", {}).get("packet_ref")
+            == strategy_packet_ref
+            and lean_engine_replay.get("lean_object_store_packet_readback", {}).get("status")
+            == "passed"
+            and lean_engine_replay.get("lean_object_store_packet_readback", {}).get("target_count")
+            == PORTFOLIO_LEG_COUNT
+        ),
+        "handoff_consumes_same_packet": (
+            lean_handoff.get("strategy_packet_ref") == strategy_packet_ref
+            and lean_handoff.get("strategy_packet_hash")
+            == _stable_payload_hash("lean-strategy-packet", strategy_packet)
+            and lean_handoff.get("strategy_packet_replay_passed") is True
+        ),
+        "handoff_runtime_bundle_contains_packet_and_proofs": all(
+            ref in runtime_bundle_refs for ref in lineage_refs[:5]
+        ),
+        "execution_projection_consumes_packet_legs_and_orders": (
+            lean_packet_execution_projection.get("model_id")
+            == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
+            and lean_packet_execution_projection.get("status") == "passed"
+            and lean_packet_execution_projection.get("strategy_packet_ref") == strategy_packet_ref
+            and lean_packet_execution_projection.get("source_handoff_ref") == handoff_ref
+            and lean_packet_execution_projection.get("leg_count") == PORTFOLIO_LEG_COUNT
+            and all(lean_packet_execution_projection.get("replay", {}).values())
+        ),
+        "runtime_feedback_consumes_handoff_with_packet": (
+            lean_runtime_feedback.get("source_handoff_ref") == handoff_ref
+            and strategy_packet_ref
+            in lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+            and lean_runtime_feedback.get("state_updates", {}).get("bind_evolved_strategy_packet")
+            == strategy_packet_ref
+            and lean_runtime_feedback.get("state_updates", {}).get(
+                "bind_lean_packet_execution_projection"
+            )
+            == projection_ref
+            and lean_runtime_feedback.get("replay", {}).get(
+                "lean_packet_execution_projection_consumed"
+            )
+            is True
+            and lean_runtime_feedback.get("replay", {}).get("evolved_strategy_packet_refs_bound") is True
+        ),
+        "paper_only_guard_retained": (
+            lean_handoff.get("target_stage") == "paper"
+            and lean_handoff.get("broker_live_submitted") is False
+            and lean_runtime_feedback.get("persona_ooda_followup", {}).get("paper_only") is True
+        ),
+    }
+    return {
+        "proof_id": f"evolved-strategy-packet-{episode.case_id}",
+        "proof_ref": f"evolved-strategy-packet://{episode.case_id}",
+        "model_id": LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "strategy_packet_ref": strategy_packet_ref,
+        "policy_id": final_policy["policy_id"],
+        "policy_version": final_policy["policy_version"],
+        "generation": final_policy["generation"],
+        "source_outcome_window": strategy_packet["source_outcome_window"],
+        "validation_window": strategy_packet["validation_window"],
+        "strict_oos_proof_ref": strategy_packet["strict_oos_proof_ref"],
+        "no_leakage_protocol_ref": strategy_packet["no_leakage_protocol_ref"],
+        "evolution_trajectory_ref": strategy_packet["evolution_trajectory_ref"],
+        "lean_engine_replay_ref": f"lean-engine://{lean_engine_replay['replay_id']}",
+        "lean_handoff_ref": handoff_ref,
+        "lean_packet_execution_projection_ref": projection_ref,
+        "lean_runtime_feedback_ref": runtime_feedback_ref,
+        "future_holdout_score": final_evaluation["score"],
+        "future_holdout_improvement": strategy_packet["future_holdout_improvement"],
+        "lineage_refs": lineage_refs,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "evolved-strategy-packet-proof",
+            {
+                "case_id": episode.case_id,
+                "strategy_packet": strategy_packet,
+                "lineage_refs": lineage_refs,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _build_scheduler_conflict_ooda_proof(
+    *,
+    episode: PortfolioEpisode,
+    operational_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    conflict = operational_context["persona_conflict_resolution"]
+    schedule = operational_context["autonomous_schedule"]
+    adapter_followup = operational_context["broker_adapter_followup"]
+    lean_handoff = operational_context["lean_handoff"]
+    runtime_feedback = operational_context["lean_runtime_feedback"]
+    schedule_ref = str(schedule["schedule_ref"])
+    conflict_ref = str(conflict["resolution_ref"])
+    handoff_ref = f"lean-handoff://{lean_handoff['packet_id']}"
+    adapter_followup_ref = f"broker-adapter-followup://{adapter_followup['followup_id']}"
+    runtime_feedback_ref = f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
+    dispatch_ref = f"scheduler-dispatch://{episode.case_id}/next-cycle"
+    selected_action_ref = str(conflict["selected_action_ref"])
+    phase_events = [
+        {
+            "phase": phase["phase"],
+            "due_at": phase["due_at"],
+            "status": phase["status"],
+            "output_ref": f"scheduler-phase://{schedule['schedule_id']}/{phase['phase']}",
+        }
+        for phase in schedule["phases"]
+    ]
+    dispatch_events = [
+        {
+            "sequence": 1,
+            "event_type": "scheduler_recovery_tick",
+            "actor": "autonomous_scheduler",
+            "ooda_phase": "observe",
+            "input_refs": [f"checkpoint://{schedule['restart_checkpoint_ref']}"],
+            "output_ref": schedule_ref,
+            "drives_next_event": "multi_persona_conflict_resolution",
+        },
+        {
+            "sequence": 2,
+            "event_type": "multi_persona_conflict_resolution",
+            "actor": "persona_council",
+            "ooda_phase": "orient",
+            "input_refs": [
+                selected_action_ref,
+                f"reflection://{decision_traces[-1]['reflection_id']}",
+                str(conflict["oss_risk_ref"]),
+            ],
+            "output_ref": conflict_ref,
+            "drives_next_event": "lean_handoff_materialization",
+        },
+        {
+            "sequence": 3,
+            "event_type": "lean_handoff_materialization",
+            "actor": "persona+lean_handoff",
+            "ooda_phase": "act",
+            "input_refs": [selected_action_ref, conflict_ref, schedule_ref],
+            "output_ref": handoff_ref,
+            "drives_next_event": "broker_adapter_followup",
+        },
+        {
+            "sequence": 4,
+            "event_type": "broker_adapter_followup",
+            "actor": "broker_adapter+persona",
+            "ooda_phase": "orient",
+            "input_refs": [
+                str(adapter_followup["source_packet_ref"]),
+                schedule_ref,
+                f"checkpoint://{adapter_followup['restart_checkpoint_ref']}",
+            ],
+            "output_ref": adapter_followup_ref,
+            "drives_next_event": "lean_runtime_feedback",
+        },
+        {
+            "sequence": 5,
+            "event_type": "lean_runtime_feedback",
+            "actor": "lean_runtime+persona",
+            "ooda_phase": str(runtime_feedback["persona_ooda_followup"]["ooda_step"]),
+            "input_refs": [
+                str(runtime_feedback["source_runtime_ref"]),
+                str(runtime_feedback["source_handoff_ref"]),
+                schedule_ref,
+            ],
+            "output_ref": runtime_feedback_ref,
+            "drives_next_event": "scheduler_next_cycle_dispatch",
+        },
+        {
+            "sequence": 6,
+            "event_type": "scheduler_next_cycle_dispatch",
+            "actor": "autonomous_scheduler",
+            "ooda_phase": "act",
+            "input_refs": [schedule_ref, adapter_followup_ref, runtime_feedback_ref],
+            "output_ref": dispatch_ref,
+            "drives_next_event": "next_autonomous_paper_cycle",
+        },
+    ]
+    produced_at = {
+        event["output_ref"]: int(event["sequence"])
+        for event in dispatch_events
+    }
+    resolved_allocation = conflict["resolved_allocation"]
+    replay = {
+        "replayable": True,
+        "scheduler_phase_order_valid": schedule.get("phase_order_valid") is True
+        and [event["phase"] for event in phase_events] == list(AUTONOMOUS_SCHEDULER_PHASES),
+        "scheduler_phase_due_times_ordered": schedule.get("phase_due_at_ordered") is True,
+        "scheduler_recovered_restart_checkpoint": schedule.get("missed_cycle_recovered") is True
+        and bool(schedule.get("restart_checkpoint_ref")),
+        "conflict_resolution_consumes_selected_action_and_risk": (
+            selected_action_ref in dispatch_events[1]["input_refs"]
+            and str(conflict["oss_risk_ref"]) in dispatch_events[1]["input_refs"]
+            and conflict.get("open_conflicts") == []
+        ),
+        "resolved_allocation_is_portfolio_complete": (
+            set(resolved_allocation.get("direction_by_instrument", {}))
+            == {window.instrument for window in episode.windows}
+            and set(resolved_allocation.get("weight_by_instrument", {}))
+            == {window.instrument for window in episode.windows}
+            and float(resolved_allocation.get("capital_budget_pct", 2.0)) <= 1.0
+        ),
+        "handoff_consumes_conflict_resolution": (
+            lean_handoff.get("persona_conflict_resolution_ref") == conflict_ref
+            and conflict_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and lean_handoff.get("resolved_weight_by_instrument")
+            == resolved_allocation.get("weight_by_instrument")
+        ),
+        "handoff_consumes_scheduler_ref": (
+            lean_handoff.get("schedule_ref") == schedule_ref
+            and schedule_ref in lean_handoff.get("runtime_bundle_refs", [])
+        ),
+        "adapter_followup_consumes_schedule": (
+            adapter_followup.get("schedule_ref") == schedule.get("schedule_id")
+            and schedule_ref in adapter_followup.get("persona_followup", {}).get("evidence_refs", [])
+            and adapter_followup.get("state_updates", {}).get("schedule_next_cycle_after_followup")
+            == schedule.get("next_cycle_due_at")
+        ),
+        "lean_runtime_feedback_consumes_schedule": (
+            runtime_feedback.get("state_updates", {}).get("schedule_next_cycle_after_feedback")
+            == schedule.get("next_cycle_due_at")
+            and runtime_feedback.get("source_handoff_ref") == handoff_ref
+        ),
+        "runtime_ooda_step_maps_to_scheduler_phase": (
+            runtime_feedback.get("persona_ooda_followup", {}).get("next_scheduler_phase")
+            in {phase["phase"] for phase in schedule.get("phases", [])}
+            and runtime_feedback.get("persona_ooda_followup", {}).get("next_scheduler_phase")
+            in {"reflect", "evolve"}
+        ),
+        "next_dispatch_consumes_adapter_and_runtime_feedback": (
+            adapter_followup_ref in dispatch_events[-1]["input_refs"]
+            and runtime_feedback_ref in dispatch_events[-1]["input_refs"]
+            and schedule_ref in dispatch_events[-1]["input_refs"]
+        ),
+        "dispatch_events_strictly_ordered": [
+            event["sequence"] for event in dispatch_events
+        ] == list(range(1, len(dispatch_events) + 1)),
+        "no_future_dispatch_ref": all(
+            produced_at[input_ref] < int(event["sequence"])
+            for event in dispatch_events
+            for input_ref in event["input_refs"]
+            if input_ref in produced_at
+        ),
+        "paper_only_guard_retained": (
+            lean_handoff.get("target_stage") == "paper"
+            and lean_handoff.get("broker_live_submitted") is False
+            and adapter_followup.get("persona_followup", {}).get("paper_only") is True
+            and runtime_feedback.get("persona_ooda_followup", {}).get("paper_only") is True
+        ),
+    }
+    return {
+        "proof_id": f"scheduler-conflict-ooda-{episode.case_id}",
+        "proof_ref": f"scheduler-conflict-ooda://{episode.case_id}",
+        "model_id": PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "schedule_ref": schedule_ref,
+        "conflict_ref": conflict_ref,
+        "handoff_ref": handoff_ref,
+        "adapter_followup_ref": adapter_followup_ref,
+        "runtime_feedback_ref": runtime_feedback_ref,
+        "dispatch_ref": dispatch_ref,
+        "conflict_types": list(conflict["conflict_types"]),
+        "next_ooda_step": runtime_feedback["persona_ooda_followup"]["ooda_step"],
+        "next_scheduler_phase": runtime_feedback["persona_ooda_followup"]["next_scheduler_phase"],
+        "next_cycle_due_at": schedule["next_cycle_due_at"],
+        "phase_events": phase_events,
+        "dispatch_events": dispatch_events,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "scheduler-conflict-ooda-proof",
+            {
+                "case_id": episode.case_id,
+                "schedule_ref": schedule_ref,
+                "conflict_ref": conflict_ref,
+                "handoff_ref": handoff_ref,
+                "runtime_feedback_ref": runtime_feedback_ref,
+                "dispatch_events": dispatch_events,
+                "replay": replay,
             },
         ),
     }
@@ -6228,11 +9871,15 @@ def _broker_adapter_followup_is_usable(followup: Mapping[str, Any]) -> bool:
 def _persona_conflicts_are_resolved(conflict_resolution: Mapping[str, Any]) -> bool:
     allocation = conflict_resolution.get("resolved_allocation", {})
     return bool(
-        conflict_resolution.get("classified_conflicts")
+        conflict_resolution.get("model_id") == PERSONA_CONFLICT_RESOLUTION_MODEL_ID
+        and conflict_resolution.get("resolution_ref", "").startswith("persona-conflict://")
+        and conflict_resolution.get("classified_conflicts")
         and not conflict_resolution.get("open_conflicts")
         and allocation.get("capital_budget_pct", 2.0) <= 1.0
         and set(allocation.get("direction_by_instrument", {}))
         == set(allocation.get("weight_by_instrument", {}))
+        and conflict_resolution.get("selected_action_ref", "").startswith("selected-action://")
+        and conflict_resolution.get("oss_risk_ref", "").startswith("oss://")
     )
 
 
@@ -6249,8 +9896,10 @@ def _restart_recovery_is_usable(restart_recovery: Mapping[str, Any]) -> bool:
 
 def _autonomous_schedule_is_usable(schedule: Mapping[str, Any]) -> bool:
     return bool(
-        schedule.get("trigger_mode") == "autonomous_daily_paper_loop"
+        schedule.get("schedule_ref", "").startswith("schedule://")
+        and schedule.get("trigger_mode") == "autonomous_daily_paper_loop"
         and schedule.get("phase_order_valid")
+        and schedule.get("phase_due_at_ordered")
         and schedule.get("missed_cycle_recovered")
         and [phase["phase"] for phase in schedule.get("phases", [])]
         == list(AUTONOMOUS_SCHEDULER_PHASES)
@@ -6259,11 +9908,57 @@ def _autonomous_schedule_is_usable(schedule: Mapping[str, Any]) -> bool:
 
 
 def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
+    runtime_refs = set(packet.get("runtime_bundle_refs", []))
     return bool(
         packet.get("component") == "lean_handoff"
         and packet.get("strategy_packet_materialized")
+        and packet.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and packet.get("strategy_packet_ref") in runtime_refs
+        and packet.get("policy_generation") == 2
+        and packet.get("strategy_packet_validation_window") == "future_holdout"
+        and packet.get("strategy_packet_source_outcome_window") == "holdout"
+        and packet.get("strict_oos_evolution_proof_ref", "").startswith("strict-oos-evolution://")
+        and packet.get("strict_oos_evolution_proof_ref") in runtime_refs
+        and packet.get("no_leakage_protocol_ref", "").startswith("no-leakage://")
+        and packet.get("no_leakage_protocol_ref") in runtime_refs
+        and packet.get("evolution_trajectory_ref", "").startswith("trajectory://")
+        and packet.get("evolution_trajectory_ref") in runtime_refs
+        and packet.get("normalized_experiment_ref", "").startswith("experiment://")
+        and packet.get("normalized_experiment_ref") in runtime_refs
+        and packet.get("tracking_reconciliation_ref", "").startswith("tracking-reconciliation://")
+        and packet.get("tracking_reconciliation_ref") in runtime_refs
+        and packet.get("tracking_repair_ref", "").startswith(packet.get("tracking_reconciliation_ref", ""))
+        and packet.get("tracking_repair_ref") in runtime_refs
+        and packet.get("experiment_tracking_provenance_hash")
+        == packet.get("experiment_tracking_provenance", {}).get("lineage_hash")
+        and packet.get("policy_oss_ref", "").startswith("oss://")
+        and packet.get("policy_oss_ref") in runtime_refs
+        and packet.get("policy_oss_lineage_ref", "").startswith("policy-oss-lineage://")
+        and packet.get("policy_oss_lineage_ref") in runtime_refs
+        and packet.get("policy_oss_registry_ref", "").startswith("registry://")
+        and packet.get("policy_oss_registry_ref") in runtime_refs
+        and packet.get("policy_oss_lineage_hash")
+        == packet.get("policy_oss_lineage", {}).get("lineage_hash")
+        and packet.get("reflection_oss_ref", "").startswith("oss://")
+        and packet.get("reflection_oss_ref") in runtime_refs
+        and packet.get("reflection_oss_lineage_ref", "").startswith("reflection-oss-lineage://")
+        and packet.get("reflection_oss_lineage_ref") in runtime_refs
+        and packet.get("reflection_oss_registry_ref", "").startswith("registry://")
+        and packet.get("reflection_oss_registry_ref") in runtime_refs
+        and packet.get("reflection_oss_lineage_hash")
+        == packet.get("reflection_oss_lineage", {}).get("lineage_hash")
+        and packet.get("strategy_packet_replay_passed") is True
+        and packet.get("strategy_packet_hash")
         and packet.get("received_by_lean_handoff")
         and packet.get("target_stage") == "paper"
+        and packet.get("persona_conflict_resolution_ref", "").startswith("persona-conflict://")
+        and packet.get("persona_conflict_resolution_ref") in runtime_refs
+        and float(packet.get("resolved_capital_budget_pct", 2.0)) <= 1.0
+        and set(packet.get("resolved_direction_by_instrument", {}))
+        == set(packet.get("resolved_weight_by_instrument", {}))
+        and packet.get("schedule_ref", "").startswith("schedule://")
+        and packet.get("schedule_ref") in runtime_refs
+        and packet.get("next_cycle_due_at")
         and packet.get("lean_engine_replay_status") == "passed"
         and packet.get("shioaji_sandbox_lifecycle_status") == "passed"
         and packet.get("case_vectorbt_request_id")
@@ -6306,8 +10001,247 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("fills_drive_next_ooda") is True
         and replay.get("paper_runtime_guard_retained") is True
         and replay.get("case_runtime_refs_bound") is True
+        and replay.get("evolved_strategy_packet_refs_bound") is True
+        and replay.get("experiment_tracking_lineage_bound") is True
+        and replay.get("policy_oss_lineage_bound") is True
+        and replay.get("reflection_oss_lineage_bound") is True
+        and replay.get("lean_packet_execution_projection_consumed") is True
         and replay.get("next_cycle_scheduled") is True
         and replay.get("drives_persona_next_ooda_step") is True
+    )
+
+
+def _experiment_tracking_lineage_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    lineage_hashes = proof.get("lineage_hashes", {})
+    return bool(
+        proof.get("model_id") == PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("tracking-experiment-lineage://")
+        and proof.get("experiment_ref", "").startswith("experiment://")
+        and proof.get("tracking_reconciliation_ref", "").startswith("tracking-reconciliation://")
+        and proof.get("tracking_repair_ref", "").startswith(proof.get("tracking_reconciliation_ref", ""))
+        and proof.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
+        and proof.get("object_store_readback_ref", "").startswith("lean-object-store-packet-readback-")
+        and proof.get("input_hash")
+        and lineage_hashes
+        and len({str(value) for value in lineage_hashes.values()}) == 1
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "tracker_readback_reconciled",
+            "evolution_decision_cites_reconciliation",
+            "evolution_decision_metadata_carries_experiment_ref",
+            "strategy_packet_carries_tracking_provenance",
+            "object_store_readback_preserves_tracking_provenance",
+            "handoff_runtime_bundle_contains_repaired_tracking_refs",
+            "runtime_feedback_cites_repaired_tracking_refs",
+            "lineage_hash_stable_across_packet_handoff_readback",
+        ))
+    )
+
+
+def _policy_oss_lineage_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    lineage_hashes = proof.get("lineage_hashes", {})
+    return bool(
+        proof.get("model_id") == PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("policy-oss-lineage-handoff://")
+        and proof.get("source_oss_ref", "").startswith("oss://")
+        and proof.get("lineage_ref", "").startswith("policy-oss-lineage://")
+        and proof.get("registry_ref", "").startswith("registry://")
+        and proof.get("component") in POLICY_OSS_COMPONENTS
+        and proof.get("artifact_family") == _policy_candidate_expected_artifact_family(
+            str(proof.get("component"))
+        )
+        and proof.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
+        and proof.get("object_store_readback_ref", "").startswith("lean-object-store-packet-readback-")
+        and float(proof.get("policy_quality", 0.0)) > 0.0
+        and float(proof.get("policy_hint_risk", 0.0)) > 0.0
+        and proof.get("input_hash")
+        and lineage_hashes
+        and len({str(value) for value in lineage_hashes.values()}) == 1
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "policy_candidate_materiality_passed",
+            "materiality_source_matches_policy_lineage",
+            "evolved_policy_carries_policy_oss_lineage",
+            "strategy_packet_carries_policy_oss_lineage",
+            "object_store_readback_preserves_policy_oss_lineage",
+            "all_packet_targets_bind_policy_oss_lineage",
+            "handoff_runtime_bundle_contains_policy_oss_refs",
+            "runtime_feedback_cites_policy_oss_lineage",
+            "lineage_hash_stable_across_policy_packet_readback_handoff",
+        ))
+    )
+
+
+def _reflection_oss_lineage_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    lineage_hashes = proof.get("lineage_hashes", {})
+    return bool(
+        proof.get("model_id") == PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("reflection-oss-lineage-handoff://")
+        and proof.get("source_oss_ref", "").startswith("oss://")
+        and proof.get("lineage_ref", "").startswith("reflection-oss-lineage://")
+        and proof.get("registry_ref", "").startswith("registry://")
+        and proof.get("component") in REFLECTION_OSS_COMPONENTS
+        and proof.get("artifact_family") == _reflection_artifact_expected_family(
+            str(proof.get("component"))
+        )
+        and proof.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
+        and proof.get("object_store_readback_ref", "").startswith("lean-object-store-packet-readback-")
+        and float(proof.get("reflection_quality", 0.0)) > 0.0
+        and proof.get("input_hash")
+        and lineage_hashes
+        and len({str(value) for value in lineage_hashes.values()}) == 1
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "reflection_artifact_materiality_passed",
+            "materiality_source_matches_reflection_lineage",
+            "evolved_policy_carries_reflection_oss_lineage",
+            "strategy_packet_carries_reflection_oss_lineage",
+            "object_store_readback_preserves_reflection_oss_lineage",
+            "all_packet_targets_bind_reflection_oss_lineage",
+            "handoff_runtime_bundle_contains_reflection_oss_refs",
+            "runtime_feedback_cites_reflection_oss_lineage",
+            "lineage_hash_stable_across_reflection_policy_packet_readback_handoff",
+        ))
+    )
+
+
+def _lean_packet_execution_projection_is_usable(projection: Mapping[str, Any]) -> bool:
+    replay = projection.get("replay", {})
+    leg_projections = list(projection.get("leg_projections", []))
+    return bool(
+        projection.get("model_id") == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
+        and projection.get("status") == "passed"
+        and projection.get("projection_ref", "").startswith("lean-packet-execution://")
+        and projection.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and projection.get("source_handoff_ref", "").startswith("lean-handoff://")
+        and projection.get("source_runtime_ref", "").startswith("lean-engine://")
+        and projection.get("generation") == 2
+        and projection.get("target_stage") == "paper"
+        and projection.get("leg_count") == PORTFOLIO_LEG_COUNT
+        and projection.get("order_count") == PORTFOLIO_LEG_COUNT
+        and projection.get("fill_count") == PORTFOLIO_LEG_COUNT
+        and projection.get("input_hash")
+        and len(leg_projections) == PORTFOLIO_LEG_COUNT
+        and all(leg.get("target_ref", "").startswith(projection.get("projection_ref", "")) for leg in leg_projections)
+        and all(leg.get("order_ref", "").startswith("paper-order://") for leg in leg_projections)
+        and all(leg.get("fill_ref", "").startswith("paper-fill://") for leg in leg_projections)
+        and all(leg.get("readback_ref", "").endswith("/readback") for leg in leg_projections)
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "strategy_packet_ref_bound",
+            "strategy_packet_generation2_bound",
+            "handoff_allocation_bound",
+            "all_packet_instruments_have_policy_legs",
+            "all_leg_directions_match_policy_and_allocation",
+            "all_leg_weights_match_handoff_allocation",
+            "all_leg_capital_within_budget",
+            "all_leg_expected_quantities_replay_signal_payload",
+            "all_leg_market_friction_notional_bound",
+            "all_lean_targets_have_broker_orders",
+            "all_broker_orders_have_fill_readbacks",
+            "all_fill_events_bind_signal_metadata",
+            "paper_only_guard_retained",
+            "projection_ready_for_runtime_feedback",
+        ))
+    )
+
+
+def _evolved_strategy_packet_proof_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    return bool(
+        proof.get("model_id") == LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("evolved-strategy-packet://")
+        and proof.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and proof.get("generation") == 2
+        and proof.get("source_outcome_window") == "holdout"
+        and proof.get("validation_window") == "future_holdout"
+        and proof.get("strict_oos_proof_ref", "").startswith("strict-oos-evolution://")
+        and proof.get("no_leakage_protocol_ref", "").startswith("no-leakage://")
+        and proof.get("evolution_trajectory_ref", "").startswith("trajectory://")
+        and proof.get("lean_engine_replay_ref", "").startswith("lean-engine://")
+        and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_packet_execution_projection_ref", "").startswith(
+            "lean-packet-execution://"
+        )
+        and proof.get("lean_runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
+        and float(proof.get("future_holdout_improvement", 0.0)) > 0.0
+        and proof.get("input_hash")
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "strategy_packet_is_generation2",
+            "strategy_packet_declares_future_holdout_validation",
+            "strict_oos_generation2_step_matches_packet",
+            "packet_binds_strict_oos_proof",
+            "packet_binds_no_leakage_protocol",
+            "packet_binds_evolution_trajectory",
+            "lean_engine_replay_reads_same_packet",
+            "handoff_consumes_same_packet",
+            "handoff_runtime_bundle_contains_packet_and_proofs",
+            "execution_projection_consumes_packet_legs_and_orders",
+            "runtime_feedback_consumes_handoff_with_packet",
+            "paper_only_guard_retained",
+        ))
+    )
+
+
+def _scheduler_conflict_ooda_proof_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    dispatch_events = list(proof.get("dispatch_events", []))
+    phase_events = list(proof.get("phase_events", []))
+    event_types = [event.get("event_type") for event in dispatch_events]
+    return bool(
+        proof.get("model_id") == PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("scheduler-conflict-ooda://")
+        and proof.get("schedule_ref", "").startswith("schedule://")
+        and proof.get("conflict_ref", "").startswith("persona-conflict://")
+        and proof.get("handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("adapter_followup_ref", "").startswith("broker-adapter-followup://")
+        and proof.get("runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
+        and proof.get("dispatch_ref", "").startswith("scheduler-dispatch://")
+        and [event.get("phase") for event in phase_events] == list(AUTONOMOUS_SCHEDULER_PHASES)
+        and event_types == [
+            "scheduler_recovery_tick",
+            "multi_persona_conflict_resolution",
+            "lean_handoff_materialization",
+            "broker_adapter_followup",
+            "lean_runtime_feedback",
+            "scheduler_next_cycle_dispatch",
+        ]
+        and proof.get("next_scheduler_phase") in {"reflect", "evolve"}
+        and proof.get("next_ooda_step") in {"observe", "orient", "decide", "act"}
+        and proof.get("next_cycle_due_at")
+        and proof.get("input_hash")
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "scheduler_phase_order_valid",
+            "scheduler_phase_due_times_ordered",
+            "scheduler_recovered_restart_checkpoint",
+            "conflict_resolution_consumes_selected_action_and_risk",
+            "resolved_allocation_is_portfolio_complete",
+            "handoff_consumes_conflict_resolution",
+            "handoff_consumes_scheduler_ref",
+            "adapter_followup_consumes_schedule",
+            "lean_runtime_feedback_consumes_schedule",
+            "runtime_ooda_step_maps_to_scheduler_phase",
+            "next_dispatch_consumes_adapter_and_runtime_feedback",
+            "dispatch_events_strictly_ordered",
+            "no_future_dispatch_ref",
+            "paper_only_guard_retained",
+        ))
     )
 
 
@@ -6318,7 +10252,54 @@ def _lean_engine_result_is_usable(
 ) -> bool:
     runtime_context = result.get("runtime_context", {})
     loaded_metadata = result.get("loaded_metadata", {})
+    loaded_packet = result.get("loaded_strategy_packet", {})
+    loaded_targets = result.get("loaded_packet_targets", [])
+    loaded_signal = result.get("loaded_signal", {})
     object_store_keys = set(result.get("object_store_keys", []))
+    tracking_provenance = loaded_packet.get("experiment_tracking_provenance", {})
+    policy_oss_lineage = loaded_packet.get("policy_oss_lineage", {})
+    reflection_oss_lineage = loaded_packet.get("reflection_oss_lineage", {})
+    packet_readback_valid = True
+    if loaded_packet:
+        packet_readback_valid = bool(
+            len(loaded_targets) == PORTFOLIO_LEG_COUNT
+            and loaded_signal.get("signal_id") == loaded_targets[0].get("signal_id")
+            and loaded_signal.get("symbol") == loaded_targets[0].get("execution_symbol")
+            and loaded_packet.get("normalized_experiment_ref", "").startswith("experiment://")
+            and loaded_packet.get("tracking_reconciliation_ref", "").startswith(
+                "tracking-reconciliation://"
+            )
+            and loaded_packet.get("tracking_repair_ref", "").startswith(
+                loaded_packet.get("tracking_reconciliation_ref", "")
+            )
+            and loaded_packet.get("experiment_tracking_provenance_hash")
+            == tracking_provenance.get("lineage_hash")
+            and loaded_packet.get("policy_oss_ref", "").startswith("oss://")
+            and loaded_packet.get("policy_oss_lineage_ref", "").startswith(
+                "policy-oss-lineage://"
+            )
+            and loaded_packet.get("policy_oss_lineage_hash")
+            == policy_oss_lineage.get("lineage_hash")
+            and loaded_packet.get("reflection_oss_ref", "").startswith("oss://")
+            and loaded_packet.get("reflection_oss_lineage_ref", "").startswith(
+                "reflection-oss-lineage://"
+            )
+            and loaded_packet.get("reflection_oss_lineage_hash")
+            == reflection_oss_lineage.get("lineage_hash")
+            and all(
+                target.get("signal", {}).get("metadata", {}).get("strategy_packet_ref")
+                == loaded_packet.get("packet_ref")
+                and target.get("policy_oss_lineage_hash")
+                == loaded_packet.get("policy_oss_lineage_hash")
+                and target.get("signal", {}).get("metadata", {}).get("policy_oss_ref")
+                == loaded_packet.get("policy_oss_ref")
+                and target.get("reflection_oss_lineage_hash")
+                == loaded_packet.get("reflection_oss_lineage_hash")
+                and target.get("signal", {}).get("metadata", {}).get("reflection_oss_ref")
+                == loaded_packet.get("reflection_oss_ref")
+                for target in loaded_targets
+            )
+        )
     return bool(
         runtime_context.get("runtime_binding_id") == binding.binding_id
         and runtime_context.get("runtime_id") == binding.runtime_id
@@ -6333,12 +10314,78 @@ def _lean_engine_result_is_usable(
         and result.get("broker_production_live_enabled") == "false"
         and any(key.endswith("/artifact.bin") for key in object_store_keys)
         and any(key.endswith("/metadata.json") for key in object_store_keys)
+        and packet_readback_valid
+    )
+
+
+def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) -> bool:
+    replay = readback.get("replay", {})
+    target_signal_ids = list(readback.get("target_signal_ids", []))
+    target_refs = list(readback.get("target_refs", []))
+    first_signal_id = target_signal_ids[0] if target_signal_ids else None
+    first_target_ref = target_refs[0] if target_refs else None
+    return bool(
+        readback.get("model_id") == LEAN_OBJECT_STORE_PACKET_READBACK_MODEL_ID
+        and readback.get("status") == "passed"
+        and readback.get("packet_ref", "").startswith("lean-strategy-packet://")
+        and readback.get("packet_hash") == readback.get("source_packet_hash")
+        and readback.get("artifact_payload_checksum")
+        and readback.get("target_count") == PORTFOLIO_LEG_COUNT
+        and len(target_refs) == PORTFOLIO_LEG_COUNT
+        and len(target_signal_ids) == PORTFOLIO_LEG_COUNT
+        and readback.get("loaded_signal_id") == first_signal_id
+        and readback.get("loaded_signal_source_target_ref") == first_target_ref
+        and readback.get("normalized_experiment_ref", "").startswith("experiment://")
+        and readback.get("tracking_reconciliation_ref", "").startswith("tracking-reconciliation://")
+        and readback.get("tracking_repair_ref", "").startswith(readback.get("tracking_reconciliation_ref", ""))
+        and readback.get("experiment_tracking_provenance_hash")
+        == readback.get("loaded_experiment_tracking_provenance_hash")
+        and readback.get("policy_oss_ref", "").startswith("oss://")
+        and readback.get("policy_oss_lineage_ref", "").startswith("policy-oss-lineage://")
+        and readback.get("policy_oss_lineage_hash") == readback.get("loaded_policy_oss_lineage_hash")
+        and readback.get("reflection_oss_ref", "").startswith("oss://")
+        and readback.get("reflection_oss_lineage_ref", "").startswith("reflection-oss-lineage://")
+        and readback.get("reflection_oss_lineage_hash")
+        == readback.get("loaded_reflection_oss_lineage_hash")
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "packet_present_in_object_store_artifact",
+            "packet_ref_matches_case_strategy_packet",
+            "packet_hash_matches_persona_packet",
+            "target_count_matches_portfolio",
+            "all_targets_have_signals",
+            "all_targets_bind_strategy_packet_ref",
+            "target_refs_unique",
+            "loaded_signal_from_first_packet_target",
+            "loaded_signal_symbol_matches_first_target",
+            "loaded_signal_quantity_matches_first_target",
+            "algorithm_executed_loaded_packet_signal",
+            "object_store_keys_include_packet_artifact_and_metadata",
+            "tracking_provenance_present_in_packet",
+            "loaded_packet_preserves_tracking_provenance",
+            "loaded_tracking_ref_matches_packet",
+            "policy_oss_lineage_present_in_packet",
+            "loaded_packet_preserves_policy_oss_lineage",
+            "loaded_policy_oss_ref_matches_packet",
+            "all_targets_bind_policy_oss_lineage",
+            "reflection_oss_lineage_present_in_packet",
+            "loaded_packet_preserves_reflection_oss_lineage",
+            "loaded_reflection_oss_ref_matches_packet",
+            "all_targets_bind_reflection_oss_lineage",
+            "paper_only_guard_retained",
+        ))
     )
 
 
 def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
     runtime_context = replay.get("runtime_context", {})
     loaded_metadata = replay.get("loaded_metadata", {})
+    strategy_packet = replay.get("case_specific_strategy_packet", {})
+    tracking_provenance = strategy_packet.get("experiment_tracking_provenance", {})
+    policy_oss_lineage = strategy_packet.get("policy_oss_lineage", {})
+    reflection_oss_lineage = strategy_packet.get("reflection_oss_lineage", {})
+    packet_targets = replay.get("case_specific_packet_targets", [])
+    packet_readback = replay.get("lean_object_store_packet_readback", {})
     return bool(
         replay.get("model_id") == LEAN_ENGINE_REPLAY_MODEL_ID
         and replay.get("status") == "passed"
@@ -6353,7 +10400,46 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
         and int(replay.get("executed_on_data_callbacks", 0)) >= 1
         and int(replay.get("fill_count", 0)) >= 1
         and replay.get("broker_production_live_enabled") == "false"
-        and replay.get("case_specific_strategy_packet", {}).get("validation_signature")
+        and strategy_packet.get("validation_signature")
+        and strategy_packet.get("packet_ref", "").startswith("lean-strategy-packet://")
+        and strategy_packet.get("generation") == 2
+        and strategy_packet.get("validation_window") == "future_holdout"
+        and strategy_packet.get("source_outcome_window") == "holdout"
+        and strategy_packet.get("strict_oos_proof_ref", "").startswith("strict-oos-evolution://")
+        and strategy_packet.get("no_leakage_protocol_ref", "").startswith("no-leakage://")
+        and strategy_packet.get("evolution_trajectory_ref", "").startswith("trajectory://")
+        and strategy_packet.get("normalized_experiment_ref", "").startswith("experiment://")
+        and strategy_packet.get("tracking_reconciliation_ref", "").startswith("tracking-reconciliation://")
+        and strategy_packet.get("tracking_repair_ref", "").startswith(
+            strategy_packet.get("tracking_reconciliation_ref", "")
+        )
+        and strategy_packet.get("experiment_tracking_provenance_hash")
+        == tracking_provenance.get("lineage_hash")
+        and strategy_packet.get("policy_oss_ref", "").startswith("oss://")
+        and strategy_packet.get("policy_oss_lineage_ref", "").startswith(
+            "policy-oss-lineage://"
+        )
+        and strategy_packet.get("policy_oss_lineage_hash") == policy_oss_lineage.get("lineage_hash")
+        and strategy_packet.get("reflection_oss_ref", "").startswith("oss://")
+        and strategy_packet.get("reflection_oss_lineage_ref", "").startswith(
+            "reflection-oss-lineage://"
+        )
+        and strategy_packet.get("reflection_oss_lineage_hash") == reflection_oss_lineage.get(
+            "lineage_hash"
+        )
+        and all(
+            target.get("policy_oss_ref") == strategy_packet.get("policy_oss_ref")
+            and target.get("policy_oss_lineage_hash")
+            == strategy_packet.get("policy_oss_lineage_hash")
+            and target.get("reflection_oss_ref") == strategy_packet.get("reflection_oss_ref")
+            and target.get("reflection_oss_lineage_hash")
+            == strategy_packet.get("reflection_oss_lineage_hash")
+            for target in packet_targets
+        )
+        and strategy_packet.get("strict_oos_replay_passed") is True
+        and strategy_packet.get("no_leakage_replay_passed") is True
+        and len(packet_targets) == PORTFOLIO_LEG_COUNT
+        and _lean_object_store_packet_readback_is_usable(packet_readback)
     )
 
 
@@ -6688,13 +10774,18 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("no_forbidden_window_sources") is True
         and replay.get("uses_memory_or_declares_cold_start") is True
         and replay.get("uses_memory_in_scoring_or_declares_cold_start") is True
+        and replay.get("uses_cross_persona_institutional_memory_or_declares_cold_start") is True
         and replay.get("memory_counterfactual_replays_score_delta") is True
         and replay.get("uses_persona_reasoning_response") is True
         and replay.get("uses_selected_oss_feedback") is True
+        and replay.get("uses_policy_candidate_oss_metrics") is True
+        and replay.get("uses_reflection_artifact_oss_metrics") is True
         and replay.get("uses_oss_response_followup_loop") is True
         and replay.get("uses_oss_disagreement_arbitration") is True
         and replay.get("uses_tracking_reconciliation") is True
         and replay.get("uses_alpha_seed_revision") is True
+        and replay.get("uses_cross_cycle_runtime_feedback_or_declares_cold_start") is True
+        and replay.get("uses_multi_cycle_lineage_or_declares_cold_start") is True
         and replay.get("input_hash")
         and replay.get("candidate_hash")
         and replay.get("score_hash")
@@ -6764,6 +10855,21 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
     tracking_reconciliation_usage = response.get("tracking_reconciliation_usage", {})
     alpha_seed_revision_ref = input_context.get("alpha_seed_revision_ref")
     alpha_seed_revision_usage = response.get("alpha_seed_revision_usage", {})
+    institutional_memory_status = input_context.get("institutional_memory_status")
+    institutional_memory_entry_ref = input_context.get("institutional_memory_entry_ref")
+    institutional_memory_contributing_persona_ids = set(
+        input_context.get("institutional_memory_contributing_persona_ids", [])
+    )
+    institutional_memory_usage = response.get("institutional_memory_usage", {})
+    multi_cycle_lineage_status = input_context.get("multi_cycle_lineage_status")
+    multi_cycle_lineage_ref = input_context.get("multi_cycle_lineage_ref")
+    multi_cycle_latest_runtime_feedback_ref = input_context.get(
+        "multi_cycle_latest_runtime_feedback_ref"
+    )
+    multi_cycle_older_runtime_feedback_ref = input_context.get(
+        "multi_cycle_older_runtime_feedback_ref"
+    )
+    multi_cycle_lineage_usage = response.get("multi_cycle_lineage_usage", {})
     return bool(
         request.get("model_id") == PERSONA_REASONING_MODEL_ID
         and response.get("model_id") == PERSONA_REASONING_MODEL_ID
@@ -6792,6 +10898,51 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
         and alpha_seed_revision_usage.get("model_id") == PERSONA_ALPHA_SEED_REVISION_MODEL_ID
         and alpha_seed_revision_ref in request.get("input_refs", [])
         and alpha_seed_revision_ref in generation_request.get("input_refs", [])
+        and institutional_memory_usage.get("model_id") == PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID
+        and (
+            (
+                institutional_memory_status == "cold_start"
+                and institutional_memory_usage.get("status") == "cold_start"
+                and institutional_memory_entry_ref is None
+            )
+            or (
+                institutional_memory_status == "applied"
+                and institutional_memory_usage.get("status") == "applied"
+                and institutional_memory_usage.get("entry_ref") == institutional_memory_entry_ref
+                and institutional_memory_entry_ref in request.get("input_refs", [])
+                and institutional_memory_entry_ref in generation_request.get("input_refs", [])
+                and input_context.get("persona_id") not in institutional_memory_contributing_persona_ids
+            )
+        )
+        and multi_cycle_lineage_usage.get("model_id") == PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID
+        and (
+            (
+                multi_cycle_lineage_status == "cold_start"
+                and multi_cycle_lineage_usage.get("status") == "cold_start"
+                and multi_cycle_lineage_ref is None
+            )
+            or (
+                multi_cycle_lineage_status == "single_prior"
+                and multi_cycle_lineage_usage.get("status") == "single_prior"
+                and multi_cycle_lineage_usage.get("lineage_ref") == multi_cycle_lineage_ref
+                and multi_cycle_lineage_ref in request.get("input_refs", [])
+                and multi_cycle_lineage_ref in generation_request.get("input_refs", [])
+                and multi_cycle_latest_runtime_feedback_ref in request.get("input_refs", [])
+                and multi_cycle_latest_runtime_feedback_ref in generation_request.get("input_refs", [])
+                and multi_cycle_older_runtime_feedback_ref is None
+            )
+            or (
+                multi_cycle_lineage_status == "lineage_applied"
+                and multi_cycle_lineage_usage.get("status") == "lineage_applied"
+                and multi_cycle_lineage_usage.get("lineage_ref") == multi_cycle_lineage_ref
+                and multi_cycle_lineage_ref in request.get("input_refs", [])
+                and multi_cycle_lineage_ref in generation_request.get("input_refs", [])
+                and multi_cycle_latest_runtime_feedback_ref in request.get("input_refs", [])
+                and multi_cycle_latest_runtime_feedback_ref in generation_request.get("input_refs", [])
+                and multi_cycle_older_runtime_feedback_ref in request.get("input_refs", [])
+                and multi_cycle_older_runtime_feedback_ref in generation_request.get("input_refs", [])
+            )
+        )
         and int(followup_usage.get("followup_count", 0)) >= 8
         and response.get("reasoning_ref") in generation_request.get("input_refs", [])
         and generation_response.get("source_reasoning_response_id") == response.get("response_id")
@@ -7521,6 +11672,505 @@ def _strict_oos_evolution_proof_is_usable(proof: Mapping[str, Any]) -> bool:
     )
 
 
+def _build_policy_candidate_materiality_proof(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    generation_policies: Sequence[Mapping[str, Any]],
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    policy_entry = case_upstream_artifacts["selected_oss"]["policy_candidate"]
+    policy_input = oss_inputs["policy_candidate"]
+    component = str(policy_entry["component"])
+    request_id = str(policy_entry["request_id"])
+    source_ref = f"oss://{component}/{request_id}"
+    expected_artifact_family = _policy_candidate_expected_artifact_family(component)
+    policy_quality = _policy_quality_from_oss(oss_inputs)
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        generation = int(artifact["generation"])
+        candidate_request = artifact["candidate_generation"]["request"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_id = str(trace["selected_candidate_id"])
+        selected_action = _candidate_action_key(selected_id)
+        scorecard = artifact["scorer"]["scorecards"][selected_id]
+        feedback_candidate_id = next(
+            candidate_id
+            for candidate_id in artifact["scorer"]["scorecards"]
+            if str(candidate_id).endswith("-feedback-adapt")
+        )
+        feedback_scorecard = artifact["scorer"]["scorecards"][feedback_candidate_id]
+        policy = generation_policies[generation]
+        recomputed_hint = _risk_hint_from_oss(oss_inputs, generation)
+        trace_bindings.append(
+            {
+                "generation": generation,
+                "trace_id": trace["reflection_id"],
+                "policy_id": policy["policy_id"],
+                "selected_candidate_id": selected_id,
+                "selected_action": selected_action,
+                "source_oss_ref": source_ref,
+                "reasoning_consumes_policy_oss": source_ref in reasoning_request["input_refs"],
+                "candidate_generation_consumes_policy_oss": source_ref in candidate_request["input_refs"],
+                "selected_candidate_cites_policy_oss": source_ref in selected_candidate["evidence_refs"],
+                "scoring_input_component": artifact["input_context"]["oss_components_by_role"]["policy_candidate"],
+                "scoring_input_request_id": artifact["input_context"]["oss_request_ids_by_role"]["policy_candidate"],
+                "scoring_policy_hint_risk": float(scoring_inputs["policy_hint_risk"]),
+                "recomputed_policy_hint_risk": float(recomputed_hint),
+                "scoring_policy_quality": float(scoring_inputs["policy_quality"]),
+                "recomputed_policy_quality": float(policy_quality),
+                "feedback_scorecard_policy_quality": float(
+                    feedback_scorecard["components"].get("policy_quality", 0.0)
+                ),
+                "selected_scorecard_policy_quality": float(
+                    scorecard["components"].get("policy_quality", 0.0)
+                ),
+                "selected_candidate_risk_multiplier": float(selected_candidate["risk_multiplier"]),
+                "evolved_policy_risk_multiplier": float(policy["risk_multiplier"]),
+                "policy_hint_risk_replay_match": float(scoring_inputs["policy_hint_risk"]) == float(recomputed_hint),
+                "policy_quality_replay_match": float(scoring_inputs["policy_quality"]) == float(policy_quality),
+                "feedback_scorecard_replays_policy_quality": float(
+                    feedback_scorecard["components"].get("policy_quality", 0.0)
+                )
+                == float(policy_quality),
+                "selected_scorecard_replays_policy_quality": (
+                    selected_action == "feedback-adapt"
+                    and float(scorecard["components"].get("policy_quality", 0.0)) == float(policy_quality)
+                ),
+                "selected_candidate_uses_policy_hint_risk": float(
+                    selected_candidate["risk_multiplier"]
+                )
+                == float(recomputed_hint),
+                "evolved_policy_uses_policy_hint_risk": (
+                    float(policy["risk_multiplier"]) == max(float(recomputed_hint), 1.15)
+                    if generation == 2
+                    else float(policy["risk_multiplier"]) == float(recomputed_hint)
+                ),
+                "selected_candidate_is_feedback_adapt_policy_candidate": selected_action == "feedback-adapt",
+                "decision_replay_uses_policy_candidate_oss_metrics": artifact["replay"].get(
+                    "uses_policy_candidate_oss_metrics"
+                )
+                is True,
+                "policy_ref_in_decision_evidence": source_ref in trace["evidence_refs"],
+                "no_forbidden_window_policy_sources": "future_holdout"
+                not in set(trace["decision_inputs"]["allowed_windows"]),
+            }
+        )
+
+    metric_signal_keys = sorted(
+        key
+        for key, value in policy_entry.get("metrics", {}).items()
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    )
+    replay = {
+        "replayable": True,
+        "policy_oss_role_completed": policy_entry.get("status") == "completed"
+        and policy_input.get("status") == "completed",
+        "component_is_policy_learning_oss": component in POLICY_OSS_COMPONENTS,
+        "artifact_family_matches_component": policy_entry.get("artifact_family") == expected_artifact_family,
+        "registry_and_producer_bound": bool(policy_entry.get("registry_id"))
+        and bool(policy_entry.get("producer_run_id"))
+        and policy_entry.get("registry_artifact_type") in {"model_artifact", "optimizer_result"},
+        "metrics_drive_nonzero_policy_quality": float(policy_quality) > 0.0,
+        "policy_hint_risk_is_recomputed_from_oss_metrics": all(
+            binding["policy_hint_risk_replay_match"] for binding in trace_bindings
+        ),
+        "policy_quality_is_recomputed_from_oss_metrics": all(
+            binding["policy_quality_replay_match"] for binding in trace_bindings
+        ),
+        "reasoning_consumes_policy_oss": all(
+            binding["reasoning_consumes_policy_oss"] for binding in trace_bindings
+        ),
+        "candidate_generation_consumes_policy_oss": all(
+            binding["candidate_generation_consumes_policy_oss"] for binding in trace_bindings
+        ),
+        "selected_candidate_cites_policy_oss": all(
+            binding["selected_candidate_cites_policy_oss"] for binding in trace_bindings
+        ),
+        "feedback_scorecard_replays_policy_quality": all(
+            binding["feedback_scorecard_replays_policy_quality"] for binding in trace_bindings
+        ),
+        "selected_scorecard_replays_policy_quality": all(
+            binding["selected_scorecard_replays_policy_quality"] for binding in trace_bindings
+        ),
+        "selected_policy_uses_policy_hint_risk": all(
+            binding["selected_candidate_uses_policy_hint_risk"]
+            and binding["evolved_policy_uses_policy_hint_risk"]
+            for binding in trace_bindings
+        ),
+        "policy_material_to_selected_score": all(
+            binding["selected_candidate_is_feedback_adapt_policy_candidate"]
+            and binding["selected_scorecard_policy_quality"] > 0.0
+            for binding in trace_bindings
+        ),
+        "decision_artifact_replays_policy_materiality": all(
+            binding["decision_replay_uses_policy_candidate_oss_metrics"] for binding in trace_bindings
+        ),
+        "no_holdout_or_future_leakage_in_policy_artifact": case_upstream_artifacts.get("allowed_windows")
+        == ["observe", "feedback"]
+        and case_upstream_artifacts.get("forbidden_windows_not_used") == ["holdout", "future_holdout"]
+        and all(binding["no_forbidden_window_policy_sources"] for binding in trace_bindings),
+        "evolved_policy_lineage_bound": [binding["generation"] for binding in trace_bindings] == [1, 2]
+        and [binding["policy_id"] for binding in trace_bindings]
+        == [generation_policies[1]["policy_id"], generation_policies[2]["policy_id"]],
+    }
+    return {
+        "proof_id": f"policy-candidate-materiality-{episode.case_id}",
+        "proof_ref": f"policy-materiality://{episode.case_id}",
+        "model_id": PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_ref,
+        "artifact_family": policy_entry.get("artifact_family"),
+        "expected_artifact_family": expected_artifact_family,
+        "registry_id": policy_entry.get("registry_id"),
+        "registry_artifact_type": policy_entry.get("registry_artifact_type"),
+        "producer_run_id": policy_entry.get("producer_run_id"),
+        "metric_signal_keys": metric_signal_keys,
+        "primary_output_keys": sorted(policy_entry.get("primary_output", {})),
+        "policy_quality": policy_quality,
+        "trace_bindings": trace_bindings,
+        "evidence_refs": [
+            source_ref,
+            f"registry://{policy_entry.get('registry_id')}",
+            *[f"reflection://{trace['reflection_id']}" for trace in decision_traces],
+            *[f"policy://{generation_policies[index]['policy_id']}" for index in (1, 2)],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "policy-candidate-materiality",
+            {
+                "case_id": episode.case_id,
+                "component": component,
+                "request_id": request_id,
+                "metrics": policy_entry.get("metrics", {}),
+                "trace_bindings": trace_bindings,
+            },
+        ),
+    }
+
+
+def _policy_candidate_expected_artifact_family(component: str) -> str:
+    if component in {"finrl", "rllib"}:
+        return "rl_policy"
+    if component == "ray_tune":
+        return "optimizer_result"
+    return "policy_candidate"
+
+
+def _policy_candidate_materiality_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    trace_bindings = list(proof.get("trace_bindings", []))
+    return bool(
+        proof.get("model_id") == PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("policy-materiality://")
+        and proof.get("component") in POLICY_OSS_COMPONENTS
+        and proof.get("artifact_family") == proof.get("expected_artifact_family")
+        and proof.get("registry_id")
+        and proof.get("producer_run_id")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and [binding.get("generation") for binding in trace_bindings] == [1, 2]
+        and all(float(binding.get("scoring_policy_quality", 0.0)) > 0.0 for binding in trace_bindings)
+        and all(float(binding.get("selected_scorecard_policy_quality", 0.0)) > 0.0 for binding in trace_bindings)
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "policy_oss_role_completed",
+            "component_is_policy_learning_oss",
+            "artifact_family_matches_component",
+            "registry_and_producer_bound",
+            "metrics_drive_nonzero_policy_quality",
+            "policy_hint_risk_is_recomputed_from_oss_metrics",
+            "policy_quality_is_recomputed_from_oss_metrics",
+            "reasoning_consumes_policy_oss",
+            "candidate_generation_consumes_policy_oss",
+            "selected_candidate_cites_policy_oss",
+            "feedback_scorecard_replays_policy_quality",
+            "selected_scorecard_replays_policy_quality",
+            "selected_policy_uses_policy_hint_risk",
+            "policy_material_to_selected_score",
+            "decision_artifact_replays_policy_materiality",
+            "no_holdout_or_future_leakage_in_policy_artifact",
+            "evolved_policy_lineage_bound",
+        ))
+    )
+
+
+def _build_reflection_artifact_materiality_proof(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    reflection_entry = case_upstream_artifacts["selected_oss"]["reflection_artifact"]
+    reflection_input = oss_inputs["reflection_artifact"]
+    component = str(reflection_entry["component"])
+    request_id = str(reflection_entry["request_id"])
+    source_ref = f"oss://{component}/{request_id}"
+    expected_artifact_family = _reflection_artifact_expected_family(component)
+    reflection_quality = _reflection_quality_from_oss(oss_inputs)
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning = artifact["persona_reasoning"]
+        reasoning_request = reasoning["request"]
+        reasoning_response = reasoning["response"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_id = str(trace["selected_candidate_id"])
+        selected_action = _candidate_action_key(selected_id)
+        scorecard = artifact["scorer"]["scorecards"][selected_id]
+        feedback_candidate_id = next(
+            candidate_id
+            for candidate_id in artifact["scorer"]["scorecards"]
+            if str(candidate_id).endswith("-feedback-adapt")
+        )
+        contrarian_candidate_id = next(
+            candidate_id
+            for candidate_id in artifact["scorer"]["scorecards"]
+            if str(candidate_id).endswith("-contrarian-check")
+        )
+        feedback_blueprint = next(
+            blueprint
+            for blueprint in reasoning_response["candidate_blueprints"]
+            if blueprint["action"] == "feedback-adapt"
+        )
+        contrarian_blueprint = next(
+            blueprint
+            for blueprint in reasoning_response["candidate_blueprints"]
+            if blueprint["action"] == "contrarian-check"
+        )
+        feedback_scorecard = artifact["scorer"]["scorecards"][feedback_candidate_id]
+        contrarian_candidate = next(
+            candidate
+            for candidate in trace["candidates"]
+            if str(candidate["candidate_id"]) == contrarian_candidate_id
+        )
+        trace_bindings.append(
+            {
+                "generation": int(artifact["generation"]),
+                "trace_id": trace["reflection_id"],
+                "selected_candidate_id": selected_id,
+                "selected_action": selected_action,
+                "source_oss_ref": source_ref,
+                "reasoning_request_consumes_reflection_oss": source_ref in reasoning_request["input_refs"],
+                "reasoning_usage_ref_matches": reasoning_response["reflection_artifact_usage"][
+                    "source_oss_ref"
+                ]
+                == source_ref,
+                "reasoning_usage_quality": float(
+                    reasoning_response["reflection_artifact_usage"]["reflection_quality"]
+                ),
+                "reasoning_usage_quality_replay_match": float(
+                    reasoning_response["reflection_artifact_usage"]["reflection_quality"]
+                )
+                == float(reflection_quality),
+                "feedback_blueprint_uses_reflection_role": "reflection_artifact"
+                in feedback_blueprint["evidence_roles"],
+                "contrarian_blueprint_uses_reflection_role": "reflection_artifact"
+                in contrarian_blueprint["evidence_roles"],
+                "candidate_generation_consumes_reflection_oss": source_ref in candidate_request["input_refs"],
+                "selected_candidate_cites_reflection_oss": source_ref in selected_candidate["evidence_refs"],
+                "contrarian_candidate_cites_reflection_oss": source_ref
+                in contrarian_candidate["evidence_refs"],
+                "selected_rationale_mentions_reflection": "reflection"
+                in str(selected_candidate.get("rationale", "")).lower(),
+                "scoring_reflection_quality": float(scoring_inputs["reflection_quality"]),
+                "recomputed_reflection_quality": float(reflection_quality),
+                "scoring_reflection_quality_replay_match": float(scoring_inputs["reflection_quality"])
+                == float(reflection_quality),
+                "feedback_scorecard_reflection_quality": float(
+                    feedback_scorecard["components"].get("reflection_quality", 0.0)
+                ),
+                "selected_scorecard_reflection_quality": float(
+                    scorecard["components"].get("reflection_quality", 0.0)
+                ),
+                "feedback_scorecard_replays_reflection_quality": float(
+                    feedback_scorecard["components"].get("reflection_quality", 0.0)
+                )
+                == float(reflection_quality),
+                "selected_scorecard_replays_reflection_quality": (
+                    selected_action == "feedback-adapt"
+                    and float(scorecard["components"].get("reflection_quality", 0.0))
+                    == float(reflection_quality)
+                ),
+                "decision_replay_uses_reflection_artifact_metrics": artifact["replay"].get(
+                    "uses_reflection_artifact_oss_metrics"
+                )
+                is True,
+                "reflection_ref_in_decision_evidence": source_ref in trace["evidence_refs"],
+                "no_forbidden_window_reflection_sources": "future_holdout"
+                not in set(trace["decision_inputs"]["allowed_windows"]),
+            }
+        )
+
+    metric_signal_keys = sorted(
+        key
+        for key, value in reflection_entry.get("metrics", {}).items()
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    )
+    replay = {
+        "replayable": True,
+        "reflection_oss_role_completed": reflection_entry.get("status") == "completed"
+        and reflection_input.get("status") == "completed",
+        "component_is_reflection_learning_oss": component in REFLECTION_OSS_COMPONENTS,
+        "artifact_family_matches_component": reflection_entry.get("artifact_family")
+        == expected_artifact_family,
+        "registry_and_producer_bound": bool(reflection_entry.get("registry_id"))
+        and bool(reflection_entry.get("producer_run_id"))
+        and reflection_entry.get("registry_artifact_type")
+        in {"prompt_bundle", "model_artifact", "behavior_policy"},
+        "metrics_drive_nonzero_reflection_quality": float(reflection_quality) > 0.0,
+        "reasoning_consumes_reflection_oss": all(
+            binding["reasoning_request_consumes_reflection_oss"] for binding in trace_bindings
+        ),
+        "reasoning_usage_replays_reflection_quality": all(
+            binding["reasoning_usage_ref_matches"]
+            and binding["reasoning_usage_quality_replay_match"]
+            for binding in trace_bindings
+        ),
+        "feedback_blueprint_consumes_reflection_role": all(
+            binding["feedback_blueprint_uses_reflection_role"] for binding in trace_bindings
+        ),
+        "contrarian_blueprint_consumes_reflection_role": all(
+            binding["contrarian_blueprint_uses_reflection_role"] for binding in trace_bindings
+        ),
+        "candidate_generation_consumes_reflection_oss": all(
+            binding["candidate_generation_consumes_reflection_oss"] for binding in trace_bindings
+        ),
+        "selected_candidate_cites_reflection_oss": all(
+            binding["selected_candidate_cites_reflection_oss"] for binding in trace_bindings
+        ),
+        "contrarian_candidate_cites_reflection_oss": all(
+            binding["contrarian_candidate_cites_reflection_oss"] for binding in trace_bindings
+        ),
+        "selected_rationale_mentions_reflection": all(
+            binding["selected_rationale_mentions_reflection"] for binding in trace_bindings
+        ),
+        "scorer_recomputes_reflection_quality": all(
+            binding["scoring_reflection_quality_replay_match"] for binding in trace_bindings
+        ),
+        "feedback_scorecard_replays_reflection_quality": all(
+            binding["feedback_scorecard_replays_reflection_quality"] for binding in trace_bindings
+        ),
+        "selected_scorecard_replays_reflection_quality": all(
+            binding["selected_scorecard_replays_reflection_quality"] for binding in trace_bindings
+        ),
+        "reflection_material_to_selected_score": all(
+            binding["selected_action"] == "feedback-adapt"
+            and binding["selected_scorecard_reflection_quality"] > 0.0
+            for binding in trace_bindings
+        ),
+        "decision_artifact_replays_reflection_materiality": all(
+            binding["decision_replay_uses_reflection_artifact_metrics"] for binding in trace_bindings
+        ),
+        "no_holdout_or_future_leakage_in_reflection_artifact": case_upstream_artifacts.get("allowed_windows")
+        == ["observe", "feedback"]
+        and case_upstream_artifacts.get("forbidden_windows_not_used") == ["holdout", "future_holdout"]
+        and all(binding["no_forbidden_window_reflection_sources"] for binding in trace_bindings),
+    }
+    return {
+        "proof_id": f"reflection-artifact-materiality-{episode.case_id}",
+        "proof_ref": f"reflection-materiality://{episode.case_id}",
+        "model_id": PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_ref,
+        "artifact_family": reflection_entry.get("artifact_family"),
+        "expected_artifact_family": expected_artifact_family,
+        "registry_id": reflection_entry.get("registry_id"),
+        "registry_artifact_type": reflection_entry.get("registry_artifact_type"),
+        "producer_run_id": reflection_entry.get("producer_run_id"),
+        "metric_signal_keys": metric_signal_keys,
+        "primary_output_keys": sorted(reflection_entry.get("primary_output", {})),
+        "reflection_quality": reflection_quality,
+        "trace_bindings": trace_bindings,
+        "evidence_refs": [
+            source_ref,
+            f"registry://{reflection_entry.get('registry_id')}",
+            *[f"reflection://{trace['reflection_id']}" for trace in decision_traces],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "reflection-artifact-materiality",
+            {
+                "case_id": episode.case_id,
+                "component": component,
+                "request_id": request_id,
+                "metrics": reflection_entry.get("metrics", {}),
+                "trace_bindings": trace_bindings,
+            },
+        ),
+    }
+
+
+def _reflection_artifact_expected_family(component: str) -> str:
+    if component == "dspy":
+        return "prompt_bundle"
+    if component == "trl":
+        return "model_artifact"
+    if component == "imitation":
+        return "imitation_policy"
+    return "reflection_artifact"
+
+
+def _reflection_artifact_materiality_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    trace_bindings = list(proof.get("trace_bindings", []))
+    return bool(
+        proof.get("model_id") == PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("reflection-materiality://")
+        and proof.get("component") in REFLECTION_OSS_COMPONENTS
+        and proof.get("artifact_family") == proof.get("expected_artifact_family")
+        and proof.get("registry_id")
+        and proof.get("producer_run_id")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and [binding.get("generation") for binding in trace_bindings] == [1, 2]
+        and all(float(binding.get("scoring_reflection_quality", 0.0)) > 0.0 for binding in trace_bindings)
+        and all(
+            float(binding.get("selected_scorecard_reflection_quality", 0.0)) > 0.0
+            for binding in trace_bindings
+        )
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "reflection_oss_role_completed",
+            "component_is_reflection_learning_oss",
+            "artifact_family_matches_component",
+            "registry_and_producer_bound",
+            "metrics_drive_nonzero_reflection_quality",
+            "reasoning_consumes_reflection_oss",
+            "reasoning_usage_replays_reflection_quality",
+            "feedback_blueprint_consumes_reflection_role",
+            "contrarian_blueprint_consumes_reflection_role",
+            "candidate_generation_consumes_reflection_oss",
+            "selected_candidate_cites_reflection_oss",
+            "contrarian_candidate_cites_reflection_oss",
+            "selected_rationale_mentions_reflection",
+            "scorer_recomputes_reflection_quality",
+            "feedback_scorecard_replays_reflection_quality",
+            "selected_scorecard_replays_reflection_quality",
+            "reflection_material_to_selected_score",
+            "decision_artifact_replays_reflection_materiality",
+            "no_holdout_or_future_leakage_in_reflection_artifact",
+        ))
+    )
+
+
 def _build_usability_dimensions(
     *,
     episode: PortfolioEpisode,
@@ -7539,8 +12189,14 @@ def _build_usability_dimensions(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    policy_candidate_materiality: Mapping[str, Any],
+    reflection_artifact_materiality: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
+    cross_cycle_carryover: Mapping[str, Any],
+    persisted_cycle_resume: Mapping[str, Any],
+    multi_cycle_lineage: Mapping[str, Any],
+    institutional_memory_lineage: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
@@ -7563,6 +12219,9 @@ def _build_usability_dimensions(
             trace["agent_decision_artifact"]["memory_counterfactual"]
         )
         for trace in decision_traces
+    ) else 0.0
+    institutional_memory_lineage_score = 1.0 if _institutional_memory_lineage_is_usable(
+        institutional_memory_lineage
     ) else 0.0
     decision_explainability = 1.0 if all(
         trace["candidate_count"] >= 4
@@ -7614,8 +12273,26 @@ def _build_usability_dimensions(
         artifacts=case_upstream_artifacts,
     ) else 0.0
     lean_handoff = 1.0 if _lean_handoff_packet_is_usable(operational_context["lean_handoff"]) else 0.0
+    lean_packet_execution_projection = 1.0 if _lean_packet_execution_projection_is_usable(
+        operational_context["lean_packet_execution_projection"]
+    ) else 0.0
     lean_runtime_feedback = 1.0 if _lean_runtime_feedback_is_usable(
         operational_context["lean_runtime_feedback"]
+    ) else 0.0
+    experiment_tracking_lineage_handoff = 1.0 if _experiment_tracking_lineage_handoff_is_usable(
+        operational_context["experiment_tracking_lineage_handoff"]
+    ) else 0.0
+    policy_oss_lineage_handoff = 1.0 if _policy_oss_lineage_handoff_is_usable(
+        operational_context["policy_oss_lineage_handoff"]
+    ) else 0.0
+    reflection_oss_lineage_handoff = 1.0 if _reflection_oss_lineage_handoff_is_usable(
+        operational_context["reflection_oss_lineage_handoff"]
+    ) else 0.0
+    evolved_strategy_packet = 1.0 if _evolved_strategy_packet_proof_is_usable(
+        operational_context["evolved_strategy_packet_proof"]
+    ) else 0.0
+    scheduler_conflict_ooda = 1.0 if _scheduler_conflict_ooda_proof_is_usable(
+        operational_context["scheduler_conflict_ooda_proof"]
     ) else 0.0
     multi_generation_trajectory = 1.0 if _evolution_trajectory_is_usable(evolution_trajectory) else 0.0
     no_leakage_temporal_protocol = 1.0 if _no_leakage_temporal_protocol_is_usable(
@@ -7623,6 +12300,12 @@ def _build_usability_dimensions(
     ) else 0.0
     strict_oos_evolution = 1.0 if _strict_oos_evolution_proof_is_usable(
         strict_oos_evolution_proof
+    ) else 0.0
+    policy_candidate_oss_materiality = 1.0 if _policy_candidate_materiality_is_usable(
+        policy_candidate_materiality
+    ) else 0.0
+    reflection_artifact_oss_materiality = 1.0 if _reflection_artifact_materiality_is_usable(
+        reflection_artifact_materiality
     ) else 0.0
     oss_response_followup_loop = 1.0 if (
         _oss_response_followup_loop_is_usable(oss_followup_loop)
@@ -7633,6 +12316,15 @@ def _build_usability_dimensions(
     ) else 0.0
     persona_oss_ooda_causality = 1.0 if _persona_oss_ooda_causal_ledger_is_usable(
         persona_oss_ooda_ledger
+    ) else 0.0
+    cross_cycle_runtime_carryover = 1.0 if _cross_cycle_carryover_is_usable(
+        cross_cycle_carryover
+    ) else 0.0
+    persisted_cycle_resume_carryover = 1.0 if _persisted_cycle_resume_is_usable(
+        persisted_cycle_resume
+    ) else 0.0
+    multi_cycle_lineage_carryover = 1.0 if _multi_cycle_lineage_is_usable(
+        multi_cycle_lineage
     ) else 0.0
     oss_disagreement_arbitration = 1.0 if all(
         _trace_oss_disagreement_arbitration_is_usable(trace)
@@ -7652,6 +12344,8 @@ def _build_usability_dimensions(
         "multi_generation_trajectory": multi_generation_trajectory,
         "no_leakage_temporal_protocol": no_leakage_temporal_protocol,
         "strict_oos_evolution": strict_oos_evolution,
+        "policy_candidate_oss_materiality": policy_candidate_oss_materiality,
+        "reflection_artifact_oss_materiality": reflection_artifact_oss_materiality,
         "drawdown_reduction": drawdown_reduction,
         "turnover_control": turnover_control,
         "fill_quality": fill_quality,
@@ -7659,12 +12353,16 @@ def _build_usability_dimensions(
         "memory_reuse": memory_reuse,
         "memory_influences_decision": memory_influences_decision,
         "memory_counterfactual_decision": memory_counterfactual_decision,
+        "institutional_memory_lineage": institutional_memory_lineage_score,
         "decision_explainability": decision_explainability,
         "persona_decision_artifact": persona_decision_artifact,
         "persona_reasoning_generation": persona_reasoning_generation,
         "oss_response_followup_loop": oss_response_followup_loop,
         "multi_oss_closed_loop": multi_oss_closed_loop,
         "persona_oss_ooda_causality": persona_oss_ooda_causality,
+        "cross_cycle_runtime_carryover": cross_cycle_runtime_carryover,
+        "persisted_cycle_resume_carryover": persisted_cycle_resume_carryover,
+        "multi_cycle_lineage_carryover": multi_cycle_lineage_carryover,
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
         "tracking_reconciliation": tracking_reconciliation,
         "alpha_seed_revision": alpha_seed_revision,
@@ -7683,7 +12381,13 @@ def _build_usability_dimensions(
         "shioaji_sandbox_lifecycle": shioaji_sandbox,
         "case_specific_upstream_artifact_feedback": case_upstream_feedback,
         "lean_handoff_packet": lean_handoff,
+        "lean_packet_execution_projection": lean_packet_execution_projection,
         "lean_runtime_feedback": lean_runtime_feedback,
+        "experiment_tracking_lineage_handoff": experiment_tracking_lineage_handoff,
+        "policy_oss_lineage_handoff": policy_oss_lineage_handoff,
+        "reflection_oss_lineage_handoff": reflection_oss_lineage_handoff,
+        "evolved_strategy_packet_handoff": evolved_strategy_packet,
+        "scheduler_conflict_ooda_dispatch": scheduler_conflict_ooda,
     }
 
 
@@ -7706,8 +12410,14 @@ def _diagnose_validation_execution(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    policy_candidate_materiality: Mapping[str, Any],
+    reflection_artifact_materiality: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
+    cross_cycle_carryover: Mapping[str, Any],
+    persisted_cycle_resume: Mapping[str, Any],
+    multi_cycle_lineage: Mapping[str, Any],
+    institutional_memory_lineage: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
@@ -7866,6 +12576,20 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "cross_persona_institutional_memory_drives_persona_scoring",
+            _institutional_memory_lineage_is_usable(institutional_memory_lineage),
+            {
+                "proof_id": institutional_memory_lineage["proof_id"],
+                "lineage_status": institutional_memory_lineage["lineage_status"],
+                "entry_ref": institutional_memory_lineage.get("entry_ref"),
+                "contributing_persona_ids": list(
+                    institutional_memory_lineage.get("contributing_persona_ids", [])
+                ),
+                "trace_binding_count": len(institutional_memory_lineage["trace_bindings"]),
+                "replay": copy.deepcopy(dict(institutional_memory_lineage["replay"])),
+            },
+        ),
+        _diagnostic_check(
             "oss_feedback_drives_persona_next_steps",
             set(oss_inputs) == {
                 "session",
@@ -7897,6 +12621,30 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "policy_candidate_oss_materiality_drives_evolved_policy",
+            _policy_candidate_materiality_is_usable(policy_candidate_materiality),
+            {
+                "proof_id": policy_candidate_materiality["proof_id"],
+                "component": policy_candidate_materiality["component"],
+                "artifact_family": policy_candidate_materiality["artifact_family"],
+                "policy_quality": policy_candidate_materiality["policy_quality"],
+                "trace_binding_count": len(policy_candidate_materiality["trace_bindings"]),
+                "replay": copy.deepcopy(dict(policy_candidate_materiality["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "reflection_artifact_oss_materiality_drives_persona_reasoning",
+            _reflection_artifact_materiality_is_usable(reflection_artifact_materiality),
+            {
+                "proof_id": reflection_artifact_materiality["proof_id"],
+                "component": reflection_artifact_materiality["component"],
+                "artifact_family": reflection_artifact_materiality["artifact_family"],
+                "reflection_quality": reflection_artifact_materiality["reflection_quality"],
+                "trace_binding_count": len(reflection_artifact_materiality["trace_bindings"]),
+                "replay": copy.deepcopy(dict(reflection_artifact_materiality["replay"])),
+            },
+        ),
+        _diagnostic_check(
             "multi_oss_closed_loop_proof_replays_role_bindings",
             _multi_oss_closed_loop_proof_is_usable(multi_oss_closed_loop_proof),
             {
@@ -7918,6 +12666,44 @@ def _diagnose_validation_execution(
                 "phase_order": list(persona_oss_ooda_ledger["phase_order"]),
                 "event_types": list(persona_oss_ooda_ledger["event_types"]),
                 "replay": copy.deepcopy(dict(persona_oss_ooda_ledger["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "cross_cycle_runtime_feedback_drives_next_case_decision",
+            _cross_cycle_carryover_is_usable(cross_cycle_carryover),
+            {
+                "proof_id": cross_cycle_carryover["proof_id"],
+                "carryover_status": cross_cycle_carryover["carryover_status"],
+                "previous_case_id": cross_cycle_carryover.get("previous_case_id"),
+                "runtime_feedback_ref": cross_cycle_carryover.get("runtime_feedback_ref"),
+                "trace_binding_count": len(cross_cycle_carryover["trace_bindings"]),
+                "replay": copy.deepcopy(dict(cross_cycle_carryover["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "persisted_cycle_resume_replays_after_restart_and_schedule",
+            _persisted_cycle_resume_is_usable(persisted_cycle_resume),
+            {
+                "proof_id": persisted_cycle_resume["proof_id"],
+                "resume_status": persisted_cycle_resume["resume_status"],
+                "previous_case_id": persisted_cycle_resume.get("previous_case_id"),
+                "restart_checkpoint_ref": persisted_cycle_resume.get("restart_checkpoint_ref"),
+                "schedule_ref": persisted_cycle_resume.get("schedule_ref"),
+                "trace_binding_count": len(persisted_cycle_resume["trace_bindings"]),
+                "replay": copy.deepcopy(dict(persisted_cycle_resume["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "multi_cycle_lineage_drives_persona_next_case_decision",
+            _multi_cycle_lineage_is_usable(multi_cycle_lineage),
+            {
+                "proof_id": multi_cycle_lineage["proof_id"],
+                "lineage_status": multi_cycle_lineage["lineage_status"],
+                "lineage_case_ids": list(multi_cycle_lineage["lineage_case_ids"]),
+                "latest_runtime_feedback_ref": multi_cycle_lineage.get("latest_runtime_feedback_ref"),
+                "older_runtime_feedback_ref": multi_cycle_lineage.get("older_runtime_feedback_ref"),
+                "trace_binding_count": len(multi_cycle_lineage["trace_bindings"]),
+                "replay": copy.deepcopy(dict(multi_cycle_lineage["replay"])),
             },
         ),
         _diagnostic_check(
@@ -8034,6 +12820,21 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "scheduler_conflict_ooda_dispatch_replays_next_cycle",
+            _scheduler_conflict_ooda_proof_is_usable(
+                operational_context["scheduler_conflict_ooda_proof"]
+            ),
+            {
+                "proof_id": operational_context["scheduler_conflict_ooda_proof"]["proof_id"],
+                "conflict_ref": operational_context["scheduler_conflict_ooda_proof"]["conflict_ref"],
+                "schedule_ref": operational_context["scheduler_conflict_ooda_proof"]["schedule_ref"],
+                "dispatch_ref": operational_context["scheduler_conflict_ooda_proof"]["dispatch_ref"],
+                "replay": copy.deepcopy(
+                    dict(operational_context["scheduler_conflict_ooda_proof"]["replay"])
+                ),
+            },
+        ),
+        _diagnostic_check(
             "lean_handoff_packet_materialized",
             _lean_handoff_packet_is_usable(operational_context["lean_handoff"]),
             {
@@ -8041,6 +12842,50 @@ def _diagnose_validation_execution(
                 "component": operational_context["lean_handoff"]["component"],
                 "case_vectorbt_request_id": operational_context["lean_handoff"].get("case_vectorbt_request_id"),
                 "case_tracking_run_id": operational_context["lean_handoff"].get("case_tracking_run_id"),
+            },
+        ),
+        _diagnostic_check(
+            "lean_packet_execution_projection_replays_packet_legs",
+            _lean_packet_execution_projection_is_usable(
+                operational_context["lean_packet_execution_projection"]
+            ),
+            {
+                "projection_id": operational_context["lean_packet_execution_projection"][
+                    "projection_id"
+                ],
+                "strategy_packet_ref": operational_context["lean_packet_execution_projection"][
+                    "strategy_packet_ref"
+                ],
+                "leg_count": operational_context["lean_packet_execution_projection"][
+                    "leg_count"
+                ],
+                "order_count": operational_context["lean_packet_execution_projection"][
+                    "order_count"
+                ],
+                "replay": copy.deepcopy(
+                    dict(operational_context["lean_packet_execution_projection"]["replay"])
+                ),
+            },
+        ),
+        _diagnostic_check(
+            "evolved_strategy_packet_reaches_lean_handoff",
+            _evolved_strategy_packet_proof_is_usable(
+                operational_context["evolved_strategy_packet_proof"]
+            ),
+            {
+                "proof_id": operational_context["evolved_strategy_packet_proof"]["proof_id"],
+                "strategy_packet_ref": operational_context["evolved_strategy_packet_proof"][
+                    "strategy_packet_ref"
+                ],
+                "strict_oos_proof_ref": operational_context["evolved_strategy_packet_proof"][
+                    "strict_oos_proof_ref"
+                ],
+                "validation_window": operational_context["evolved_strategy_packet_proof"][
+                    "validation_window"
+                ],
+                "replay": copy.deepcopy(
+                    dict(operational_context["evolved_strategy_packet_proof"]["replay"])
+                ),
             },
         ),
         _diagnostic_check(
@@ -8053,6 +12898,72 @@ def _diagnose_validation_execution(
                 "runtime_binding_id": operational_context["lean_runtime_feedback"]["runtime_feedback"][
                     "runtime_binding_id"
                 ],
+            },
+        ),
+        _diagnostic_check(
+            "tracking_experiment_lineage_reaches_evolution_and_lean_packet",
+            _experiment_tracking_lineage_handoff_is_usable(
+                operational_context["experiment_tracking_lineage_handoff"]
+            ),
+            {
+                "proof_id": operational_context["experiment_tracking_lineage_handoff"]["proof_id"],
+                "backend": operational_context["experiment_tracking_lineage_handoff"]["backend"],
+                "experiment_ref": operational_context["experiment_tracking_lineage_handoff"][
+                    "experiment_ref"
+                ],
+                "tracking_reconciliation_ref": operational_context[
+                    "experiment_tracking_lineage_handoff"
+                ]["tracking_reconciliation_ref"],
+                "lineage_hashes": copy.deepcopy(
+                    dict(operational_context["experiment_tracking_lineage_handoff"]["lineage_hashes"])
+                ),
+                "replay": copy.deepcopy(
+                    dict(operational_context["experiment_tracking_lineage_handoff"]["replay"])
+                ),
+            },
+        ),
+        _diagnostic_check(
+            "policy_oss_lineage_reaches_evolved_policy_and_lean_packet",
+            _policy_oss_lineage_handoff_is_usable(
+                operational_context["policy_oss_lineage_handoff"]
+            ),
+            {
+                "proof_id": operational_context["policy_oss_lineage_handoff"]["proof_id"],
+                "component": operational_context["policy_oss_lineage_handoff"]["component"],
+                "source_oss_ref": operational_context["policy_oss_lineage_handoff"][
+                    "source_oss_ref"
+                ],
+                "lineage_ref": operational_context["policy_oss_lineage_handoff"][
+                    "lineage_ref"
+                ],
+                "lineage_hashes": copy.deepcopy(
+                    dict(operational_context["policy_oss_lineage_handoff"]["lineage_hashes"])
+                ),
+                "replay": copy.deepcopy(
+                    dict(operational_context["policy_oss_lineage_handoff"]["replay"])
+                ),
+            },
+        ),
+        _diagnostic_check(
+            "reflection_oss_lineage_reaches_evolved_policy_and_lean_packet",
+            _reflection_oss_lineage_handoff_is_usable(
+                operational_context["reflection_oss_lineage_handoff"]
+            ),
+            {
+                "proof_id": operational_context["reflection_oss_lineage_handoff"]["proof_id"],
+                "component": operational_context["reflection_oss_lineage_handoff"]["component"],
+                "source_oss_ref": operational_context["reflection_oss_lineage_handoff"][
+                    "source_oss_ref"
+                ],
+                "lineage_ref": operational_context["reflection_oss_lineage_handoff"][
+                    "lineage_ref"
+                ],
+                "lineage_hashes": copy.deepcopy(
+                    dict(operational_context["reflection_oss_lineage_handoff"]["lineage_hashes"])
+                ),
+                "replay": copy.deepcopy(
+                    dict(operational_context["reflection_oss_lineage_handoff"]["replay"])
+                ),
             },
         ),
         _diagnostic_check(
@@ -8108,6 +13019,12 @@ def _diagnose_validation_execution(
                 "replay_id": operational_context["lean_engine_replay"]["replay_id"],
                 "runtime_binding_id": operational_context["lean_engine_replay"]["runtime_context"]["runtime_binding_id"],
                 "fill_count": operational_context["lean_engine_replay"]["fill_count"],
+                "packet_readback_id": operational_context["lean_engine_replay"][
+                    "lean_object_store_packet_readback"
+                ]["readback_id"],
+                "packet_target_count": operational_context["lean_engine_replay"][
+                    "lean_object_store_packet_readback"
+                ]["target_count"],
             },
         ),
         _diagnostic_check(
@@ -8292,8 +13209,14 @@ def _build_case_result(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    policy_candidate_materiality: Mapping[str, Any],
+    reflection_artifact_materiality: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
+    cross_cycle_carryover: Mapping[str, Any],
+    persisted_cycle_resume: Mapping[str, Any],
+    multi_cycle_lineage: Mapping[str, Any],
+    institutional_memory_lineage: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
@@ -8302,6 +13225,7 @@ def _build_case_result(
     validation_plan: Mapping[str, Any],
     validation_diagnostics: Mapping[str, Any],
     validation_repair: Mapping[str, Any],
+    prior_institutional_memory: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     overall_usability_score = round(mean(usability_dimensions.values()), 10)
     generation_results = []
@@ -8347,6 +13271,8 @@ def _build_case_result(
                 role: result["drives_persona_step"] for role, result in oss_inputs.items()
             },
             "response_followup_loop": copy.deepcopy(dict(oss_followup_loop)),
+            "policy_candidate_materiality": copy.deepcopy(dict(policy_candidate_materiality)),
+            "reflection_artifact_materiality": copy.deepcopy(dict(reflection_artifact_materiality)),
             "closed_loop_proof": copy.deepcopy(dict(multi_oss_closed_loop_proof)),
             "ooda_causal_ledger": copy.deepcopy(dict(persona_oss_ooda_ledger)),
         },
@@ -8369,6 +13295,9 @@ def _build_case_result(
         },
         "memory": {
             "prior_memory": memory_contexts[0],
+            "prior_institutional_memory": copy.deepcopy(dict(prior_institutional_memory))
+            if prior_institutional_memory
+            else None,
             "generation_memory_writes": [
                 {
                     "created": write["created"],
@@ -8379,6 +13308,7 @@ def _build_case_result(
                 for write in memory_writes
             ],
             "memory_reused_for_next_decision": [memory_contexts[1], memory_contexts[2]],
+            "institutional_memory_lineage": copy.deepcopy(dict(institutional_memory_lineage)),
         },
         "reflection": {
             "agent_decision_traces": list(decision_traces),
@@ -8386,6 +13316,11 @@ def _build_case_result(
             "selected_candidate_ids": [trace["selected_candidate_id"] for trace in decision_traces],
         },
         "operational_context": dict(operational_context),
+        "cross_cycle": {
+            "runtime_feedback_carryover": copy.deepcopy(dict(cross_cycle_carryover)),
+            "persisted_cycle_resume": copy.deepcopy(dict(persisted_cycle_resume)),
+            "multi_cycle_lineage": copy.deepcopy(dict(multi_cycle_lineage)),
+        },
         "validation_cycle": {
             "planning": dict(validation_plan),
             "execution_review": dict(validation_diagnostics),
@@ -8395,6 +13330,11 @@ def _build_case_result(
             "decision_id": evolution_decision.decision_id,
             "decision_state": _enum_value(evolution_decision.decision_state),
             "action_type": _enum_value(evolution_decision.action_type),
+            "evidence_refs": [
+                ref.to_dict() if isinstance(ref, EvidenceRef) else copy.deepcopy(dict(ref))
+                for ref in evolution_decision.evidence_refs
+            ],
+            "metadata": copy.deepcopy(dict(evolution_decision.metadata or {})),
             "review_steps": [_enum_value(step.step_type) for step in evolution_decision.review_chain],
             "execution_status": _enum_value(evolution_decision.execution_result.status)
             if evolution_decision.execution_result
@@ -8413,10 +13353,28 @@ def _build_case_result(
             "memory_counterfactual_drives_decision": usability_dimensions[
                 "memory_counterfactual_decision"
             ] == 1.0,
+            "cross_persona_institutional_memory_drives_decision": usability_dimensions[
+                "institutional_memory_lineage"
+            ] == 1.0,
             "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
+            "policy_candidate_oss_materiality": usability_dimensions[
+                "policy_candidate_oss_materiality"
+            ] == 1.0,
+            "reflection_artifact_oss_materiality": usability_dimensions[
+                "reflection_artifact_oss_materiality"
+            ] == 1.0,
             "multi_oss_closed_loop_drives_decision": usability_dimensions["multi_oss_closed_loop"] == 1.0,
             "persona_oss_ooda_causality_replayed": usability_dimensions[
                 "persona_oss_ooda_causality"
+            ] == 1.0,
+            "cross_cycle_runtime_feedback_drives_next_case": usability_dimensions[
+                "cross_cycle_runtime_carryover"
+            ] == 1.0,
+            "persisted_cycle_resume_drives_next_case": usability_dimensions[
+                "persisted_cycle_resume_carryover"
+            ] == 1.0,
+            "multi_cycle_lineage_drives_next_case": usability_dimensions[
+                "multi_cycle_lineage_carryover"
             ] == 1.0,
             "oss_response_followup_loop_drives_decision": usability_dimensions[
                 "oss_response_followup_loop"
@@ -8444,6 +13402,24 @@ def _build_case_result(
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
             "lean_engine_replay_uses_runtime_binding": usability_dimensions["lean_engine_replay"] == 1.0,
             "lean_runtime_feedback_drives_ooda": usability_dimensions["lean_runtime_feedback"] == 1.0,
+            "experiment_tracking_lineage_reaches_lean_handoff": usability_dimensions[
+                "experiment_tracking_lineage_handoff"
+            ] == 1.0,
+            "policy_oss_lineage_reaches_lean_handoff": usability_dimensions[
+                "policy_oss_lineage_handoff"
+            ] == 1.0,
+            "reflection_oss_lineage_reaches_lean_handoff": usability_dimensions[
+                "reflection_oss_lineage_handoff"
+            ] == 1.0,
+            "lean_packet_execution_projection_replayed": usability_dimensions[
+                "lean_packet_execution_projection"
+            ] == 1.0,
+            "evolved_strategy_packet_reaches_lean_handoff": usability_dimensions[
+                "evolved_strategy_packet_handoff"
+            ] == 1.0,
+            "scheduler_conflict_ooda_dispatch_replayed": usability_dimensions[
+                "scheduler_conflict_ooda_dispatch"
+            ] == 1.0,
             "shioaji_sandbox_lifecycle_reconciled": usability_dimensions["shioaji_sandbox_lifecycle"] == 1.0,
             "case_specific_upstream_artifact_feedback": usability_dimensions[
                 "case_specific_upstream_artifact_feedback"
@@ -8486,10 +13462,19 @@ def _build_summary(
     memory_counterfactuals = [
         artifact["memory_counterfactual"] for artifact in decision_artifacts
     ]
+    institutional_memory_lineages = [
+        case["memory"]["institutional_memory_lineage"] for case in cases
+    ]
     evolution_trajectories = [case["evolution"]["trajectory"] for case in cases]
     no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
     strict_oos_evolution_proofs = [
         case["evolution"]["strict_oos_evolution_proof"] for case in cases
+    ]
+    policy_candidate_materialities = [
+        case["oss_feedback"]["policy_candidate_materiality"] for case in cases
+    ]
+    reflection_artifact_materialities = [
+        case["oss_feedback"]["reflection_artifact_materiality"] for case in cases
     ]
     oss_followup_loops = [case["oss_feedback"]["response_followup_loop"] for case in cases]
     multi_oss_closed_loop_proofs = [
@@ -8497,6 +13482,15 @@ def _build_summary(
     ]
     persona_oss_ooda_ledgers = [
         case["oss_feedback"]["ooda_causal_ledger"] for case in cases
+    ]
+    cross_cycle_carryovers = [
+        case["cross_cycle"]["runtime_feedback_carryover"] for case in cases
+    ]
+    persisted_cycle_resumes = [
+        case["cross_cycle"]["persisted_cycle_resume"] for case in cases
+    ]
+    multi_cycle_lineages = [
+        case["cross_cycle"]["multi_cycle_lineage"] for case in cases
     ]
     oss_disagreement_arbitrations = [
         case["case_upstream_artifacts"]["oss_disagreement_arbitration"] for case in cases
@@ -8513,8 +13507,31 @@ def _build_summary(
     broker_adapter_followups = [
         case["operational_context"]["broker_adapter_followup"] for case in cases
     ]
+    lean_packet_execution_projections = [
+        case["operational_context"]["lean_packet_execution_projection"] for case in cases
+    ]
+    lean_object_store_packet_readbacks = [
+        case["operational_context"]["lean_engine_replay"]["lean_object_store_packet_readback"]
+        for case in cases
+    ]
     lean_runtime_feedbacks = [
         case["operational_context"]["lean_runtime_feedback"] for case in cases
+    ]
+    experiment_tracking_lineage_handoffs = [
+        case["operational_context"]["experiment_tracking_lineage_handoff"]
+        for case in cases
+    ]
+    policy_oss_lineage_handoffs = [
+        case["operational_context"]["policy_oss_lineage_handoff"] for case in cases
+    ]
+    reflection_oss_lineage_handoffs = [
+        case["operational_context"]["reflection_oss_lineage_handoff"] for case in cases
+    ]
+    evolved_strategy_packet_proofs = [
+        case["operational_context"]["evolved_strategy_packet_proof"] for case in cases
+    ]
+    scheduler_conflict_ooda_proofs = [
+        case["operational_context"]["scheduler_conflict_ooda_proof"] for case in cases
     ]
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
@@ -8588,6 +13605,58 @@ def _build_summary(
         "lean_engine_algorithm_modules": sorted({
             case["operational_context"]["lean_engine_replay"]["algorithm_module"] for case in cases
         }),
+        "lean_object_store_packet_readback_models": sorted({
+            readback["model_id"] for readback in lean_object_store_packet_readbacks
+        }),
+        "lean_object_store_packet_readback_target_counts": sorted({
+            readback["target_count"] for readback in lean_object_store_packet_readbacks
+        }),
+        "lean_object_store_packet_readback_loaded_signal_sources": sorted({
+            "first_packet_target"
+            for readback in lean_object_store_packet_readbacks
+            if readback["loaded_signal_id"] == readback["target_signal_ids"][0]
+        }),
+        "lean_object_store_packet_readback_replay_flags": sorted({
+            flag
+            for readback in lean_object_store_packet_readbacks
+            for flag, value in readback["replay"].items()
+            if value is True
+        }),
+        "lean_packet_execution_projection_models": sorted({
+            projection["model_id"] for projection in lean_packet_execution_projections
+        }),
+        "lean_packet_execution_projection_generations": sorted({
+            projection["generation"] for projection in lean_packet_execution_projections
+        }),
+        "lean_packet_execution_projection_leg_counts": sorted({
+            projection["leg_count"] for projection in lean_packet_execution_projections
+        }),
+        "lean_packet_execution_projection_event_chains": sorted({
+            "->".join(leg["event_chain"])
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+        }),
+        "lean_packet_execution_projection_lean_calls": sorted({
+            leg["lean_order_call"]
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+        }),
+        "lean_packet_execution_projection_quantity_types": sorted({
+            leg["quantity_type"]
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+        }),
+        "lean_packet_execution_projection_order_types": sorted({
+            leg["order_type"]
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+        }),
+        "lean_packet_execution_projection_replay_flags": sorted({
+            flag
+            for projection in lean_packet_execution_projections
+            for flag, value in projection["replay"].items()
+            if value is True
+        }),
         "lean_runtime_feedback_models": sorted({
             feedback["model_id"] for feedback in lean_runtime_feedbacks
         }),
@@ -8604,6 +13673,89 @@ def _build_summary(
             flag
             for feedback in lean_runtime_feedbacks
             for flag, value in feedback["replay"].items()
+            if value is True
+        }),
+        "experiment_tracking_lineage_handoff_models": sorted({
+            proof["model_id"] for proof in experiment_tracking_lineage_handoffs
+        }),
+        "experiment_tracking_lineage_handoff_backends": sorted({
+            proof["backend"] for proof in experiment_tracking_lineage_handoffs
+        }),
+        "experiment_tracking_lineage_handoff_replay_flags": sorted({
+            flag
+            for proof in experiment_tracking_lineage_handoffs
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "policy_oss_lineage_handoff_models": sorted({
+            proof["model_id"] for proof in policy_oss_lineage_handoffs
+        }),
+        "policy_oss_lineage_handoff_components": sorted({
+            proof["component"] for proof in policy_oss_lineage_handoffs
+        }),
+        "policy_oss_lineage_handoff_artifact_families": sorted({
+            proof["artifact_family"] for proof in policy_oss_lineage_handoffs
+        }),
+        "policy_oss_lineage_handoff_replay_flags": sorted({
+            flag
+            for proof in policy_oss_lineage_handoffs
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "reflection_oss_lineage_handoff_models": sorted({
+            proof["model_id"] for proof in reflection_oss_lineage_handoffs
+        }),
+        "reflection_oss_lineage_handoff_components": sorted({
+            proof["component"] for proof in reflection_oss_lineage_handoffs
+        }),
+        "reflection_oss_lineage_handoff_artifact_families": sorted({
+            proof["artifact_family"] for proof in reflection_oss_lineage_handoffs
+        }),
+        "reflection_oss_lineage_handoff_replay_flags": sorted({
+            flag
+            for proof in reflection_oss_lineage_handoffs
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "evolved_strategy_packet_models": sorted({
+            proof["model_id"] for proof in evolved_strategy_packet_proofs
+        }),
+        "evolved_strategy_packet_generations": sorted({
+            proof["generation"] for proof in evolved_strategy_packet_proofs
+        }),
+        "evolved_strategy_packet_source_to_validation_paths": sorted({
+            f"{proof['source_outcome_window']}:{proof['validation_window']}"
+            for proof in evolved_strategy_packet_proofs
+        }),
+        "evolved_strategy_packet_replay_flags": sorted({
+            flag
+            for proof in evolved_strategy_packet_proofs
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "scheduler_conflict_ooda_models": sorted({
+            proof["model_id"] for proof in scheduler_conflict_ooda_proofs
+        }),
+        "scheduler_conflict_ooda_event_types": sorted({
+            event["event_type"]
+            for proof in scheduler_conflict_ooda_proofs
+            for event in proof["dispatch_events"]
+        }),
+        "scheduler_conflict_ooda_phases": sorted({
+            event["phase"]
+            for proof in scheduler_conflict_ooda_proofs
+            for event in proof["phase_events"]
+        }),
+        "scheduler_conflict_ooda_next_ooda_steps": sorted({
+            proof["next_ooda_step"] for proof in scheduler_conflict_ooda_proofs
+        }),
+        "scheduler_conflict_ooda_next_scheduler_phases": sorted({
+            proof["next_scheduler_phase"] for proof in scheduler_conflict_ooda_proofs
+        }),
+        "scheduler_conflict_ooda_replay_flags": sorted({
+            flag
+            for proof in scheduler_conflict_ooda_proofs
+            for flag, value in proof["replay"].items()
             if value is True
         }),
         "shioaji_sandbox_models": sorted({
@@ -8641,6 +13793,46 @@ def _build_summary(
             entry["artifact_family"]
             for case in cases
             for entry in case["case_upstream_artifacts"]["selected_oss"].values()
+        }),
+        "policy_candidate_materiality_models": sorted({
+            proof["model_id"] for proof in policy_candidate_materialities
+        }),
+        "policy_candidate_materiality_components": sorted({
+            proof["component"] for proof in policy_candidate_materialities
+        }),
+        "policy_candidate_materiality_artifact_families": sorted({
+            proof["artifact_family"] for proof in policy_candidate_materialities
+        }),
+        "policy_candidate_materiality_metric_signal_keys": sorted({
+            key
+            for proof in policy_candidate_materialities
+            for key in proof["metric_signal_keys"]
+        }),
+        "policy_candidate_materiality_replay_flags": sorted({
+            flag
+            for proof in policy_candidate_materialities
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "reflection_artifact_materiality_models": sorted({
+            proof["model_id"] for proof in reflection_artifact_materialities
+        }),
+        "reflection_artifact_materiality_components": sorted({
+            proof["component"] for proof in reflection_artifact_materialities
+        }),
+        "reflection_artifact_materiality_artifact_families": sorted({
+            proof["artifact_family"] for proof in reflection_artifact_materialities
+        }),
+        "reflection_artifact_materiality_metric_signal_keys": sorted({
+            key
+            for proof in reflection_artifact_materialities
+            for key in proof["metric_signal_keys"]
+        }),
+        "reflection_artifact_materiality_replay_flags": sorted({
+            flag
+            for proof in reflection_artifact_materialities
+            for flag, value in proof["replay"].items()
+            if value is True
         }),
         "oss_response_followup_loop_models": sorted({
             loop["model_id"] for loop in oss_followup_loops
@@ -8711,6 +13903,83 @@ def _build_summary(
             flag
             for ledger in persona_oss_ooda_ledgers
             for flag, value in ledger["replay"].items()
+            if value is True
+        }),
+        "cross_cycle_carryover_models": sorted({
+            proof["model_id"] for proof in cross_cycle_carryovers
+        }),
+        "cross_cycle_carryover_statuses": sorted({
+            proof["carryover_status"] for proof in cross_cycle_carryovers
+        }),
+        "cross_cycle_carryover_next_ooda_steps": sorted({
+            str(proof["next_ooda_step"])
+            for proof in cross_cycle_carryovers
+            if proof.get("next_ooda_step")
+        }),
+        "cross_cycle_carryover_score_adjusted_actions": sorted({
+            action
+            for proof in cross_cycle_carryovers
+            for action, value in proof["score_adjustments"].items()
+            if float(value) > 0.0
+        }),
+        "cross_cycle_carryover_replay_flags": sorted({
+            flag
+            for proof in cross_cycle_carryovers
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "persisted_cycle_resume_models": sorted({
+            proof["model_id"] for proof in persisted_cycle_resumes
+        }),
+        "persisted_cycle_resume_statuses": sorted({
+            proof["resume_status"] for proof in persisted_cycle_resumes
+        }),
+        "persisted_cycle_resume_steps": sorted({
+            str(proof["resume_step"])
+            for proof in persisted_cycle_resumes
+            if proof.get("resume_step")
+        }),
+        "persisted_cycle_resume_next_scheduler_phases": sorted({
+            str(proof["next_scheduler_phase"])
+            for proof in persisted_cycle_resumes
+            if proof.get("next_scheduler_phase")
+        }),
+        "persisted_cycle_resume_score_adjusted_actions": sorted({
+            action
+            for proof in persisted_cycle_resumes
+            for action, value in proof["score_adjustments"].items()
+            if float(value) > 0.0
+        }),
+        "persisted_cycle_resume_replay_flags": sorted({
+            flag
+            for proof in persisted_cycle_resumes
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "multi_cycle_lineage_models": sorted({
+            proof["model_id"] for proof in multi_cycle_lineages
+        }),
+        "multi_cycle_lineage_statuses": sorted({
+            proof["lineage_status"] for proof in multi_cycle_lineages
+        }),
+        "multi_cycle_lineage_depths": sorted({
+            int(proof["lineage_depth"]) for proof in multi_cycle_lineages
+        }),
+        "multi_cycle_lineage_trend_signals": sorted({
+            str(proof["trend_signal"])
+            for proof in multi_cycle_lineages
+            if proof.get("trend_signal")
+        }),
+        "multi_cycle_lineage_score_adjusted_actions": sorted({
+            action
+            for proof in multi_cycle_lineages
+            for action, value in proof["score_adjustments"].items()
+            if float(value) > 0.0
+        }),
+        "multi_cycle_lineage_replay_flags": sorted({
+            flag
+            for proof in multi_cycle_lineages
+            for flag, value in proof["replay"].items()
             if value is True
         }),
         "oss_disagreement_arbitration_models": sorted({
@@ -8813,6 +14082,24 @@ def _build_summary(
         "agent_memory_counterfactual_replay_flags": sorted({
             flag
             for proof in memory_counterfactuals
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "institutional_memory_lineage_models": sorted({
+            proof["model_id"] for proof in institutional_memory_lineages
+        }),
+        "institutional_memory_lineage_statuses": sorted({
+            proof["lineage_status"] for proof in institutional_memory_lineages
+        }),
+        "institutional_memory_lineage_score_adjusted_actions": sorted({
+            action
+            for proof in institutional_memory_lineages
+            for action, value in proof["score_adjustments"].items()
+            if float(value) > 0.0
+        }),
+        "institutional_memory_lineage_replay_flags": sorted({
+            flag
+            for proof in institutional_memory_lineages
             for flag, value in proof["replay"].items()
             if value is True
         }),
@@ -8928,6 +14215,22 @@ def _build_summary(
         "memory_counterfactual_drives_decision_count": sum(
             1 for item in usable if item["memory_counterfactual_drives_decision"]
         ),
+        "institutional_memory_lineage_count": len(institutional_memory_lineages),
+        "institutional_memory_lineage_pass_count": sum(
+            1 for proof in institutional_memory_lineages if _institutional_memory_lineage_is_usable(proof)
+        ),
+        "institutional_memory_lineage_cold_start_count": sum(
+            1 for proof in institutional_memory_lineages if proof["lineage_status"] == "cold_start"
+        ),
+        "institutional_memory_lineage_applied_count": sum(
+            1 for proof in institutional_memory_lineages if proof["lineage_status"] == "applied"
+        ),
+        "institutional_memory_lineage_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in institutional_memory_lineages
+        ),
+        "cross_persona_institutional_memory_drives_decision_count": sum(
+            1 for item in usable if item["cross_persona_institutional_memory_drives_decision"]
+        ),
         "intra_case_memory_influence_count": sum(
             1
             for case in cases
@@ -8942,6 +14245,30 @@ def _build_summary(
         ),
         "multi_oss_feedback_drives_decision_count": sum(
             1 for item in usable if item["multi_oss_feedback_drives_decision"]
+        ),
+        "policy_candidate_materiality_count": len(policy_candidate_materialities),
+        "policy_candidate_materiality_pass_count": sum(
+            1
+            for proof in policy_candidate_materialities
+            if _policy_candidate_materiality_is_usable(proof)
+        ),
+        "policy_candidate_materiality_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in policy_candidate_materialities
+        ),
+        "policy_candidate_oss_materiality_count": sum(
+            1 for item in usable if item["policy_candidate_oss_materiality"]
+        ),
+        "reflection_artifact_materiality_count": len(reflection_artifact_materialities),
+        "reflection_artifact_materiality_pass_count": sum(
+            1
+            for proof in reflection_artifact_materialities
+            if _reflection_artifact_materiality_is_usable(proof)
+        ),
+        "reflection_artifact_materiality_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in reflection_artifact_materialities
+        ),
+        "reflection_artifact_oss_materiality_count": sum(
+            1 for item in usable if item["reflection_artifact_oss_materiality"]
         ),
         "multi_oss_closed_loop_proof_count": len(multi_oss_closed_loop_proofs),
         "multi_oss_closed_loop_proof_pass_count": sum(
@@ -8975,6 +14302,57 @@ def _build_summary(
         ),
         "persona_oss_ooda_causality_replay_count": sum(
             1 for item in usable if item["persona_oss_ooda_causality_replayed"]
+        ),
+        "cross_cycle_carryover_count": len(cross_cycle_carryovers),
+        "cross_cycle_carryover_pass_count": sum(
+            1 for proof in cross_cycle_carryovers if _cross_cycle_carryover_is_usable(proof)
+        ),
+        "cross_cycle_runtime_feedback_applied_count": sum(
+            1 for proof in cross_cycle_carryovers if proof["carryover_status"] == "applied"
+        ),
+        "cross_cycle_runtime_feedback_cold_start_count": sum(
+            1 for proof in cross_cycle_carryovers if proof["carryover_status"] == "cold_start"
+        ),
+        "cross_cycle_carryover_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in cross_cycle_carryovers
+        ),
+        "cross_cycle_runtime_feedback_drives_next_case_count": sum(
+            1 for item in usable if item["cross_cycle_runtime_feedback_drives_next_case"]
+        ),
+        "persisted_cycle_resume_count": len(persisted_cycle_resumes),
+        "persisted_cycle_resume_pass_count": sum(
+            1 for proof in persisted_cycle_resumes if _persisted_cycle_resume_is_usable(proof)
+        ),
+        "persisted_cycle_resume_applied_count": sum(
+            1 for proof in persisted_cycle_resumes if proof["resume_status"] == "applied"
+        ),
+        "persisted_cycle_resume_cold_start_count": sum(
+            1 for proof in persisted_cycle_resumes if proof["resume_status"] == "cold_start"
+        ),
+        "persisted_cycle_resume_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in persisted_cycle_resumes
+        ),
+        "persisted_cycle_resume_drives_next_case_count": sum(
+            1 for item in usable if item["persisted_cycle_resume_drives_next_case"]
+        ),
+        "multi_cycle_lineage_count": len(multi_cycle_lineages),
+        "multi_cycle_lineage_pass_count": sum(
+            1 for proof in multi_cycle_lineages if _multi_cycle_lineage_is_usable(proof)
+        ),
+        "multi_cycle_lineage_cold_start_count": sum(
+            1 for proof in multi_cycle_lineages if proof["lineage_status"] == "cold_start"
+        ),
+        "multi_cycle_lineage_single_prior_count": sum(
+            1 for proof in multi_cycle_lineages if proof["lineage_status"] == "single_prior"
+        ),
+        "multi_cycle_lineage_applied_count": sum(
+            1 for proof in multi_cycle_lineages if proof["lineage_status"] == "lineage_applied"
+        ),
+        "multi_cycle_lineage_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in multi_cycle_lineages
+        ),
+        "multi_cycle_lineage_drives_next_case_count": sum(
+            1 for item in usable if item["multi_cycle_lineage_drives_next_case"]
         ),
         "oss_response_followup_loop_count": len(oss_followup_loops),
         "oss_response_followup_loop_pass_count": sum(
@@ -9048,12 +14426,109 @@ def _build_summary(
         "restart_recovery_count": sum(1 for item in usable if item["restart_recovery_restores_loop"]),
         "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
         "lean_engine_replay_count": sum(1 for item in usable if item["lean_engine_replay_uses_runtime_binding"]),
+        "lean_object_store_packet_readback_count": len(lean_object_store_packet_readbacks),
+        "lean_object_store_packet_readback_pass_count": sum(
+            1
+            for readback in lean_object_store_packet_readbacks
+            if _lean_object_store_packet_readback_is_usable(readback)
+        ),
+        "lean_object_store_packet_readback_target_count": sum(
+            readback["target_count"] for readback in lean_object_store_packet_readbacks
+        ),
+        "lean_object_store_loaded_signal_from_packet_target_count": sum(
+            1
+            for readback in lean_object_store_packet_readbacks
+            if readback["loaded_signal_id"] == readback["target_signal_ids"][0]
+        ),
+        "lean_packet_execution_projection_count": len(lean_packet_execution_projections),
+        "lean_packet_execution_projection_pass_count": sum(
+            1
+            for projection in lean_packet_execution_projections
+            if _lean_packet_execution_projection_is_usable(projection)
+        ),
+        "lean_packet_execution_projection_leg_count": sum(
+            len(projection["leg_projections"]) for projection in lean_packet_execution_projections
+        ),
+        "lean_packet_execution_projection_order_count": sum(
+            projection["order_count"] for projection in lean_packet_execution_projections
+        ),
+        "lean_packet_execution_projection_fill_count": sum(
+            projection["fill_count"] for projection in lean_packet_execution_projections
+        ),
+        "lean_packet_execution_projection_readback_count": sum(
+            1
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+            if leg["broker_readback_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+        ),
+        "lean_packet_execution_projection_replayed_count": sum(
+            1 for item in usable if item["lean_packet_execution_projection_replayed"]
+        ),
         "lean_runtime_feedback_count": len(lean_runtime_feedbacks),
         "lean_runtime_feedback_pass_count": sum(
             1 for feedback in lean_runtime_feedbacks if _lean_runtime_feedback_is_usable(feedback)
         ),
+        "lean_runtime_feedback_consumed_execution_projection_count": sum(
+            1
+            for feedback in lean_runtime_feedbacks
+            if feedback["replay"].get("lean_packet_execution_projection_consumed") is True
+        ),
         "lean_runtime_feedback_drives_ooda_count": sum(
             1 for item in usable if item["lean_runtime_feedback_drives_ooda"]
+        ),
+        "experiment_tracking_lineage_handoff_count": len(experiment_tracking_lineage_handoffs),
+        "experiment_tracking_lineage_handoff_pass_count": sum(
+            1
+            for proof in experiment_tracking_lineage_handoffs
+            if _experiment_tracking_lineage_handoff_is_usable(proof)
+        ),
+        "experiment_tracking_lineage_handoff_drives_lean_count": sum(
+            1
+            for item in usable
+            if item["experiment_tracking_lineage_reaches_lean_handoff"]
+        ),
+        "policy_oss_lineage_handoff_count": len(policy_oss_lineage_handoffs),
+        "policy_oss_lineage_handoff_pass_count": sum(
+            1
+            for proof in policy_oss_lineage_handoffs
+            if _policy_oss_lineage_handoff_is_usable(proof)
+        ),
+        "policy_oss_lineage_handoff_drives_lean_count": sum(
+            1
+            for item in usable
+            if item["policy_oss_lineage_reaches_lean_handoff"]
+        ),
+        "reflection_oss_lineage_handoff_count": len(reflection_oss_lineage_handoffs),
+        "reflection_oss_lineage_handoff_pass_count": sum(
+            1
+            for proof in reflection_oss_lineage_handoffs
+            if _reflection_oss_lineage_handoff_is_usable(proof)
+        ),
+        "reflection_oss_lineage_handoff_drives_lean_count": sum(
+            1
+            for item in usable
+            if item["reflection_oss_lineage_reaches_lean_handoff"]
+        ),
+        "evolved_strategy_packet_proof_count": len(evolved_strategy_packet_proofs),
+        "evolved_strategy_packet_proof_pass_count": sum(
+            1
+            for proof in evolved_strategy_packet_proofs
+            if _evolved_strategy_packet_proof_is_usable(proof)
+        ),
+        "evolved_strategy_packet_handoff_count": sum(
+            1 for item in usable if item["evolved_strategy_packet_reaches_lean_handoff"]
+        ),
+        "scheduler_conflict_ooda_proof_count": len(scheduler_conflict_ooda_proofs),
+        "scheduler_conflict_ooda_proof_pass_count": sum(
+            1
+            for proof in scheduler_conflict_ooda_proofs
+            if _scheduler_conflict_ooda_proof_is_usable(proof)
+        ),
+        "scheduler_conflict_ooda_event_count": sum(
+            len(proof["dispatch_events"]) for proof in scheduler_conflict_ooda_proofs
+        ),
+        "scheduler_conflict_ooda_dispatch_count": sum(
+            1 for item in usable if item["scheduler_conflict_ooda_dispatch_replayed"]
         ),
         "shioaji_sandbox_lifecycle_count": sum(1 for item in usable if item["shioaji_sandbox_lifecycle_reconciled"]),
         "case_specific_vectorbt_backtest_count": sum(
@@ -9097,11 +14572,16 @@ def _build_summary(
             "Every agent decision emits a memory counterfactual proving retrieved lessons change selected scores and margins, while cold starts declare zero memory influence.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every case converts OSS responses into persona follow-up requests that feed reasoning, candidate evidence, and scorer adjustments.",
+            "Every case proves the selected FinRL/RLlib/Ray Tune policy-candidate artifact materially changes persona scoring, risk sizing, and the evolved policy packet.",
+            "Every case proves the selected DSPy/TRL/imitation reflection artifact materially changes persona reasoning blueprints, selected rationale, scorer replay, and candidate evidence.",
             "Every case emits a multi-OSS closed-loop proof replaying each role from OSS response through persona follow-up, reasoning inputs, candidate generation, scorer adjustments, and selected evidence.",
             "Every case emits an OODA causal ledger proving OSS responses, persona follow-up outputs, candidate generation, scorer output, selected action, and LEAN handoff occur in replayable temporal order without future artifact references.",
+            "Every non-cold-start persona case consumes the prior autonomous cycle's LEAN runtime feedback in reasoning, candidate generation, selected evidence, and scorer adjustments.",
+            "Every non-cold-start persona case resumes that prior autonomous cycle through persisted checkpoint, schedule, and object-store readback refs before using the runtime feedback.",
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
             "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case reconciles experiment-tracker readback divergence and routes the repaired tracking ref into persona reasoning, scorer adjustments, and selected candidate evidence.",
+            "Every case carries the repaired MLflow/W&B experiment lineage from evolution decision evidence into the LEAN strategy packet, Object Store readback, handoff bundle, and runtime feedback.",
             "Every persona decision emits a replayable request-response artifact covering candidate generation, scoring, risk checks, and rejected alternatives.",
             "Every persona decision first emits a structured reasoning response whose candidate blueprints drive the scored candidates.",
             "Every case records a multi-generation evolution trajectory proving gen0->gen1->gen2 lineage, two distinct unseen-window improvements, and bounded turnover.",
@@ -9111,6 +14591,10 @@ def _build_summary(
             "Every case emits a persona-visible broker adapter lifecycle packet tying paper order status paths, Shioaji sandbox place/cancel/readback, live-disabled rejection, and restart recovery into a replayable response.",
             "Every broker adapter response triggers a scenario-specific persona follow-up action before the next autonomous paper cycle.",
             "Every LEAN runtime response is consumed by the persona and drives a scenario-specific next OODA action with runtime binding, object-store readback, and handoff refs.",
+            "Every case proves the generation-2 strict-OOS evolved strategy packet reaches LEAN handoff, runtime bundle refs, and runtime feedback with future-holdout provenance intact.",
+            "Every case materializes the evolved multi-leg strategy packet into the LEAN Object Store and proves the smoke algorithm loaded its first target signal from that packet artifact.",
+            "Every case projects each generation-2 strategy packet leg into a LEAN-side target/order/fill/readback chain and feeds that projection into persona runtime feedback.",
+            "Every case replays scheduler and multi-persona conflict causality from recovered schedule tick through resolved allocation, LEAN handoff, adapter/runtime feedback, and next-cycle dispatch.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
     }
