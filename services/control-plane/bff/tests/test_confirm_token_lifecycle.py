@@ -128,7 +128,7 @@ def test_expired_confirm_tokens_return_typed_410() -> None:
                 json=body,
             )
             assert response.status_code == 410, response.text
-            detail = response.json()["detail"]
+            detail = response.json()
             assert detail["error"]["code"] == "OPERATION_NOT_ALLOWED"
             assert detail["error"]["details"]["precondition_failed"] == "confirm_token_expired"
             assert detail["error"]["details"]["tokenId"] == "ct-bff-b1-009-expired"

@@ -146,7 +146,7 @@ def test_bff_actions_named_facade_rejects_body_idempotency_key() -> None:
         )
 
         assert response.status_code == 400, response.text
-        detail = response.json()["detail"]
+        detail = response.json()
         assert detail["error"]["code"] == "VALIDATION_FAILED"
         assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
         assert bff_main.command_store._get_all_commands() == []
@@ -162,7 +162,7 @@ def test_bff_actions_adapter_requires_idempotency_key() -> None:
         )
 
         assert response.status_code == 400, response.text
-        detail = response.json()["detail"]
+        detail = response.json()
         assert detail["error"]["code"] == "VALIDATION_FAILED"
         assert detail["error"]["details"]["precondition_failed"] == "idempotency_key"
         assert bff_main.command_store._get_all_commands() == []
@@ -181,7 +181,7 @@ def test_bff_actions_adapter_policy_denial_records_foundation_error() -> None:
         )
 
         assert response.status_code == 403, response.text
-        detail = response.json()["detail"]
+        detail = response.json()
         assert detail["foundation_error"]["error_kind"] == "policy_denial"
         assert detail["policy_decision"]["decision"] == "deny"
         assert detail["audit_action"]["metadata"]["route"] == "POST /bff/v1/commands"

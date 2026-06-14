@@ -202,7 +202,7 @@ def test_remediate_v5_intervention_missing_two_man_returns_409() -> None:
             },
         )
         assert response.status_code == 409, response.text
-        detail = response.json()["detail"]
+        detail = response.json()
         error = detail["error"]
         assert error["code"] == "TWO_MAN_REQUIRED"
         assert error["details"]["kind"] == "two_man"
@@ -227,7 +227,7 @@ def test_remediate_v5_intervention_missing_approval_returns_409() -> None:
             },
         )
         assert response.status_code == 409, response.text
-        detail = response.json()["detail"]
+        detail = response.json()
         error = detail["error"]
         assert error["code"] == "APPROVAL_REQUIRED"
         assert error["details"]["kind"] == "approval"
@@ -251,7 +251,7 @@ def test_remediate_v5_intervention_missing_confirm_token_returns_428() -> None:
             },
         )
         assert response.status_code == 428, response.text
-        detail = response.json()["detail"]
+        detail = response.json()
         error = detail["error"]
         assert error["code"] == "CONFIRMATION_REQUIRED"
         assert error["details"]["kind"] == "confirm_token"
@@ -310,7 +310,7 @@ def test_bff_v1_commands_remediate_sentinel_missing_two_man_returns_409() -> Non
             },
         )
         assert response.status_code == 409, response.text
-        detail = response.json()["detail"]
+        detail = response.json()
         error = detail["error"]
         assert error["code"] == "TWO_MAN_REQUIRED"
         assert "TWO_MAN_SIGNATURE_MISSING" in str(detail)

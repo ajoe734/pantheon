@@ -65,7 +65,7 @@ def test_agora_journal_patch_rejects_non_merge_patch_content_type() -> None:
             )
 
             assert response.status_code == 415, response.text
-            detail = response.json()["detail"]
+            detail = response.json()
             assert detail["error"]["code"] == "VALIDATION_FAILED"
             assert detail["error"]["details"]["precondition_failed"] == "content_type"
         finally:
@@ -89,7 +89,7 @@ def test_agora_journal_patch_rejects_body_idempotency_key() -> None:
             )
 
             assert response.status_code == 400, response.text
-            detail = response.json()["detail"]
+            detail = response.json()
             assert detail["error"]["code"] == "VALIDATION_FAILED"
             assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
         finally:
@@ -170,7 +170,7 @@ def test_agora_journal_patch_idempotency_conflict_rejected() -> None:
 
             assert first.status_code == 200, first.text
             assert second.status_code == 409, second.text
-            detail = second.json()["detail"]
+            detail = second.json()
             assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
             assert detail["error"]["details"]["precondition_failed"] == "idempotency_conflict"
         finally:
