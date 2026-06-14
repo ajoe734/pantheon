@@ -22,6 +22,7 @@ import os
 import sys
 import tempfile
 import uuid
+import json
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ if str(_CP_GOV) not in sys.path:
 from fastapi.testclient import TestClient  # noqa: E402
 
 from services.evolution import main as evo_main  # noqa: E402
+from services.evolution import scheduler_worker  # noqa: E402
 from services.evolution.main import app  # noqa: E402
 
 # ---- Incident domain objects (for seeding postmortems in tests) ----
@@ -48,12 +50,21 @@ if str(_INC_SVC) not in sys.path:
     sys.path.insert(0, str(_INC_SVC))
 
 from incident import IncidentCase, Postmortem  # noqa: E402
+from services.incidents.consumer import ThresholdTelemetryIncidentConsumer  # noqa: E402
 
 client = TestClient(app)
+_SWEEP_FIXTURE_PATH = Path(__file__).with_name("fixtures") / "threshold_breach_daily_sweep.json"
 
 
 def uid() -> str:
     return f"ev-t-{uuid.uuid4().hex[:8]}"
+
+
+def sweep_fixture(extra: dict | None = None) -> dict:
+    payload = json.loads(_SWEEP_FIXTURE_PATH.read_text(encoding="utf-8"))
+    if extra:
+        payload.update(extra)
+    return payload
 
 
 @pytest.fixture(autouse=True)
@@ -1100,6 +1111,113 @@ def test_cooldown_blocks_high_risk_freeze_live_repeated_trigger():
     r2 = client.post("/api/evolution/proposals", json=body2)
     assert r2.status_code == 422
     assert "single-active-rule" in r2.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# DEVLOOP-EVOLUTION: daily sweep + threshold-trigger fixture
+# ---------------------------------------------------------------------------
+
+def test_daily_sweep_threshold_fixture_creates_evolution_decision():
+    payload = sweep_fixture()
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload)
+
+    r = client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [payload["incident_id"]], "sweep_id": "fixture-sweep"},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["scanned_incidents"] == 1
+    assert body["created_decisions"] == 1
+    assert body["cooldown_blocked"] == 0
+    assert body["scheduler_attach"]["worker_module"] == "services.evolution.scheduler_worker"
+    item = body["items"][0]
+    assert item["status"] == "created"
+    assert item["action_type"] == "retrain"
+
+    decision = client.get(f"/api/evolution/proposals/{item['decision_id']}").json()
+    assert decision["decision_state"] == "proposed"
+    assert decision["linked_incident_id"] == payload["incident_id"]
+    assert decision["target_id"] == payload["telemetry_event"]["artifact_id"]
+    assert decision["target_stage"] == "paper"
+    assert decision["metadata"]["source"] == "evolution_daily_sweep"
+    assert decision["metadata"]["proposal_only"] is True
+    assert decision["metadata"]["runtime_binding_mutation_allowed"] is False
+    assert decision["threshold_snapshots"][0]["metric_name"] == "rolling_drawdown_multiple"
+    assert decision["threshold_snapshots"][0]["observed_value"] == 1.42
+
+
+def test_daily_sweep_respects_cooldown_for_same_target_after_execute():
+    first_payload = sweep_fixture()
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(first_payload)
+
+    first = client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [first_payload["incident_id"]], "sweep_id": "cooldown-first"},
+    ).json()["items"][0]
+    decision_id = first["decision_id"]
+    advance_to_reviewed(decision_id, apv_id="apv-daily-sweep-cooldown")
+    advance_to_approved(decision_id)
+    executed = advance_to_executed(decision_id)
+    assert executed["cooldown_ends_at"] is not None
+
+    second_payload = sweep_fixture(
+        {
+            "incident_id": "inc-evolution-sweep-fixture-002",
+            "title": "Paper runtime drawdown threshold breached again",
+        }
+    )
+    second_payload["telemetry_event"]["event_id"] = "tel-evolution-sweep-fixture-002"
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(second_payload)
+
+    r = client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [second_payload["incident_id"]], "sweep_id": "cooldown-second"},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["scanned_incidents"] == 1
+    assert body["created_decisions"] == 0
+    assert body["cooldown_blocked"] == 1
+    item = body["items"][0]
+    assert item["status"] == "cooldown_blocked"
+    assert item["active_decision_id"] == decision_id
+    assert "cooldown/observation" in item["reason"]
+
+
+def test_scheduler_worker_posts_daily_sweep_tick(monkeypatch):
+    seen: dict[str, Any] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"created_decisions": 0, "cooldown_blocked": 0}'
+
+    def fake_urlopen(request, timeout):
+        seen["url"] = request.full_url
+        seen["timeout"] = timeout
+        seen["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(scheduler_worker.urllib.request, "urlopen", fake_urlopen)
+
+    result = scheduler_worker.run_tick(
+        api_url="http://evolution:8093",
+        max_incidents=7,
+        timeout_seconds=4.0,
+    )
+
+    assert seen["url"] == "http://evolution:8093/api/evolution/daily-sweep"
+    assert seen["timeout"] == 4.0
+    assert seen["payload"] == {"sweep_id": "scheduled-daily", "max_incidents": 7}
+    assert result["created_decisions"] == 0
 
 
 # ---------------------------------------------------------------------------
