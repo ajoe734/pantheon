@@ -6113,6 +6113,10 @@ def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) 
         "projection_source",
         "projection_updated_at",
         "staleness",
+        "executed_trade_count",
+        "position_count",
+        "positions",
+        "last_fill",
     ):
         if key in summary:
             projected[key] = summary.get(key)
@@ -6341,6 +6345,11 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
             else None
         ),
         "telemetry_summary": telemetry_summary,
+        "executed_trade_count": (telemetry_summary or {}).get("executed_trade_count"),
+        "total_trades": ((telemetry_summary or {}).get("metrics") or {}).get("total_trades"),
+        "position_count": (telemetry_summary or {}).get("position_count"),
+        "positions": (telemetry_summary or {}).get("positions"),
+        "last_fill": (telemetry_summary or {}).get("last_fill"),
         "paper_runtime_monitoring": monitoring_session,
         "row_health": _derive_runtime_state_row_health(
             binding=binding,
