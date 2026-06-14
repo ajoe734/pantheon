@@ -45,7 +45,11 @@ The campaign deliberately goes **deeper and broader** each round.
 | 7 | Test-suite import/collection & execution health | [round-07-plan.md](round-07-plan.md) | [round-07-results.md](round-07-results.md) | PASS (~1,150 tests green, 0 failures) (PR #1550) |
 | 8 | Write-method robustness + orchestrator archive integrity | [round-08-plan.md](round-08-plan.md) | [round-08-results.md](round-08-results.md) | F8: archive indexer silently dropped legacy-id files — fixed |
 | 9 | Systematic route-resolution audit (shadowing + dup registration) | [round-09-plan.md](round-09-plan.md) | [round-09-results.md](round-09-results.md) | PASS; F9 dup-registration hazard locked by guard test |
-| 10 | _(final round + campaign summary)_ | — | — | — |
+| 10 | Undocumented/hidden-route audit (live→documented) | [round-10-plan.md](round-10-plan.md) | [round-10-results.md](round-10-results.md) | PASS; no hidden mutating endpoints |
+
+**Campaign close-out:** [SUMMARY.md](SUMMARY.md) — 5 defects fixed (PRs #1540,
+#1541, #1542, #1553, #1555), 5 findings attributed to owners, 5 regression
+test files added.
 
 ## Environment under test
 
