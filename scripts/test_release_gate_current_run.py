@@ -65,3 +65,13 @@ def test_release_gate_aggregate_defaults_to_current_run_audit_dir(tmp_path: Path
     assert evidence_check["label"] == "Evidence written to `.lovable/audits/current-run`."
     assert evidence_check["status"] == "pass"
     assert evidence_check["note"] == "1 audit file(s) found"
+
+
+def test_integration_gate_uploads_only_current_run_audits() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow = repo_root / "execute-plans" / ".github" / "workflows" / "pantheon-integration-gate.yml"
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
+    assert ".lovable/audits/current-run" in text
+    assert ".lovable/audits/*.md" not in text
