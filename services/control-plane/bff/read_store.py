@@ -2469,6 +2469,19 @@ class ServiceBackedReadAdapter:
             "keys": ["runtime_id", "id"],
             "snapshot_key": "telemetry_summaries",
         },
+        "telemetry_events": {
+            "env": "PANTHEON_BFF_TELEMETRY_EVENT_STORE",
+            "dirs": ("TELEMETRY_STORAGE_DIR", "PANTHEON_TELEMETRY_DATA_DIR"),
+            "filenames": (
+                "telemetry_events.jsonl",
+                "telemetry_events.json",
+                "events.jsonl",
+                "events.json",
+            ),
+            "keys": ["event_id", "telemetry_event_id", "id"],
+            "nested_key": "events",
+            "snapshot_key": "telemetry_events",
+        },
         "telemetry_performance": {
             "env": "PANTHEON_BFF_TELEMETRY_PERFORMANCE_STORE",
             "dirs": (),
@@ -2710,6 +2723,11 @@ class ServiceBackedReadAdapter:
             "list_path": "/api/telemetry/runtime-summaries",
             "list_key": "summaries",
         },
+        "telemetry_events": {
+            "base_env": ("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_URL"),
+            "list_path": "/api/telemetry/events",
+            "list_key": "events",
+        },
         "lineage_edges": {
             "base_env": ("PANTHEON_LINEAGE_READ_URL", "PANTHEON_LINEAGE_API_URL"),
             "list_path": "/api/v1/lineage",
@@ -2826,7 +2844,7 @@ class ServiceBackedReadAdapter:
             if dataset == "synthesis_conflict_logs":
                 payload = _project_synthesis_conflict_log_store_payload(payload)
             nested_key = self._DATASETS[dataset].get("nested_key")
-            if nested_key and isinstance(payload, dict):
+            if nested_key and isinstance(payload, dict) and str(nested_key) in payload:
                 payload = payload.get(str(nested_key), {})
             normalized = _normalize_records(payload, self._DATASETS[dataset]["keys"])
             self._cache[dataset] = normalized
@@ -15448,13 +15466,120 @@ class ReadSurfaceStore:
         artifact_id: Optional[str] = None,
         time_range: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """TL-01: Return telemetry events with optional filters.
+        """TL-01: Return telemetry events with optional filters."""
+        _, events = self.list_telemetry_events_with_source(
+            pool_id=pool_id,
+            artifact_id=artifact_id,
+            time_range=time_range,
+        )
+        return events
 
-        v1: returns telemetry summaries as event-like records.
-        Production would ingest raw telemetry events from the event store.
+    def list_telemetry_events_with_source(
+        self,
+        pool_id: Optional[str] = None,
+        artifact_id: Optional[str] = None,
+        time_range: Optional[str] = None,
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Return telemetry events and the read source used for TL-01.
+
+        The event store is authoritative when it has records. The legacy summary
+        projection is retained only as an explicitly degraded empty-store fallback.
         """
-        # v1: adapt telemetry summaries as event list
-        events = []
+        available, raw_events = self._service.list_records("telemetry_events")
+        source = self._service.source("telemetry_events") if available else "missing"
+        event_records = [
+            self._project_telemetry_event(event)
+            for event in raw_events
+            if isinstance(event, dict)
+        ]
+        if event_records:
+            return source, self._filter_telemetry_events(
+                event_records,
+                pool_id=pool_id,
+                artifact_id=artifact_id,
+                time_range=time_range,
+            )
+
+        fallback_events = self._telemetry_summary_projection_events()
+        if fallback_events:
+            return "telemetry_summary_fallback", self._filter_telemetry_events(
+                fallback_events,
+                pool_id=pool_id,
+                artifact_id=artifact_id,
+                time_range=time_range,
+            )
+        return "missing", []
+
+    @staticmethod
+    def _project_telemetry_event(event: Dict[str, Any]) -> Dict[str, Any]:
+        projected = json.loads(json.dumps(event))
+        event_id = (
+            projected.get("id")
+            or projected.get("event_id")
+            or projected.get("telemetry_event_id")
+        )
+        if event_id not in (None, ""):
+            projected.setdefault("id", str(event_id))
+        runtime_id = (
+            projected.get("runtime_id")
+            or projected.get("runtimeBindingId")
+            or projected.get("runtime_binding_id")
+        )
+        if runtime_id not in (None, ""):
+            projected.setdefault("runtime_id", str(runtime_id))
+        event_type = (
+            projected.get("type")
+            or projected.get("event_type")
+            or projected.get("kind")
+            or "telemetry"
+        )
+        projected.setdefault("type", str(event_type))
+        timestamp = ReadSurfaceStore._telemetry_event_timestamp(projected)
+        if timestamp:
+            projected.setdefault("timestamp", timestamp)
+        return projected
+
+    @staticmethod
+    def _telemetry_event_timestamp(event: Dict[str, Any]) -> str:
+        for key in (
+            "timestamp",
+            "occurred_at",
+            "emitted_at",
+            "created_at",
+            "collected_at",
+        ):
+            value = event.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return ""
+
+    @staticmethod
+    def _filter_telemetry_events(
+        events: List[Dict[str, Any]],
+        *,
+        pool_id: Optional[str],
+        artifact_id: Optional[str],
+        time_range: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        filtered = list(events)
+        if artifact_id:
+            filtered = [
+                event
+                for event in filtered
+                if event.get("artifact_id") == artifact_id
+                or event.get("runtime_id") == artifact_id
+            ]
+        if pool_id:
+            filtered = [event for event in filtered if event.get("pool_id") == pool_id]
+        # time_range filtering remains deferred to the telemetry service.
+        return sorted(
+            filtered,
+            key=ReadSurfaceStore._telemetry_event_timestamp,
+            reverse=True,
+        )
+
+    def _telemetry_summary_projection_events(self) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
         available, summaries = self._service.list_records("telemetry_summaries")
         if available:
             summary_records = [
@@ -15482,16 +15607,7 @@ class ReadSurfaceStore:
                 },
             }
             events.append(event)
-
-        if artifact_id:
-            # Filter by artifact_id via runtime_id match (v1: artifacts map to runtimes)
-            events = [e for e in events if e["runtime_id"] == artifact_id]
-        if pool_id:
-            # v1: pool_id filtering not available in telemetry summaries
-            # Production would join telemetry with pool membership
-            pass
-        # time_range filtering deferred to v2
-        return sorted(events, key=lambda x: x.get("timestamp", ""), reverse=True)
+        return events
 
     # ------------------------------------------------------------------ #
     # Telemetry performance (TL-03)

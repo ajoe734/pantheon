@@ -254,14 +254,16 @@ class DeploymentPlan:
             errors.append(f"Invalid runtime_action: {self.runtime_action}")
             runtime_action = None
         try:
-            PlanStatus(self.status)
+            plan_status = PlanStatus(self.status)
         except ValueError:
             errors.append(f"Invalid status: {self.status}")
+            plan_status = None
 
-        if current_stage and target_stage and current_stage == target_stage:
+        stages_match = current_stage and target_stage and current_stage == target_stage
+        if stages_match and plan_status != PlanStatus.EXECUTED:
             errors.append("target_stage must differ from current_stage")
 
-        if current_stage and target_stage and transition_type:
+        if current_stage and target_stage and transition_type and not stages_match:
             try:
                 expected_transition = StagePlanner().derive_transition_type(current_stage, target_stage)
             except DeploymentPlanError as exc:

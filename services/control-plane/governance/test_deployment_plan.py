@@ -382,6 +382,26 @@ class TestDeploymentPlanCreation(unittest.TestCase):
         errors = validate_plan(invalid_plan)
         self.assertTrue(any("end_at must be after start_at" in error for error in errors))
 
+    def test_executed_plan_allows_current_stage_to_match_target_stage(self):
+        plan = self.planner.create_plan(
+            plan_id="plan-paper-executed",
+            approval_decision_id="approval-001",
+            approval_decision=approved_decision(),
+            registry_entry=approved_registry_entry(),
+            capital_pool_id="pool-001",
+            sponsor_persona_id="persona-ops",
+            target_stage=DeploymentStage.PAPER,
+            rollback=rollback_ref(),
+        )
+        plan.current_stage = DeploymentStage.PAPER
+        plan.status = PlanStatus.EXECUTED
+
+        self.assertEqual(validate_plan(plan), [])
+
+        plan.status = PlanStatus.EXECUTING
+        errors = validate_plan(plan)
+        self.assertTrue(any("target_stage must differ" in error for error in errors))
+
 
 class TestExecutionProjection(unittest.TestCase):
     def setUp(self):

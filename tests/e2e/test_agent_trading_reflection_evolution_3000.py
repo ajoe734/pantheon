@@ -27,6 +27,7 @@ from services.persona.agent_usability_validation import (
     LOOKBACK_BARS,
     MARKET_FRICTION_MODEL_ID,
     MIN_USABILITY_SCORE,
+    MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID,
     NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID,
     OPERATIONAL_SCENARIOS,
     ORDER_TYPES,
@@ -42,6 +43,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_CANDIDATE_SCORER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
     PERSONA_MEMORY_INFLUENCE_MODEL_ID,
+    PERSONA_OSS_OODA_LEDGER_MODEL_ID,
     PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
     PERSONA_REASONING_EVALUATOR_MODEL_ID,
     PERSONA_REASONING_MODEL_ID,
@@ -108,6 +110,16 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["intra_case_memory_influence_count"] == DEFAULT_CASE_COUNT
     assert summary["cross_case_memory_influence_count"] == DEFAULT_CASE_COUNT - summary["persona_count"]
     assert summary["multi_oss_feedback_drives_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_oss_closed_loop_proof_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_oss_closed_loop_proof_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["multi_oss_closed_loop_role_binding_count"] == DEFAULT_CASE_COUNT * 8
+    assert summary["multi_oss_closed_loop_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["multi_oss_closed_loop_drives_decision_count"] == DEFAULT_CASE_COUNT
+    assert summary["persona_oss_ooda_ledger_count"] == DEFAULT_CASE_COUNT
+    assert summary["persona_oss_ooda_ledger_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["persona_oss_ooda_ledger_event_count"] == DEFAULT_CASE_COUNT * 22
+    assert summary["persona_oss_ooda_ledger_handoff_event_count"] == DEFAULT_CASE_COUNT
+    assert summary["persona_oss_ooda_causality_replay_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["oss_response_followup_loop_drives_decision_count"] == DEFAULT_CASE_COUNT
@@ -317,6 +329,74 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "retain-observe",
         "risk-off",
     ]
+    assert coverage["multi_oss_closed_loop_models"] == [MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID]
+    assert set(coverage["multi_oss_closed_loop_roles"]) == {
+        "alpha_model",
+        "backtest",
+        "handoff",
+        "policy_candidate",
+        "reflection_artifact",
+        "risk_analytics",
+        "session",
+        "tracker",
+    }
+    assert set(coverage["multi_oss_closed_loop_components"]) == set(OSS_REQUIRED_COMPONENTS)
+    assert set(coverage["multi_oss_closed_loop_candidate_actions"]) == {
+        "contrarian-check",
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    }
+    assert set(coverage["multi_oss_closed_loop_replay_flags"]) == {
+        "all_followup_outputs_consumed_by_candidate_generation",
+        "all_followup_outputs_used_by_both_generations",
+        "all_followup_responses_completed",
+        "all_followups_requested_after_oss_response",
+        "all_oss_responses_completed",
+        "all_required_roles_present",
+        "all_role_score_adjustments_available_to_scorer",
+        "all_source_oss_refs_consumed_by_reasoning",
+        "all_source_refs_bound_to_followup_requests",
+        "feedback_adapt_path_receives_all_oss_feedback",
+        "replayable",
+        "selected_candidate_cites_all_followup_outputs",
+        "selected_case_oss_roles_bound",
+    }
+    assert coverage["persona_oss_ooda_ledger_models"] == [PERSONA_OSS_OODA_LEDGER_MODEL_ID]
+    assert set(coverage["persona_oss_ooda_ledger_phases"]) == {
+        "act",
+        "decide",
+        "observe",
+        "orient",
+    }
+    assert set(coverage["persona_oss_ooda_ledger_event_types"]) == {
+        "candidate_generation",
+        "candidate_scoring",
+        "lean_handoff_packet",
+        "oss_response",
+        "persona_followup_response",
+        "selected_action",
+    }
+    assert set(coverage["persona_oss_ooda_ledger_actors"]) == {
+        "oss",
+        "persona",
+        "persona+lean_handoff",
+        "persona+oss",
+    }
+    assert set(coverage["persona_oss_ooda_ledger_replay_flags"]) == {
+        "actionable_oss_feedback_has_downstream_persona_action",
+        "all_events_strictly_ordered",
+        "all_followup_outputs_precede_candidate_generation",
+        "all_ooda_phases_present",
+        "all_oss_responses_precede_persona_followups",
+        "all_persona_followups_emit_completed_outputs",
+        "candidate_generation_precedes_scoring",
+        "lean_handoff_consumes_selected_action",
+        "ledger_replayable",
+        "no_future_artifact_reference",
+        "scoring_precedes_selected_action",
+        "selected_action_precedes_lean_handoff",
+    }
     assert coverage["oss_disagreement_arbitration_models"] == [
         PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID
     ]
@@ -462,6 +542,8 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_no_leakage_temporal_protocol(case)
         _assert_strict_oos_evolution_proof(case)
         _assert_memory_and_oss_closed_loop(case)
+        _assert_multi_oss_closed_loop_proof(case)
+        _assert_persona_oss_ooda_causal_ledger(case)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
         _assert_evolution_and_scores(case)
@@ -1084,6 +1166,233 @@ def _assert_memory_and_oss_closed_loop(case: dict) -> None:
     assert replay["responses_drive_candidate_scoring"] is True
     assert replay["feedback_adapt_receives_all_followup_refs"] is True
     assert replay["risk_response_available_to_risk_off"] is True
+
+
+def _assert_multi_oss_closed_loop_proof(case: dict) -> None:
+    proof = case["oss_feedback"]["closed_loop_proof"]
+    followup_loop = case["oss_feedback"]["response_followup_loop"]
+    traces = case["reflection"]["agent_decision_traces"]
+    required_roles = [
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    ]
+
+    assert proof["model_id"] == MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == f"multi-oss-closed-loop://{case['case_id']}"
+    assert proof["input_hash"]
+    assert [record["role"] for record in proof["role_records"]] == required_roles
+    assert len(proof["trace_bindings"]) == 2
+
+    followup_by_role = {
+        followup["role"]: followup for followup in followup_loop["followups"]
+    }
+    selected_oss = case["case_upstream_artifacts"]["selected_oss"]
+    followup_output_refs = {record["followup_output_ref"] for record in proof["role_records"]}
+    assert set(followup_loop["candidate_evidence_refs_by_action"]["feedback-adapt"]) == followup_output_refs
+
+    for record in proof["role_records"]:
+        role = record["role"]
+        component = record["component"]
+        request_id = case["oss_feedback"]["request_ids"][role]
+        source_ref = f"oss://{component}/{request_id}"
+        followup = followup_by_role[role]
+
+        assert component in OSS_REQUIRED_COMPONENTS
+        assert record["source_oss_request_id"] == request_id
+        assert record["source_oss_ref"] == source_ref
+        assert record["source_status"] == "completed"
+        assert record["source_drives_persona_step"] == case["oss_feedback"]["drives_persona_steps"][role]
+        assert record["followup_request_id"] == followup["request"]["request_id"]
+        assert record["followup_response_id"] == followup["response"]["response_id"]
+        assert record["followup_output_ref"] == followup["response"]["output_ref"]
+        assert record["followup_candidate_action"] == followup["response"]["candidate_action"]
+        assert record["source_ref_bound_to_followup"] is True
+        assert record["followup_requested_after_oss_response"] is True
+        assert record["followup_completed"] is True
+        assert record["followup_drives_persona_step"] == case["oss_feedback"]["drives_persona_steps"][role]
+        assert record["used_by_generations"] == [1, 2]
+        assert any(value > 0 for value in record["followup_score_adjustments"].values())
+        if role in selected_oss:
+            selected_entry = selected_oss[role]
+            assert record["selected_oss_ref"] == f"oss://{selected_entry['component']}/{selected_entry['request_id']}"
+            assert record["selected_oss_bound"] is True
+        else:
+            assert record["selected_oss_ref"] is None
+            assert record["selected_oss_bound"] is True
+
+    for binding, trace in zip(proof["trace_bindings"], traces):
+        artifact = trace["agent_decision_artifact"]
+        reasoning_refs = set(artifact["persona_reasoning"]["request"]["input_refs"])
+        candidate_refs = set(artifact["candidate_generation"]["request"]["input_refs"])
+        selected_refs = set(trace["selected_candidate"]["evidence_refs"])
+        scorer_adjustments = artifact["scorer"]["scoring_inputs"]["oss_followup_score_adjustments"]
+
+        assert binding["generation"] == artifact["generation"]
+        assert binding["trace_id"] == trace["reflection_id"]
+        assert binding["selected_candidate_id"] == trace["selected_candidate_id"]
+        assert binding["selected_action"] == "feedback-adapt"
+        assert binding["oss_followup_loop_ref"] == followup_loop["loop_ref"]
+        assert binding["reasoning_request_consumes_all_source_oss_refs"] is True
+        assert binding["candidate_request_consumes_all_followup_outputs"] is True
+        assert binding["selected_candidate_cites_all_followup_outputs"] is True
+        assert binding["scorer_has_all_role_adjustments"] is True
+        assert set(followup_output_refs).issubset(selected_refs)
+        assert [role_binding["role"] for role_binding in binding["role_bindings"]] == required_roles
+        for role_binding, record in zip(binding["role_bindings"], proof["role_records"]):
+            action = record["followup_candidate_action"]
+            expected_adjustment = record["followup_score_adjustments"][action]
+            assert record["source_oss_ref"] in reasoning_refs
+            assert record["followup_output_ref"] in candidate_refs
+            assert record["followup_output_ref"] in selected_refs
+            assert scorer_adjustments[action] >= expected_adjustment
+            assert role_binding["source_ref_in_reasoning_request"] is True
+            assert role_binding["followup_output_in_candidate_request"] is True
+            assert role_binding["followup_output_in_selected_evidence"] is True
+            assert role_binding["scorer_adjustment_available"] is True
+
+    assert all(proof["replay"].values())
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["multi_oss_closed_loop_proof_replays_role_bindings"]["status"] == "passed"
+    assert case["usability_dimensions"]["multi_oss_closed_loop"] == 1.0
+    assert case["usable"]["multi_oss_closed_loop_drives_decision"] is True
+
+
+def _assert_persona_oss_ooda_causal_ledger(case: dict) -> None:
+    ledger = case["oss_feedback"]["ooda_causal_ledger"]
+    proof = case["oss_feedback"]["closed_loop_proof"]
+    traces = case["reflection"]["agent_decision_traces"]
+    lean_handoff = case["operational_context"]["lean_handoff"]
+    events = ledger["events"]
+    produced_at = {event["output_ref"]: event["sequence"] for event in events}
+
+    assert ledger["model_id"] == PERSONA_OSS_OODA_LEDGER_MODEL_ID
+    assert ledger["status"] == "passed"
+    assert ledger["case_id"] == case["case_id"]
+    assert ledger["persona_id"] == case["persona_id"]
+    assert ledger["ledger_ref"] == f"persona-oss-ooda-ledger://{case['case_id']}"
+    assert ledger["source_closed_loop_proof_ref"] == proof["proof_ref"]
+    assert ledger["oss_followup_loop_ref"] == case["oss_feedback"]["response_followup_loop"]["loop_ref"]
+    assert ledger["event_count"] == 22
+    assert ledger["input_hash"]
+    assert [event["sequence"] for event in events] == list(range(1, 23))
+    assert set(ledger["phase_order"]) == {"observe", "orient", "decide", "act"}
+
+    events_by_type = {
+        event_type: [event for event in events if event["event_type"] == event_type]
+        for event_type in {
+            "oss_response",
+            "persona_followup_response",
+            "candidate_generation",
+            "candidate_scoring",
+            "selected_action",
+            "lean_handoff_packet",
+        }
+    }
+    assert len(events_by_type["oss_response"]) == 8
+    assert len(events_by_type["persona_followup_response"]) == 8
+    assert len(events_by_type["candidate_generation"]) == 2
+    assert len(events_by_type["candidate_scoring"]) == 2
+    assert len(events_by_type["selected_action"]) == 1
+    assert len(events_by_type["lean_handoff_packet"]) == 1
+
+    for event in events:
+        assert event["output_ref"] in ledger["evidence_refs"]
+        for input_ref in event["input_refs"]:
+            if input_ref in produced_at:
+                assert produced_at[input_ref] < event["sequence"]
+
+    role_records = proof["role_records"]
+    for source_event, record in zip(events_by_type["oss_response"], role_records):
+        assert source_event["ooda_phase"] == "observe"
+        assert source_event["actor"] == "oss"
+        assert source_event["role"] == record["role"]
+        assert source_event["component"] == record["component"]
+        assert source_event["output_ref"] == record["source_oss_ref"]
+        assert source_event["response_ref"] == record["source_oss_ref"]
+        assert source_event["downstream_persona_action"] == record["source_drives_persona_step"]
+
+    for followup_event, record in zip(events_by_type["persona_followup_response"], role_records):
+        assert followup_event["ooda_phase"] == "orient"
+        assert followup_event["actor"] == "persona+oss"
+        assert followup_event["role"] == record["role"]
+        assert followup_event["component"] == record["component"]
+        assert followup_event["input_refs"] == [record["source_oss_ref"]]
+        assert followup_event["output_ref"] == record["followup_output_ref"]
+        assert followup_event["downstream_persona_action"] == record["followup_candidate_action"]
+        assert produced_at[record["source_oss_ref"]] < followup_event["sequence"]
+
+    followup_output_refs = {record["followup_output_ref"] for record in role_records}
+    candidate_refs = []
+    scorer_refs = []
+    for generation_event, trace in zip(events_by_type["candidate_generation"], traces):
+        artifact = trace["agent_decision_artifact"]
+        expected_ref = (
+            f"candidate-generation://{artifact['candidate_generation']['response']['response_id']}"
+        )
+        candidate_refs.append(expected_ref)
+        assert generation_event["ooda_phase"] == "decide"
+        assert generation_event["actor"] == "persona"
+        assert generation_event["generation"] == artifact["generation"]
+        assert generation_event["output_ref"] == expected_ref
+        assert set(generation_event["input_refs"]) == followup_output_refs
+        assert all(produced_at[ref] < generation_event["sequence"] for ref in followup_output_refs)
+
+    for scoring_event, trace, candidate_ref in zip(
+        events_by_type["candidate_scoring"],
+        traces,
+        candidate_refs,
+    ):
+        expected_ref = f"candidate-score://{trace['reflection_id']}"
+        scorer_refs.append(expected_ref)
+        assert scoring_event["ooda_phase"] == "decide"
+        assert scoring_event["actor"] == "persona"
+        assert scoring_event["generation"] == trace["agent_decision_artifact"]["generation"]
+        assert scoring_event["input_refs"] == [candidate_ref]
+        assert scoring_event["output_ref"] == expected_ref
+        assert produced_at[candidate_ref] < scoring_event["sequence"]
+
+    selected_event = events_by_type["selected_action"][0]
+    final_trace = traces[-1]
+    selected_ref = f"selected-action://{case['case_id']}/{final_trace['selected_candidate_id']}"
+    assert selected_event["ooda_phase"] == "act"
+    assert selected_event["actor"] == "persona"
+    assert selected_event["input_refs"] == scorer_refs
+    assert selected_event["output_ref"] == selected_ref
+    assert selected_event["downstream_persona_action"] == "feedback-adapt"
+    assert all(produced_at[ref] < selected_event["sequence"] for ref in scorer_refs)
+
+    handoff_event = events_by_type["lean_handoff_packet"][0]
+    handoff_source_ref = f"oss://{lean_handoff['component']}/{lean_handoff['request_id']}"
+    assert handoff_event["ooda_phase"] == "act"
+    assert handoff_event["actor"] == "persona+lean_handoff"
+    assert handoff_event["role"] == "handoff"
+    assert handoff_event["component"] == "lean_handoff"
+    assert selected_ref in handoff_event["input_refs"]
+    assert handoff_source_ref in handoff_event["input_refs"]
+    assert handoff_event["output_ref"] == f"lean-handoff://{lean_handoff['packet_id']}"
+    assert produced_at[selected_ref] < handoff_event["sequence"]
+    assert produced_at[handoff_source_ref] < handoff_event["sequence"]
+
+    assert all(ledger["replay"].values())
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["persona_oss_ooda_ledger_replays_temporal_causality"]["status"] == "passed"
+    assert case["usability_dimensions"]["persona_oss_ooda_causality"] == 1.0
+    assert case["usable"]["persona_oss_ooda_causality_replayed"] is True
 
 
 def _assert_case_specific_upstream_artifacts(case: dict) -> None:

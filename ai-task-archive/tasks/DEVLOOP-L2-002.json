@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "task_id": "DEVLOOP-L2-002",
+  "archived_at": "2026-06-14T14:14:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "DEVLOOP-L2-002",
+    "title": "Implement golden replay acceptance harness scripts",
+    "summary_zh": "依 GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md 實作 scripts/run_golden_replay.py 與 scripts/verify_replay_telemetry.py,做成可重複的端到端驗收 harness(decision chain -> signal -> paper runtime -> telemetry -> lineage)。",
+    "phase": "Layer 2 / acceptance harness",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "DEVLOOP-L0-003"
+    ],
+    "artifacts": [
+      "scripts/run_golden_replay.py",
+      "scripts/verify_replay_telemetry.py",
+      "GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md"
+    ],
+    "acceptance": [
+      "兩個腳本存在且可跑;run_golden_replay 產出 output manifest;verify_replay_telemetry 對 paper 模式驗收通過;與 runbook Step 4/5 對齊"
+    ],
+    "next": "Split into replay-run + replay-verify ready-now tasks.",
+    "last_update": "2026-06-14T14:14:02Z",
+    "auto_created_by": "dispatch_devloop_rightside_2026-06-14",
+    "terminal_outcome": "superseded",
+    "superseded_by": "DEVLOOP-REPLAY-RUN"
+  },
+  "handoffs": [],
+  "blockers": []
+}
