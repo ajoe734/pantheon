@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from consumer import build_drift_report_from_event
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from store import ReconciliationDriftStore, build_reconciliation_drift_store
@@ -442,6 +443,14 @@ class EvaluationBody(BaseModel):
     evaluated_at: Optional[str] = None
 
 
+class TelemetryEventConsumeBody(BaseModel):
+    event: Optional[Dict[str, Any]] = None
+    events: List[Dict[str, Any]] = Field(default_factory=list)
+    baseline_metrics: Dict[str, Any] = Field(default_factory=dict)
+    thresholds: Dict[str, Any] = Field(default_factory=dict)
+    generated_at: Optional[str] = None
+
+
 class HandoffBody(BaseModel):
     actor_id: str = "reconciliation-drift-service"
     handoff_state: str = "sent"
@@ -542,6 +551,7 @@ register_fastapi_health_routes(
         "evaluation_count": len(store.list_evaluations()),
         "alert_count": len(store.list_alert_handoffs()),
         "reconciliation_record_count": len(store.list_reconciliation_records()),
+        "drift_report_count": len(store.list_drift_reports()),
     },
     details=lambda: {
         "data_dir": DATA_DIR,
@@ -563,6 +573,7 @@ def health() -> Dict[str, Any]:
         "evaluation_count": len(evaluations),
         "alert_handoff_count": len(alerts),
         "reconciliation_record_count": len(records),
+        "drift_report_count": len(store.list_drift_reports()),
         "telemetry_api_url": os.getenv("PANTHEON_TELEMETRY_API_URL", ""),
         "lineage_read_url": os.getenv("PANTHEON_LINEAGE_READ_URL", ""),
         "runtime_manager_url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", ""),
@@ -620,6 +631,44 @@ def create_evaluation(body: EvaluationBody) -> Dict[str, Any]:
     for alert in _build_alert_handoffs(stored, timestamp):
         store.put_alert_handoff(alert)
     return stored
+
+
+@app.post("/api/reconciliation-drift/telemetry-events/consume", status_code=201)
+def consume_telemetry_events(body: TelemetryEventConsumeBody) -> Dict[str, Any]:
+    events = list(body.events)
+    if body.event:
+        events.insert(0, body.event)
+
+    existing_report_ids = {str(item.get("drift_report_id") or "") for item in store.list_drift_reports()}
+    drift_reports: List[Dict[str, Any]] = []
+    ignored_event_ids: List[str] = []
+    for event in events:
+        report = build_drift_report_from_event(
+            event,
+            baseline_metrics=body.baseline_metrics,
+            thresholds=body.thresholds,
+            generated_at=body.generated_at,
+            existing_report_ids=existing_report_ids,
+        )
+        if report is None:
+            ignored_event_ids.append(str(event.get("event_id") or event.get("id") or "<unknown>"))
+            continue
+        stored = store.put_drift_report(report)
+        existing_report_ids.add(str(stored.get("drift_report_id") or ""))
+        drift_reports.append(stored)
+
+    return {
+        "status": "ok",
+        "consumed_event_count": len(events),
+        "drift_report_count": len(drift_reports),
+        "drift_reports": drift_reports,
+        "ignored_event_ids": ignored_event_ids,
+        "source_contract": {
+            "telemetry_truth_owner": "telemetry-ingest",
+            "derived_only": True,
+            "emergency_control_chain_affected": False,
+        },
+    }
 
 
 @app.post("/api/reconciliation-drift/paper-runs/reconcile", status_code=201)
@@ -1046,10 +1095,36 @@ def get_reconciliation_record(record_id: str) -> Dict[str, Any]:
     return record
 
 
+@app.get("/api/reconciliation-drift/drift-reports")
+def list_drift_reports(
+    scope_ref: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+) -> List[Dict[str, Any]]:
+    reports = store.list_drift_reports()
+    if scope_ref:
+        reports = [item for item in reports if item.get("scope_ref") == scope_ref]
+    if status:
+        reports = [item for item in reports if item.get("status") == status]
+    return reports
+
+
+@app.get("/api/reconciliation-drift/drift-reports/{report_id}")
+def get_drift_report(report_id: str) -> Dict[str, Any]:
+    report = store.get_drift_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="drift report not found")
+    return report
+
+
 @app.get("/api/reconciliation-drift/summary")
 def summary(binding_id: Optional[str] = Query(default=None)) -> Dict[str, Any]:
     evaluations = list_evaluations(binding_id=binding_id)
     alerts = list_alert_handoffs(binding_id=binding_id, handoff_state=None)
+    drift_reports = store.list_drift_reports()
+    if binding_id:
+        drift_reports = [
+            item for item in drift_reports if item.get("binding_id") == binding_id or item.get("scope_ref") == binding_id
+        ]
     latest = sorted(evaluations, key=lambda item: str(item.get("evaluated_at") or ""))[-1] if evaluations else None
     return {
         "status": latest.get("status") if latest else "degraded",
@@ -1057,6 +1132,7 @@ def summary(binding_id: Optional[str] = Query(default=None)) -> Dict[str, Any]:
         "latest_evaluation_id": latest.get("evaluation_id") if latest else None,
         "evaluation_count": len(evaluations),
         "alert_handoff_count": len(alerts),
+        "drift_report_count": len(drift_reports),
         "derived_only": True,
         "emergency_control_chain_affected": False,
         "projection_updated_at": latest.get("evaluated_at") if latest else None,
