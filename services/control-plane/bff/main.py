@@ -12385,7 +12385,7 @@ async def create_trainer_session(
 
 @app.get("/api/v1/trainer/sessions")
 async def list_trainer_sessions(
-    persona_id: str,
+    persona_id: Optional[str] = None,
     status: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
@@ -12393,6 +12393,18 @@ async def list_trainer_sessions(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+
+    # Enforce fail-closed ordering: authenticate before validating the required
+    # persona_id query param, so an unauthenticated caller gets 401 (not 422) and
+    # cannot probe endpoint existence/shape. Path-param siblings already do this.
+    if not persona_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Request validation failed",
+            "persona_id is required",
+            precondition_failed="persona_id",
+        )
 
     persona = read_store.get_persona(persona_id)
     if not persona:
