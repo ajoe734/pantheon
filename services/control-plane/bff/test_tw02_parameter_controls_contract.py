@@ -195,7 +195,7 @@ def test_tw02_patch_rejects_when_patch_authority_is_false() -> None:
         assert response.status_code == 409, response.text
 
         payload = response.json()
-        assert payload["error"]["code"] == "PRECONDITION_NOT_MET"
+        assert payload["error"]["code"] == "PRECONDITION_FAILED"
         assert payload["error"]["details"]["precondition_failed"] == (
             "allowedActions.canPatchControls"
         )
@@ -218,5 +218,5 @@ def test_tw02_patch_rejects_non_active_session_status() -> None:
         assert response.status_code == 409, response.text
 
         payload = response.json()
-        assert payload["error"]["code"] == "INVALID_STATE"
+        assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
         assert payload["error"]["details"]["precondition_failed"] == "status"

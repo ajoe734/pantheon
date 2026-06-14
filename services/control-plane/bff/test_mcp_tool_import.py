@@ -226,7 +226,7 @@ def test_tool_action_rejects_missing_tool_viewer_role_and_live_lean_direct_grant
         json={"reason": "Missing import", "scope": {"executionContext": "research"}},
     )
     assert missing.status_code == 404, missing.text
-    assert missing.json()["error"]["code"] == "OBJECT_NOT_FOUND"
+    assert missing.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
     viewer = client.post(
         "/bff/v1/mcp/servers/server-alpha/import-tools",
@@ -251,5 +251,5 @@ def test_tool_action_rejects_missing_tool_viewer_role_and_live_lean_direct_grant
     )
     assert denied.status_code == 409, denied.text
     detail = denied.json()["detail"]
-    assert detail["error"]["code"] == "PRECONDITION_NOT_MET"
+    assert detail["error"]["code"] == "PRECONDITION_FAILED"
     assert detail["error"]["details"]["precondition_failed"] == "lean_direct_live"

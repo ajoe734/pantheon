@@ -226,7 +226,7 @@ def test_bff_audit_and_command_confirmation_routes() -> None:
             headers={**HEADERS, "Idempotency-Key": "gap-005-confirm-missing"},
         )
         assert missing_token.status_code == 400, missing_token.text
-        assert missing_token.json()["error"]["code"] == "CONFIRM_TOKEN_REQUIRED"
+        assert missing_token.json()["error"]["code"] == "CONFIRMATION_REQUIRED"
 
         confirmation = client.post(
             "/bff/command-confirmations",

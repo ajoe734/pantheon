@@ -534,7 +534,7 @@ def test_replay_dlq_requires_idempotency_key(bff_client) -> None:
     )
     assert resp.status_code == 400
     body = resp.json()
-    assert body["error"]["code"] == "INVALID_PARAMS"
+    assert body["error"]["code"] == "VALIDATION_FAILED"
 
 
 def test_replay_dlq_service_unavailable(bff_client) -> None:

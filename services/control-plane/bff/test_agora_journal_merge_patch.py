@@ -66,7 +66,7 @@ def test_agora_journal_patch_rejects_non_merge_patch_content_type() -> None:
 
             assert response.status_code == 415, response.text
             detail = response.json()["detail"]
-            assert detail["error"]["code"] == "INVALID_REQUEST"
+            assert detail["error"]["code"] == "VALIDATION_FAILED"
             assert detail["error"]["details"]["precondition_failed"] == "content_type"
         finally:
             bff_main.read_store = original_store
@@ -90,7 +90,7 @@ def test_agora_journal_patch_rejects_body_idempotency_key() -> None:
 
             assert response.status_code == 400, response.text
             detail = response.json()["detail"]
-            assert detail["error"]["code"] == "INVALID_REQUEST"
+            assert detail["error"]["code"] == "VALIDATION_FAILED"
             assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
         finally:
             bff_main.read_store = original_store

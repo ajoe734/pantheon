@@ -85,7 +85,7 @@ def test_post_bff_logout_invalidates_session_for_subsequent_get_me(monkeypatch) 
     me_resp = client.get("/bff/me", headers={"Authorization": auth})
     assert me_resp.status_code == 401
     detail = me_resp.json()["detail"]
-    assert detail["error"]["code"] == "INVALID_TOKEN"
+    assert detail["error"]["code"] == "AUTH_REQUIRED"
     assert detail["error"]["details"]["reason"] == "SESSION_LOGGED_OUT"
 
 

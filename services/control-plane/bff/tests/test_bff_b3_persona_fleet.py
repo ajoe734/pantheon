@@ -107,6 +107,6 @@ def test_persona_fleet_requires_authentication() -> None:
             assert resp.status_code == 401, resp.text
             body = resp.json()
             error = body.get("error") or (body.get("detail") or {}).get("error") or {}
-            assert error["code"] in {"AUTH_REQUIRED", "INVALID_TOKEN"}
+            assert error["code"] in {"AUTH_REQUIRED", "AUTH_REQUIRED"}
         finally:
             bff_main.read_store = original
