@@ -149,6 +149,7 @@ PERSONA_REASONING_MODEL_ID = "persona_structured_reasoning_candidate_generator_v
 PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
 EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v1"
 NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1"
+STRICT_OOS_EVOLUTION_PROOF_MODEL_ID = "persona_strict_oos_evolution_proof_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
 PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
@@ -651,6 +652,17 @@ def run_agent_usability_validations(
             case_upstream_artifacts=case_upstream_artifacts,
             evolution_trajectory=evolution_trajectory,
         )
+        strict_oos_evolution_proof = _build_strict_oos_evolution_proof(
+            episode=episode,
+            generation_policies=(generation0_policy, generation1_policy, generation2_policy),
+            evaluations=(generation0_eval, generation1_eval, generation2_eval),
+            baseline_holdout_counterfactual=baseline_holdout_counterfactual,
+            generation1_future_counterfactual=generation1_future_counterfactual,
+            decision_traces=(decision_trace0, decision_trace1),
+            evolution_decision=evolution_decision,
+            evolution_trajectory=evolution_trajectory,
+            no_leakage_protocol=no_leakage_protocol,
+        )
         operational_context = _build_operational_context(
             episode=episode,
             generation_policies=(generation0_policy, generation1_policy, generation2_policy),
@@ -679,6 +691,7 @@ def run_agent_usability_validations(
             operational_context=operational_context,
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
+            strict_oos_evolution_proof=strict_oos_evolution_proof,
             oss_followup_loop=oss_followup_loop,
         )
         validation_diagnostics = _diagnose_validation_execution(
@@ -698,6 +711,7 @@ def run_agent_usability_validations(
             operational_context=operational_context,
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
+            strict_oos_evolution_proof=strict_oos_evolution_proof,
             oss_followup_loop=oss_followup_loop,
         )
         validation_repair = _repair_validation_deficiencies(
@@ -718,6 +732,7 @@ def run_agent_usability_validations(
             evolution_decision=evolution_decision,
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
+            strict_oos_evolution_proof=strict_oos_evolution_proof,
             oss_followup_loop=oss_followup_loop,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
@@ -6558,6 +6573,172 @@ def _no_leakage_temporal_protocol_is_usable(protocol: Mapping[str, Any]) -> bool
     )
 
 
+def _build_strict_oos_evolution_proof(
+    *,
+    episode: PortfolioEpisode,
+    generation_policies: Sequence[Mapping[str, Any]],
+    evaluations: Sequence[Mapping[str, Any]],
+    baseline_holdout_counterfactual: Mapping[str, Any],
+    generation1_future_counterfactual: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    evolution_decision: EvolutionDecision,
+    evolution_trajectory: Mapping[str, Any],
+    no_leakage_protocol: Mapping[str, Any],
+) -> dict[str, Any]:
+    holdout_improvement = round(
+        float(evaluations[1]["score"]) - float(baseline_holdout_counterfactual["score"]),
+        10,
+    )
+    future_holdout_improvement = round(
+        float(evaluations[2]["score"]) - float(generation1_future_counterfactual["score"]),
+        10,
+    )
+    window_pairs = [
+        {
+            "instrument": boundary["instrument"],
+            "holdout": copy.deepcopy(boundary["periods"]["holdout"]),
+            "future_holdout": copy.deepcopy(boundary["periods"]["future_holdout"]),
+            "strictly_after": boundary["periods"]["holdout"]["end_date"]
+            < boundary["periods"]["future_holdout"]["start_date"],
+            "disjoint": boundary["non_overlapping"],
+        }
+        for boundary in no_leakage_protocol["window_boundaries"]
+    ]
+    proof_steps = [
+        {
+            "step_id": f"{episode.case_id}-feedback-to-holdout",
+            "source_outcome_window": "feedback",
+            "decision_trace_ref": decision_traces[0]["reflection_id"],
+            "candidate_policy_id": generation_policies[1]["policy_id"],
+            "counterfactual_policy_id": generation_policies[0]["policy_id"],
+            "validation_window": "holdout",
+            "hidden_windows_before_decision": list(
+                decision_traces[0]["decision_inputs"]["forbidden_windows_not_used"]
+            ),
+            "visible_windows_before_decision": list(decision_traces[0]["decision_inputs"]["allowed_windows"]),
+            "counterfactual_score": baseline_holdout_counterfactual["score"],
+            "candidate_score": evaluations[1]["score"],
+            "score_improvement": holdout_improvement,
+            "strict_improvement": holdout_improvement > 0,
+            "validation_window_unseen_by_decision": "holdout"
+            in decision_traces[0]["decision_inputs"]["forbidden_windows_not_used"],
+            "future_window_hidden": "future_holdout"
+            in decision_traces[0]["decision_inputs"]["forbidden_windows_not_used"],
+        },
+        {
+            "step_id": f"{episode.case_id}-holdout-to-future-holdout",
+            "source_outcome_window": "holdout",
+            "decision_trace_ref": decision_traces[1]["reflection_id"],
+            "candidate_policy_id": generation_policies[2]["policy_id"],
+            "counterfactual_policy_id": generation_policies[1]["policy_id"],
+            "validation_window": "future_holdout",
+            "hidden_windows_before_decision": list(
+                decision_traces[1]["decision_inputs"]["forbidden_windows_not_used"]
+            ),
+            "visible_windows_before_decision": list(decision_traces[1]["decision_inputs"]["allowed_windows"]),
+            "counterfactual_score": generation1_future_counterfactual["score"],
+            "candidate_score": evaluations[2]["score"],
+            "score_improvement": future_holdout_improvement,
+            "strict_improvement": future_holdout_improvement > 0,
+            "validation_window_unseen_by_decision": "future_holdout"
+            in decision_traces[1]["decision_inputs"]["forbidden_windows_not_used"],
+            "future_window_hidden": "future_holdout"
+            in decision_traces[1]["decision_inputs"]["forbidden_windows_not_used"],
+        },
+    ]
+    replay = {
+        "replayable": True,
+        "uses_two_distinct_validation_windows": [step["validation_window"] for step in proof_steps]
+        == ["holdout", "future_holdout"],
+        "holdout_and_future_holdout_disjoint": all(
+            pair["strictly_after"] and pair["disjoint"] for pair in window_pairs
+        ),
+        "generation1_uses_feedback_only_before_holdout": (
+            proof_steps[0]["source_outcome_window"] == "feedback"
+            and proof_steps[0]["visible_windows_before_decision"] == ["observe", "feedback"]
+            and proof_steps[0]["validation_window_unseen_by_decision"] is True
+        ),
+        "generation2_uses_holdout_only_before_future_holdout": (
+            proof_steps[1]["source_outcome_window"] == "holdout"
+            and proof_steps[1]["visible_windows_before_decision"] == ["observe", "feedback", "holdout"]
+            and proof_steps[1]["validation_window_unseen_by_decision"] is True
+        ),
+        "future_holdout_hidden_from_all_decisions": all(step["future_window_hidden"] for step in proof_steps),
+        "strict_improvement_on_each_unseen_window": all(step["strict_improvement"] for step in proof_steps),
+        "trajectory_agrees_with_oos_steps": [
+            comparison["evaluation_window"] for comparison in evolution_trajectory.get("comparisons", [])
+        ] == [step["validation_window"] for step in proof_steps],
+        "no_leakage_protocol_passed": _no_leakage_temporal_protocol_is_usable(no_leakage_protocol),
+        "evolution_trajectory_passed": _evolution_trajectory_is_usable(evolution_trajectory),
+        "evolution_decision_executed": _enum_value(evolution_decision.decision_state)
+        == EvolutionDecisionState.EXECUTED.value,
+    }
+    return {
+        "proof_id": f"strict-oos-evolution-proof-{episode.case_id}",
+        "proof_ref": f"strict-oos-evolution://{episode.case_id}",
+        "model_id": STRICT_OOS_EVOLUTION_PROOF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "policy_lineage": [
+            {
+                "generation": policy["generation"],
+                "policy_id": policy["policy_id"],
+                "policy_version": policy["policy_version"],
+            }
+            for policy in generation_policies
+        ],
+        "window_pairs": window_pairs,
+        "proof_steps": proof_steps,
+        "evidence_refs": [
+            f"reflection://{trace['reflection_id']}" for trace in decision_traces
+        ] + [
+            f"policy://{policy['policy_id']}" for policy in generation_policies
+        ] + [
+            f"evolution://{evolution_decision.decision_id}",
+            f"trajectory://{evolution_trajectory['trajectory_id']}",
+            f"no-leakage://{no_leakage_protocol['protocol_id']}",
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "strict-oos-evolution-proof",
+            {
+                "case_id": episode.case_id,
+                "policy_lineage": [policy["policy_id"] for policy in generation_policies],
+                "window_pairs": window_pairs,
+                "proof_steps": proof_steps,
+            },
+        ),
+    }
+
+
+def _strict_oos_evolution_proof_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    steps = list(proof.get("proof_steps", []))
+    return bool(
+        proof.get("model_id") == STRICT_OOS_EVOLUTION_PROOF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("strict-oos-evolution://")
+        and proof.get("input_hash")
+        and [step.get("source_outcome_window") for step in steps] == ["feedback", "holdout"]
+        and [step.get("validation_window") for step in steps] == ["holdout", "future_holdout"]
+        and all(float(step.get("score_improvement", 0.0)) > 0 for step in steps)
+        and all(step.get("strict_improvement") is True for step in steps)
+        and all(step.get("validation_window_unseen_by_decision") is True for step in steps)
+        and replay.get("replayable") is True
+        and replay.get("uses_two_distinct_validation_windows") is True
+        and replay.get("holdout_and_future_holdout_disjoint") is True
+        and replay.get("generation1_uses_feedback_only_before_holdout") is True
+        and replay.get("generation2_uses_holdout_only_before_future_holdout") is True
+        and replay.get("future_holdout_hidden_from_all_decisions") is True
+        and replay.get("strict_improvement_on_each_unseen_window") is True
+        and replay.get("trajectory_agrees_with_oos_steps") is True
+        and replay.get("no_leakage_protocol_passed") is True
+        and replay.get("evolution_trajectory_passed") is True
+        and replay.get("evolution_decision_executed") is True
+    )
+
+
 def _build_usability_dimensions(
     *,
     episode: PortfolioEpisode,
@@ -6575,6 +6756,7 @@ def _build_usability_dimensions(
     operational_context: Mapping[str, Any],
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
@@ -6649,6 +6831,9 @@ def _build_usability_dimensions(
     no_leakage_temporal_protocol = 1.0 if _no_leakage_temporal_protocol_is_usable(
         no_leakage_protocol
     ) else 0.0
+    strict_oos_evolution = 1.0 if _strict_oos_evolution_proof_is_usable(
+        strict_oos_evolution_proof
+    ) else 0.0
     oss_response_followup_loop = 1.0 if (
         _oss_response_followup_loop_is_usable(oss_followup_loop)
         and all(_trace_oss_followup_loop_is_usable(trace) for trace in decision_traces)
@@ -6670,6 +6855,7 @@ def _build_usability_dimensions(
         "multi_generation_improvement": multi_generation_improvement,
         "multi_generation_trajectory": multi_generation_trajectory,
         "no_leakage_temporal_protocol": no_leakage_temporal_protocol,
+        "strict_oos_evolution": strict_oos_evolution,
         "drawdown_reduction": drawdown_reduction,
         "turnover_control": turnover_control,
         "fill_quality": fill_quality,
@@ -6720,6 +6906,7 @@ def _diagnose_validation_execution(
     operational_context: Mapping[str, Any],
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
@@ -6812,6 +6999,22 @@ def _diagnose_validation_execution(
                     stage["evaluation_window"] for stage in no_leakage_protocol["stage_contracts"]
                 ],
                 "replay": copy.deepcopy(dict(no_leakage_protocol["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "strict_oos_evolution_proof_replays_unseen_windows",
+            _strict_oos_evolution_proof_is_usable(strict_oos_evolution_proof),
+            {
+                "proof_id": strict_oos_evolution_proof["proof_id"],
+                "proof_steps": [
+                    {
+                        "source_outcome_window": step["source_outcome_window"],
+                        "validation_window": step["validation_window"],
+                        "score_improvement": step["score_improvement"],
+                    }
+                    for step in strict_oos_evolution_proof["proof_steps"]
+                ],
+                "replay": copy.deepcopy(dict(strict_oos_evolution_proof["replay"])),
             },
         ),
         _diagnostic_check(
@@ -7238,6 +7441,7 @@ def _build_case_result(
     evolution_decision: EvolutionDecision,
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
@@ -7343,6 +7547,7 @@ def _build_case_result(
             else None,
             "trajectory": copy.deepcopy(dict(evolution_trajectory)),
             "no_leakage_protocol": copy.deepcopy(dict(no_leakage_protocol)),
+            "strict_oos_evolution_proof": copy.deepcopy(dict(strict_oos_evolution_proof)),
         },
         "usability_dimensions": dict(usability_dimensions),
         "overall_usability_score": overall_usability_score,
@@ -7363,6 +7568,7 @@ def _build_case_result(
                 "persona_reasoning_generation"
             ] == 1.0,
             "multi_generation_evolution": usability_dimensions["multi_generation_trajectory"] == 1.0,
+            "strict_oos_evolution": usability_dimensions["strict_oos_evolution"] == 1.0,
             "portfolio_level": len(episode.windows) == PORTFOLIO_LEG_COUNT,
             "multi_dimensional_score_passed": overall_usability_score >= MIN_USABILITY_SCORE,
             "validation_planned_before_execution": usability_dimensions["validation_planning"] == 1.0,
@@ -7418,6 +7624,9 @@ def _build_summary(
     ]
     evolution_trajectories = [case["evolution"]["trajectory"] for case in cases]
     no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
+    strict_oos_evolution_proofs = [
+        case["evolution"]["strict_oos_evolution_proof"] for case in cases
+    ]
     oss_followup_loops = [case["oss_feedback"]["response_followup_loop"] for case in cases]
     oss_disagreement_arbitrations = [
         case["case_upstream_artifacts"]["oss_disagreement_arbitration"] for case in cases
@@ -7706,6 +7915,22 @@ def _build_summary(
             "->".join(stage["evaluation_window"] for stage in protocol["stage_contracts"])
             for protocol in no_leakage_protocols
         }),
+        "strict_oos_evolution_proof_models": sorted({
+            proof["model_id"] for proof in strict_oos_evolution_proofs
+        }),
+        "strict_oos_evolution_source_to_validation_paths": sorted({
+            "->".join(
+                f"{step['source_outcome_window']}:{step['validation_window']}"
+                for step in proof["proof_steps"]
+            )
+            for proof in strict_oos_evolution_proofs
+        }),
+        "strict_oos_evolution_replay_flags": sorted({
+            flag
+            for proof in strict_oos_evolution_proofs
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -7736,6 +7961,11 @@ def _build_summary(
         "no_leakage_temporal_protocol_pass_count": sum(
             1 for protocol in no_leakage_protocols if _no_leakage_temporal_protocol_is_usable(protocol)
         ),
+        "strict_oos_evolution_proof_count": len(strict_oos_evolution_proofs),
+        "strict_oos_evolution_proof_pass_count": sum(
+            1 for proof in strict_oos_evolution_proofs if _strict_oos_evolution_proof_is_usable(proof)
+        ),
+        "strict_oos_evolution_count": sum(1 for item in usable if item["strict_oos_evolution"]),
         "portfolio_trade_generation_count": sum(len(case["generation_results"]) for case in cases),
         "portfolio_trade_generation_fill_count": sum(
             1
@@ -7876,6 +8106,7 @@ def _build_summary(
             "Every validation first asks coverage-gap questions and executes a unique validation plan.",
             "The evolved policy is selected without holdout/future-holdout data in the decision trace.",
             "Every case records a no-leakage temporal protocol proving observe/feedback/holdout/future-holdout boundaries before scoring evolution.",
+            "Every case emits a strict OOS evolution proof showing gen1 uses feedback to improve holdout and gen2 uses only holdout outcome before improving a disjoint future holdout.",
             "Every case trades a three-instrument portfolio across three generations through paper runtime fills.",
             "Every case writes memory and proves retrieved lessons influence later candidate scoring and selected evidence refs.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
