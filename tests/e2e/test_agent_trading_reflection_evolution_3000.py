@@ -22,6 +22,7 @@ from services.persona.agent_usability_validation import (
     HOLDOUT_BARS,
     LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID,
     LEAN_ENGINE_REPLAY_MODEL_ID,
+    LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID,
     LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO,
     LEAN_RUNTIME_FEEDBACK_MODEL_ID,
     LEAN_RUNTIME_FEEDBACK_OODA_STEP_BY_ACTION,
@@ -205,8 +206,16 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["restart_recovery_count"] == DEFAULT_CASE_COUNT
     assert summary["autonomous_scheduler_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_engine_replay_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_packet_execution_projection_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_packet_execution_projection_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_packet_execution_projection_leg_count"] == DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
+    assert summary["lean_packet_execution_projection_order_count"] == DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
+    assert summary["lean_packet_execution_projection_fill_count"] == DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
+    assert summary["lean_packet_execution_projection_readback_count"] == DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
+    assert summary["lean_packet_execution_projection_replayed_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_runtime_feedback_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_runtime_feedback_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_runtime_feedback_consumed_execution_projection_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_runtime_feedback_drives_ooda_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_pass_count"] == DEFAULT_CASE_COUNT
@@ -312,6 +321,38 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert set(coverage["scheduler_phases"]) == set(AUTONOMOUS_SCHEDULER_PHASES)
     assert coverage["lean_engine_replay_models"] == [LEAN_ENGINE_REPLAY_MODEL_ID]
     assert coverage["lean_engine_algorithm_modules"] == ["pantheon_algo.smoke_loader_test"]
+    assert coverage["lean_packet_execution_projection_models"] == [
+        LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
+    ]
+    assert coverage["lean_packet_execution_projection_generations"] == [2]
+    assert coverage["lean_packet_execution_projection_leg_counts"] == [PORTFOLIO_LEG_COUNT]
+    assert coverage["lean_packet_execution_projection_event_chains"] == [
+        "packet_leg_target->lean_target_order->paper_fill_readback"
+    ]
+    assert set(coverage["lean_packet_execution_projection_lean_calls"]) == {
+        "LimitOrder",
+        "MarketOrder",
+        "SetHoldings",
+    }
+    assert set(coverage["lean_packet_execution_projection_quantity_types"]) == set(QUANTITY_TYPES)
+    assert set(coverage["lean_packet_execution_projection_order_types"]) == set(ORDER_TYPES)
+    assert set(coverage["lean_packet_execution_projection_replay_flags"]) == {
+        "all_broker_orders_have_fill_readbacks",
+        "all_fill_events_bind_signal_metadata",
+        "all_lean_targets_have_broker_orders",
+        "all_leg_capital_within_budget",
+        "all_leg_directions_match_policy_and_allocation",
+        "all_leg_expected_quantities_replay_signal_payload",
+        "all_leg_market_friction_notional_bound",
+        "all_leg_weights_match_handoff_allocation",
+        "all_packet_instruments_have_policy_legs",
+        "handoff_allocation_bound",
+        "paper_only_guard_retained",
+        "projection_ready_for_runtime_feedback",
+        "replayable",
+        "strategy_packet_generation2_bound",
+        "strategy_packet_ref_bound",
+    }
     assert coverage["lean_runtime_feedback_models"] == [LEAN_RUNTIME_FEEDBACK_MODEL_ID]
     assert set(coverage["lean_runtime_feedback_actions"]) == set(
         LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO.values()
@@ -330,6 +371,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "evolved_strategy_packet_refs_bound",
         "fills_drive_next_ooda",
         "handoff_packet_consumed",
+        "lean_packet_execution_projection_consumed",
         "next_cycle_scheduled",
         "object_store_readback_verified",
         "paper_runtime_guard_retained",
@@ -344,6 +386,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "holdout:future_holdout"
     ]
     assert set(coverage["evolved_strategy_packet_replay_flags"]) == {
+        "execution_projection_consumes_packet_legs_and_orders",
         "handoff_consumes_same_packet",
         "handoff_runtime_bundle_contains_packet_and_proofs",
         "lean_engine_replay_reads_same_packet",
@@ -861,6 +904,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_multi_cycle_lineage_carryover(case, persona_case_history)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
+        _assert_lean_packet_execution_projection(case)
         _assert_evolved_strategy_packet_proof(case)
         _assert_scheduler_conflict_ooda_proof(case)
         _assert_evolution_and_scores(case)
@@ -3145,6 +3189,7 @@ def _assert_operational_context(case: dict) -> None:
     assert schedule["schedule_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["runtime_bundle_refs"]
 
+    projection = operational["lean_packet_execution_projection"]
     runtime_feedback = operational["lean_runtime_feedback"]
     expected_runtime_action = LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO[operational["scenario"]]
     assert runtime_feedback["feedback_id"] == f"lean-runtime-feedback-{case['case_id']}"
@@ -3157,6 +3202,7 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["source_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
     assert runtime_feedback["request_response_flow"] == [
         "persona_strategy_packet",
+        "lean_packet_execution_projection",
         "lean_runtime_replay_response",
         "persona_next_ooda_action",
     ]
@@ -3183,6 +3229,7 @@ def _assert_operational_context(case: dict) -> None:
     assert ooda_followup["evidence_refs"] == [
         runtime_feedback["source_runtime_ref"],
         runtime_feedback["source_handoff_ref"],
+        projection["projection_ref"],
         handoff["strategy_packet_ref"],
         handoff["strict_oos_evolution_proof_ref"],
         handoff["no_leakage_protocol_ref"],
@@ -3194,14 +3241,18 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["state_updates"]["bind_runtime_context"] == runtime_readback["runtime_binding_id"]
     assert runtime_feedback["state_updates"]["verify_object_store_metadata"] == runtime_readback["object_store_metadata_key"]
     assert runtime_feedback["state_updates"]["bind_evolved_strategy_packet"] == handoff["strategy_packet_ref"]
+    assert runtime_feedback["state_updates"]["bind_lean_packet_execution_projection"] == projection["projection_ref"]
     assert runtime_feedback["state_updates"]["attach_to_handoff_packet"] == handoff["packet_id"]
     assert runtime_feedback["state_updates"]["attach_to_decision_trace"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
     assert runtime_feedback["state_updates"]["schedule_next_cycle_after_feedback"] == schedule["next_cycle_due_at"]
     assert all(runtime_feedback["replay"].values())
     assert runtime_feedback["input_hash"]
+    assert case["usability_dimensions"]["lean_packet_execution_projection"] == 1.0
     assert case["usability_dimensions"]["lean_runtime_feedback"] == 1.0
     assert case["usability_dimensions"]["evolved_strategy_packet_handoff"] == 1.0
+    assert case["usable"]["lean_packet_execution_projection_replayed"] is True
     assert case["usable"]["evolved_strategy_packet_reaches_lean_handoff"] is True
+    assert check_by_name["lean_packet_execution_projection_replays_packet_legs"]["status"] == "passed"
     assert check_by_name["lean_runtime_feedback_drives_persona_ooda"]["status"] == "passed"
     assert check_by_name["evolved_strategy_packet_reaches_lean_handoff"]["status"] == "passed"
     assert case["usability_dimensions"]["scheduler_conflict_ooda_dispatch"] == 1.0
@@ -3209,11 +3260,113 @@ def _assert_operational_context(case: dict) -> None:
     assert check_by_name["scheduler_conflict_ooda_dispatch_replays_next_cycle"]["status"] == "passed"
 
 
+def _assert_lean_packet_execution_projection(case: dict) -> None:
+    operational = case["operational_context"]
+    projection = operational["lean_packet_execution_projection"]
+    handoff = operational["lean_handoff"]
+    replay = operational["lean_engine_replay"]
+    lifecycle = operational["broker_lifecycle"]
+    conflict = operational["persona_conflict_resolution"]
+    final_costs = operational["market_friction"]["generation_costs"][-1]["leg_costs"]
+    cost_by_instrument = {cost["instrument"]: cost for cost in final_costs}
+    orders_by_id = {order["order_id"]: order for order in lifecycle["orders"]}
+
+    assert projection["projection_id"] == f"lean-packet-execution-{case['case_id']}"
+    assert projection["projection_ref"] == f"lean-packet-execution://{case['case_id']}/generation2"
+    assert projection["model_id"] == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
+    assert projection["status"] == "passed"
+    assert projection["case_id"] == case["case_id"]
+    assert projection["persona_id"] == case["persona_id"]
+    assert projection["strategy_packet_ref"] == handoff["strategy_packet_ref"]
+    assert projection["source_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert projection["source_runtime_ref"] == f"lean-engine://{replay['replay_id']}"
+    assert projection["policy_id"] == case["generation_results"][-1]["policy_id"]
+    assert projection["policy_version"] == case["generation_results"][-1]["policy_version"]
+    assert projection["generation"] == 2
+    assert projection["target_stage"] == "paper"
+    assert projection["portfolio_instruments"] == case["portfolio"]["instruments"]
+    assert projection["capital_budget_pct"] == conflict["resolved_allocation"]["capital_budget_pct"]
+    assert projection["leg_count"] == PORTFOLIO_LEG_COUNT
+    assert projection["order_count"] == PORTFOLIO_LEG_COUNT
+    assert projection["fill_count"] == PORTFOLIO_LEG_COUNT
+    assert len(projection["leg_projections"]) == PORTFOLIO_LEG_COUNT
+    assert projection["input_refs"] == [
+        handoff["strategy_packet_ref"],
+        f"lean-handoff://{handoff['packet_id']}",
+        f"lean-engine://{replay['replay_id']}",
+        conflict["resolution_ref"],
+        handoff["strict_oos_evolution_proof_ref"],
+        handoff["no_leakage_protocol_ref"],
+        handoff["evolution_trajectory_ref"],
+    ]
+
+    for leg in projection["leg_projections"]:
+        order = orders_by_id[leg["broker_order_id"]]
+        cost = cost_by_instrument[leg["instrument"]]
+        assert leg["generation"] == 2
+        assert leg["policy_id"] == projection["policy_id"]
+        assert leg["policy_version"] == projection["policy_version"]
+        assert leg["instrument"] in case["portfolio"]["instruments"]
+        assert leg["execution_symbol"].startswith(leg["lean_symbol"])
+        assert leg["lean_symbol"] == order["symbol"]
+        assert leg["direction"] == handoff["resolved_direction_by_instrument"][leg["instrument"]]
+        assert leg["target_weight"] == handoff["resolved_weight_by_instrument"][leg["instrument"]]
+        assert leg["resolved_weight"] == handoff["resolved_weight_by_instrument"][leg["instrument"]]
+        assert leg["capital_budget_pct"] == projection["capital_budget_pct"]
+        assert leg["quantity_type"] == case["order_profile"]["quantity_type"]
+        assert leg["order_type"] == case["order_profile"]["order_type"]
+        assert leg["lean_order_call"] in {"SetHoldings", "MarketOrder", "LimitOrder"}
+        assert leg["target_ref"] == f"{projection['projection_ref']}/leg/{leg['leg_index']}/target"
+        assert leg["order_ref"] == f"paper-order://{leg['broker_order_id']}"
+        assert leg["fill_ref"] == f"paper-fill://{leg['broker_fill_event_id']}"
+        assert leg["readback_ref"] == f"{leg['order_ref']}/readback"
+        assert leg["signal_id"] == leg["expected_signal_id"]
+        assert abs(leg["requested_quantity"] - leg["expected_requested_quantity"]) <= 1e-6
+        assert leg["fill_quantity"] != 0.0
+        assert leg["fill_price"] > 0.0
+        assert leg["market_data_ref"].startswith(HISTORICAL_OHLCV_DATASET_ID)
+        assert leg["source_dataset_ref"] == HISTORICAL_OHLCV_DATASET_ID
+        assert leg["market_friction_notional"] == cost["notional"]
+        assert leg["market_friction_total_cost_bps"] == cost["total_cost_bps"]
+        assert leg["within_liquidity_cap"] is True
+        assert order["generation"] == 2
+        assert order["fill_event_id"] == leg["broker_fill_event_id"]
+        assert order["terminal_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+        assert order["readback_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+        assert leg["broker_terminal_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+        assert leg["broker_readback_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+        assert leg["broker_reconciled"] is True
+        assert leg["live_broker_submitted"] is False
+        assert leg["event_chain"] == [
+            "packet_leg_target",
+            "lean_target_order",
+            "paper_fill_readback",
+        ]
+        assert set(leg["input_refs"]) == {
+            handoff["strategy_packet_ref"],
+            f"lean-handoff://{handoff['packet_id']}",
+            handoff["strict_oos_evolution_proof_ref"],
+            handoff["no_leakage_protocol_ref"],
+            handoff["evolution_trajectory_ref"],
+            f"lean-engine://{replay['replay_id']}",
+            conflict["resolution_ref"],
+            leg["order_ref"],
+            leg["fill_ref"],
+        }
+
+    assert round(sum(leg["target_weight"] for leg in projection["leg_projections"]), 6) == (
+        projection["capital_budget_pct"]
+    )
+    assert all(projection["replay"].values())
+    assert projection["input_hash"]
+
+
 def _assert_evolved_strategy_packet_proof(case: dict) -> None:
     operational = case["operational_context"]
     proof = operational["evolved_strategy_packet_proof"]
     replay = operational["lean_engine_replay"]
     handoff = operational["lean_handoff"]
+    projection = operational["lean_packet_execution_projection"]
     runtime_feedback = operational["lean_runtime_feedback"]
     strict_oos = case["evolution"]["strict_oos_evolution_proof"]
     no_leakage = case["evolution"]["no_leakage_protocol"]
@@ -3235,6 +3388,7 @@ def _assert_evolved_strategy_packet_proof(case: dict) -> None:
     assert proof["evolution_trajectory_ref"] == f"trajectory://{trajectory['trajectory_id']}"
     assert proof["lean_engine_replay_ref"] == f"lean-engine://{replay['replay_id']}"
     assert proof["lean_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert proof["lean_packet_execution_projection_ref"] == projection["projection_ref"]
     assert proof["lean_runtime_feedback_ref"] == f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
     assert proof["future_holdout_score"] == case["scores"]["generation2_future_holdout"]
     assert proof["future_holdout_improvement"] == case["scores"]["future_generation_improvement"]
@@ -3246,6 +3400,7 @@ def _assert_evolved_strategy_packet_proof(case: dict) -> None:
         f"trajectory://{trajectory['trajectory_id']}",
         f"lean-engine://{replay['replay_id']}",
         f"lean-handoff://{handoff['packet_id']}",
+        projection["projection_ref"],
         f"lean-runtime-feedback://{runtime_feedback['feedback_id']}",
     ]
     assert all(proof["replay"].values())

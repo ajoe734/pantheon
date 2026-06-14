@@ -135,6 +135,7 @@ MARKET_FRICTION_MODEL_ID = "volume_capped_slippage_commission_v1"
 LEAN_ENGINE_REPLAY_MODEL_ID = "pantheon_lean_smoke_binding_context_v1"
 LEAN_RUNTIME_FEEDBACK_MODEL_ID = "persona_lean_runtime_feedback_v1"
 LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID = "lean_evolved_strategy_packet_provenance_v1"
+LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID = "lean_evolved_packet_multi_asset_execution_projection_v1"
 SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID = "shioaji_sandbox_facade_mock_replay_v1"
 BROKER_ADAPTER_LIFECYCLE_MODEL_ID = "persona_broker_adapter_lifecycle_v1"
 BROKER_ADAPTER_FOLLOWUP_MODEL_ID = "persona_broker_adapter_followup_v1"
@@ -7036,11 +7037,22 @@ def _build_operational_context(
         shioaji_sandbox_lifecycle=shioaji_sandbox_lifecycle,
         case_upstream_artifacts=case_upstream_artifacts,
     )
+    lean_packet_execution_projection = _build_lean_packet_execution_projection(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        executions=executions,
+        market_friction=market_friction,
+        broker_lifecycle=broker_lifecycle,
+        persona_conflict_resolution=persona_conflict,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+    )
     lean_runtime_feedback = _build_lean_runtime_feedback_response(
         episode=episode,
         scenario=scenario,
         lean_engine_replay=lean_engine_replay,
         lean_handoff=lean_handoff,
+        lean_packet_execution_projection=lean_packet_execution_projection,
         autonomous_schedule=autonomous_schedule,
         decision_traces=decision_traces,
     )
@@ -7053,6 +7065,7 @@ def _build_operational_context(
         strict_oos_evolution_proof=strict_oos_evolution_proof,
         lean_engine_replay=lean_engine_replay,
         lean_handoff=lean_handoff,
+        lean_packet_execution_projection=lean_packet_execution_projection,
         lean_runtime_feedback=lean_runtime_feedback,
     )
     scheduler_conflict_ooda_proof = _build_scheduler_conflict_ooda_proof(
@@ -7075,6 +7088,7 @@ def _build_operational_context(
             broker_lifecycle["lifecycle_model"],
             autonomous_schedule["schedule_id"],
             broker_adapter_followup["followup_id"],
+            lean_packet_execution_projection["projection_id"],
             lean_runtime_feedback["feedback_id"],
         ),
         "scenario": scenario,
@@ -7089,6 +7103,7 @@ def _build_operational_context(
         "lean_engine_replay": lean_engine_replay,
         "case_upstream_artifacts": _case_upstream_artifacts_case_summary(case_upstream_artifacts),
         "lean_handoff": lean_handoff,
+        "lean_packet_execution_projection": lean_packet_execution_projection,
         "lean_runtime_feedback": lean_runtime_feedback,
         "evolved_strategy_packet_proof": evolved_strategy_packet_proof,
         "scheduler_conflict_ooda_proof": scheduler_conflict_ooda_proof,
@@ -7882,12 +7897,268 @@ def _build_lean_handoff_packet(
     }
 
 
+def _lean_execution_call_for(quantity_type: str, order_type: str) -> str:
+    if quantity_type == "PERCENT_PORTFOLIO":
+        return "SetHoldings"
+    if order_type == "LIMIT":
+        return "LimitOrder"
+    return "MarketOrder"
+
+
+def _lean_symbol_for_execution_symbol(execution_symbol: str) -> str:
+    return str(execution_symbol).split(".", 1)[0]
+
+
+def _build_lean_packet_execution_projection(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    executions: Sequence[Mapping[str, Any]],
+    market_friction: Mapping[str, Any],
+    broker_lifecycle: Mapping[str, Any],
+    persona_conflict_resolution: Mapping[str, Any],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+) -> dict[str, Any]:
+    generation = int(final_policy["generation"])
+    execution = executions[generation]
+    fill_events = list(execution.get("fill_events", []))
+    fill_by_symbol = {
+        str(
+            fill.get("metadata", {}).get("symbol")
+            or fill.get("metadata", {}).get("signal_symbol")
+            or fill.get("metadata", {}).get("source_symbol")
+        ): fill
+        for fill in fill_events
+    }
+    orders = [
+        order for order in broker_lifecycle.get("orders", [])
+        if int(order.get("generation", -1)) == generation
+    ]
+    order_by_symbol = {str(order.get("symbol")): order for order in orders}
+    final_costs = market_friction["generation_costs"][generation]["leg_costs"]
+    cost_by_instrument = {str(cost["instrument"]): cost for cost in final_costs}
+    allocation = persona_conflict_resolution["resolved_allocation"]
+    strategy_packet = lean_handoff["strategy_packet"]
+    strategy_packet_ref = str(lean_handoff["strategy_packet_ref"])
+    handoff_ref = f"lean-handoff://{lean_handoff['packet_id']}"
+    projection_ref = f"lean-packet-execution://{episode.case_id}/generation{generation}"
+    leg_projections: list[dict[str, Any]] = []
+    for leg_index, window in enumerate(episode.windows):
+        leg = final_policy["legs"][window.instrument]
+        lean_symbol = _lean_symbol_for_execution_symbol(window.execution_symbol)
+        cost = cost_by_instrument.get(window.instrument, {})
+        order = order_by_symbol.get(lean_symbol, {})
+        fill = fill_by_symbol.get(lean_symbol, {})
+        fill_metrics = fill.get("metrics", {})
+        fill_metadata = fill.get("metadata", {})
+        entry_row = _entry_row_for_generation(window, generation)
+        direction = int(leg["direction"])
+        policy_weight = float(leg["weight"])
+        target_weight = float(allocation["weight_by_instrument"][window.instrument])
+        risk_weight = float(leg["risk_multiplier"]) * policy_weight
+        expected_quantity = _quantity_for(
+            str(final_policy["quantity_type"]),
+            float(entry_row["close"]),
+            risk_weight,
+            episode.ordinal + leg_index,
+        )
+        requested_quantity = _finite_float(fill_metadata.get("requested_quantity"), 0.0)
+        target_ref = f"{projection_ref}/leg/{leg_index}/target"
+        order_ref = f"paper-order://{order.get('order_id', '')}"
+        fill_ref = f"paper-fill://{order.get('fill_event_id', fill.get('event_id', ''))}"
+        readback_ref = f"{order_ref}/readback"
+        leg_projections.append(
+            {
+                "leg_index": leg_index,
+                "instrument": window.instrument,
+                "execution_symbol": window.execution_symbol,
+                "lean_symbol": lean_symbol,
+                "policy_id": final_policy["policy_id"],
+                "policy_version": final_policy["policy_version"],
+                "generation": generation,
+                "direction": direction,
+                "policy_weight": round(policy_weight, 6),
+                "target_weight": round(target_weight, 6),
+                "resolved_weight": round(target_weight, 6),
+                "capital_budget_pct": allocation["capital_budget_pct"],
+                "risk_multiplier": leg["risk_multiplier"],
+                "quantity_type": final_policy["quantity_type"],
+                "order_type": final_policy["order_type"],
+                "lean_order_call": _lean_execution_call_for(
+                    str(final_policy["quantity_type"]),
+                    str(final_policy["order_type"]),
+                ),
+                "target_ref": target_ref,
+                "order_ref": order_ref,
+                "fill_ref": fill_ref,
+                "readback_ref": readback_ref,
+                "signal_id": fill_metadata.get("signal_id"),
+                "expected_signal_id": _stable_id(
+                    "sig",
+                    episode.case_id,
+                    str(generation),
+                    window.instrument,
+                    str(window.start_index),
+                ),
+                "requested_quantity": requested_quantity,
+                "expected_requested_quantity": expected_quantity,
+                "fill_quantity": _finite_float(fill_metrics.get("fill_quantity"), 0.0),
+                "fill_price": _finite_float(fill_metrics.get("fill_price"), float(entry_row["close"])),
+                "market_data_ref": fill_metadata.get("market_data_ref"),
+                "source_dataset_ref": fill_metadata.get("source_dataset_ref"),
+                "market_friction_notional": cost.get("notional"),
+                "market_friction_total_cost_bps": cost.get("total_cost_bps"),
+                "within_liquidity_cap": cost.get("within_liquidity_cap"),
+                "broker_order_id": order.get("order_id"),
+                "broker_fill_event_id": order.get("fill_event_id"),
+                "broker_status_path": list(order.get("status_path", [])),
+                "broker_terminal_status": order.get("terminal_status"),
+                "broker_readback_status": order.get("readback_status"),
+                "broker_reconciled": order.get("reconciled") is True,
+                "live_broker_submitted": order.get("live_broker_submitted") is True,
+                "input_refs": [
+                    strategy_packet_ref,
+                    handoff_ref,
+                    lean_handoff["strict_oos_evolution_proof_ref"],
+                    lean_handoff["no_leakage_protocol_ref"],
+                    lean_handoff["evolution_trajectory_ref"],
+                    f"lean-engine://{lean_engine_replay['replay_id']}",
+                    persona_conflict_resolution["resolution_ref"],
+                    order_ref,
+                    fill_ref,
+                ],
+                "event_chain": [
+                    "packet_leg_target",
+                    "lean_target_order",
+                    "paper_fill_readback",
+                ],
+            }
+        )
+    replay = {
+        "replayable": True,
+        "strategy_packet_ref_bound": (
+            strategy_packet.get("packet_ref") == strategy_packet_ref
+            and strategy_packet_ref in lean_handoff.get("runtime_bundle_refs", [])
+        ),
+        "strategy_packet_generation2_bound": (
+            strategy_packet.get("generation") == generation
+            and strategy_packet.get("policy_id") == final_policy.get("policy_id")
+            and strategy_packet.get("validation_window") == "future_holdout"
+        ),
+        "handoff_allocation_bound": (
+            lean_handoff.get("resolved_weight_by_instrument")
+            == allocation.get("weight_by_instrument")
+            and lean_handoff.get("resolved_direction_by_instrument")
+            == allocation.get("direction_by_instrument")
+        ),
+        "all_packet_instruments_have_policy_legs": (
+            set(strategy_packet.get("portfolio_instruments", []))
+            == set(final_policy.get("legs", {}))
+            == {window.instrument for window in episode.windows}
+        ),
+        "all_leg_directions_match_policy_and_allocation": all(
+            leg["direction"] == int(final_policy["legs"][leg["instrument"]]["direction"])
+            and leg["direction"] == int(allocation["direction_by_instrument"][leg["instrument"]])
+            for leg in leg_projections
+        ),
+        "all_leg_weights_match_handoff_allocation": all(
+            abs(
+                float(leg["target_weight"])
+                - float(lean_handoff["resolved_weight_by_instrument"][leg["instrument"]])
+            ) <= 1e-9
+            for leg in leg_projections
+        ),
+        "all_leg_capital_within_budget": (
+            round(sum(float(leg["target_weight"]) for leg in leg_projections), 6)
+            == float(allocation["capital_budget_pct"])
+            and float(allocation["capital_budget_pct"]) <= 1.0
+        ),
+        "all_leg_expected_quantities_replay_signal_payload": all(
+            leg["signal_id"] == leg["expected_signal_id"]
+            and abs(float(leg["requested_quantity"]) - float(leg["expected_requested_quantity"])) <= 1e-6
+            for leg in leg_projections
+        ),
+        "all_leg_market_friction_notional_bound": all(
+            leg["market_friction_notional"] is not None
+            and float(leg["market_friction_notional"]) > 0.0
+            and leg["within_liquidity_cap"] is True
+            for leg in leg_projections
+        ),
+        "all_lean_targets_have_broker_orders": (
+            len(leg_projections) == PORTFOLIO_LEG_COUNT
+            and all(leg["broker_order_id"] for leg in leg_projections)
+        ),
+        "all_broker_orders_have_fill_readbacks": all(
+            leg["broker_fill_event_id"]
+            and leg["broker_terminal_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+            and leg["broker_readback_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+            and leg["broker_reconciled"] is True
+            for leg in leg_projections
+        ),
+        "all_fill_events_bind_signal_metadata": all(
+            leg["fill_quantity"] != 0.0
+            and leg["market_data_ref"]
+            and leg["source_dataset_ref"] == HISTORICAL_OHLCV_DATASET_ID
+            for leg in leg_projections
+        ),
+        "paper_only_guard_retained": (
+            lean_handoff.get("target_stage") == "paper"
+            and lean_handoff.get("broker_live_submitted") is False
+            and all(leg["live_broker_submitted"] is False for leg in leg_projections)
+        ),
+        "projection_ready_for_runtime_feedback": True,
+    }
+    return {
+        "projection_id": f"lean-packet-execution-{episode.case_id}",
+        "projection_ref": projection_ref,
+        "model_id": LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "strategy_packet_ref": strategy_packet_ref,
+        "source_handoff_ref": handoff_ref,
+        "source_runtime_ref": f"lean-engine://{lean_engine_replay['replay_id']}",
+        "policy_id": final_policy["policy_id"],
+        "policy_version": final_policy["policy_version"],
+        "generation": generation,
+        "target_stage": lean_handoff["target_stage"],
+        "portfolio_instruments": [window.instrument for window in episode.windows],
+        "capital_budget_pct": allocation["capital_budget_pct"],
+        "leg_count": len(leg_projections),
+        "order_count": len(orders),
+        "fill_count": len(fill_events),
+        "leg_projections": leg_projections,
+        "input_refs": [
+            strategy_packet_ref,
+            handoff_ref,
+            f"lean-engine://{lean_engine_replay['replay_id']}",
+            persona_conflict_resolution["resolution_ref"],
+            lean_handoff["strict_oos_evolution_proof_ref"],
+            lean_handoff["no_leakage_protocol_ref"],
+            lean_handoff["evolution_trajectory_ref"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "lean-packet-execution-projection",
+            {
+                "case_id": episode.case_id,
+                "strategy_packet_ref": strategy_packet_ref,
+                "handoff_ref": handoff_ref,
+                "leg_projections": leg_projections,
+                "replay": replay,
+            },
+        ),
+    }
+
+
 def _build_lean_runtime_feedback_response(
     *,
     episode: PortfolioEpisode,
     scenario: str,
     lean_engine_replay: Mapping[str, Any],
     lean_handoff: Mapping[str, Any],
+    lean_packet_execution_projection: Mapping[str, Any],
     autonomous_schedule: Mapping[str, Any],
     decision_traces: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -7910,9 +8181,11 @@ def _build_lean_runtime_feedback_response(
     strategy_packet_ref = str(lean_handoff.get("strategy_packet_ref", ""))
     strict_oos_ref = str(lean_handoff.get("strict_oos_evolution_proof_ref", ""))
     no_leakage_ref = str(lean_handoff.get("no_leakage_protocol_ref", ""))
+    projection_ref = str(lean_packet_execution_projection.get("projection_ref", ""))
     evidence_refs = [
         runtime_ref,
         handoff_ref,
+        projection_ref,
         strategy_packet_ref,
         strict_oos_ref,
         no_leakage_ref,
@@ -7948,6 +8221,15 @@ def _build_lean_runtime_feedback_response(
             and no_leakage_ref in lean_handoff.get("runtime_bundle_refs", [])
             and lean_handoff.get("strategy_packet_replay_passed") is True
         ),
+        "lean_packet_execution_projection_consumed": (
+            lean_packet_execution_projection.get("model_id") == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
+            and lean_packet_execution_projection.get("status") == "passed"
+            and lean_packet_execution_projection.get("source_handoff_ref") == handoff_ref
+            and lean_packet_execution_projection.get("strategy_packet_ref") == strategy_packet_ref
+            and lean_packet_execution_projection.get("leg_count") == PORTFOLIO_LEG_COUNT
+            and projection_ref in evidence_refs
+            and all(lean_packet_execution_projection.get("replay", {}).values())
+        ),
         "next_cycle_scheduled": autonomous_schedule.get("phase_order_valid") is True
         and bool(autonomous_schedule.get("next_cycle_due_at")),
         "drives_persona_next_ooda_step": True,
@@ -7975,6 +8257,7 @@ def _build_lean_runtime_feedback_response(
         },
         "request_response_flow": [
             "persona_strategy_packet",
+            "lean_packet_execution_projection",
             "lean_runtime_replay_response",
             "persona_next_ooda_action",
         ],
@@ -7993,6 +8276,7 @@ def _build_lean_runtime_feedback_response(
             "bind_runtime_context": runtime_context.get("runtime_binding_id"),
             "verify_object_store_metadata": metadata_key,
             "bind_evolved_strategy_packet": strategy_packet_ref,
+            "bind_lean_packet_execution_projection": projection_ref,
             "attach_to_handoff_packet": lean_handoff["packet_id"],
             "attach_to_decision_trace": decision_traces[-1]["reflection_id"],
             "schedule_next_cycle_after_feedback": autonomous_schedule["next_cycle_due_at"],
@@ -8007,6 +8291,7 @@ def _build_lean_runtime_feedback_response(
                 "runtime_ref": runtime_ref,
                 "handoff_ref": handoff_ref,
                 "strategy_packet_ref": strategy_packet_ref,
+                "projection_ref": projection_ref,
                 "runtime_binding_id": runtime_context.get("runtime_binding_id"),
                 "metadata_key": metadata_key,
                 "fill_count": lean_engine_replay.get("fill_count"),
@@ -8025,12 +8310,14 @@ def _build_evolved_strategy_packet_proof(
     strict_oos_evolution_proof: Mapping[str, Any],
     lean_engine_replay: Mapping[str, Any],
     lean_handoff: Mapping[str, Any],
+    lean_packet_execution_projection: Mapping[str, Any],
     lean_runtime_feedback: Mapping[str, Any],
 ) -> dict[str, Any]:
     strategy_packet = lean_handoff["strategy_packet"]
     final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
     strategy_packet_ref = str(strategy_packet["packet_ref"])
     handoff_ref = f"lean-handoff://{lean_handoff['packet_id']}"
+    projection_ref = str(lean_packet_execution_projection["projection_ref"])
     runtime_feedback_ref = f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}"
     runtime_bundle_refs = set(lean_handoff.get("runtime_bundle_refs", []))
     lineage_refs = [
@@ -8040,6 +8327,7 @@ def _build_evolved_strategy_packet_proof(
         str(strategy_packet["evolution_trajectory_ref"]),
         f"lean-engine://{lean_engine_replay['replay_id']}",
         handoff_ref,
+        projection_ref,
         runtime_feedback_ref,
     ]
     replay = {
@@ -8092,12 +8380,29 @@ def _build_evolved_strategy_packet_proof(
         "handoff_runtime_bundle_contains_packet_and_proofs": all(
             ref in runtime_bundle_refs for ref in lineage_refs[:5]
         ),
+        "execution_projection_consumes_packet_legs_and_orders": (
+            lean_packet_execution_projection.get("model_id")
+            == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
+            and lean_packet_execution_projection.get("status") == "passed"
+            and lean_packet_execution_projection.get("strategy_packet_ref") == strategy_packet_ref
+            and lean_packet_execution_projection.get("source_handoff_ref") == handoff_ref
+            and lean_packet_execution_projection.get("leg_count") == PORTFOLIO_LEG_COUNT
+            and all(lean_packet_execution_projection.get("replay", {}).values())
+        ),
         "runtime_feedback_consumes_handoff_with_packet": (
             lean_runtime_feedback.get("source_handoff_ref") == handoff_ref
             and strategy_packet_ref
             in lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
             and lean_runtime_feedback.get("state_updates", {}).get("bind_evolved_strategy_packet")
             == strategy_packet_ref
+            and lean_runtime_feedback.get("state_updates", {}).get(
+                "bind_lean_packet_execution_projection"
+            )
+            == projection_ref
+            and lean_runtime_feedback.get("replay", {}).get(
+                "lean_packet_execution_projection_consumed"
+            )
+            is True
             and lean_runtime_feedback.get("replay", {}).get("evolved_strategy_packet_refs_bound") is True
         ),
         "paper_only_guard_retained": (
@@ -8124,6 +8429,7 @@ def _build_evolved_strategy_packet_proof(
         "evolution_trajectory_ref": strategy_packet["evolution_trajectory_ref"],
         "lean_engine_replay_ref": f"lean-engine://{lean_engine_replay['replay_id']}",
         "lean_handoff_ref": handoff_ref,
+        "lean_packet_execution_projection_ref": projection_ref,
         "lean_runtime_feedback_ref": runtime_feedback_ref,
         "future_holdout_score": final_evaluation["score"],
         "future_holdout_improvement": strategy_packet["future_holdout_improvement"],
@@ -8551,8 +8857,50 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("paper_runtime_guard_retained") is True
         and replay.get("case_runtime_refs_bound") is True
         and replay.get("evolved_strategy_packet_refs_bound") is True
+        and replay.get("lean_packet_execution_projection_consumed") is True
         and replay.get("next_cycle_scheduled") is True
         and replay.get("drives_persona_next_ooda_step") is True
+    )
+
+
+def _lean_packet_execution_projection_is_usable(projection: Mapping[str, Any]) -> bool:
+    replay = projection.get("replay", {})
+    leg_projections = list(projection.get("leg_projections", []))
+    return bool(
+        projection.get("model_id") == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
+        and projection.get("status") == "passed"
+        and projection.get("projection_ref", "").startswith("lean-packet-execution://")
+        and projection.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and projection.get("source_handoff_ref", "").startswith("lean-handoff://")
+        and projection.get("source_runtime_ref", "").startswith("lean-engine://")
+        and projection.get("generation") == 2
+        and projection.get("target_stage") == "paper"
+        and projection.get("leg_count") == PORTFOLIO_LEG_COUNT
+        and projection.get("order_count") == PORTFOLIO_LEG_COUNT
+        and projection.get("fill_count") == PORTFOLIO_LEG_COUNT
+        and projection.get("input_hash")
+        and len(leg_projections) == PORTFOLIO_LEG_COUNT
+        and all(leg.get("target_ref", "").startswith(projection.get("projection_ref", "")) for leg in leg_projections)
+        and all(leg.get("order_ref", "").startswith("paper-order://") for leg in leg_projections)
+        and all(leg.get("fill_ref", "").startswith("paper-fill://") for leg in leg_projections)
+        and all(leg.get("readback_ref", "").endswith("/readback") for leg in leg_projections)
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "strategy_packet_ref_bound",
+            "strategy_packet_generation2_bound",
+            "handoff_allocation_bound",
+            "all_packet_instruments_have_policy_legs",
+            "all_leg_directions_match_policy_and_allocation",
+            "all_leg_weights_match_handoff_allocation",
+            "all_leg_capital_within_budget",
+            "all_leg_expected_quantities_replay_signal_payload",
+            "all_leg_market_friction_notional_bound",
+            "all_lean_targets_have_broker_orders",
+            "all_broker_orders_have_fill_readbacks",
+            "all_fill_events_bind_signal_metadata",
+            "paper_only_guard_retained",
+            "projection_ready_for_runtime_feedback",
+        ))
     )
 
 
@@ -8571,6 +8919,9 @@ def _evolved_strategy_packet_proof_is_usable(proof: Mapping[str, Any]) -> bool:
         and proof.get("evolution_trajectory_ref", "").startswith("trajectory://")
         and proof.get("lean_engine_replay_ref", "").startswith("lean-engine://")
         and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_packet_execution_projection_ref", "").startswith(
+            "lean-packet-execution://"
+        )
         and proof.get("lean_runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
         and float(proof.get("future_holdout_improvement", 0.0)) > 0.0
         and proof.get("input_hash")
@@ -8585,6 +8936,7 @@ def _evolved_strategy_packet_proof_is_usable(proof: Mapping[str, Any]) -> bool:
             "lean_engine_replay_reads_same_packet",
             "handoff_consumes_same_packet",
             "handoff_runtime_bundle_contains_packet_and_proofs",
+            "execution_projection_consumes_packet_legs_and_orders",
             "runtime_feedback_consumes_handoff_with_packet",
             "paper_only_guard_retained",
         ))
@@ -10525,6 +10877,9 @@ def _build_usability_dimensions(
         artifacts=case_upstream_artifacts,
     ) else 0.0
     lean_handoff = 1.0 if _lean_handoff_packet_is_usable(operational_context["lean_handoff"]) else 0.0
+    lean_packet_execution_projection = 1.0 if _lean_packet_execution_projection_is_usable(
+        operational_context["lean_packet_execution_projection"]
+    ) else 0.0
     lean_runtime_feedback = 1.0 if _lean_runtime_feedback_is_usable(
         operational_context["lean_runtime_feedback"]
     ) else 0.0
@@ -10621,6 +10976,7 @@ def _build_usability_dimensions(
         "shioaji_sandbox_lifecycle": shioaji_sandbox,
         "case_specific_upstream_artifact_feedback": case_upstream_feedback,
         "lean_handoff_packet": lean_handoff,
+        "lean_packet_execution_projection": lean_packet_execution_projection,
         "lean_runtime_feedback": lean_runtime_feedback,
         "evolved_strategy_packet_handoff": evolved_strategy_packet,
         "scheduler_conflict_ooda_dispatch": scheduler_conflict_ooda,
@@ -11081,6 +11437,29 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "lean_packet_execution_projection_replays_packet_legs",
+            _lean_packet_execution_projection_is_usable(
+                operational_context["lean_packet_execution_projection"]
+            ),
+            {
+                "projection_id": operational_context["lean_packet_execution_projection"][
+                    "projection_id"
+                ],
+                "strategy_packet_ref": operational_context["lean_packet_execution_projection"][
+                    "strategy_packet_ref"
+                ],
+                "leg_count": operational_context["lean_packet_execution_projection"][
+                    "leg_count"
+                ],
+                "order_count": operational_context["lean_packet_execution_projection"][
+                    "order_count"
+                ],
+                "replay": copy.deepcopy(
+                    dict(operational_context["lean_packet_execution_projection"]["replay"])
+                ),
+            },
+        ),
+        _diagnostic_check(
             "evolved_strategy_packet_reaches_lean_handoff",
             _evolved_strategy_packet_proof_is_usable(
                 operational_context["evolved_strategy_packet_proof"]
@@ -11538,6 +11917,9 @@ def _build_case_result(
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
             "lean_engine_replay_uses_runtime_binding": usability_dimensions["lean_engine_replay"] == 1.0,
             "lean_runtime_feedback_drives_ooda": usability_dimensions["lean_runtime_feedback"] == 1.0,
+            "lean_packet_execution_projection_replayed": usability_dimensions[
+                "lean_packet_execution_projection"
+            ] == 1.0,
             "evolved_strategy_packet_reaches_lean_handoff": usability_dimensions[
                 "evolved_strategy_packet_handoff"
             ] == 1.0,
@@ -11631,6 +12013,9 @@ def _build_summary(
     broker_adapter_followups = [
         case["operational_context"]["broker_adapter_followup"] for case in cases
     ]
+    lean_packet_execution_projections = [
+        case["operational_context"]["lean_packet_execution_projection"] for case in cases
+    ]
     lean_runtime_feedbacks = [
         case["operational_context"]["lean_runtime_feedback"] for case in cases
     ]
@@ -11711,6 +12096,41 @@ def _build_summary(
         }),
         "lean_engine_algorithm_modules": sorted({
             case["operational_context"]["lean_engine_replay"]["algorithm_module"] for case in cases
+        }),
+        "lean_packet_execution_projection_models": sorted({
+            projection["model_id"] for projection in lean_packet_execution_projections
+        }),
+        "lean_packet_execution_projection_generations": sorted({
+            projection["generation"] for projection in lean_packet_execution_projections
+        }),
+        "lean_packet_execution_projection_leg_counts": sorted({
+            projection["leg_count"] for projection in lean_packet_execution_projections
+        }),
+        "lean_packet_execution_projection_event_chains": sorted({
+            "->".join(leg["event_chain"])
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+        }),
+        "lean_packet_execution_projection_lean_calls": sorted({
+            leg["lean_order_call"]
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+        }),
+        "lean_packet_execution_projection_quantity_types": sorted({
+            leg["quantity_type"]
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+        }),
+        "lean_packet_execution_projection_order_types": sorted({
+            leg["order_type"]
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+        }),
+        "lean_packet_execution_projection_replay_flags": sorted({
+            flag
+            for projection in lean_packet_execution_projections
+            for flag, value in projection["replay"].items()
+            if value is True
         }),
         "lean_runtime_feedback_models": sorted({
             feedback["model_id"] for feedback in lean_runtime_feedbacks
@@ -12439,9 +12859,38 @@ def _build_summary(
         "restart_recovery_count": sum(1 for item in usable if item["restart_recovery_restores_loop"]),
         "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
         "lean_engine_replay_count": sum(1 for item in usable if item["lean_engine_replay_uses_runtime_binding"]),
+        "lean_packet_execution_projection_count": len(lean_packet_execution_projections),
+        "lean_packet_execution_projection_pass_count": sum(
+            1
+            for projection in lean_packet_execution_projections
+            if _lean_packet_execution_projection_is_usable(projection)
+        ),
+        "lean_packet_execution_projection_leg_count": sum(
+            len(projection["leg_projections"]) for projection in lean_packet_execution_projections
+        ),
+        "lean_packet_execution_projection_order_count": sum(
+            projection["order_count"] for projection in lean_packet_execution_projections
+        ),
+        "lean_packet_execution_projection_fill_count": sum(
+            projection["fill_count"] for projection in lean_packet_execution_projections
+        ),
+        "lean_packet_execution_projection_readback_count": sum(
+            1
+            for projection in lean_packet_execution_projections
+            for leg in projection["leg_projections"]
+            if leg["broker_readback_status"] == BROKER_LIFECYCLE_TERMINAL_STATUS
+        ),
+        "lean_packet_execution_projection_replayed_count": sum(
+            1 for item in usable if item["lean_packet_execution_projection_replayed"]
+        ),
         "lean_runtime_feedback_count": len(lean_runtime_feedbacks),
         "lean_runtime_feedback_pass_count": sum(
             1 for feedback in lean_runtime_feedbacks if _lean_runtime_feedback_is_usable(feedback)
+        ),
+        "lean_runtime_feedback_consumed_execution_projection_count": sum(
+            1
+            for feedback in lean_runtime_feedbacks
+            if feedback["replay"].get("lean_packet_execution_projection_consumed") is True
         ),
         "lean_runtime_feedback_drives_ooda_count": sum(
             1 for item in usable if item["lean_runtime_feedback_drives_ooda"]
@@ -12528,6 +12977,7 @@ def _build_summary(
             "Every broker adapter response triggers a scenario-specific persona follow-up action before the next autonomous paper cycle.",
             "Every LEAN runtime response is consumed by the persona and drives a scenario-specific next OODA action with runtime binding, object-store readback, and handoff refs.",
             "Every case proves the generation-2 strict-OOS evolved strategy packet reaches LEAN handoff, runtime bundle refs, and runtime feedback with future-holdout provenance intact.",
+            "Every case projects each generation-2 strategy packet leg into a LEAN-side target/order/fill/readback chain and feeds that projection into persona runtime feedback.",
             "Every case replays scheduler and multi-persona conflict causality from recovered schedule tick through resolved allocation, LEAN handoff, adapter/runtime feedback, and next-cycle dispatch.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
