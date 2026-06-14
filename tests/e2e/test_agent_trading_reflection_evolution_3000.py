@@ -41,6 +41,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_ALPHA_SEED_REVISION_MODEL_ID,
     PERSONA_CANDIDATE_GENERATOR_MODEL_ID,
     PERSONA_CANDIDATE_SCORER_MODEL_ID,
+    PERSONA_CONFLICT_RESOLUTION_MODEL_ID,
     PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
     PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
@@ -54,6 +55,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_REASONING_EVALUATOR_MODEL_ID,
     PERSONA_REASONING_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
+    PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID,
     PERSONA_TRACKING_RECONCILIATION_MODEL_ID,
     SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID,
     OSS_REQUIRED_COMPONENTS,
@@ -205,6 +207,10 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["lean_runtime_feedback_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_runtime_feedback_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_runtime_feedback_drives_ooda_count"] == DEFAULT_CASE_COUNT
+    assert summary["scheduler_conflict_ooda_proof_count"] == DEFAULT_CASE_COUNT
+    assert summary["scheduler_conflict_ooda_proof_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["scheduler_conflict_ooda_event_count"] == DEFAULT_CASE_COUNT * 6
+    assert summary["scheduler_conflict_ooda_dispatch_count"] == DEFAULT_CASE_COUNT
     assert summary["shioaji_sandbox_lifecycle_count"] == DEFAULT_CASE_COUNT
     assert summary["case_specific_vectorbt_backtest_count"] == DEFAULT_CASE_COUNT
     assert summary["case_specific_tracking_roundtrip_count"] == DEFAULT_CASE_COUNT
@@ -324,6 +330,45 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "paper_runtime_guard_retained",
         "runtime_binding_readback_verified",
         "runtime_feedback_consumed",
+    }
+    assert coverage["scheduler_conflict_ooda_models"] == [
+        PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID
+    ]
+    assert set(coverage["scheduler_conflict_ooda_event_types"]) == {
+        "broker_adapter_followup",
+        "lean_handoff_materialization",
+        "lean_runtime_feedback",
+        "multi_persona_conflict_resolution",
+        "scheduler_next_cycle_dispatch",
+        "scheduler_recovery_tick",
+    }
+    assert set(coverage["scheduler_conflict_ooda_phases"]) == set(AUTONOMOUS_SCHEDULER_PHASES)
+    assert set(coverage["scheduler_conflict_ooda_next_ooda_steps"]) == {
+        "act",
+        "decide",
+        "observe",
+        "orient",
+    }
+    assert set(coverage["scheduler_conflict_ooda_next_scheduler_phases"]) == {
+        "evolve",
+        "reflect",
+    }
+    assert set(coverage["scheduler_conflict_ooda_replay_flags"]) == {
+        "adapter_followup_consumes_schedule",
+        "conflict_resolution_consumes_selected_action_and_risk",
+        "dispatch_events_strictly_ordered",
+        "handoff_consumes_conflict_resolution",
+        "handoff_consumes_scheduler_ref",
+        "lean_runtime_feedback_consumes_schedule",
+        "next_dispatch_consumes_adapter_and_runtime_feedback",
+        "no_future_dispatch_ref",
+        "paper_only_guard_retained",
+        "replayable",
+        "resolved_allocation_is_portfolio_complete",
+        "runtime_ooda_step_maps_to_scheduler_phase",
+        "scheduler_phase_due_times_ordered",
+        "scheduler_phase_order_valid",
+        "scheduler_recovered_restart_checkpoint",
     }
     assert coverage["cross_cycle_carryover_models"] == [
         PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID
@@ -790,6 +835,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_multi_cycle_lineage_carryover(case, persona_case_history)
         _assert_case_specific_upstream_artifacts(case)
         _assert_operational_context(case)
+        _assert_scheduler_conflict_ooda_proof(case)
         _assert_evolution_and_scores(case)
         assert all(case["usable"].values())
         latest_case_by_persona[case["persona_id"]] = case
@@ -2829,10 +2875,17 @@ def _assert_operational_context(case: dict) -> None:
         assert order["live_broker_submitted"] is False
 
     conflict = operational["persona_conflict_resolution"]
+    assert conflict["model_id"] == PERSONA_CONFLICT_RESOLUTION_MODEL_ID
+    assert conflict["resolution_ref"] == f"persona-conflict://{case['case_id']}"
     assert conflict["classified_conflicts"]
     assert "weight_conflict" in conflict["conflict_types"]
     assert conflict["open_conflicts"] == []
     assert conflict["decision_trace_ref"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
+    assert conflict["selected_action_ref"] == (
+        f"selected-action://{case['case_id']}/"
+        f"{case['reflection']['agent_decision_traces'][-1]['selected_candidate_id']}"
+    )
+    assert conflict["oss_risk_ref"].startswith("oss://")
     allocation = conflict["resolved_allocation"]
     assert allocation["capital_budget_pct"] <= 1.0
     assert set(allocation["direction_by_instrument"]) == set(case["portfolio"]["instruments"])
@@ -2847,8 +2900,10 @@ def _assert_operational_context(case: dict) -> None:
     assert recovery["memory_refs_before_restart"] == recovery["memory_refs_after_recovery"]
 
     schedule = operational["autonomous_schedule"]
+    assert schedule["schedule_ref"] == f"schedule://{schedule['schedule_id']}"
     assert schedule["trigger_mode"] == "autonomous_daily_paper_loop"
     assert schedule["phase_order_valid"] is True
+    assert schedule["phase_due_at_ordered"] is True
     assert [phase["phase"] for phase in schedule["phases"]] == list(AUTONOMOUS_SCHEDULER_PHASES)
     assert schedule["missed_cycle_recovered"] is True
     assert schedule["next_cycle_due_at"]
@@ -3002,8 +3057,16 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["target_stage"] == "paper"
     assert handoff["broker_live_submitted"] is False
     assert set(handoff["portfolio_instruments"]) == set(case["portfolio"]["instruments"])
+    assert handoff["persona_conflict_resolution_ref"] == conflict["resolution_ref"]
+    assert handoff["resolved_capital_budget_pct"] == allocation["capital_budget_pct"]
+    assert handoff["resolved_direction_by_instrument"] == allocation["direction_by_instrument"]
+    assert handoff["resolved_weight_by_instrument"] == allocation["weight_by_instrument"]
+    assert handoff["schedule_ref"] == schedule["schedule_ref"]
+    assert handoff["next_cycle_due_at"] == schedule["next_cycle_due_at"]
     for entry in case["case_upstream_artifacts"]["selected_oss"].values():
         assert f"oss://{entry['component']}/{entry['request_id']}" in handoff["runtime_bundle_refs"]
+    assert conflict["resolution_ref"] in handoff["runtime_bundle_refs"]
+    assert schedule["schedule_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["runtime_bundle_refs"]
 
     runtime_feedback = operational["lean_runtime_feedback"]
@@ -3058,6 +3121,54 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["input_hash"]
     assert case["usability_dimensions"]["lean_runtime_feedback"] == 1.0
     assert check_by_name["lean_runtime_feedback_drives_persona_ooda"]["status"] == "passed"
+    assert case["usability_dimensions"]["scheduler_conflict_ooda_dispatch"] == 1.0
+    assert case["usable"]["scheduler_conflict_ooda_dispatch_replayed"] is True
+    assert check_by_name["scheduler_conflict_ooda_dispatch_replays_next_cycle"]["status"] == "passed"
+
+
+def _assert_scheduler_conflict_ooda_proof(case: dict) -> None:
+    operational = case["operational_context"]
+    proof = operational["scheduler_conflict_ooda_proof"]
+    conflict = operational["persona_conflict_resolution"]
+    schedule = operational["autonomous_schedule"]
+    handoff = operational["lean_handoff"]
+    adapter_followup = operational["broker_adapter_followup"]
+    runtime_feedback = operational["lean_runtime_feedback"]
+
+    assert proof["model_id"] == PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["proof_ref"] == f"scheduler-conflict-ooda://{case['case_id']}"
+    assert proof["schedule_ref"] == schedule["schedule_ref"]
+    assert proof["conflict_ref"] == conflict["resolution_ref"]
+    assert proof["handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert proof["adapter_followup_ref"] == f"broker-adapter-followup://{adapter_followup['followup_id']}"
+    assert proof["runtime_feedback_ref"] == f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
+    assert proof["dispatch_ref"] == f"scheduler-dispatch://{case['case_id']}/next-cycle"
+    assert proof["conflict_types"] == conflict["conflict_types"]
+    assert proof["next_ooda_step"] == runtime_feedback["persona_ooda_followup"]["ooda_step"]
+    assert proof["next_scheduler_phase"] == runtime_feedback["persona_ooda_followup"]["next_scheduler_phase"]
+    assert proof["next_cycle_due_at"] == schedule["next_cycle_due_at"]
+    assert [event["phase"] for event in proof["phase_events"]] == list(AUTONOMOUS_SCHEDULER_PHASES)
+    assert [event["event_type"] for event in proof["dispatch_events"]] == [
+        "scheduler_recovery_tick",
+        "multi_persona_conflict_resolution",
+        "lean_handoff_materialization",
+        "broker_adapter_followup",
+        "lean_runtime_feedback",
+        "scheduler_next_cycle_dispatch",
+    ]
+    assert [event["sequence"] for event in proof["dispatch_events"]] == [1, 2, 3, 4, 5, 6]
+    assert proof["dispatch_events"][1]["output_ref"] == conflict["resolution_ref"]
+    assert proof["dispatch_events"][2]["output_ref"] == proof["handoff_ref"]
+    assert proof["dispatch_events"][3]["output_ref"] == proof["adapter_followup_ref"]
+    assert proof["dispatch_events"][4]["output_ref"] == proof["runtime_feedback_ref"]
+    assert proof["dispatch_events"][5]["output_ref"] == proof["dispatch_ref"]
+    assert conflict["resolution_ref"] in proof["dispatch_events"][2]["input_refs"]
+    assert schedule["schedule_ref"] in proof["dispatch_events"][2]["input_refs"]
+    assert proof["adapter_followup_ref"] in proof["dispatch_events"][5]["input_refs"]
+    assert proof["runtime_feedback_ref"] in proof["dispatch_events"][5]["input_refs"]
+    assert all(proof["replay"].values())
+    assert proof["input_hash"]
 
 
 def _assert_evolution_and_scores(case: dict) -> None:

@@ -142,6 +142,8 @@ CASE_UPSTREAM_TRACKING_MODEL_ID = "case_specific_tracking_artifact_roundtrip_v1"
 CASE_SELECTED_OSS_MODEL_ID = "case_specific_selected_oss_feedback_v1"
 PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID = "persona_policy_candidate_oss_materiality_v1"
 PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID = "persona_reflection_artifact_oss_materiality_v1"
+PERSONA_CONFLICT_RESOLUTION_MODEL_ID = "persona_multi_persona_conflict_resolution_v1"
+PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID = "persona_scheduler_conflict_ooda_dispatch_v1"
 PERSONA_DECISION_ARTIFACT_MODEL_ID = "persona_replayable_candidate_decision_v1"
 PERSONA_CANDIDATE_GENERATOR_MODEL_ID = "persona_candidate_generation_from_oss_feedback_v1"
 PERSONA_CANDIDATE_SCORER_MODEL_ID = "persona_multi_factor_candidate_scorer_v1"
@@ -7013,6 +7015,8 @@ def _build_operational_context(
         oss_inputs=oss_inputs,
         market_friction=market_friction,
         broker_lifecycle=broker_lifecycle,
+        persona_conflict_resolution=persona_conflict,
+        autonomous_schedule=autonomous_schedule,
         lean_engine_replay=lean_engine_replay,
         shioaji_sandbox_lifecycle=shioaji_sandbox_lifecycle,
         case_upstream_artifacts=case_upstream_artifacts,
@@ -7023,6 +7027,17 @@ def _build_operational_context(
         lean_engine_replay=lean_engine_replay,
         lean_handoff=lean_handoff,
         autonomous_schedule=autonomous_schedule,
+        decision_traces=decision_traces,
+    )
+    scheduler_conflict_ooda_proof = _build_scheduler_conflict_ooda_proof(
+        episode=episode,
+        operational_context={
+            "persona_conflict_resolution": persona_conflict,
+            "autonomous_schedule": autonomous_schedule,
+            "broker_adapter_followup": broker_adapter_followup,
+            "lean_handoff": lean_handoff,
+            "lean_runtime_feedback": lean_runtime_feedback,
+        },
         decision_traces=decision_traces,
     )
     return {
@@ -7049,6 +7064,7 @@ def _build_operational_context(
         "case_upstream_artifacts": _case_upstream_artifacts_case_summary(case_upstream_artifacts),
         "lean_handoff": lean_handoff,
         "lean_runtime_feedback": lean_runtime_feedback,
+        "scheduler_conflict_ooda_proof": scheduler_conflict_ooda_proof,
     }
 
 
@@ -7243,8 +7259,15 @@ def _build_persona_conflict_resolution(
             instrument: round(weight / total_weight, 6)
             for instrument, weight in resolved_weights.items()
         }
+    resolution_ref = f"persona-conflict://{episode.case_id}"
+    selected_action_ref = (
+        f"selected-action://{episode.case_id}/{decision_traces[-1]['selected_candidate_id']}"
+    )
+    risk_oss_ref = f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}"
     return {
         "resolution_id": f"conflict-resolution-{episode.case_id}",
+        "resolution_ref": resolution_ref,
+        "model_id": PERSONA_CONFLICT_RESOLUTION_MODEL_ID,
         "council_votes": council_votes,
         "classified_conflicts": classified_conflicts,
         "conflict_types": sorted(conflict_types),
@@ -7256,7 +7279,17 @@ def _build_persona_conflict_resolution(
             "turnover_budget": 1.25,
         },
         "decision_trace_ref": decision_traces[-1]["reflection_id"],
-        "oss_risk_ref": f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}",
+        "selected_action_ref": selected_action_ref,
+        "oss_risk_ref": risk_oss_ref,
+        "evidence_refs": [
+            selected_action_ref,
+            f"reflection://{decision_traces[-1]['reflection_id']}",
+            risk_oss_ref,
+            *[
+                conflict["conflict_id"]
+                for conflict in classified_conflicts
+            ],
+        ],
     }
 
 
@@ -7532,6 +7565,7 @@ def _build_autonomous_schedule(
     generated_at: str,
     restart_recovery: Mapping[str, Any],
 ) -> dict[str, Any]:
+    schedule_id = f"schedule-{episode.case_id}"
     phases = []
     for phase_index, phase in enumerate(AUTONOMOUS_SCHEDULER_PHASES):
         phases.append(
@@ -7547,10 +7581,15 @@ def _build_autonomous_schedule(
             }
         )
     return {
-        "schedule_id": f"schedule-{episode.case_id}",
+        "schedule_id": schedule_id,
+        "schedule_ref": f"schedule://{schedule_id}",
         "trigger_mode": "autonomous_daily_paper_loop",
         "phases": phases,
         "phase_order_valid": [phase["phase"] for phase in phases] == list(AUTONOMOUS_SCHEDULER_PHASES),
+        "phase_due_at_ordered": all(
+            str(left["due_at"]) < str(right["due_at"])
+            for left, right in zip(phases, phases[1:])
+        ),
         "restart_checkpoint_ref": restart_recovery["checkpoint_id"],
         "missed_cycle_recovered": restart_recovery["recovered"],
         "next_cycle_due_at": _offset_timestamp(
@@ -7688,6 +7727,8 @@ def _build_lean_handoff_packet(
     oss_inputs: Mapping[str, Mapping[str, Any]],
     market_friction: Mapping[str, Any],
     broker_lifecycle: Mapping[str, Any],
+    persona_conflict_resolution: Mapping[str, Any],
+    autonomous_schedule: Mapping[str, Any],
     lean_engine_replay: Mapping[str, Any],
     shioaji_sandbox_lifecycle: Mapping[str, Any],
     case_upstream_artifacts: Mapping[str, Any],
@@ -7699,6 +7740,9 @@ def _build_lean_handoff_packet(
         f"oss://{entry['component']}/{entry['request_id']}"
         for entry in case_upstream_artifacts["selected_oss"].values()
     ]
+    conflict_ref = str(persona_conflict_resolution["resolution_ref"])
+    schedule_ref = str(autonomous_schedule["schedule_ref"])
+    resolved_allocation = persona_conflict_resolution["resolved_allocation"]
     return {
         "packet_id": f"lean-packet-{episode.case_id}",
         "component": handoff["component"],
@@ -7711,6 +7755,16 @@ def _build_lean_handoff_packet(
         "portfolio_instruments": [window.instrument for window in episode.windows],
         "market_friction_model_id": market_friction["model_id"],
         "broker_lifecycle_model": broker_lifecycle["lifecycle_model"],
+        "persona_conflict_resolution_ref": conflict_ref,
+        "resolved_capital_budget_pct": resolved_allocation["capital_budget_pct"],
+        "resolved_direction_by_instrument": copy.deepcopy(
+            dict(resolved_allocation["direction_by_instrument"])
+        ),
+        "resolved_weight_by_instrument": copy.deepcopy(
+            dict(resolved_allocation["weight_by_instrument"])
+        ),
+        "schedule_ref": schedule_ref,
+        "next_cycle_due_at": autonomous_schedule["next_cycle_due_at"],
         "lean_engine_replay_id": lean_engine_replay["replay_id"],
         "lean_engine_replay_status": lean_engine_replay["status"],
         "shioaji_sandbox_lifecycle_id": shioaji_sandbox_lifecycle["lifecycle_id"],
@@ -7727,6 +7781,8 @@ def _build_lean_handoff_packet(
             f"oss://{handoff['component']}/{handoff['request_id']}",
             f"oss://vectorbt/{vectorbt['request_id']}",
             f"experiment://{tracker['backend']}/{tracker['run_id']}",
+            conflict_ref,
+            schedule_ref,
             *selected_oss_refs,
             f"lean-engine://{lean_engine_replay['replay_id']}",
             f"broker-sandbox://{shioaji_sandbox_lifecycle['lifecycle_id']}",
@@ -7852,6 +7908,208 @@ def _build_lean_runtime_feedback_response(
     }
 
 
+def _build_scheduler_conflict_ooda_proof(
+    *,
+    episode: PortfolioEpisode,
+    operational_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    conflict = operational_context["persona_conflict_resolution"]
+    schedule = operational_context["autonomous_schedule"]
+    adapter_followup = operational_context["broker_adapter_followup"]
+    lean_handoff = operational_context["lean_handoff"]
+    runtime_feedback = operational_context["lean_runtime_feedback"]
+    schedule_ref = str(schedule["schedule_ref"])
+    conflict_ref = str(conflict["resolution_ref"])
+    handoff_ref = f"lean-handoff://{lean_handoff['packet_id']}"
+    adapter_followup_ref = f"broker-adapter-followup://{adapter_followup['followup_id']}"
+    runtime_feedback_ref = f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
+    dispatch_ref = f"scheduler-dispatch://{episode.case_id}/next-cycle"
+    selected_action_ref = str(conflict["selected_action_ref"])
+    phase_events = [
+        {
+            "phase": phase["phase"],
+            "due_at": phase["due_at"],
+            "status": phase["status"],
+            "output_ref": f"scheduler-phase://{schedule['schedule_id']}/{phase['phase']}",
+        }
+        for phase in schedule["phases"]
+    ]
+    dispatch_events = [
+        {
+            "sequence": 1,
+            "event_type": "scheduler_recovery_tick",
+            "actor": "autonomous_scheduler",
+            "ooda_phase": "observe",
+            "input_refs": [f"checkpoint://{schedule['restart_checkpoint_ref']}"],
+            "output_ref": schedule_ref,
+            "drives_next_event": "multi_persona_conflict_resolution",
+        },
+        {
+            "sequence": 2,
+            "event_type": "multi_persona_conflict_resolution",
+            "actor": "persona_council",
+            "ooda_phase": "orient",
+            "input_refs": [
+                selected_action_ref,
+                f"reflection://{decision_traces[-1]['reflection_id']}",
+                str(conflict["oss_risk_ref"]),
+            ],
+            "output_ref": conflict_ref,
+            "drives_next_event": "lean_handoff_materialization",
+        },
+        {
+            "sequence": 3,
+            "event_type": "lean_handoff_materialization",
+            "actor": "persona+lean_handoff",
+            "ooda_phase": "act",
+            "input_refs": [selected_action_ref, conflict_ref, schedule_ref],
+            "output_ref": handoff_ref,
+            "drives_next_event": "broker_adapter_followup",
+        },
+        {
+            "sequence": 4,
+            "event_type": "broker_adapter_followup",
+            "actor": "broker_adapter+persona",
+            "ooda_phase": "orient",
+            "input_refs": [
+                str(adapter_followup["source_packet_ref"]),
+                schedule_ref,
+                f"checkpoint://{adapter_followup['restart_checkpoint_ref']}",
+            ],
+            "output_ref": adapter_followup_ref,
+            "drives_next_event": "lean_runtime_feedback",
+        },
+        {
+            "sequence": 5,
+            "event_type": "lean_runtime_feedback",
+            "actor": "lean_runtime+persona",
+            "ooda_phase": str(runtime_feedback["persona_ooda_followup"]["ooda_step"]),
+            "input_refs": [
+                str(runtime_feedback["source_runtime_ref"]),
+                str(runtime_feedback["source_handoff_ref"]),
+                schedule_ref,
+            ],
+            "output_ref": runtime_feedback_ref,
+            "drives_next_event": "scheduler_next_cycle_dispatch",
+        },
+        {
+            "sequence": 6,
+            "event_type": "scheduler_next_cycle_dispatch",
+            "actor": "autonomous_scheduler",
+            "ooda_phase": "act",
+            "input_refs": [schedule_ref, adapter_followup_ref, runtime_feedback_ref],
+            "output_ref": dispatch_ref,
+            "drives_next_event": "next_autonomous_paper_cycle",
+        },
+    ]
+    produced_at = {
+        event["output_ref"]: int(event["sequence"])
+        for event in dispatch_events
+    }
+    resolved_allocation = conflict["resolved_allocation"]
+    replay = {
+        "replayable": True,
+        "scheduler_phase_order_valid": schedule.get("phase_order_valid") is True
+        and [event["phase"] for event in phase_events] == list(AUTONOMOUS_SCHEDULER_PHASES),
+        "scheduler_phase_due_times_ordered": schedule.get("phase_due_at_ordered") is True,
+        "scheduler_recovered_restart_checkpoint": schedule.get("missed_cycle_recovered") is True
+        and bool(schedule.get("restart_checkpoint_ref")),
+        "conflict_resolution_consumes_selected_action_and_risk": (
+            selected_action_ref in dispatch_events[1]["input_refs"]
+            and str(conflict["oss_risk_ref"]) in dispatch_events[1]["input_refs"]
+            and conflict.get("open_conflicts") == []
+        ),
+        "resolved_allocation_is_portfolio_complete": (
+            set(resolved_allocation.get("direction_by_instrument", {}))
+            == {window.instrument for window in episode.windows}
+            and set(resolved_allocation.get("weight_by_instrument", {}))
+            == {window.instrument for window in episode.windows}
+            and float(resolved_allocation.get("capital_budget_pct", 2.0)) <= 1.0
+        ),
+        "handoff_consumes_conflict_resolution": (
+            lean_handoff.get("persona_conflict_resolution_ref") == conflict_ref
+            and conflict_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and lean_handoff.get("resolved_weight_by_instrument")
+            == resolved_allocation.get("weight_by_instrument")
+        ),
+        "handoff_consumes_scheduler_ref": (
+            lean_handoff.get("schedule_ref") == schedule_ref
+            and schedule_ref in lean_handoff.get("runtime_bundle_refs", [])
+        ),
+        "adapter_followup_consumes_schedule": (
+            adapter_followup.get("schedule_ref") == schedule.get("schedule_id")
+            and schedule_ref in adapter_followup.get("persona_followup", {}).get("evidence_refs", [])
+            and adapter_followup.get("state_updates", {}).get("schedule_next_cycle_after_followup")
+            == schedule.get("next_cycle_due_at")
+        ),
+        "lean_runtime_feedback_consumes_schedule": (
+            runtime_feedback.get("state_updates", {}).get("schedule_next_cycle_after_feedback")
+            == schedule.get("next_cycle_due_at")
+            and runtime_feedback.get("source_handoff_ref") == handoff_ref
+        ),
+        "runtime_ooda_step_maps_to_scheduler_phase": (
+            runtime_feedback.get("persona_ooda_followup", {}).get("next_scheduler_phase")
+            in {phase["phase"] for phase in schedule.get("phases", [])}
+            and runtime_feedback.get("persona_ooda_followup", {}).get("next_scheduler_phase")
+            in {"reflect", "evolve"}
+        ),
+        "next_dispatch_consumes_adapter_and_runtime_feedback": (
+            adapter_followup_ref in dispatch_events[-1]["input_refs"]
+            and runtime_feedback_ref in dispatch_events[-1]["input_refs"]
+            and schedule_ref in dispatch_events[-1]["input_refs"]
+        ),
+        "dispatch_events_strictly_ordered": [
+            event["sequence"] for event in dispatch_events
+        ] == list(range(1, len(dispatch_events) + 1)),
+        "no_future_dispatch_ref": all(
+            produced_at[input_ref] < int(event["sequence"])
+            for event in dispatch_events
+            for input_ref in event["input_refs"]
+            if input_ref in produced_at
+        ),
+        "paper_only_guard_retained": (
+            lean_handoff.get("target_stage") == "paper"
+            and lean_handoff.get("broker_live_submitted") is False
+            and adapter_followup.get("persona_followup", {}).get("paper_only") is True
+            and runtime_feedback.get("persona_ooda_followup", {}).get("paper_only") is True
+        ),
+    }
+    return {
+        "proof_id": f"scheduler-conflict-ooda-{episode.case_id}",
+        "proof_ref": f"scheduler-conflict-ooda://{episode.case_id}",
+        "model_id": PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "schedule_ref": schedule_ref,
+        "conflict_ref": conflict_ref,
+        "handoff_ref": handoff_ref,
+        "adapter_followup_ref": adapter_followup_ref,
+        "runtime_feedback_ref": runtime_feedback_ref,
+        "dispatch_ref": dispatch_ref,
+        "conflict_types": list(conflict["conflict_types"]),
+        "next_ooda_step": runtime_feedback["persona_ooda_followup"]["ooda_step"],
+        "next_scheduler_phase": runtime_feedback["persona_ooda_followup"]["next_scheduler_phase"],
+        "next_cycle_due_at": schedule["next_cycle_due_at"],
+        "phase_events": phase_events,
+        "dispatch_events": dispatch_events,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "scheduler-conflict-ooda-proof",
+            {
+                "case_id": episode.case_id,
+                "schedule_ref": schedule_ref,
+                "conflict_ref": conflict_ref,
+                "handoff_ref": handoff_ref,
+                "runtime_feedback_ref": runtime_feedback_ref,
+                "dispatch_events": dispatch_events,
+                "replay": replay,
+            },
+        ),
+    }
+
+
 def _lean_runtime_feedback_action_for_scenario(scenario: str) -> str:
     return LEAN_RUNTIME_FEEDBACK_ACTIONS_BY_SCENARIO.get(
         scenario,
@@ -7953,11 +8211,15 @@ def _broker_adapter_followup_is_usable(followup: Mapping[str, Any]) -> bool:
 def _persona_conflicts_are_resolved(conflict_resolution: Mapping[str, Any]) -> bool:
     allocation = conflict_resolution.get("resolved_allocation", {})
     return bool(
-        conflict_resolution.get("classified_conflicts")
+        conflict_resolution.get("model_id") == PERSONA_CONFLICT_RESOLUTION_MODEL_ID
+        and conflict_resolution.get("resolution_ref", "").startswith("persona-conflict://")
+        and conflict_resolution.get("classified_conflicts")
         and not conflict_resolution.get("open_conflicts")
         and allocation.get("capital_budget_pct", 2.0) <= 1.0
         and set(allocation.get("direction_by_instrument", {}))
         == set(allocation.get("weight_by_instrument", {}))
+        and conflict_resolution.get("selected_action_ref", "").startswith("selected-action://")
+        and conflict_resolution.get("oss_risk_ref", "").startswith("oss://")
     )
 
 
@@ -7974,8 +8236,10 @@ def _restart_recovery_is_usable(restart_recovery: Mapping[str, Any]) -> bool:
 
 def _autonomous_schedule_is_usable(schedule: Mapping[str, Any]) -> bool:
     return bool(
-        schedule.get("trigger_mode") == "autonomous_daily_paper_loop"
+        schedule.get("schedule_ref", "").startswith("schedule://")
+        and schedule.get("trigger_mode") == "autonomous_daily_paper_loop"
         and schedule.get("phase_order_valid")
+        and schedule.get("phase_due_at_ordered")
         and schedule.get("missed_cycle_recovered")
         and [phase["phase"] for phase in schedule.get("phases", [])]
         == list(AUTONOMOUS_SCHEDULER_PHASES)
@@ -7984,11 +8248,20 @@ def _autonomous_schedule_is_usable(schedule: Mapping[str, Any]) -> bool:
 
 
 def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
+    runtime_refs = set(packet.get("runtime_bundle_refs", []))
     return bool(
         packet.get("component") == "lean_handoff"
         and packet.get("strategy_packet_materialized")
         and packet.get("received_by_lean_handoff")
         and packet.get("target_stage") == "paper"
+        and packet.get("persona_conflict_resolution_ref", "").startswith("persona-conflict://")
+        and packet.get("persona_conflict_resolution_ref") in runtime_refs
+        and float(packet.get("resolved_capital_budget_pct", 2.0)) <= 1.0
+        and set(packet.get("resolved_direction_by_instrument", {}))
+        == set(packet.get("resolved_weight_by_instrument", {}))
+        and packet.get("schedule_ref", "").startswith("schedule://")
+        and packet.get("schedule_ref") in runtime_refs
+        and packet.get("next_cycle_due_at")
         and packet.get("lean_engine_replay_status") == "passed"
         and packet.get("shioaji_sandbox_lifecycle_status") == "passed"
         and packet.get("case_vectorbt_request_id")
@@ -8033,6 +8306,54 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("case_runtime_refs_bound") is True
         and replay.get("next_cycle_scheduled") is True
         and replay.get("drives_persona_next_ooda_step") is True
+    )
+
+
+def _scheduler_conflict_ooda_proof_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    dispatch_events = list(proof.get("dispatch_events", []))
+    phase_events = list(proof.get("phase_events", []))
+    event_types = [event.get("event_type") for event in dispatch_events]
+    return bool(
+        proof.get("model_id") == PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("scheduler-conflict-ooda://")
+        and proof.get("schedule_ref", "").startswith("schedule://")
+        and proof.get("conflict_ref", "").startswith("persona-conflict://")
+        and proof.get("handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("adapter_followup_ref", "").startswith("broker-adapter-followup://")
+        and proof.get("runtime_feedback_ref", "").startswith("lean-runtime-feedback://")
+        and proof.get("dispatch_ref", "").startswith("scheduler-dispatch://")
+        and [event.get("phase") for event in phase_events] == list(AUTONOMOUS_SCHEDULER_PHASES)
+        and event_types == [
+            "scheduler_recovery_tick",
+            "multi_persona_conflict_resolution",
+            "lean_handoff_materialization",
+            "broker_adapter_followup",
+            "lean_runtime_feedback",
+            "scheduler_next_cycle_dispatch",
+        ]
+        and proof.get("next_scheduler_phase") in {"reflect", "evolve"}
+        and proof.get("next_ooda_step") in {"observe", "orient", "decide", "act"}
+        and proof.get("next_cycle_due_at")
+        and proof.get("input_hash")
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "scheduler_phase_order_valid",
+            "scheduler_phase_due_times_ordered",
+            "scheduler_recovered_restart_checkpoint",
+            "conflict_resolution_consumes_selected_action_and_risk",
+            "resolved_allocation_is_portfolio_complete",
+            "handoff_consumes_conflict_resolution",
+            "handoff_consumes_scheduler_ref",
+            "adapter_followup_consumes_schedule",
+            "lean_runtime_feedback_consumes_schedule",
+            "runtime_ooda_step_maps_to_scheduler_phase",
+            "next_dispatch_consumes_adapter_and_runtime_feedback",
+            "dispatch_events_strictly_ordered",
+            "no_future_dispatch_ref",
+            "paper_only_guard_retained",
+        ))
     )
 
 
@@ -9915,6 +10236,9 @@ def _build_usability_dimensions(
     lean_runtime_feedback = 1.0 if _lean_runtime_feedback_is_usable(
         operational_context["lean_runtime_feedback"]
     ) else 0.0
+    scheduler_conflict_ooda = 1.0 if _scheduler_conflict_ooda_proof_is_usable(
+        operational_context["scheduler_conflict_ooda_proof"]
+    ) else 0.0
     multi_generation_trajectory = 1.0 if _evolution_trajectory_is_usable(evolution_trajectory) else 0.0
     no_leakage_temporal_protocol = 1.0 if _no_leakage_temporal_protocol_is_usable(
         no_leakage_protocol
@@ -10003,6 +10327,7 @@ def _build_usability_dimensions(
         "case_specific_upstream_artifact_feedback": case_upstream_feedback,
         "lean_handoff_packet": lean_handoff,
         "lean_runtime_feedback": lean_runtime_feedback,
+        "scheduler_conflict_ooda_dispatch": scheduler_conflict_ooda,
     }
 
 
@@ -10432,6 +10757,21 @@ def _diagnose_validation_execution(
             {
                 "phase_count": len(operational_context["autonomous_schedule"]["phases"]),
                 "next_cycle_due_at": operational_context["autonomous_schedule"]["next_cycle_due_at"],
+            },
+        ),
+        _diagnostic_check(
+            "scheduler_conflict_ooda_dispatch_replays_next_cycle",
+            _scheduler_conflict_ooda_proof_is_usable(
+                operational_context["scheduler_conflict_ooda_proof"]
+            ),
+            {
+                "proof_id": operational_context["scheduler_conflict_ooda_proof"]["proof_id"],
+                "conflict_ref": operational_context["scheduler_conflict_ooda_proof"]["conflict_ref"],
+                "schedule_ref": operational_context["scheduler_conflict_ooda_proof"]["schedule_ref"],
+                "dispatch_ref": operational_context["scheduler_conflict_ooda_proof"]["dispatch_ref"],
+                "replay": copy.deepcopy(
+                    dict(operational_context["scheduler_conflict_ooda_proof"]["replay"])
+                ),
             },
         ),
         _diagnostic_check(
@@ -10881,6 +11221,9 @@ def _build_case_result(
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
             "lean_engine_replay_uses_runtime_binding": usability_dimensions["lean_engine_replay"] == 1.0,
             "lean_runtime_feedback_drives_ooda": usability_dimensions["lean_runtime_feedback"] == 1.0,
+            "scheduler_conflict_ooda_dispatch_replayed": usability_dimensions[
+                "scheduler_conflict_ooda_dispatch"
+            ] == 1.0,
             "shioaji_sandbox_lifecycle_reconciled": usability_dimensions["shioaji_sandbox_lifecycle"] == 1.0,
             "case_specific_upstream_artifact_feedback": usability_dimensions[
                 "case_specific_upstream_artifact_feedback"
@@ -10971,6 +11314,9 @@ def _build_summary(
     lean_runtime_feedbacks = [
         case["operational_context"]["lean_runtime_feedback"] for case in cases
     ]
+    scheduler_conflict_ooda_proofs = [
+        case["operational_context"]["scheduler_conflict_ooda_proof"] for case in cases
+    ]
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
@@ -11059,6 +11405,31 @@ def _build_summary(
             flag
             for feedback in lean_runtime_feedbacks
             for flag, value in feedback["replay"].items()
+            if value is True
+        }),
+        "scheduler_conflict_ooda_models": sorted({
+            proof["model_id"] for proof in scheduler_conflict_ooda_proofs
+        }),
+        "scheduler_conflict_ooda_event_types": sorted({
+            event["event_type"]
+            for proof in scheduler_conflict_ooda_proofs
+            for event in proof["dispatch_events"]
+        }),
+        "scheduler_conflict_ooda_phases": sorted({
+            event["phase"]
+            for proof in scheduler_conflict_ooda_proofs
+            for event in proof["phase_events"]
+        }),
+        "scheduler_conflict_ooda_next_ooda_steps": sorted({
+            proof["next_ooda_step"] for proof in scheduler_conflict_ooda_proofs
+        }),
+        "scheduler_conflict_ooda_next_scheduler_phases": sorted({
+            proof["next_scheduler_phase"] for proof in scheduler_conflict_ooda_proofs
+        }),
+        "scheduler_conflict_ooda_replay_flags": sorted({
+            flag
+            for proof in scheduler_conflict_ooda_proofs
+            for flag, value in proof["replay"].items()
             if value is True
         }),
         "shioaji_sandbox_models": sorted({
@@ -11736,6 +12107,18 @@ def _build_summary(
         "lean_runtime_feedback_drives_ooda_count": sum(
             1 for item in usable if item["lean_runtime_feedback_drives_ooda"]
         ),
+        "scheduler_conflict_ooda_proof_count": len(scheduler_conflict_ooda_proofs),
+        "scheduler_conflict_ooda_proof_pass_count": sum(
+            1
+            for proof in scheduler_conflict_ooda_proofs
+            if _scheduler_conflict_ooda_proof_is_usable(proof)
+        ),
+        "scheduler_conflict_ooda_event_count": sum(
+            len(proof["dispatch_events"]) for proof in scheduler_conflict_ooda_proofs
+        ),
+        "scheduler_conflict_ooda_dispatch_count": sum(
+            1 for item in usable if item["scheduler_conflict_ooda_dispatch_replayed"]
+        ),
         "shioaji_sandbox_lifecycle_count": sum(1 for item in usable if item["shioaji_sandbox_lifecycle_reconciled"]),
         "case_specific_vectorbt_backtest_count": sum(
             1 for item in usable if item["case_specific_upstream_artifact_feedback"]
@@ -11796,6 +12179,7 @@ def _build_summary(
             "Every case emits a persona-visible broker adapter lifecycle packet tying paper order status paths, Shioaji sandbox place/cancel/readback, live-disabled rejection, and restart recovery into a replayable response.",
             "Every broker adapter response triggers a scenario-specific persona follow-up action before the next autonomous paper cycle.",
             "Every LEAN runtime response is consumed by the persona and drives a scenario-specific next OODA action with runtime binding, object-store readback, and handoff refs.",
+            "Every case replays scheduler and multi-persona conflict causality from recovered schedule tick through resolved allocation, LEAN handoff, adapter/runtime feedback, and next-cycle dispatch.",
             "Every case passes a multi-dimensional usability score, not only a single return metric.",
         ],
     }
