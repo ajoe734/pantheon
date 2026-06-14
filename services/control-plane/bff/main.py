@@ -48529,6 +48529,10 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
     if ooda_src in (None, "missing") and packets:
         ooda_src = "composed_market_persona_defaults"
     surface_status = "ok" if ooda_src not in (None, "missing") else "unavailable"
+    # Propagate an unavailable backing source into the per-stage cards so the
+    # card body cannot report all-green while meta.status says "unavailable".
+    # A present-but-empty source (0 packets) stays "ok" with active_count 0.
+    stage_status = surface_status
 
     return {
         "enabled": True,
@@ -48541,7 +48545,7 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
             stage: {
                 "label": label,
                 "description": desc,
-                "status": "ok",
+                "status": stage_status,
                 "active_count": stage_counts[stage],
                 "detail_link": f"/bff/ooda/packets?stage={stage}",
             }

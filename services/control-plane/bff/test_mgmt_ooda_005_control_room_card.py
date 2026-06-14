@@ -216,3 +216,11 @@ def test_ooda_status_card_no_source_returns_unavailable(monkeypatch) -> None:
     assert card["enabled"] is True
     assert card["total_packet_count"] == 0
     assert card["meta"]["status"] == "unavailable"
+    # Regression: when the backing source is missing the card body must not
+    # report all-green. Every stage card propagates the unavailable status so
+    # the body cannot contradict meta.status.
+    assert card["stages"], "expected stage cards to be present"
+    for stage_card in card["stages"].values():
+        assert stage_card["status"] == "unavailable", (
+            f"stage card should mirror unavailable source, got {stage_card['status']}"
+        )
