@@ -1,0 +1,35 @@
+{
+  "incident_id": "inc-threshold-fixture-001",
+  "title": "Paper runtime drawdown threshold breached",
+  "telemetry_event": {
+    "event_id": "tel-threshold-fixture-001",
+    "event_type": "pnl_snapshot",
+    "created_at": "2026-05-17T00:00:00Z",
+    "severity": "high",
+    "runtime_binding_id": "rb-threshold-fixture-paper-001",
+    "deployment_stage": "paper",
+    "deployment_plan_id": "plan-threshold-fixture-001",
+    "capital_pool_id": "pool-threshold-fixture-001",
+    "persona_capital_binding_id": "pcb-threshold-fixture-001",
+    "artifact_id": "artifact-threshold-fixture-001",
+    "artifact_version": "1.0.0",
+    "runtime_id": "runtime-threshold-fixture-001",
+    "trace_id": "trace-threshold-fixture-001",
+    "metrics": {
+      "rolling_drawdown_multiple": 1.42,
+      "pnl": -315.75
+    },
+    "description": "Paper telemetry reported rolling drawdown above the governed threshold."
+  },
+  "threshold_snapshot": {
+    "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.5",
+    "signal_type": "performance_degradation",
+    "metric_name": "rolling_drawdown_multiple",
+    "comparator": "gt",
+    "observed_value": 1.42,
+    "threshold_value": 1.25,
+    "window": "paper-session",
+    "breached": true,
+    "note": "Drawdown exceeded the policy tolerance for paper runtime review."
+  }
+}
