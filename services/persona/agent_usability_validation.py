@@ -151,6 +151,7 @@ EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v
 NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1"
 STRICT_OOS_EVOLUTION_PROOF_MODEL_ID = "persona_strict_oos_evolution_proof_v1"
 PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID = "persona_memory_counterfactual_decision_proof_v1"
+MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID = "persona_multi_oss_closed_loop_proof_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
 PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
@@ -664,6 +665,13 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
         )
+        multi_oss_closed_loop_proof = _build_multi_oss_closed_loop_proof(
+            episode=episode,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
+            oss_followup_loop=oss_followup_loop,
+            decision_traces=(decision_trace0, decision_trace1),
+        )
         operational_context = _build_operational_context(
             episode=episode,
             generation_policies=(generation0_policy, generation1_policy, generation2_policy),
@@ -693,6 +701,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             oss_followup_loop=oss_followup_loop,
         )
         validation_diagnostics = _diagnose_validation_execution(
@@ -713,6 +722,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             oss_followup_loop=oss_followup_loop,
         )
         validation_repair = _repair_validation_deficiencies(
@@ -734,6 +744,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             oss_followup_loop=oss_followup_loop,
             usability_dimensions=usability_dimensions,
             oss_inputs=oss_inputs,
@@ -1905,6 +1916,257 @@ def _oss_response_followup_loop_is_usable(loop: Mapping[str, Any]) -> bool:
         and replay.get("feedback_adapt_receives_all_followup_refs") is True
         and replay.get("risk_response_available_to_risk_off") is True
         and loop.get("input_hash")
+    )
+
+
+def _build_multi_oss_closed_loop_proof(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    oss_followup_loop: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    required_roles = (
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    )
+    followup_by_role = {
+        str(followup["role"]): followup
+        for followup in oss_followup_loop.get("followups", [])
+    }
+    selected_oss = case_upstream_artifacts.get("selected_oss", {})
+    role_records: list[dict[str, Any]] = []
+    for role in required_roles:
+        result = oss_inputs[role]
+        followup = followup_by_role[role]
+        component = str(result["component"])
+        request_id = str(result["request_id"])
+        source_oss_ref = f"oss://{component}/{request_id}"
+        score_adjustments = {
+            action: float(value)
+            for action, value in followup["response"]["score_adjustments"].items()
+            if float(value) > 0.0
+        }
+        selected_entry = selected_oss.get(role)
+        selected_oss_ref = (
+            f"oss://{selected_entry['component']}/{selected_entry['request_id']}"
+            if isinstance(selected_entry, Mapping)
+            else None
+        )
+        role_records.append(
+            {
+                "role": role,
+                "component": component,
+                "source_oss_request_id": request_id,
+                "source_oss_ref": source_oss_ref,
+                "source_status": result.get("status"),
+                "source_drives_persona_step": result.get("drives_persona_step"),
+                "followup_request_id": followup["request"]["request_id"],
+                "followup_response_id": followup["response"]["response_id"],
+                "followup_output_ref": followup["response"]["output_ref"],
+                "followup_candidate_action": followup["response"]["candidate_action"],
+                "followup_score_adjustments": score_adjustments,
+                "source_ref_bound_to_followup": (
+                    followup["source_oss_ref"] == source_oss_ref
+                    and followup["request"]["source_oss_ref"] == source_oss_ref
+                    and followup["request"]["source_oss_request_id"] == request_id
+                ),
+                "followup_requested_after_oss_response": followup["request"]["requested_after_oss_response"],
+                "followup_completed": followup["response"]["status"] == "completed",
+                "followup_drives_persona_step": followup["request"]["drives_persona_step"],
+                "used_by_generations": list(followup["response"]["used_by_generations"]),
+                "selected_oss_ref": selected_oss_ref,
+                "selected_oss_bound": (
+                    selected_oss_ref is None
+                    or (
+                        selected_entry.get("model_id") == CASE_SELECTED_OSS_MODEL_ID
+                        and selected_entry.get("status") == "completed"
+                        and selected_entry.get("drives_persona_step") == _oss_persona_step(component)
+                    )
+                ),
+            }
+        )
+
+    all_followup_output_refs = [
+        record["followup_output_ref"] for record in role_records
+    ]
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scorer_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_refs = set(str(ref) for ref in selected_candidate["evidence_refs"])
+        reasoning_refs = set(str(ref) for ref in reasoning_request["input_refs"])
+        candidate_refs = set(str(ref) for ref in candidate_request["input_refs"])
+        scorer_adjustments = scorer_inputs["oss_followup_score_adjustments"]
+        role_trace_bindings = []
+        for record in role_records:
+            candidate_action = str(record["followup_candidate_action"])
+            role_adjustment = float(
+                record["followup_score_adjustments"].get(candidate_action, 0.0)
+            )
+            role_trace_bindings.append(
+                {
+                    "role": record["role"],
+                    "source_ref_in_reasoning_request": record["source_oss_ref"] in reasoning_refs,
+                    "followup_output_in_candidate_request": record["followup_output_ref"] in candidate_refs,
+                    "followup_output_in_selected_evidence": record["followup_output_ref"] in selected_refs,
+                    "scorer_adjustment_available": float(
+                        scorer_adjustments.get(candidate_action, 0.0)
+                    ) >= role_adjustment > 0.0,
+                }
+            )
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_candidate_id": trace["selected_candidate_id"],
+                "selected_action": _candidate_action_key(str(trace["selected_candidate_id"])),
+                "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
+                "reasoning_request_consumes_all_source_oss_refs": all(
+                    binding["source_ref_in_reasoning_request"]
+                    for binding in role_trace_bindings
+                ),
+                "candidate_request_consumes_all_followup_outputs": all(
+                    binding["followup_output_in_candidate_request"]
+                    for binding in role_trace_bindings
+                ),
+                "selected_candidate_cites_all_followup_outputs": set(
+                    all_followup_output_refs
+                ).issubset(selected_refs),
+                "scorer_has_all_role_adjustments": all(
+                    binding["scorer_adjustment_available"]
+                    for binding in role_trace_bindings
+                ),
+                "role_bindings": role_trace_bindings,
+            }
+        )
+
+    replay = {
+        "replayable": True,
+        "all_required_roles_present": set(oss_inputs) == set(required_roles)
+        and [record["role"] for record in role_records] == list(required_roles),
+        "all_oss_responses_completed": all(record["source_status"] == "completed" for record in role_records),
+        "all_source_refs_bound_to_followup_requests": all(
+            record["source_ref_bound_to_followup"] for record in role_records
+        ),
+        "all_followups_requested_after_oss_response": all(
+            record["followup_requested_after_oss_response"] is True for record in role_records
+        ),
+        "all_followup_responses_completed": all(record["followup_completed"] for record in role_records),
+        "all_followup_outputs_used_by_both_generations": all(
+            record["used_by_generations"] == [1, 2] for record in role_records
+        ),
+        "selected_case_oss_roles_bound": all(
+            record["selected_oss_bound"] for record in role_records if record["selected_oss_ref"]
+        )
+        and {
+            record["role"] for record in role_records if record["selected_oss_ref"]
+        } == {"alpha_model", "policy_candidate", "reflection_artifact", "risk_analytics"},
+        "all_source_oss_refs_consumed_by_reasoning": all(
+            binding["reasoning_request_consumes_all_source_oss_refs"]
+            for binding in trace_bindings
+        ),
+        "all_followup_outputs_consumed_by_candidate_generation": all(
+            binding["candidate_request_consumes_all_followup_outputs"]
+            for binding in trace_bindings
+        ),
+        "all_role_score_adjustments_available_to_scorer": all(
+            binding["scorer_has_all_role_adjustments"] for binding in trace_bindings
+        ),
+        "selected_candidate_cites_all_followup_outputs": all(
+            binding["selected_candidate_cites_all_followup_outputs"]
+            for binding in trace_bindings
+        ),
+        "feedback_adapt_path_receives_all_oss_feedback": set(
+            oss_followup_loop["candidate_evidence_refs_by_action"]["feedback-adapt"]
+        ) == set(all_followup_output_refs),
+    }
+    return {
+        "proof_id": f"multi-oss-closed-loop-proof-{episode.case_id}",
+        "proof_ref": f"multi-oss-closed-loop://{episode.case_id}",
+        "model_id": MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "role_records": role_records,
+        "trace_bindings": trace_bindings,
+        "evidence_refs": [
+            *[record["source_oss_ref"] for record in role_records],
+            *all_followup_output_refs,
+            oss_followup_loop["loop_ref"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "multi-oss-closed-loop-proof",
+            {
+                "case_id": episode.case_id,
+                "role_records": role_records,
+                "trace_bindings": trace_bindings,
+            },
+        ),
+    }
+
+
+def _multi_oss_closed_loop_proof_is_usable(proof: Mapping[str, Any]) -> bool:
+    required_roles = (
+        "session",
+        "alpha_model",
+        "backtest",
+        "policy_candidate",
+        "reflection_artifact",
+        "tracker",
+        "risk_analytics",
+        "handoff",
+    )
+    replay = proof.get("replay", {})
+    role_records = list(proof.get("role_records", []))
+    trace_bindings = list(proof.get("trace_bindings", []))
+    return bool(
+        proof.get("model_id") == MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("multi-oss-closed-loop://")
+        and proof.get("input_hash")
+        and [record.get("role") for record in role_records] == list(required_roles)
+        and len(trace_bindings) == 2
+        and all(record.get("source_status") == "completed" for record in role_records)
+        and all(record.get("source_ref_bound_to_followup") is True for record in role_records)
+        and all(record.get("followup_requested_after_oss_response") is True for record in role_records)
+        and all(record.get("followup_completed") is True for record in role_records)
+        and all(record.get("used_by_generations") == [1, 2] for record in role_records)
+        and all(
+            any(float(value) > 0.0 for value in record.get("followup_score_adjustments", {}).values())
+            for record in role_records
+        )
+        and all(
+            binding.get("reasoning_request_consumes_all_source_oss_refs") is True
+            and binding.get("candidate_request_consumes_all_followup_outputs") is True
+            and binding.get("selected_candidate_cites_all_followup_outputs") is True
+            and binding.get("scorer_has_all_role_adjustments") is True
+            for binding in trace_bindings
+        )
+        and replay.get("replayable") is True
+        and replay.get("all_required_roles_present") is True
+        and replay.get("all_oss_responses_completed") is True
+        and replay.get("all_source_refs_bound_to_followup_requests") is True
+        and replay.get("all_followups_requested_after_oss_response") is True
+        and replay.get("all_followup_responses_completed") is True
+        and replay.get("all_followup_outputs_used_by_both_generations") is True
+        and replay.get("selected_case_oss_roles_bound") is True
+        and replay.get("all_source_oss_refs_consumed_by_reasoning") is True
+        and replay.get("all_followup_outputs_consumed_by_candidate_generation") is True
+        and replay.get("all_role_score_adjustments_available_to_scorer") is True
+        and replay.get("selected_candidate_cites_all_followup_outputs") is True
+        and replay.get("feedback_adapt_path_receives_all_oss_feedback") is True
     )
 
 
@@ -6968,6 +7230,7 @@ def _build_usability_dimensions(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    multi_oss_closed_loop_proof: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, float]:
     fill_quality = mean(float(execution["fill_rate"]) for execution in executions)
@@ -7055,6 +7318,9 @@ def _build_usability_dimensions(
         _oss_response_followup_loop_is_usable(oss_followup_loop)
         and all(_trace_oss_followup_loop_is_usable(trace) for trace in decision_traces)
     ) else 0.0
+    multi_oss_closed_loop = 1.0 if _multi_oss_closed_loop_proof_is_usable(
+        multi_oss_closed_loop_proof
+    ) else 0.0
     oss_disagreement_arbitration = 1.0 if all(
         _trace_oss_disagreement_arbitration_is_usable(trace)
         for trace in decision_traces
@@ -7084,6 +7350,7 @@ def _build_usability_dimensions(
         "persona_decision_artifact": persona_decision_artifact,
         "persona_reasoning_generation": persona_reasoning_generation,
         "oss_response_followup_loop": oss_response_followup_loop,
+        "multi_oss_closed_loop": multi_oss_closed_loop,
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
         "tracking_reconciliation": tracking_reconciliation,
         "alpha_seed_revision": alpha_seed_revision,
@@ -7125,6 +7392,7 @@ def _diagnose_validation_execution(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    multi_oss_closed_loop_proof: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_plan = validation_plan["selected_validation_plan"]
@@ -7311,6 +7579,19 @@ def _diagnose_validation_execution(
                     dict(oss_followup_loop["candidate_score_adjustments"])
                 ),
                 "trace_ids": [trace["reflection_id"] for trace in decision_traces],
+            },
+        ),
+        _diagnostic_check(
+            "multi_oss_closed_loop_proof_replays_role_bindings",
+            _multi_oss_closed_loop_proof_is_usable(multi_oss_closed_loop_proof),
+            {
+                "proof_id": multi_oss_closed_loop_proof["proof_id"],
+                "role_count": len(multi_oss_closed_loop_proof["role_records"]),
+                "trace_binding_count": len(multi_oss_closed_loop_proof["trace_bindings"]),
+                "components": [
+                    record["component"] for record in multi_oss_closed_loop_proof["role_records"]
+                ],
+                "replay": copy.deepcopy(dict(multi_oss_closed_loop_proof["replay"])),
             },
         ),
         _diagnostic_check(
@@ -7685,6 +7966,7 @@ def _build_case_result(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    multi_oss_closed_loop_proof: Mapping[str, Any],
     oss_followup_loop: Mapping[str, Any],
     usability_dimensions: Mapping[str, float],
     oss_inputs: Mapping[str, Mapping[str, Any]],
@@ -7738,6 +8020,7 @@ def _build_case_result(
                 role: result["drives_persona_step"] for role, result in oss_inputs.items()
             },
             "response_followup_loop": copy.deepcopy(dict(oss_followup_loop)),
+            "closed_loop_proof": copy.deepcopy(dict(multi_oss_closed_loop_proof)),
         },
         "case_upstream_artifacts": _case_upstream_artifacts_case_summary(case_upstream_artifacts),
         "generation_results": generation_results,
@@ -7803,6 +8086,7 @@ def _build_case_result(
                 "memory_counterfactual_decision"
             ] == 1.0,
             "multi_oss_feedback_drives_decision": usability_dimensions["oss_evidence_completeness"] == 1.0,
+            "multi_oss_closed_loop_drives_decision": usability_dimensions["multi_oss_closed_loop"] == 1.0,
             "oss_response_followup_loop_drives_decision": usability_dimensions[
                 "oss_response_followup_loop"
             ] == 1.0,
@@ -7877,6 +8161,9 @@ def _build_summary(
         case["evolution"]["strict_oos_evolution_proof"] for case in cases
     ]
     oss_followup_loops = [case["oss_feedback"]["response_followup_loop"] for case in cases]
+    multi_oss_closed_loop_proofs = [
+        case["oss_feedback"]["closed_loop_proof"] for case in cases
+    ]
     oss_disagreement_arbitrations = [
         case["case_upstream_artifacts"]["oss_disagreement_arbitration"] for case in cases
     ]
@@ -8038,6 +8325,35 @@ def _build_summary(
             followup["response"]["candidate_action"]
             for loop in oss_followup_loops
             for followup in loop["followups"]
+        }),
+        "multi_oss_closed_loop_models": sorted({
+            proof["model_id"] for proof in multi_oss_closed_loop_proofs
+        }),
+        "multi_oss_closed_loop_roles": sorted({
+            record["role"]
+            for proof in multi_oss_closed_loop_proofs
+            for record in proof["role_records"]
+        }),
+        "multi_oss_closed_loop_components": sorted({
+            record["component"]
+            for proof in multi_oss_closed_loop_proofs
+            for record in proof["role_records"]
+        }),
+        "multi_oss_closed_loop_role_components": sorted({
+            f"{record['role']}:{record['component']}"
+            for proof in multi_oss_closed_loop_proofs
+            for record in proof["role_records"]
+        }),
+        "multi_oss_closed_loop_candidate_actions": sorted({
+            record["followup_candidate_action"]
+            for proof in multi_oss_closed_loop_proofs
+            for record in proof["role_records"]
+        }),
+        "multi_oss_closed_loop_replay_flags": sorted({
+            flag
+            for proof in multi_oss_closed_loop_proofs
+            for flag, value in proof["replay"].items()
+            if value is True
         }),
         "oss_disagreement_arbitration_models": sorted({
             arbitration["model_id"] for arbitration in oss_disagreement_arbitrations
@@ -8269,6 +8585,21 @@ def _build_summary(
         "multi_oss_feedback_drives_decision_count": sum(
             1 for item in usable if item["multi_oss_feedback_drives_decision"]
         ),
+        "multi_oss_closed_loop_proof_count": len(multi_oss_closed_loop_proofs),
+        "multi_oss_closed_loop_proof_pass_count": sum(
+            1
+            for proof in multi_oss_closed_loop_proofs
+            if _multi_oss_closed_loop_proof_is_usable(proof)
+        ),
+        "multi_oss_closed_loop_role_binding_count": sum(
+            len(proof["role_records"]) for proof in multi_oss_closed_loop_proofs
+        ),
+        "multi_oss_closed_loop_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in multi_oss_closed_loop_proofs
+        ),
+        "multi_oss_closed_loop_drives_decision_count": sum(
+            1 for item in usable if item["multi_oss_closed_loop_drives_decision"]
+        ),
         "oss_response_followup_loop_count": len(oss_followup_loops),
         "oss_response_followup_loop_pass_count": sum(
             1 for loop in oss_followup_loops if _oss_response_followup_loop_is_usable(loop)
@@ -8390,6 +8721,7 @@ def _build_summary(
             "Every agent decision emits a memory counterfactual proving retrieved lessons change selected scores and margins, while cold starts declare zero memory influence.",
             "Every case uses OSS feedback across alpha, policy, reflection, tracking, risk, session, and LEAN handoff roles.",
             "Every case converts OSS responses into persona follow-up requests that feed reasoning, candidate evidence, and scorer adjustments.",
+            "Every case emits a multi-OSS closed-loop proof replaying each role from OSS response through persona follow-up, reasoning inputs, candidate generation, scorer adjustments, and selected evidence.",
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
             "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case reconciles experiment-tracker readback divergence and routes the repaired tracking ref into persona reasoning, scorer adjustments, and selected candidate evidence.",
