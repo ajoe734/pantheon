@@ -37,8 +37,9 @@ The campaign deliberately goes **deeper and broader** each round.
 | # | Theme | Plan | Results | Fix |
 |---|---|---|---|---|
 | 1 | Live dev stack reachability & control-plane health | [round-01-plan.md](round-01-plan.md) | [round-01-results.md](round-01-results.md) | OODA card false-green when source missing (PR #1540) |
-| 2 | Contract-surface conformance breadth & ghost-route audit | [round-02-plan.md](round-02-plan.md) | [round-02-results.md](round-02-results.md) | `/api/v1/incidents/stream` SSE route un-shadowed |
-| 3 | _(planned at end of round 2, deeper/broader)_ | — | — | — |
+| 2 | Contract-surface conformance breadth & ghost-route audit | [round-02-plan.md](round-02-plan.md) | [round-02-results.md](round-02-results.md) | `/api/v1/incidents/stream` SSE route un-shadowed (PR #1541) |
+| 3 | Parameterized-route robustness (no unhandled 500s) | [round-03-plan.md](round-03-plan.md) | [round-03-results.md](round-03-results.md) | persona-league detail 500→404 + ErrorCode static guard |
+| 4 | _(planned at end of round 3, deeper/broader)_ | — | — | — |
 
 ## Environment under test
 

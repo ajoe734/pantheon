@@ -48970,7 +48970,7 @@ async def bff_persona_league_detail(
     if not entry:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona league entry not found",
             f"Persona league entry {persona_id} does not exist",
         )
