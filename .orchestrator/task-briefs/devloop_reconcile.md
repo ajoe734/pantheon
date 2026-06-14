@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Reconciliation-drift consumer: audit + fixture-proven emission
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Helper-claimed by Codex while Claude completes higher-priority work.
+- Next: Review approved: 14/14 tests pass, fixture-driven DriftReport emission verified at function and HTTP layers, compose consumer profile wired and locked by test, dev scheduling path documented. Returning to Codex for finalization.
 
 ## Summary
 審查 services/reconciliation-drift 的 consumer;用 telemetry event fixture 證明能產出 DriftReport;確認 dev 可掛載/排程。可用 fixture 獨立完成,不需等右半真實資料流。
