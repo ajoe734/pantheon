@@ -665,6 +665,7 @@ services:
       PANTHEON_BFF_PERSONA_SESSION_STORE: /data/bff/persona_sessions.json
       PANTHEON_BFF_PAPER_LIVE_DRIFT_STORE: /data/bff/paper_live_drift_reports.json
       PANTHEON_BFF_V5_INTERVENTION_STORE: /data/bff/v5_interventions.json
+      PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/loop_runs.json
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
@@ -788,6 +789,27 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+
+  loop-run-projector-scheduler:
+    profiles: ["loop-run-projector"]
+    build:
+      context: .
+      dockerfile: services/control-plane/bff/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    command: ["python", "scripts/loop_run_projector_scheduler.py"]
+    environment:
+      BFF_BASE: http://operator-bff:8001
+      BFF_TOKEN: ${BFF_TOKEN:-op-dev:admin:mfa}
+      BFF_INSECURE: "0"
+      PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/loop_runs.json
+      LOOP_RUN_PROJECTOR_INTERVAL_SECONDS: ${LOOP_RUN_PROJECTOR_INTERVAL_SECONDS:-300}
+      LOOP_RUN_PROJECTOR_MAX_TICKS: ${LOOP_RUN_PROJECTOR_MAX_TICKS:-0}
+    volumes:
+      - bff-data:/data/bff
+    depends_on:
+      operator-bff:
+        condition: service_healthy
 
   persona:
     build:
