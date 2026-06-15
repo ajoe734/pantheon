@@ -65,10 +65,16 @@ and resilience.
 | 12 | Real JWT/MFA auth path (not stub) — attack matrix | [round-12-plan.md](round-12-plan.md) | [round-12-results.md](round-12-results.md) | PASS (fail-closed, alg-pinned); F10 no-exp hardening; attack-matrix test added |
 | 13 | Idempotency-Key replay correctness | [round-13-plan.md](round-13-plan.md) | [round-13-results.md](round-13-results.md) | PASS (replay cached, conflict 409, key required) |
 | 14 | Concurrency & idempotency durability | [round-14-plan.md](round-14-plan.md) | [round-14-results.md](round-14-results.md) | PASS (no intra-instance race; guard test); F11 per-process idempotency under HA |
-
 | 15 | Pagination correctness & cursor robustness | [round-15-plan.md](round-15-plan.md) | [round-15-results.md](round-15-results.md) | PASS (complete, no dup/gap; cursor fuzz no 500); O5 scale note |
-
 | 16 | Broad query-param fuzz (500-hunt + injection) | [round-16-plan.md](round-16-plan.md) | [round-16-results.md](round-16-results.md) | F12: audit from_ts/to_ts 500 on every value (NameError) — fixed; H2 injection PASS |
+| 17 | Static undefined-symbol audit (NameError 500s) | [round-17-plan.md](round-17-plan.md) | [round-17-results.md](round-17-results.md) | PASS (F12 was sole instance in 655 files); guard test added |
+| 18 | Header + parameterized-route query fuzz | [round-18-plan.md](round-18-plan.md) | [round-18-results.md](round-18-results.md) | PASS (1,408 header + 52 query fuzz, 0 5xx) |
+| 19 | Graceful degradation & degradation-signal consistency | [round-19-plan.md](round-19-plan.md) | [round-19-results.md](round-19-results.md) | PASS (F2 generalized: 0 false-green across 722 surfaces) |
+| 20 | Phase-2 close-out: regression consolidation + summary | [round-20-plan.md](round-20-plan.md) | [round-20-results.md](round-20-results.md) | PASS (25 campaign tests green on dev); [SUMMARY-PHASE2.md](SUMMARY-PHASE2.md) |
+
+**Phase 2 close-out (rounds 11–20):** [SUMMARY-PHASE2.md](SUMMARY-PHASE2.md) —
+1 defect fixed (F12), 4 findings for owners (F10/F11/F13/O5), 3 regression test
+files added; the entire BFF input surface fuzzed (only 500 anywhere was F12).
 
 ## Environment under test
 
