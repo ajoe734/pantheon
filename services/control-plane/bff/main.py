@@ -42583,18 +42583,30 @@ def _merge_registry_records(
 
 
 def _tool_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_tools()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("tools")
 
 
 def _skill_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_skills()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("skills")
 
 
 def _mcp_server_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_mcp_servers()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("mcp_servers")
 
 
 def _mcp_tool_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_mcp_tools()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("mcp_tools")
 
 
@@ -45158,12 +45170,15 @@ def _get_bff_job(job_id: str) -> Optional[Dict[str, Any]]:
     overlay = _GOV_BFF_JOB_OVERLAY.get(job_id)
     if overlay is not None:
         return dict(overlay)
+    projected = read_store.get_job_bff(job_id)
+    if projected is not None:
+        return projected
     return _find_record_by_id(_read_store_fixture_records("jobs"), job_id, ("job_id", "id"))
 
 
 def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
     jobs = _merge_registry_records(
-        _read_store_fixture_records("jobs"),
+        read_store.list_jobs_bff(),
         [dict(record) for record in _GOV_BFF_JOB_OVERLAY.values()],
         ("job_id", "id"),
     )
@@ -45754,16 +45769,23 @@ async def bff_list_jobs(
         snapshot_at=snapshot_at,
         has_data=bool(jobs) or None,
     )
+    total = len(jobs)
     if surface.get("status") == "unavailable" and not jobs:
+        page_items: List[Dict[str, Any]] = []
         next_page_token = None
     else:
-        jobs, next_page_token = _page_slice(jobs, page_token, page_size)
+        page_items, next_page_token = _page_slice(jobs, page_token, page_size)
 
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {"jobs": surface}
     return {
-        "items": jobs,
-        "page_info": {"next_page_token": next_page_token},
+        "data": page_items,
+        "items": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "returned": len(page_items),
+        },
         "meta": meta,
     }
 

@@ -2493,6 +2493,19 @@ class ServiceBackedReadAdapter:
             "keys": ["persona_id", "id"],
             "snapshot_key": "consult_policies",
         },
+        "route_policies": {
+            "env": "PANTHEON_BFF_ROUTE_POLICY_STORE",
+            "dirs": (
+                "PANTHEON_PERSONA_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": (
+                "route_policies.json",
+                "persona_route_policies.json",
+            ),
+            "keys": ["policy_id", "route_policy_id", "id"],
+            "snapshot_key": "route_policies",
+        },
         "incidents": {
             "env": "PANTHEON_BFF_INCIDENT_STORE",
             "dirs": ("INCIDENTS_DATA_DIR", "POSTMORTEMS_DATA_DIR"),
@@ -2522,6 +2535,13 @@ class ServiceBackedReadAdapter:
             "filenames": ("decisions.json",),
             "keys": ["decision_id", "id"],
             "snapshot_key": "evolution_decisions",
+        },
+        "evolution_programs": {
+            "env": "PANTHEON_BFF_EVOLUTION_PROGRAM_STORE",
+            "dirs": ("EVOLUTION_DATA_DIR",),
+            "filenames": ("evolution_programs.json",),
+            "keys": ["program_id", "id"],
+            "snapshot_key": "evolution_programs",
         },
         "telemetry_summaries": {
             "env": "PANTHEON_BFF_TELEMETRY_SUMMARY_STORE",
@@ -2662,6 +2682,41 @@ class ServiceBackedReadAdapter:
             "keys": ["runId", "run_id", "id"],
             "snapshot_key": "agora_evaluation_runs",
         },
+        "agora_watchlist": {
+            "env": "PANTHEON_BFF_AGORA_WATCHLIST_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["watchlist_id", "symbol", "id"],
+            "snapshot_key": "agora_watchlist",
+        },
+        "agora_committee_evidence_packs": {
+            "env": "PANTHEON_BFF_AGORA_COMMITTEE_EVIDENCE_PACK_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["packId", "pack_id", "id", "sessionId", "session_id"],
+            "snapshot_key": "agora_committee_evidence_packs",
+        },
+        "agora_handoffs": {
+            "env": "PANTHEON_BFF_AGORA_HANDOFF_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["handoffId", "handoff_id", "id"],
+            "snapshot_key": "agora_handoffs",
+        },
+        "agora_training_examples": {
+            "env": "PANTHEON_BFF_AGORA_TRAINING_EXAMPLE_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["trainingExampleId", "training_example_id", "example_id", "id"],
+            "snapshot_key": "agora_training_examples",
+        },
+        "agora_audit_events": {
+            "env": "PANTHEON_BFF_AGORA_AUDIT_EVENT_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["auditId", "audit_id", "eventId", "event_id", "id"],
+            "snapshot_key": "agora_audit_events",
+        },
         "institutional_memory_entries": {
             "env": "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE",
             "dirs": ("PANTHEON_MEMORY_DATA_DIR",),
@@ -2748,6 +2803,20 @@ class ServiceBackedReadAdapter:
             "keys": ["hook_id", "cron_id", "id", "name"],
             "snapshot_key": "hook_registry",
         },
+        "jobs": {
+            "env": "PANTHEON_BFF_JOB_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["job_id", "run_id", "id"],
+            "snapshot_key": "jobs",
+        },
+        "decision_journal_entries": {
+            "env": "PANTHEON_BFF_DECISION_JOURNAL_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["entry_id", "id"],
+            "snapshot_key": "decision_journal_entries",
+        },
         "loop_runs": {
             "env": "PANTHEON_BFF_LOOP_RUN_STORE",
             "dirs": (),
@@ -2793,6 +2862,54 @@ class ServiceBackedReadAdapter:
             ),
             "keys": ["log_id", "id", "conflict_resolution_log_id"],
             "snapshot_key": "synthesis_conflict_logs",
+        },
+        "ranking_formulas": {
+            "env": "PANTHEON_BFF_RANKING_FORMULA_STORE",
+            "dirs": (
+                "PANTHEON_CAPITAL_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": ("ranking_formulas.json",),
+            "keys": ["formula_id", "id"],
+            "snapshot_key": "ranking_formulas",
+        },
+        "rankings": {
+            "env": "PANTHEON_BFF_RANKING_STORE",
+            "dirs": (
+                "PANTHEON_CAPITAL_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": ("rankings.json",),
+            "keys": ["ranking_id", "id"],
+            "snapshot_key": "rankings",
+        },
+        "skills": {
+            "env": "PANTHEON_BFF_SKILLS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("skills.json",),
+            "keys": ["skill_id", "id"],
+            "snapshot_key": "skills",
+        },
+        "tools": {
+            "env": "PANTHEON_BFF_TOOLS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("tools.json",),
+            "keys": ["tool_id", "id"],
+            "snapshot_key": "tools",
+        },
+        "mcp_servers": {
+            "env": "PANTHEON_BFF_MCP_SERVERS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("mcp_servers.json",),
+            "keys": ["server_id", "id"],
+            "snapshot_key": "mcp_servers",
+        },
+        "mcp_tools": {
+            "env": "PANTHEON_BFF_MCP_TOOLS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("mcp_tools.json",),
+            "keys": ["tool_id", "id"],
+            "snapshot_key": "mcp_tools",
         },
     }
 
@@ -6880,6 +6997,7 @@ class ReadSurfaceStore:
         "consultation_sessions": "consultation_sessions",
         "consult_transcripts": "consult_transcripts",
         "consult_policies": "consult_policies",
+        "route_policies": "route_policies",
         "incidents": "incidents",
         "postmortems": "postmortems",
         "evolution_decisions": "evolution_decisions",
@@ -6918,6 +7036,10 @@ class ReadSurfaceStore:
         "consult_memos": "consult_memos",
         "trainer_replays": "trainer_replays",
         "trainer_controls": "trainer_controls",
+        "workflow_templates": "workflow_templates",
+        "hook_registry": "hook_registry",
+        "jobs": "jobs",
+        "bff_jobs": "bff_jobs",
         "decision_journal_entries": "decision_journal_entries",
         "decision_journal_idempotency": "decision_journal_idempotency",
         "agora_journal_audit_events": "agora_journal_audit_events",
@@ -8884,7 +9006,7 @@ class ReadSurfaceStore:
             if approval_source != "missing":
                 return approval_source
         if dataset == "governance_review_queue_items":
-            for upstream_dataset in ("deployment_plans", "evolution_decisions"):
+            for upstream_dataset in ("deployment_plans", "approval_decisions", "evolution_decisions"):
                 upstream_source = self.dataset_source(
                     upstream_dataset,
                     include_snapshot_fallback=include_snapshot_fallback,
@@ -8921,6 +9043,22 @@ class ReadSurfaceStore:
         if not isinstance(records, dict):
             records = {}
             self._data[local_key] = records
+        return records
+
+    def _decision_journal_read_records(self) -> Dict[str, Dict[str, Any]]:
+        records: Dict[str, Dict[str, Any]] = {}
+        if "decision_journal_entries" in ServiceBackedReadAdapter._DATASETS:
+            available, service_records = self._service.list_records(
+                "decision_journal_entries",
+                include_snapshot_fallback=self._allow_local_snapshot_fallback,
+            )
+            if available:
+                for index, record in enumerate(service_records):
+                    if not isinstance(record, dict):
+                        continue
+                    key = _record_key(record, ["entry_id", "id"]) or str(index)
+                    records[key] = json.loads(json.dumps(record))
+        records.update(self._decision_journal_records())
         return records
 
     def _decision_journal_idempotency_records(self) -> Dict[str, Dict[str, Any]]:
@@ -9097,7 +9235,7 @@ class ReadSurfaceStore:
     def list_decision_journal_entries(self) -> List[Dict[str, Any]]:
         entries = [
             self._project_decision_journal_entry(record)
-            for record in self._decision_journal_records().values()
+            for record in self._decision_journal_read_records().values()
             if isinstance(record, dict)
         ]
         entries.sort(
@@ -10888,7 +11026,11 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list(self._local_overlay_records("ranking_formulas").values())
+        # Prefer service store (projected file); merge overlay writes on top.
+        all_records = self._read_dataset_records("ranking_formulas")
+        if not all_records:
+            all_records = list(self._local_overlay_records("ranking_formulas").values())
+        items = [json.loads(json.dumps(r)) for r in all_records if isinstance(r, dict)]
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: x.get("id", ""))
@@ -10896,7 +11038,18 @@ class ReadSurfaceStore:
     def get_ranking_formula(self, formula_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not formula_id:
             return None
-        return self._local_overlay_records("ranking_formulas").get(formula_id)
+        overlay = self._local_overlay_records("ranking_formulas").get(formula_id)
+        if overlay is not None:
+            return overlay
+        available, service_records = self._service.list_records("ranking_formulas")
+        if available and service_records:
+            for record in service_records:
+                if not isinstance(record, dict):
+                    continue
+                rid = str(record.get("formula_id") or record.get("id") or "")
+                if rid == formula_id:
+                    return json.loads(json.dumps(record))
+        return None
 
     def create_ranking_formula(
         self,
@@ -11022,7 +11175,11 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list(self._local_overlay_records("rankings").values())
+        # Prefer service store (projected file); merge overlay writes on top.
+        all_records = self._read_dataset_records("rankings")
+        if not all_records:
+            all_records = list(self._local_overlay_records("rankings").values())
+        items = [json.loads(json.dumps(r)) for r in all_records if isinstance(r, dict)]
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: x.get("id", ""))
@@ -11030,7 +11187,18 @@ class ReadSurfaceStore:
     def get_ranking(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ranking_id:
             return None
-        return self._local_overlay_records("rankings").get(ranking_id)
+        overlay = self._local_overlay_records("rankings").get(ranking_id)
+        if overlay is not None:
+            return overlay
+        available, service_records = self._service.list_records("rankings")
+        if available and service_records:
+            for record in service_records:
+                if not isinstance(record, dict):
+                    continue
+                rid = str(record.get("ranking_id") or record.get("id") or "")
+                if rid == ranking_id:
+                    return json.loads(json.dumps(record))
+        return None
 
     # ------------------------------------------------------------------ #
     # Persona League / Management fleet projection
@@ -11091,7 +11259,11 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list((self._local_fallback("evolution_programs") or {}).values())
+        available, raw_records = self._service.list_records("evolution_programs")
+        if available:
+            items = raw_records
+        else:
+            items = list((self._local_fallback("evolution_programs") or {}).values())
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: str(x.get("created_at") or ""), reverse=True)
@@ -11099,6 +11271,9 @@ class ReadSurfaceStore:
     def get_evolution_program(self, program_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not program_id:
             return None
+        available, record = self._service.record("evolution_programs", program_id)
+        if available:
+            return record
         return (self._local_fallback("evolution_programs") or {}).get(program_id)
 
     def create_evolution_program(
@@ -11580,7 +11755,17 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         job_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list((self._local_fallback("jobs") or self._local_fallback("bff_jobs") or {}).values())
+        available, service_records = self._service.list_records("jobs")
+        if available and service_records:
+            items = [dict(record) for record in service_records if isinstance(record, dict)]
+        else:
+            raw = self._local_fallback("jobs") or self._local_fallback("bff_jobs") or {}
+            if isinstance(raw, dict):
+                items = [dict(record) for record in raw.values() if isinstance(record, dict)]
+            elif isinstance(raw, list):
+                items = [dict(record) for record in raw if isinstance(record, dict)]
+            else:
+                items = []
         if status:
             items = [i for i in items if i.get("status") == status]
         if job_type:
@@ -11590,8 +11775,26 @@ class ReadSurfaceStore:
     def get_job_bff(self, job_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not job_id:
             return None
+        available, service_records = self._service.list_records("jobs")
+        if available and service_records:
+            for job in service_records:
+                if not isinstance(job, dict):
+                    continue
+                found = str(job.get("job_id") or job.get("run_id") or job.get("id") or "")
+                if found == str(job_id):
+                    return dict(job)
         jobs = self._local_fallback("jobs") or self._local_fallback("bff_jobs") or {}
-        return jobs.get(job_id)
+        if isinstance(jobs, dict):
+            job = jobs.get(job_id)
+            return dict(job) if isinstance(job, dict) else None
+        if isinstance(jobs, list):
+            for job in jobs:
+                if not isinstance(job, dict):
+                    continue
+                found = str(job.get("job_id") or job.get("run_id") or job.get("id") or "")
+                if found == str(job_id):
+                    return dict(job)
+        return None
 
     def get_job_logs_bff(self, job_id: str) -> List[Dict[str, Any]]:
         job = self.get_job_bff(job_id)
@@ -11753,6 +11956,7 @@ class ReadSurfaceStore:
         items = list((self._local_fallback("governance_review_queue_items") or {}).values())
         if not items:
             reviewable_statuses = {"draft", "pending_review", "proposed", "under_review", "reviewed"}
+            linked_approval_decision_ids: set[str] = set()
             for plan in self.list_deployment_plans():
                 status = str(plan.get("status") or "").strip().lower()
                 if status and status not in reviewable_statuses:
@@ -11761,6 +11965,9 @@ class ReadSurfaceStore:
                 if not plan_id:
                     continue
                 decision = self.get_approval_decision(plan.get("approval_decision_id"))
+                decision_id = str((decision or {}).get("decision_id") or (decision or {}).get("id") or "").strip()
+                if decision_id:
+                    linked_approval_decision_ids.add(decision_id)
                 items.append(
                     {
                         "item_id": f"review-{plan_id}",
@@ -11795,6 +12002,46 @@ class ReadSurfaceStore:
                         },
                         "review_summary": {
                             "riskSummary": decision.get("rationale") or "Evolution decision awaiting governance review.",
+                        },
+                    }
+                )
+            for decision in self.list_approval_decisions():
+                decision_id = str(decision.get("decision_id") or decision.get("id") or "").strip()
+                if not decision_id or decision_id in linked_approval_decision_ids:
+                    continue
+                status = str(decision.get("state") or decision.get("decision_state") or "").strip().lower()
+                outcome = str(decision.get("outcome") or decision.get("decision") or "").strip().lower()
+                if outcome in {"approved", "approved_with_conditions", "rejected"}:
+                    continue
+                if status and status not in reviewable_statuses:
+                    continue
+                target_type = str(decision.get("target_type") or decision.get("decision_type") or "ApprovalDecision")
+                submitted_by = decision.get("created_by") or decision.get("reviewer") or "governance-service"
+                can_decide = status in {"under_review", "reviewed", "in_review"}
+                items.append(
+                    {
+                        "item_id": f"review-{decision_id}",
+                        "item_type": "ApprovalDecision",
+                        "risk_level": decision.get("risk_level"),
+                        "status": status or "proposed",
+                        "submitted_at": decision.get("submitted_at") or decision.get("created_at"),
+                        "submitted_by": submitted_by,
+                        "governance_outcome": outcome or status or "proposed",
+                        "allowedActions": {
+                            "canApprove": can_decide,
+                            "canReject": can_decide,
+                            "canRequestRevision": status in {"proposed", "under_review", "reviewed"},
+                        },
+                        "review_summary": {
+                            "riskSummary": (
+                                decision.get("rationale")
+                                or f"{target_type} approval decision awaiting governance review."
+                            ),
+                            "evidence_refs": json.loads(json.dumps(decision.get("evidence_refs") or [])),
+                            "linked_approval_decision_id": decision_id,
+                            "target_type": target_type,
+                            "target_id": decision.get("target_id"),
+                            "target_version": decision.get("target_version"),
                         },
                     }
                 )
@@ -18838,6 +19085,13 @@ class ReadSurfaceStore:
         return []
 
     def list_route_policies(self) -> List[Dict[str, Any]]:
+        available, service_records = self._service.list_records("route_policies")
+        if available and service_records:
+            return [
+                json.loads(json.dumps(record))
+                for record in service_records
+                if isinstance(record, dict)
+            ]
         raw = self._local_fallback("route_policies")
         if isinstance(raw, dict):
             return [json.loads(json.dumps(v)) for v in raw.values() if isinstance(v, dict)]
@@ -18853,3 +19107,15 @@ class ReadSurfaceStore:
         lane: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         return []
+
+    def list_skills(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("skills"))
+
+    def list_tools(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("tools"))
+
+    def list_mcp_servers(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("mcp_servers"))
+
+    def list_mcp_tools(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("mcp_tools"))

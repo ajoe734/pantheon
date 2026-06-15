@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import uuid
@@ -14,6 +15,8 @@ from services.foundation.postgres_json_store import (
     ensure_postgres_schema,
     quote_pg_identifier,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 BACKEND_ENV = "MANAGEMENT_AI_STORE_BACKEND"
@@ -564,30 +567,70 @@ class PostgresAssistantConversationStore:
 
     def bootstrap(self) -> None:
         index_name = quote_pg_identifier(f"{self.surface}_turns_session_created_idx")
+        index_bare = f"{self.surface}_turns_session_created_idx"
+        turns_bare = f"{self.surface}_turns"
+
         with self._connect() as conn:
             ensure_postgres_schema(conn, self.schema)
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.turns_table} (
-                    turn_id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL REFERENCES {self.sessions_table}(record_id) ON DELETE CASCADE,
-                    role TEXT NOT NULL CHECK (role IN ('user','assistant','system')),
-                    text TEXT NOT NULL DEFAULT '',
-                    attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
-                    provider_status JSONB,
-                    trace_id TEXT,
-                    ui_snapshot JSONB,
-                    ui_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
-                    assistant_metadata JSONB,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    sequence BIGSERIAL NOT NULL
+
+            try:
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.turns_table} (
+                        turn_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL REFERENCES {self.sessions_table}(record_id) ON DELETE CASCADE,
+                        role TEXT NOT NULL CHECK (role IN ('user','assistant','system')),
+                        text TEXT NOT NULL DEFAULT '',
+                        attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        provider_status JSONB,
+                        trace_id TEXT,
+                        ui_snapshot JSONB,
+                        ui_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        assistant_metadata JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        sequence BIGSERIAL NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS {index_name} "
-                f"ON {self.turns_table} (session_id, created_at, sequence)"
-            )
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") != "42501":
+                    raise
+                # InsufficientPrivilege on CREATE TABLE: accept if the table already exists
+                # (table was created by the owning role; this connection role lacks DDL privilege)
+                conn.rollback()
+                cursor = conn.execute(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = %s AND table_name = %s",
+                    (self.schema, turns_bare),
+                )
+                if self._fetch_one(cursor) is None:
+                    raise
+                _logger.warning(
+                    "bootstrap: InsufficientPrivilege on CREATE TABLE %s; "
+                    "table already exists — continuing. "
+                    "Grant DDL privileges to the connecting role or pre-create the table as the owner.",
+                    self.turns_table_name,
+                )
+
+            try:
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS {index_name} "
+                    f"ON {self.turns_table} (session_id, created_at, sequence)"
+                )
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") != "42501":
+                    raise
+                # InsufficientPrivilege on CREATE INDEX: non-fatal.
+                # Index creation requires table ownership; BFF can operate without it
+                # (queries will be slower until the index is created by the table owner).
+                conn.rollback()
+                _logger.warning(
+                    "bootstrap: InsufficientPrivilege on CREATE INDEX %s; "
+                    "index must be created by the table owner. "
+                    "BFF will continue — queries on %s may be slower until the index exists.",
+                    index_bare,
+                    self.turns_table_name,
+                )
 
     def reset(self) -> None:
         with self._connect() as conn:
