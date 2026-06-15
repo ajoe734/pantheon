@@ -85,6 +85,9 @@ case "$MODE" in
     if [[ -f scripts/test_verify_e2e_promotion_governance.py ]]; then
       run_step "e2e-promotion-governance-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_promotion_governance.py || echo "promotion-governance verifier tests reported failures"
     fi
+    if [[ -f scripts/test_verify_e2e_capital_integrity.py ]]; then
+      run_step "e2e-capital-integrity-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_capital_integrity.py || echo "capital-integrity verifier tests reported failures"
+    fi
     ;;
   wave)
     REF="${TARGET_REF:-HEAD}"
