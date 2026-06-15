@@ -2802,6 +2802,34 @@ class ServiceBackedReadAdapter:
             "keys": ["log_id", "id", "conflict_resolution_log_id"],
             "snapshot_key": "synthesis_conflict_logs",
         },
+        "skills": {
+            "env": "PANTHEON_BFF_SKILLS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("skills.json",),
+            "keys": ["skill_id", "id"],
+            "snapshot_key": "skills",
+        },
+        "tools": {
+            "env": "PANTHEON_BFF_TOOLS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("tools.json",),
+            "keys": ["tool_id", "id"],
+            "snapshot_key": "tools",
+        },
+        "mcp_servers": {
+            "env": "PANTHEON_BFF_MCP_SERVERS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("mcp_servers.json",),
+            "keys": ["server_id", "id"],
+            "snapshot_key": "mcp_servers",
+        },
+        "mcp_tools": {
+            "env": "PANTHEON_BFF_MCP_TOOLS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("mcp_tools.json",),
+            "keys": ["tool_id", "id"],
+            "snapshot_key": "mcp_tools",
+        },
     }
 
     _HTTP_DATASETS = {
@@ -18968,3 +18996,15 @@ class ReadSurfaceStore:
         lane: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         return []
+
+    def list_skills(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("skills"))
+
+    def list_tools(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("tools"))
+
+    def list_mcp_servers(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("mcp_servers"))
+
+    def list_mcp_tools(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("mcp_tools"))
