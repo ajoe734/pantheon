@@ -3159,17 +3159,30 @@ class ServiceBackedReadAdapter:
         }
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
-        avail_inc, incidents = self._load_dataset("incidents")
-        if avail_inc:
-            return True, [
-                self._derive_loop_run(inc)
-                for inc in incidents.values()
-                if isinstance(inc, dict) and "sentinel" not in str(inc.get("title") or "").lower()
-            ]
+        # Merge the dedicated v5 loop-run ledger (paper-binding execution loops,
+        # populated by the loop-run projector) with incident-derived recovery
+        # loops. Previously incidents short-circuited this method, so the
+        # projector's PANTHEON_BFF_LOOP_RUN_STORE records never surfaced whenever
+        # any incident existed — leaving the ledger blank despite active runtimes.
+        runs: List[Dict[str, Any]] = []
+        seen: set = set()
         avail_lr, lr_data = self._load_dataset("loop_runs")
         if avail_lr:
-            return True, list(lr_data.values())
-        return False, []
+            for run in lr_data.values():
+                if isinstance(run, dict):
+                    runs.append(run)
+                    seen.add(str(run.get("id") or ""))
+        avail_inc, incidents = self._load_dataset("incidents")
+        if avail_inc:
+            for inc in incidents.values():
+                if not isinstance(inc, dict):
+                    continue
+                if "sentinel" in str(inc.get("title") or "").lower():
+                    continue
+                derived = self._derive_loop_run(inc)
+                if str(derived.get("id") or "") not in seen:
+                    runs.append(derived)
+        return (avail_lr or avail_inc), runs
 
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         avail_inc, incidents = self._load_dataset("incidents")
@@ -3186,10 +3199,15 @@ class ServiceBackedReadAdapter:
                 ]
                 if 1 <= n <= len(non_sentinel):
                     return True, self._derive_loop_run(non_sentinel[n - 1], override_id=loop_run_id)
-            return True, None
+        # Fall through to the dedicated loop-run ledger for projector-written
+        # records (e.g. lr-rb-*) that are not incident-derived.
         avail_lr, lr_data = self._load_dataset("loop_runs")
-        if avail_lr:
+        if avail_lr and loop_run_id in lr_data:
             return True, lr_data.get(loop_run_id)
+        if avail_inc:
+            return True, None
+        if avail_lr:
+            return True, None
         return False, None
 
     def list_sentinel_findings(
