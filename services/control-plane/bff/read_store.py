@@ -13452,8 +13452,15 @@ class ReadSurfaceStore:
                 )
             ]
 
+        # Normalize the sort key to a naive datetime: _parse_rfc3339 returns an
+        # aware value for tz-bearing run_at (e.g. "...Z") but the datetime.min
+        # fallback (and tz-less run_at) is naive, and sorting a mix of aware and
+        # naive datetimes raises TypeError. Strip tzinfo so the key is uniform
+        # (consistent with the cutoff comparison above).
         analyses.sort(
-            key=lambda analysis: _parse_rfc3339(analysis.get("run_at")) or datetime.min,
+            key=lambda analysis: (
+                _parse_rfc3339(analysis.get("run_at")) or datetime.min
+            ).replace(tzinfo=None),
             reverse=True,
         )
         return [self._project_research_analysis_summary(analysis) for analysis in analyses]
