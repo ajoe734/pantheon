@@ -3,7 +3,7 @@
     "snapshot_date": "2026-06-15",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 504,
+    "total_routes": 505,
     "status_values": [
       "implemented",
       "alias",
@@ -1771,6 +1771,12 @@
       "method": "GET",
       "path": "/redoc",
       "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/data-sources",
+      "family": "management-console",
       "status": "implemented"
     },
     {

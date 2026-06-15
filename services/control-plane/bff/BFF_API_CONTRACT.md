@@ -460,6 +460,28 @@ return a bare `[]`. The unavailable condition is explicit in
 | `/bff/alerts/{id}` | `/api/v1/operator/alerts` | `{ data: AlertProjection, meta }` for a single projected alert id | `operator` |
 | `/bff/knowledge` | Composed Knowledge inbox over `/api/v1/knowledge/notes`, `/api/v1/knowledge/evidence`, `/api/v1/knowledge/insights`, `/api/v1/knowledge/strategy-specs`, and `/api/v1/knowledge/memory` | `{ data, items, page_info, meta }`; when no backing knowledge store is readable, returns an empty `data/items` list with `meta.surfaces.knowledge_inbox.status: unavailable` and `source: missing` rather than a bare array | `operator` |
 
+### 10.1.2 BFF Management Endpoints (BFFGAP-CONSOLE Series)
+
+Endpoints in the `/bff/management/` namespace are BFF-only composite read views served
+directly from the source-ingest service registry or aggregated read surfaces.
+They follow the canonical list envelope (§5.1) and emit explicit degraded envelopes
+when the backing store is unconfigured or unreachable (§7.2).
+
+| Route | Composes | Response Envelope | Degraded Behavior | Min Role |
+|---|---|---|---|---|
+| `GET /bff/management/data-sources` | source-ingest `/api/source-ingest/registry` | `{ data, items, page_info, meta }` canonical list; `meta.status`, `meta.source`, `meta.surfaces.data_sources` | When source-ingest URL is unconfigured (`source:missing`) or unreachable (`source:unavailable`): empty `items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
+
+**Degraded envelope example** (source-ingest unconfigured in dev):
+
+```json
+{
+  "data": { "id": "management-data-sources", "items": [], "status": "unavailable", "source": "missing" },
+  "items": [],
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 0 },
+  "meta": { "snapshot_at": "...", "status": "unavailable", "source": "missing", "surfaces": { "data_sources": "unavailable" } }
+}
+```
+
 ### 10.2 Consistency Model
 
 Composed views support the `snapshot` query parameter:
@@ -713,7 +735,8 @@ New `list_*` methods were added to `ReadSurfaceStore` in `read_store.py`.
 | Governance sub-rules (GR) | GR-01 to GR-04 | 4 |
 | Composed views | 10 | 10 |
 | SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
-| **Total v1 endpoints** | | **55** |
+| BFF Management (BFFGAP-CONSOLE) | DS-01 (`/bff/management/data-sources`) | 1 |
+| **Total v1 endpoints** | | **56** |
 
 ---
 
