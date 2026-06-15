@@ -597,3 +597,38 @@ class TestPendingSignalStoreQueueKey(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPersistentDedup(unittest.TestCase):
+    """E2E-R16: signal dedup survives a worker restart via the store's
+    persistent processed-id window (fixes the in-memory-only limitation
+    flagged in E2E-R6)."""
+
+    def test_inmemory_store_records_processed(self):
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+        store = InMemoryPendingSignalStore()
+        self.assertFalse(store.is_processed("sig-x"))
+        store.mark_processed("sig-x")
+        self.assertTrue(store.is_processed("sig-x"))
+
+    def test_duplicate_caught_after_restart_via_persistent_store(self):
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+        store = InMemoryPendingSignalStore()
+        sig = _make_signal("sig-restart-1")
+
+        # Worker #1 processes the signal, recording it persistently.
+        c1 = SignalConsumer(store_client=store)
+        c1._remember_processed(sig["signal_id"])
+        self.assertTrue(store.is_processed("sig-restart-1"))
+
+        # Worker #2 (fresh process — empty in-memory set) must still dedup it.
+        c2 = SignalConsumer(store_client=store)
+        self.assertNotIn("sig-restart-1", c2._processed_signal_ids)
+        self.assertTrue(c2._is_duplicate(sig))
+        # and it is now cached in-memory too
+        self.assertIn("sig-restart-1", c2._processed_signal_ids)
+
+    def test_unknown_signal_not_duplicate(self):
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+        c = SignalConsumer(store_client=InMemoryPendingSignalStore())
+        self.assertFalse(c._is_duplicate(_make_signal("sig-fresh")))
