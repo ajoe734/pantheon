@@ -1,0 +1,109 @@
+name: BFF Live Evidence Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "GitHub environment that stores the live evidence secrets"
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - staging-live
+      bff_base_url:
+        description: "Target BFF base URL"
+        required: true
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+        type: string
+      approval_race_id:
+        description: "Expendable approval id for the two-operator race proof"
+        required: true
+        type: string
+      soak_seconds:
+        description: "SSE reconnect soak duration; strict evidence requires at least 75"
+        required: true
+        default: "75"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bff-live-evidence-gate-${{ github.workflow }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  live-evidence:
+    name: Strict BFF live evidence
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run
+      PANTHEON_BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      PANTHEON_FRONTEND_SHA: ${{ github.sha }}
+      PANTHEON_BFF_SHA: ${{ github.sha }}
+      PANTHEON_RELEASE_GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      PANTHEON_BFF_SMOKE_BEARER_TOKEN: ${{ secrets.PANTHEON_BFF_SMOKE_BEARER_TOKEN }}
+      PANTHEON_BFF_RBAC_TOKENS_JSON: ${{ secrets.PANTHEON_BFF_RBAC_TOKENS_JSON }}
+      PANTHEON_BFF_APPROVAL_RACE_TOKEN_A: ${{ secrets.PANTHEON_BFF_APPROVAL_RACE_TOKEN_A }}
+      PANTHEON_BFF_APPROVAL_RACE_TOKEN_B: ${{ secrets.PANTHEON_BFF_APPROVAL_RACE_TOKEN_B }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare current-run audit directory
+        run: mkdir -p "$PANTHEON_AUDIT_OUT_DIR"
+
+      - name: Validate strict live inputs
+        env:
+          APPROVAL_RACE_ID: ${{ inputs.approval_race_id }}
+        run: |
+          test -n "$PANTHEON_BFF_SMOKE_BEARER_TOKEN"
+          test -n "$PANTHEON_BFF_RBAC_TOKENS_JSON"
+          test -n "$PANTHEON_BFF_APPROVAL_RACE_TOKEN_A"
+          test -n "$PANTHEON_BFF_APPROVAL_RACE_TOKEN_B"
+          test -n "$APPROVAL_RACE_ID"
+
+      - name: Strict authenticated live evidence
+        run: |
+          python3 scripts/probe_bff_authenticated_live.py \
+            --base-url "$PANTHEON_BFF_BASE_URL" \
+            --strict-live-evidence \
+            --include-writes \
+            --approval-race-id "${{ inputs.approval_race_id }}" \
+            --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+
+      - name: Strict SSE live soak
+        run: |
+          python3 scripts/probe_bff_sse_stream.py \
+            --base-url "$PANTHEON_BFF_BASE_URL" \
+            --strict-live-evidence \
+            --soak-seconds "${{ inputs.soak_seconds }}" \
+            --soak-min-heartbeats 1 \
+            --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json"
+
+      - name: Aggregate current-run release evidence
+        if: always()
+        continue-on-error: true
+        run: |
+          node execute-plans/scripts/aggregate-release-gate.mjs \
+            --audit-dir "$PANTHEON_AUDIT_OUT_DIR"
+
+      - name: Upload current-run evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bff-live-evidence-current-run
+          path: .lovable/audits/current-run
+          if-no-files-found: error
