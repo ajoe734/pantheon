@@ -50946,6 +50946,19 @@ def _include_knowledge_routes() -> None:
 _include_knowledge_routes()
 
 
+# BFFGAP-LINEAGE: lineage graph endpoint via isolated module
+from console_gap.lineage import create_lineage_router  # noqa: E402
+app.include_router(
+    create_lineage_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_meta=_snapshot_meta,
+        utc_now=utc_now,
+    )
+)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)

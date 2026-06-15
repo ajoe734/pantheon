@@ -470,6 +470,7 @@ when the backing store is unconfigured or unreachable (§7.2).
 | Route | Composes | Response Envelope | Degraded Behavior | Min Role |
 |---|---|---|---|---|
 | `GET /bff/management/data-sources` | source-ingest `/api/source-ingest/registry` | `{ data, items, page_info, meta }` canonical list; `meta.status`, `meta.source`, `meta.surfaces.data_sources` | When source-ingest URL is unconfigured (`source:missing`) or unreachable (`source:unavailable`): empty `items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
+| `GET /bff/lineage` | lineage-edge store (`lineage_edges`) via `ReadSurfaceStore` | `{ data: { id, nodes, edges, status, source }, items, page_info, meta }` canonical list; `meta.status`, `meta.source`, `meta.surfaces.lineage`; query params: `root_id`, `root_type`, `depth` (default 3, max 20), `artifact_id` | When lineage store is missing (`source:missing`): empty `nodes`/`edges`/`items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
 
 **Degraded envelope example** (source-ingest unconfigured in dev):
 
@@ -675,8 +676,8 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 | **Canonical v1 Subtotal** | | **33** |
 | Composed views | 9 | 9 |
 | SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
-| BFF Management (BFFGAP-CONSOLE) | DS-01 (`/bff/management/data-sources`) | 1 |
-| **Total v1 endpoints** | | **49** |
+| BFF Management (BFFGAP-CONSOLE) | DS-01 (`/bff/management/data-sources`), LIN-01 (`/bff/lineage`) | 2 |
+| **Total v1 endpoints** | | **50** |
 
 ---
 
