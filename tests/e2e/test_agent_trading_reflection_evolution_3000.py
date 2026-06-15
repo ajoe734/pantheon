@@ -73,6 +73,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_TRACKING_RECONCILIATION_MODEL_ID,
     SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID,
     OSS_REQUIRED_COMPONENTS,
+    OSS_ROLE_COMPONENT_MATRIX,
     OSS_QUALITY_AFFECTED_ACTION_BY_ROLE,
     OSS_QUALITY_ISSUE_BY_ROLE,
     OSS_QUALITY_REPAIR_ACTION_BY_ROLE,
@@ -172,6 +173,20 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["multi_oss_closed_loop_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_closed_loop_role_binding_count"] == DEFAULT_CASE_COUNT * 8
     assert summary["multi_oss_closed_loop_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    expected_oss_role_components = sorted(
+        f"{role}:{component}"
+        for role, components in OSS_ROLE_COMPONENT_MATRIX.items()
+        for component in components
+    )
+    assert summary["multi_oss_closed_loop_role_component_matrix_expected_count"] == len(
+        expected_oss_role_components
+    )
+    assert summary["multi_oss_closed_loop_role_component_matrix_observed_count"] == len(
+        expected_oss_role_components
+    )
+    assert summary["multi_oss_closed_loop_role_component_matrix_missing_count"] == 0
+    assert summary["multi_oss_closed_loop_role_component_matrix_unexpected_count"] == 0
+    assert summary["multi_oss_closed_loop_role_component_min_case_count"] > 0
     assert summary["multi_oss_closed_loop_drives_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["persona_oss_ooda_ledger_count"] == DEFAULT_CASE_COUNT
     assert summary["persona_oss_ooda_ledger_pass_count"] == DEFAULT_CASE_COUNT
@@ -981,6 +996,17 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "tracker",
     }
     assert set(coverage["multi_oss_closed_loop_components"]) == set(OSS_REQUIRED_COMPONENTS)
+    assert coverage["multi_oss_closed_loop_expected_role_components"] == expected_oss_role_components
+    assert coverage["multi_oss_closed_loop_role_components"] == expected_oss_role_components
+    assert coverage["multi_oss_closed_loop_missing_role_components"] == []
+    assert coverage["multi_oss_closed_loop_unexpected_role_components"] == []
+    assert set(coverage["multi_oss_closed_loop_role_component_case_counts"]) == set(
+        expected_oss_role_components
+    )
+    assert all(
+        count > 0
+        for count in coverage["multi_oss_closed_loop_role_component_case_counts"].values()
+    )
     assert set(coverage["multi_oss_closed_loop_candidate_actions"]) == {
         "contrarian-check",
         "feedback-adapt",
@@ -994,6 +1020,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "all_followups_requested_after_oss_response",
         "all_oss_responses_completed",
         "all_required_roles_present",
+        "all_role_components_match_matrix",
         "all_role_score_adjustments_available_to_scorer",
         "all_source_oss_refs_consumed_by_reasoning",
         "all_source_refs_bound_to_followup_requests",
@@ -2443,6 +2470,9 @@ def _assert_multi_oss_closed_loop_proof(case: dict) -> None:
         followup = followup_by_role[role]
 
         assert component in OSS_REQUIRED_COMPONENTS
+        assert record["role_component_cell"] == f"{role}:{component}"
+        assert record["expected_components_for_role"] == list(OSS_ROLE_COMPONENT_MATRIX[role])
+        assert record["role_component_allowed"] is True
         assert record["source_oss_request_id"] == request_id
         assert record["source_oss_ref"] == source_ref
         assert record["source_status"] == "completed"
