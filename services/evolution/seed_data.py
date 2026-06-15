@@ -169,3 +169,25 @@ def seed(store: EvolutionDecisionStore) -> None:
         evidence_refs=[_ev("telemetry-sum-005")],
     )
     store.put(d5)
+
+    # EVO-VSLICE-001: vertical-slice proposal used to prove the evolution-programs
+    # BFF surface population path (CONSOLE-DATA-EVOLUTION task).
+    d_vslice = EvolutionDecision.create_proposed(
+        decision_id="evo-vslice-1",
+        target_type=EvolutionTargetType.CANDIDATE_ARTIFACT,
+        target_id="artifact-vslice-momentum-001",
+        target_version="v1",
+        action_type=EvolutionActionType.RETRAIN,
+        rationale="Momentum strategy vertical-slice: sharpe_pct_of_baseline fell to 0.38, below the 0.50 governed threshold over 20 days.",
+        created_by_id="evolution-controller",
+        threshold_snapshots=[
+            _snap(
+                ThresholdSignalType.PERFORMANCE_DEGRADATION,
+                "sharpe_pct_of_baseline",
+                0.38,
+                0.50,
+            )
+        ],
+        evidence_refs=[_ev("telemetry-sum-vslice-001")],
+    )
+    store.put(d_vslice)

@@ -2462,6 +2462,13 @@ class ServiceBackedReadAdapter:
             "keys": ["decision_id", "id"],
             "snapshot_key": "evolution_decisions",
         },
+        "evolution_programs": {
+            "env": "PANTHEON_BFF_EVOLUTION_PROGRAM_STORE",
+            "dirs": ("EVOLUTION_DATA_DIR",),
+            "filenames": ("evolution_programs.json",),
+            "keys": ["program_id", "id"],
+            "snapshot_key": "evolution_programs",
+        },
         "telemetry_summaries": {
             "env": "PANTHEON_BFF_TELEMETRY_SUMMARY_STORE",
             "dirs": (),
@@ -11030,7 +11037,11 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list((self._local_fallback("evolution_programs") or {}).values())
+        available, raw_records = self._service.list_records("evolution_programs")
+        if available:
+            items = raw_records
+        else:
+            items = list((self._local_fallback("evolution_programs") or {}).values())
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: str(x.get("created_at") or ""), reverse=True)
@@ -11038,6 +11049,9 @@ class ReadSurfaceStore:
     def get_evolution_program(self, program_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not program_id:
             return None
+        available, record = self._service.record("evolution_programs", program_id)
+        if available:
+            return record
         return (self._local_fallback("evolution_programs") or {}).get(program_id)
 
     def create_evolution_program(
