@@ -169,6 +169,8 @@ PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID = "persona_cross_cycle_runtime_carryover_
 PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID = "persona_persisted_cycle_resume_carryover_v1"
 PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID = "persona_multi_cycle_lineage_carryover_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
+PERSONA_DEGRADED_OSS_RESPONSE_MODEL_ID = "persona_degraded_oss_response_repair_v1"
+PERSONA_OSS_QUALITY_REPAIR_HANDOFF_MODEL_ID = "persona_oss_quality_repair_handoff_v1"
 PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID = "persona_multi_oss_disagreement_arbitration_v1"
 PERSONA_TRACKING_RECONCILIATION_MODEL_ID = "persona_tracking_readback_reconciliation_v1"
 PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID = (
@@ -223,6 +225,46 @@ OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE: dict[str, str] = {
     "backtest_policy_fill_conflict": "feedback-adapt",
     "policy_risk_liquidity_conflict": "risk-off",
     "reflection_handoff_execution_conflict": "contrarian-check",
+}
+OSS_QUALITY_ROLES: tuple[str, ...] = (
+    "session",
+    "alpha_model",
+    "backtest",
+    "policy_candidate",
+    "reflection_artifact",
+    "tracker",
+    "risk_analytics",
+    "handoff",
+)
+OSS_QUALITY_ISSUE_BY_ROLE: dict[str, str] = {
+    "session": "stale_openclaw_context_snapshot",
+    "alpha_model": "alpha_seed_drift_against_latest_feedback",
+    "backtest": "insufficient_pre_holdout_trade_coverage",
+    "policy_candidate": "low_confidence_policy_search_result",
+    "reflection_artifact": "incomplete_reflection_reasoning_trace",
+    "tracker": "experiment_lineage_readback_lag",
+    "risk_analytics": "risk_metric_coverage_below_threshold",
+    "handoff": "lean_handoff_schema_drift",
+}
+OSS_QUALITY_REPAIR_ACTION_BY_ROLE: dict[str, str] = {
+    "session": "refresh_openclaw_session_context",
+    "alpha_model": "rerun_alpha_seed_template_with_revised_seed",
+    "backtest": "rerun_vectorbt_with_full_pre_holdout_history",
+    "policy_candidate": "downweight_policy_candidate_and_request_new_search",
+    "reflection_artifact": "repair_reflection_artifact_before_scoring",
+    "tracker": "refresh_tracking_readback_before_lineage_handoff",
+    "risk_analytics": "downweight_risk_exposure_and_request_risk_rerun",
+    "handoff": "repair_lean_handoff_schema_before_packet",
+}
+OSS_QUALITY_AFFECTED_ACTION_BY_ROLE: dict[str, str] = {
+    "session": "retain-observe",
+    "alpha_model": "feedback-adapt",
+    "backtest": "feedback-adapt",
+    "policy_candidate": "feedback-adapt",
+    "reflection_artifact": "contrarian-check",
+    "tracker": "feedback-adapt",
+    "risk_analytics": "risk-off",
+    "handoff": "feedback-adapt",
 }
 AUTONOMOUS_SCHEDULER_PHASES = (
     "observe",
@@ -519,6 +561,24 @@ def run_agent_usability_validations(
         case_upstream_artifacts["persona_response"][
             "next_tracking_reconciliation_action"
         ] = tracking_reconciliation["repair"]["action"]
+        degraded_oss_response = _build_degraded_oss_response_repair(
+            episode=episode,
+            oss_inputs=oss_inputs,
+            case_upstream_artifacts=case_upstream_artifacts,
+            oss_followup_loop=oss_followup_loop,
+            tracking_reconciliation=tracking_reconciliation,
+        )
+        case_upstream_artifacts["degraded_oss_response"] = degraded_oss_response
+        case_upstream_artifacts["persona_response"]["evidence_refs"].extend(
+            [
+                degraded_oss_response["quality_ref"],
+                degraded_oss_response["repair_ref"],
+                degraded_oss_response["persona_quality_response"]["output_ref"],
+            ]
+        )
+        case_upstream_artifacts["persona_response"][
+            "next_oss_quality_action"
+        ] = degraded_oss_response["persona_quality_response"]["repair_action"]
         prior_memory = _retrieve_prior_lesson(persona_store, persona_id)
         prior_institutional_memory = _retrieve_cross_persona_institutional_lesson(
             institutional_store,
@@ -565,6 +625,7 @@ def run_agent_usability_validations(
             oss_disagreement_arbitration=oss_disagreement_arbitration,
             tracking_reconciliation=tracking_reconciliation,
             alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
+            degraded_oss_response=degraded_oss_response,
             cross_cycle_context=cross_cycle_context,
             multi_cycle_context=multi_cycle_context,
             institutional_memory_context=prior_institutional_memory,
@@ -631,6 +692,7 @@ def run_agent_usability_validations(
             oss_disagreement_arbitration=oss_disagreement_arbitration,
             tracking_reconciliation=tracking_reconciliation,
             alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
+            degraded_oss_response=degraded_oss_response,
             cross_cycle_context=cross_cycle_context,
             multi_cycle_context=multi_cycle_context,
             institutional_memory_context=prior_institutional_memory,
@@ -1486,6 +1548,166 @@ def _build_oss_response_followup_loop(
     return loop
 
 
+def _build_degraded_oss_response_repair(
+    *,
+    episode: PortfolioEpisode,
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
+    oss_followup_loop: Mapping[str, Any],
+    tracking_reconciliation: Mapping[str, Any],
+) -> dict[str, Any]:
+    role = OSS_QUALITY_ROLES[episode.ordinal % len(OSS_QUALITY_ROLES)]
+    result = oss_inputs[role]
+    component = str(result["component"])
+    request_id = str(result["request_id"])
+    issue_type = OSS_QUALITY_ISSUE_BY_ROLE[role]
+    repair_action = OSS_QUALITY_REPAIR_ACTION_BY_ROLE[role]
+    affected_action = OSS_QUALITY_AFFECTED_ACTION_BY_ROLE[role]
+    source_oss_ref = f"oss://{component}/{request_id}"
+    quality_id = f"degraded-oss-response-{episode.case_id}-{role}-{component}"
+    quality_ref = f"oss-quality://{quality_id}"
+    repair_ref = f"{quality_ref}/{issue_type}/{repair_action}"
+    output_ref = f"quality-repair://persona/{episode.case_id}/{role}/{component}"
+    repaired_artifact_ref = f"{output_ref}/repaired-artifact"
+    followup_output_ref = next(
+        (
+            followup["response"]["output_ref"]
+            for followup in oss_followup_loop.get("followups", [])
+            if followup.get("role") == role
+        ),
+        str(oss_followup_loop["loop_ref"]),
+    )
+    quality_score = round(0.46 + ((episode.ordinal + len(component)) % 9) / 100.0, 4)
+    penalty_by_action = {
+        "feedback-adapt": 0.0,
+        "retain-observe": 0.0,
+        "risk-off": 0.0,
+        "contrarian-check": 0.0,
+    }
+    penalty_by_action[affected_action] = -0.018
+    if affected_action != "feedback-adapt":
+        penalty_by_action["feedback-adapt"] = -0.006
+    score_adjustments = {
+        "feedback-adapt": 0.034,
+        "retain-observe": 0.006,
+        "risk-off": 0.014,
+        "contrarian-check": 0.01,
+    }
+    score_adjustments[affected_action] = round(
+        score_adjustments[affected_action] + 0.018,
+        10,
+    )
+    if affected_action != "feedback-adapt":
+        score_adjustments["feedback-adapt"] = round(
+            score_adjustments["feedback-adapt"] + 0.006,
+            10,
+        )
+    evidence_refs = [
+        quality_ref,
+        repair_ref,
+        output_ref,
+        repaired_artifact_ref,
+        source_oss_ref,
+        followup_output_ref,
+        str(oss_followup_loop["loop_ref"]),
+        str(tracking_reconciliation["reconciliation_ref"]),
+    ]
+    candidate_evidence_refs_by_action = {
+        action: list(evidence_refs)
+        for action in ("feedback-adapt", "retain-observe", "risk-off", "contrarian-check")
+    }
+    replay = {
+        "replayable": True,
+        "source_oss_completed_but_degraded": result.get("status") == "completed"
+        and quality_score < 0.6,
+        "quality_issue_detected_after_oss_response": bool(issue_type)
+        and source_oss_ref in evidence_refs,
+        "persona_repair_request_after_oss_response": True,
+        "persona_repair_response_completed": True,
+        "source_quality_downweighted_before_scoring": float(
+            penalty_by_action[affected_action]
+        )
+        < 0.0,
+        "repair_adjustment_available_to_scorer": any(
+            float(value) > 0.0 for value in score_adjustments.values()
+        ),
+        "feedback_candidate_receives_repair_ref": repair_ref
+        in candidate_evidence_refs_by_action["feedback-adapt"],
+        "followup_loop_bound_to_quality_repair": _oss_response_followup_loop_is_usable(
+            oss_followup_loop
+        )
+        and followup_output_ref in evidence_refs,
+        "tracking_reconciliation_bound_to_quality_repair": _tracking_readback_reconciliation_is_usable(
+            tracking_reconciliation
+        )
+        and tracking_reconciliation["reconciliation_ref"] in evidence_refs,
+    }
+    payload = {
+        "repair_id": quality_id,
+        "quality_ref": quality_ref,
+        "repair_ref": repair_ref,
+        "model_id": PERSONA_DEGRADED_OSS_RESPONSE_MODEL_ID,
+        "status": "repaired" if all(replay.values()) else "blocked",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "role": role,
+        "component": component,
+        "request_id": request_id,
+        "source_oss_ref": source_oss_ref,
+        "source_feedback_id": case_upstream_artifacts["feedback_id"],
+        "issue_type": issue_type,
+        "quality_signal": {
+            "source_status": result.get("status"),
+            "quality_score": quality_score,
+            "threshold": 0.6,
+            "completed_but_degraded": True,
+            "artifact_family": result.get("artifact_family"),
+            "metric_keys": sorted(str(key) for key in result.get("metrics", {})),
+            "diagnostic": issue_type,
+        },
+        "repair_request": {
+            "request_id": f"persona-quality-repair-request-{episode.case_id}-{role}-{component}",
+            "persona_id": _persona_id(episode.persona),
+            "source_oss_ref": source_oss_ref,
+            "quality_ref": quality_ref,
+            "issue_type": issue_type,
+            "requested_after_oss_response": True,
+            "input_refs": evidence_refs,
+            "ooda_phase": "orient",
+            "next_action": repair_action,
+        },
+        "persona_quality_response": {
+            "response_id": f"persona-quality-repair-response-{episode.case_id}-{role}-{component}",
+            "status": "completed",
+            "output_ref": output_ref,
+            "repaired_artifact_ref": repaired_artifact_ref,
+            "repair_action": repair_action,
+            "downweighted_candidate_action": affected_action,
+            "accepted_for_handoff_after_repair": True,
+            "evidence_refs": evidence_refs,
+            "used_by_generations": [1, 2],
+        },
+        "candidate_score_adjustments": score_adjustments,
+        "source_quality_penalty_by_action": penalty_by_action,
+        "candidate_evidence_refs_by_action": candidate_evidence_refs_by_action,
+        "replay": replay,
+    }
+    payload["input_hash"] = _stable_payload_hash(
+        "degraded-oss-response-repair",
+        {
+            "case_id": episode.case_id,
+            "role": role,
+            "component": component,
+            "issue_type": issue_type,
+            "repair_action": repair_action,
+            "score_adjustments": score_adjustments,
+            "penalty_by_action": penalty_by_action,
+            "evidence_refs": evidence_refs,
+        },
+    )
+    return payload
+
+
 def _build_oss_disagreement_arbitration(
     *,
     episode: PortfolioEpisode,
@@ -1975,6 +2197,16 @@ def _oss_followup_refs_for_action(
     action: str,
 ) -> list[str]:
     refs_by_action = loop.get("candidate_evidence_refs_by_action", {})
+    if not isinstance(refs_by_action, Mapping):
+        return []
+    return [str(ref) for ref in refs_by_action.get(action, [])]
+
+
+def _degraded_oss_response_refs_for_action(
+    response: Mapping[str, Any],
+    action: str,
+) -> list[str]:
+    refs_by_action = response.get("candidate_evidence_refs_by_action", {})
     if not isinstance(refs_by_action, Mapping):
         return []
     return [str(ref) for ref in refs_by_action.get(action, [])]
@@ -4712,6 +4944,7 @@ def _build_persona_reasoning_response(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    degraded_oss_response: Mapping[str, Any],
     cross_cycle_context: Mapping[str, Any],
     multi_cycle_context: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -4740,6 +4973,9 @@ def _build_persona_reasoning_response(
             str(oss_disagreement_arbitration["arbitration_ref"]),
             str(tracking_reconciliation["reconciliation_ref"]),
             str(alpha_seed_revision["revision_ref"]),
+            str(degraded_oss_response["quality_ref"]),
+            str(degraded_oss_response["repair_ref"]),
+            str(degraded_oss_response["persona_quality_response"]["output_ref"]),
             *list(cross_cycle_context.get("evidence_refs", [])),
             *list(multi_cycle_context.get("evidence_refs", [])),
             *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
@@ -4770,6 +5006,13 @@ def _build_persona_reasoning_response(
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
         "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
         "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
+        "oss_quality_ref": degraded_oss_response["quality_ref"],
+        "oss_quality_repair_ref": degraded_oss_response["repair_ref"],
+        "oss_quality_repair_output_ref": degraded_oss_response["persona_quality_response"][
+            "output_ref"
+        ],
+        "degraded_oss_role": degraded_oss_response["role"],
+        "degraded_oss_component": degraded_oss_response["component"],
         "cross_cycle_status": cross_cycle_context["status"],
         "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
         "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
@@ -4798,6 +5041,7 @@ def _build_persona_reasoning_response(
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        degraded_oss_response=degraded_oss_response,
         cross_cycle_context=cross_cycle_context,
         multi_cycle_context=multi_cycle_context,
     )
@@ -4817,6 +5061,7 @@ def _build_persona_reasoning_response(
             "process_oss_response_followup_requests",
             "arbitrate_multi_oss_disagreement",
             "reconcile_tracking_readback_before_scoring",
+            "repair_degraded_oss_artifact_before_scoring",
             "draft_candidate_policy_blueprints",
             "send_blueprints_to_scorer_and_risk_evaluator",
         ],
@@ -4890,6 +5135,25 @@ def _build_persona_reasoning_response(
                 dict(alpha_seed_revision["candidate_score_adjustments"])
             ),
         },
+        "oss_quality_repair_usage": {
+            "quality_ref": degraded_oss_response["quality_ref"],
+            "repair_ref": degraded_oss_response["repair_ref"],
+            "output_ref": degraded_oss_response["persona_quality_response"]["output_ref"],
+            "model_id": degraded_oss_response["model_id"],
+            "role": degraded_oss_response["role"],
+            "component": degraded_oss_response["component"],
+            "issue_type": degraded_oss_response["issue_type"],
+            "repair_action": degraded_oss_response["persona_quality_response"]["repair_action"],
+            "downweighted_candidate_action": degraded_oss_response["persona_quality_response"][
+                "downweighted_candidate_action"
+            ],
+            "candidate_score_adjustments": copy.deepcopy(
+                dict(degraded_oss_response["candidate_score_adjustments"])
+            ),
+            "source_quality_penalty_by_action": copy.deepcopy(
+                dict(degraded_oss_response["source_quality_penalty_by_action"])
+            ),
+        },
         "cross_cycle_usage": {
             "model_id": cross_cycle_context["model_id"],
             "status": cross_cycle_context["status"],
@@ -4947,6 +5211,7 @@ def _persona_reasoning_candidate_blueprints(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    degraded_oss_response: Mapping[str, Any],
     cross_cycle_context: Mapping[str, Any],
     multi_cycle_context: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
@@ -4998,6 +5263,22 @@ def _persona_reasoning_candidate_blueprints(
     risk_alpha_refs = _alpha_seed_revision_refs_for_action(alpha_seed_revision, "risk-off")
     retain_alpha_refs = _alpha_seed_revision_refs_for_action(alpha_seed_revision, "retain-observe")
     contrarian_alpha_refs = _alpha_seed_revision_refs_for_action(alpha_seed_revision, "contrarian-check")
+    feedback_quality_refs = _degraded_oss_response_refs_for_action(
+        degraded_oss_response,
+        "feedback-adapt",
+    )
+    risk_quality_refs = _degraded_oss_response_refs_for_action(
+        degraded_oss_response,
+        "risk-off",
+    )
+    retain_quality_refs = _degraded_oss_response_refs_for_action(
+        degraded_oss_response,
+        "retain-observe",
+    )
+    contrarian_quality_refs = _degraded_oss_response_refs_for_action(
+        degraded_oss_response,
+        "contrarian-check",
+    )
     return [
         {
             "action": "feedback-adapt",
@@ -5018,6 +5299,7 @@ def _persona_reasoning_candidate_blueprints(
                 *feedback_arbitration_refs,
                 *feedback_tracking_refs,
                 *feedback_alpha_refs,
+                *feedback_quality_refs,
                 *memory_refs,
                 *institutional_memory_refs,
                 *cross_cycle_refs,
@@ -5041,6 +5323,7 @@ def _persona_reasoning_candidate_blueprints(
                 *retain_arbitration_refs,
                 *retain_tracking_refs,
                 *retain_alpha_refs,
+                *retain_quality_refs,
             ],
             "memory_adjustment_key": "retain-observe",
             "rationale": "Keep the observe-only baseline as a scored alternative before rejecting it.",
@@ -5057,6 +5340,7 @@ def _persona_reasoning_candidate_blueprints(
                 *risk_arbitration_refs,
                 *risk_tracking_refs,
                 *risk_alpha_refs,
+                *risk_quality_refs,
                 *memory_refs,
                 *risk_institutional_memory_refs,
                 *risk_cross_cycle_refs,
@@ -5068,7 +5352,13 @@ def _persona_reasoning_candidate_blueprints(
                 or risk_cross_cycle_refs
                 or risk_multi_cycle_refs
             )
-            else [*risk_followup_refs, *risk_arbitration_refs, *risk_tracking_refs, *risk_alpha_refs],
+            else [
+                *risk_followup_refs,
+                *risk_arbitration_refs,
+                *risk_tracking_refs,
+                *risk_alpha_refs,
+                *risk_quality_refs,
+            ],
             "memory_adjustment_key": "risk-off",
             "rationale": "Use feedback direction but reduce exposure when the risk interpretation asks for caution.",
         },
@@ -5084,6 +5374,7 @@ def _persona_reasoning_candidate_blueprints(
                 *contrarian_arbitration_refs,
                 *contrarian_tracking_refs,
                 *contrarian_alpha_refs,
+                *contrarian_quality_refs,
             ],
             "memory_adjustment_key": "contrarian-check",
             "rationale": "Retain a contrarian control candidate for scored comparison and rejection.",
@@ -5232,6 +5523,42 @@ def _evaluate_persona_reasoning_response(
             },
         ),
         _persona_risk_check(
+            "reasoning_uses_degraded_oss_repair",
+            request.get("oss_quality_ref")
+            == response.get("oss_quality_repair_usage", {}).get("quality_ref")
+            and request.get("oss_quality_repair_ref")
+            == response.get("oss_quality_repair_usage", {}).get("repair_ref")
+            and request.get("oss_quality_ref") in request.get("input_refs", [])
+            and request.get("oss_quality_repair_ref") in request.get("input_refs", [])
+            and response.get("oss_quality_repair_usage", {}).get("model_id")
+            == PERSONA_DEGRADED_OSS_RESPONSE_MODEL_ID
+            and float(
+                response.get("oss_quality_repair_usage", {})
+                .get("source_quality_penalty_by_action", {})
+                .get(
+                    str(
+                        response.get("oss_quality_repair_usage", {}).get(
+                            "downweighted_candidate_action",
+                            "",
+                        )
+                    ),
+                    0.0,
+                )
+            )
+            < 0.0
+            and any(
+                float(value) > 0.0
+                for value in response.get("oss_quality_repair_usage", {})
+                .get("candidate_score_adjustments", {})
+                .values()
+            ),
+            {
+                "oss_quality_ref": request.get("oss_quality_ref"),
+                "oss_quality_repair_ref": request.get("oss_quality_repair_ref"),
+                "usage": copy.deepcopy(dict(response.get("oss_quality_repair_usage", {}))),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_uses_cross_cycle_runtime_feedback_or_declares_cold_start",
             (
                 request.get("cross_cycle_status") == "cold_start"
@@ -5328,6 +5655,7 @@ def _build_agent_decision_trace(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    degraded_oss_response: Mapping[str, Any],
     cross_cycle_context: Mapping[str, Any],
     multi_cycle_context: Mapping[str, Any],
     institutional_memory_context: Mapping[str, Any] | None,
@@ -5355,6 +5683,7 @@ def _build_agent_decision_trace(
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        degraded_oss_response=degraded_oss_response,
         cross_cycle_context=cross_cycle_context,
         multi_cycle_context=multi_cycle_context,
     )
@@ -5372,6 +5701,7 @@ def _build_agent_decision_trace(
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        degraded_oss_response=degraded_oss_response,
         cross_cycle_context=cross_cycle_context,
         multi_cycle_context=multi_cycle_context,
     )
@@ -5394,6 +5724,13 @@ def _build_agent_decision_trace(
         "oss_disagreement_arbitration_ref": oss_disagreement_arbitration["arbitration_ref"],
         "tracking_reconciliation_ref": tracking_reconciliation["reconciliation_ref"],
         "alpha_seed_revision_ref": alpha_seed_revision["revision_ref"],
+        "oss_quality_ref": degraded_oss_response["quality_ref"],
+        "oss_quality_repair_ref": degraded_oss_response["repair_ref"],
+        "degraded_oss_role": degraded_oss_response["role"],
+        "degraded_oss_component": degraded_oss_response["component"],
+        "degraded_oss_repair_action": degraded_oss_response["persona_quality_response"][
+            "repair_action"
+        ],
         "cross_cycle_status": cross_cycle_context["status"],
         "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
         "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
@@ -5412,6 +5749,9 @@ def _build_agent_decision_trace(
         str(oss_disagreement_arbitration["arbitration_ref"]),
         str(tracking_reconciliation["reconciliation_ref"]),
         str(alpha_seed_revision["revision_ref"]),
+        str(degraded_oss_response["quality_ref"]),
+        str(degraded_oss_response["repair_ref"]),
+        str(degraded_oss_response["persona_quality_response"]["output_ref"]),
         *list(cross_cycle_context.get("evidence_refs", [])),
         *list(multi_cycle_context.get("evidence_refs", [])),
         *(
@@ -5437,6 +5777,7 @@ def _build_agent_decision_trace(
         oss_disagreement_arbitration=oss_disagreement_arbitration,
         tracking_reconciliation=tracking_reconciliation,
         alpha_seed_revision=alpha_seed_revision,
+        degraded_oss_response=degraded_oss_response,
         cross_cycle_context=cross_cycle_context,
         multi_cycle_context=multi_cycle_context,
         decision_inputs=decision_inputs,
@@ -5480,6 +5821,7 @@ def _score_agent_candidates(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    degraded_oss_response: Mapping[str, Any],
     cross_cycle_context: Mapping[str, Any],
     multi_cycle_context: Mapping[str, Any],
 ) -> list[PolicyCandidate]:
@@ -5501,6 +5843,8 @@ def _score_agent_candidates(
     disagreement_score_adjustments = dict(oss_disagreement_arbitration["candidate_score_adjustments"])
     tracking_score_adjustments = dict(tracking_reconciliation["candidate_score_adjustments"])
     alpha_seed_score_adjustments = dict(alpha_seed_revision["candidate_score_adjustments"])
+    quality_repair_score_adjustments = dict(degraded_oss_response["candidate_score_adjustments"])
+    source_quality_penalty_by_action = dict(degraded_oss_response["source_quality_penalty_by_action"])
     cross_cycle_score_adjustments = _cross_cycle_score_adjustments(cross_cycle_context)
     multi_cycle_lineage_score_adjustments = _multi_cycle_lineage_score_adjustments(multi_cycle_context)
     risk_off = max(0.25, policy_hint_risk - 0.35)
@@ -5554,6 +5898,8 @@ def _score_agent_candidates(
                 + float(disagreement_score_adjustments["feedback-adapt"])
                 + float(tracking_score_adjustments["feedback-adapt"])
                 + float(alpha_seed_score_adjustments["feedback-adapt"])
+                + float(quality_repair_score_adjustments["feedback-adapt"])
+                + float(source_quality_penalty_by_action["feedback-adapt"])
                 + float(cross_cycle_score_adjustments["feedback-adapt"])
                 + float(multi_cycle_lineage_score_adjustments["feedback-adapt"])
                 + feedback_score
@@ -5574,6 +5920,8 @@ def _score_agent_candidates(
                 + float(disagreement_score_adjustments["retain-observe"])
                 + float(tracking_score_adjustments["retain-observe"])
                 + float(alpha_seed_score_adjustments["retain-observe"])
+                + float(quality_repair_score_adjustments["retain-observe"])
+                + float(source_quality_penalty_by_action["retain-observe"])
                 + max(feedback_score, 0)
             ),
             "fallback_evidence_refs": (f"policy://{baseline_policy['policy_id']}",),
@@ -5589,6 +5937,8 @@ def _score_agent_candidates(
                 + float(disagreement_score_adjustments["risk-off"])
                 + float(tracking_score_adjustments["risk-off"])
                 + float(alpha_seed_score_adjustments["risk-off"])
+                + float(quality_repair_score_adjustments["risk-off"])
+                + float(source_quality_penalty_by_action["risk-off"])
                 + float(cross_cycle_score_adjustments["risk-off"])
                 + float(multi_cycle_lineage_score_adjustments["risk-off"])
                 + max(0.0, risk_penalty)
@@ -5606,6 +5956,8 @@ def _score_agent_candidates(
                 + float(disagreement_score_adjustments["contrarian-check"])
                 + float(tracking_score_adjustments["contrarian-check"])
                 + float(alpha_seed_score_adjustments["contrarian-check"])
+                + float(quality_repair_score_adjustments["contrarian-check"])
+                + float(source_quality_penalty_by_action["contrarian-check"])
             ),
             "fallback_evidence_refs": (
                 f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",
@@ -5672,6 +6024,7 @@ def _build_persona_decision_artifact(
     oss_disagreement_arbitration: Mapping[str, Any],
     tracking_reconciliation: Mapping[str, Any],
     alpha_seed_revision: Mapping[str, Any],
+    degraded_oss_response: Mapping[str, Any],
     cross_cycle_context: Mapping[str, Any],
     multi_cycle_context: Mapping[str, Any],
     decision_inputs: Mapping[str, Any],
@@ -5721,6 +6074,13 @@ def _build_persona_decision_artifact(
         "alpha_seed_revision": copy.deepcopy(dict(alpha_seed_revision)),
         "alpha_seed_revision_score_adjustments": copy.deepcopy(
             dict(alpha_seed_revision["candidate_score_adjustments"])
+        ),
+        "degraded_oss_response": copy.deepcopy(dict(degraded_oss_response)),
+        "oss_quality_repair_score_adjustments": copy.deepcopy(
+            dict(degraded_oss_response["candidate_score_adjustments"])
+        ),
+        "source_quality_penalty_by_action": copy.deepcopy(
+            dict(degraded_oss_response["source_quality_penalty_by_action"])
         ),
         "cross_cycle_context": copy.deepcopy(dict(cross_cycle_context)),
         "cross_cycle_score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
@@ -5810,6 +6170,23 @@ def _build_persona_decision_artifact(
         "alpha_seed_revision_action": alpha_seed_revision["revision"]["action"],
         "alpha_seed_revision_component": alpha_seed_revision["alpha_component"],
         "alpha_seed_revision_key": alpha_seed_revision["revision"]["revision_key"],
+        "oss_quality_ref": degraded_oss_response["quality_ref"],
+        "oss_quality_repair_ref": degraded_oss_response["repair_ref"],
+        "oss_quality_repair_output_ref": degraded_oss_response["persona_quality_response"][
+            "output_ref"
+        ],
+        "oss_quality_repaired_artifact_ref": degraded_oss_response[
+            "persona_quality_response"
+        ]["repaired_artifact_ref"],
+        "degraded_oss_role": degraded_oss_response["role"],
+        "degraded_oss_component": degraded_oss_response["component"],
+        "degraded_oss_issue_type": degraded_oss_response["issue_type"],
+        "degraded_oss_repair_action": degraded_oss_response["persona_quality_response"][
+            "repair_action"
+        ],
+        "degraded_oss_downweighted_candidate_action": degraded_oss_response[
+            "persona_quality_response"
+        ]["downweighted_candidate_action"],
         "cross_cycle_status": cross_cycle_context["status"],
         "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
         "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
@@ -5854,6 +6231,10 @@ def _build_persona_decision_artifact(
                 str(tracking_reconciliation["reconciliation_ref"]),
                 str(tracking_reconciliation["repair"]["repair_ref"]),
                 str(alpha_seed_revision["revision_ref"]),
+                str(degraded_oss_response["quality_ref"]),
+                str(degraded_oss_response["repair_ref"]),
+                str(degraded_oss_response["persona_quality_response"]["output_ref"]),
+                str(degraded_oss_response["persona_quality_response"]["repaired_artifact_ref"]),
                 *oss_evidence_refs,
                 *[
                     followup["response"]["output_ref"]
@@ -5865,6 +6246,7 @@ def _build_persona_decision_artifact(
                 ],
                 *tracking_reconciliation["repair"]["evidence_refs"],
                 *alpha_seed_revision["persona_alpha_response"]["evidence_refs"],
+                *degraded_oss_response["persona_quality_response"]["evidence_refs"],
                 *list(cross_cycle_context.get("evidence_refs", [])),
                 *list(multi_cycle_context.get("evidence_refs", [])),
                 *([str(memory_influence["influence_ref"])] if memory_influence["influence_ref"] else []),
@@ -6048,6 +6430,31 @@ def _build_persona_decision_artifact(
                 for value in scoring_inputs["alpha_seed_revision_score_adjustments"].values()
             )
         ),
+        "uses_degraded_oss_response_repair": (
+            _degraded_oss_response_repair_is_usable(degraded_oss_response)
+            and str(degraded_oss_response["quality_ref"]) in candidate_generation["request"]["input_refs"]
+            and str(degraded_oss_response["repair_ref"]) in candidate_generation["request"]["input_refs"]
+            and str(degraded_oss_response["repair_ref"]) in selected_candidate.get("evidence_refs", [])
+            and set(
+                degraded_oss_response["candidate_evidence_refs_by_action"][
+                    _candidate_action_key(str(selected_candidate["candidate_id"]))
+                ]
+            ).issubset(set(selected_candidate.get("evidence_refs", [])))
+            and float(
+                scoring_inputs["source_quality_penalty_by_action"][
+                    degraded_oss_response["persona_quality_response"][
+                        "downweighted_candidate_action"
+                    ]
+                ]
+            )
+            < 0.0
+            and any(
+                float(value) > 0
+                for value in scoring_inputs[
+                    "oss_quality_repair_score_adjustments"
+                ].values()
+            )
+        ),
         "uses_cross_cycle_runtime_feedback_or_declares_cold_start": (
             (
                 cross_cycle_context["status"] == "cold_start"
@@ -6155,6 +6562,8 @@ def _persona_candidate_scorecard(
     disagreement_score_adjustments = dict(scoring_inputs["oss_disagreement_score_adjustments"])
     tracking_reconciliation_score_adjustments = dict(scoring_inputs["tracking_reconciliation_score_adjustments"])
     alpha_seed_revision_score_adjustments = dict(scoring_inputs["alpha_seed_revision_score_adjustments"])
+    quality_repair_score_adjustments = dict(scoring_inputs["oss_quality_repair_score_adjustments"])
+    source_quality_penalty_by_action = dict(scoring_inputs["source_quality_penalty_by_action"])
     cross_cycle_score_adjustments = dict(scoring_inputs["cross_cycle_score_adjustments"])
     multi_cycle_lineage_score_adjustments = dict(scoring_inputs["multi_cycle_lineage_score_adjustments"])
     if candidate_id.endswith("-feedback-adapt"):
@@ -6167,6 +6576,8 @@ def _persona_candidate_scorecard(
         disagreement_adjustment = float(disagreement_score_adjustments["feedback-adapt"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["feedback-adapt"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["feedback-adapt"])
+        quality_repair_adjustment = float(quality_repair_score_adjustments["feedback-adapt"])
+        source_quality_penalty = float(source_quality_penalty_by_action["feedback-adapt"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["feedback-adapt"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["feedback-adapt"]
@@ -6179,6 +6590,8 @@ def _persona_candidate_scorecard(
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + quality_repair_adjustment
+            + source_quality_penalty
             + cross_cycle_adjustment
             + multi_cycle_lineage_adjustment
             + feedback_score
@@ -6195,6 +6608,8 @@ def _persona_candidate_scorecard(
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "oss_quality_repair_adjustment": quality_repair_adjustment,
+            "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "feedback_score": feedback_score,
@@ -6212,6 +6627,8 @@ def _persona_candidate_scorecard(
         disagreement_adjustment = float(disagreement_score_adjustments["retain-observe"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["retain-observe"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["retain-observe"])
+        quality_repair_adjustment = float(quality_repair_score_adjustments["retain-observe"])
+        source_quality_penalty = float(source_quality_penalty_by_action["retain-observe"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["retain-observe"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["retain-observe"]
@@ -6224,6 +6641,8 @@ def _persona_candidate_scorecard(
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + quality_repair_adjustment
+            + source_quality_penalty
             + cross_cycle_adjustment
             + multi_cycle_lineage_adjustment
             + max(feedback_score, 0.0),
@@ -6237,6 +6656,8 @@ def _persona_candidate_scorecard(
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "oss_quality_repair_adjustment": quality_repair_adjustment,
+            "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "positive_feedback_score": round(max(feedback_score, 0.0), 10),
@@ -6251,6 +6672,8 @@ def _persona_candidate_scorecard(
         disagreement_adjustment = float(disagreement_score_adjustments["risk-off"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["risk-off"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["risk-off"])
+        quality_repair_adjustment = float(quality_repair_score_adjustments["risk-off"])
+        source_quality_penalty = float(source_quality_penalty_by_action["risk-off"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["risk-off"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["risk-off"]
@@ -6263,6 +6686,8 @@ def _persona_candidate_scorecard(
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + quality_repair_adjustment
+            + source_quality_penalty
             + cross_cycle_adjustment
             + multi_cycle_lineage_adjustment
             + max(0.0, risk_penalty),
@@ -6276,6 +6701,8 @@ def _persona_candidate_scorecard(
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "oss_quality_repair_adjustment": quality_repair_adjustment,
+            "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
@@ -6290,6 +6717,8 @@ def _persona_candidate_scorecard(
         disagreement_adjustment = float(disagreement_score_adjustments["contrarian-check"])
         tracking_reconciliation_adjustment = float(tracking_reconciliation_score_adjustments["contrarian-check"])
         alpha_seed_revision_adjustment = float(alpha_seed_revision_score_adjustments["contrarian-check"])
+        quality_repair_adjustment = float(quality_repair_score_adjustments["contrarian-check"])
+        source_quality_penalty = float(source_quality_penalty_by_action["contrarian-check"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["contrarian-check"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["contrarian-check"]
@@ -6302,6 +6731,8 @@ def _persona_candidate_scorecard(
             + disagreement_adjustment
             + tracking_reconciliation_adjustment
             + alpha_seed_revision_adjustment
+            + quality_repair_adjustment
+            + source_quality_penalty
             + cross_cycle_adjustment
             + multi_cycle_lineage_adjustment,
             10,
@@ -6314,6 +6745,8 @@ def _persona_candidate_scorecard(
             "oss_disagreement_adjustment": disagreement_adjustment,
             "tracking_reconciliation_adjustment": tracking_reconciliation_adjustment,
             "alpha_seed_revision_adjustment": alpha_seed_revision_adjustment,
+            "oss_quality_repair_adjustment": quality_repair_adjustment,
+            "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
         }
@@ -6442,6 +6875,11 @@ def _policy_from_decision_trace(
         case_upstream_artifacts=case_upstream_artifacts,
         generation=generation,
     )
+    oss_quality_repair_lineage = _build_oss_quality_repair_lineage(
+        episode=episode,
+        case_upstream_artifacts=case_upstream_artifacts,
+        generation=generation,
+    )
     legs = {
         window.instrument: {
             "instrument": window.instrument,
@@ -6474,6 +6912,11 @@ def _policy_from_decision_trace(
         "risk_analytics_lineage_ref": risk_analytics_lineage["lineage_ref"],
         "risk_analytics_lineage_hash": risk_analytics_lineage["lineage_hash"],
         "risk_analytics_lineage": risk_analytics_lineage,
+        "oss_quality_repair_ref": oss_quality_repair_lineage["repair_ref"],
+        "oss_quality_repair_lineage_ref": oss_quality_repair_lineage["lineage_ref"],
+        "oss_quality_repair_lineage_hash": oss_quality_repair_lineage["lineage_hash"],
+        "oss_quality_degraded_source_ref": oss_quality_repair_lineage["source_oss_ref"],
+        "oss_quality_repair_lineage": oss_quality_repair_lineage,
         "decision_inputs": {
             **dict(decision_trace["decision_inputs"]),
             "memory_reused": {
@@ -6686,6 +7129,54 @@ def _build_risk_analytics_lineage(
     }
 
 
+def _build_oss_quality_repair_lineage(
+    *,
+    episode: PortfolioEpisode,
+    case_upstream_artifacts: Mapping[str, Any],
+    generation: int,
+) -> dict[str, Any]:
+    response = case_upstream_artifacts["degraded_oss_response"]
+    persona_response = response["persona_quality_response"]
+    role = str(response["role"])
+    lineage_seed = {
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation": generation,
+        "role": role,
+        "component": response["component"],
+        "request_id": response["request_id"],
+        "source_oss_ref": response["source_oss_ref"],
+        "quality_ref": response["quality_ref"],
+        "repair_ref": response["repair_ref"],
+        "output_ref": persona_response["output_ref"],
+        "repaired_artifact_ref": persona_response["repaired_artifact_ref"],
+        "issue_type": response["issue_type"],
+        "repair_action": persona_response["repair_action"],
+        "downweighted_candidate_action": persona_response[
+            "downweighted_candidate_action"
+        ],
+        "quality_score": response["quality_signal"]["quality_score"],
+        "candidate_score_adjustments": copy.deepcopy(
+            dict(response["candidate_score_adjustments"])
+        ),
+        "source_quality_penalty_by_action": copy.deepcopy(
+            dict(response["source_quality_penalty_by_action"])
+        ),
+        "source_response_input_hash": response["input_hash"],
+    }
+    lineage_hash = _stable_payload_hash("oss-quality-repair-lineage", lineage_seed)
+    return {
+        "model_id": PERSONA_OSS_QUALITY_REPAIR_HANDOFF_MODEL_ID,
+        "lineage_ref": (
+            f"oss-quality-repair-lineage://{episode.case_id}/generation{generation}/"
+            f"{role}/{response['component']}"
+        ),
+        "lineage_hash": lineage_hash,
+        **lineage_seed,
+        "input_hash": lineage_hash,
+    }
+
+
 def _build_signals(
     *,
     episode: PortfolioEpisode,
@@ -6697,6 +7188,7 @@ def _build_signals(
     policy_oss_lineage = dict(policy.get("policy_oss_lineage") or {})
     reflection_oss_lineage = dict(policy.get("reflection_oss_lineage") or {})
     risk_analytics_lineage = dict(policy.get("risk_analytics_lineage") or {})
+    oss_quality_repair_lineage = dict(policy.get("oss_quality_repair_lineage") or {})
     for leg_index, window in enumerate(episode.windows):
         leg = policy["legs"][window.instrument]
         entry_row = _entry_row_for_generation(window, generation)
@@ -6751,6 +7243,18 @@ def _build_signals(
                 "risk_analytics_request_id": risk_analytics_lineage.get("request_id"),
                 "risk_analytics_materiality_penalty": risk_analytics_lineage.get(
                     "risk_materiality_penalty"
+                ),
+                "oss_quality_repair_ref": oss_quality_repair_lineage.get("repair_ref"),
+                "oss_quality_ref": oss_quality_repair_lineage.get("quality_ref"),
+                "oss_quality_repair_lineage_ref": oss_quality_repair_lineage.get("lineage_ref"),
+                "oss_quality_repair_lineage_hash": oss_quality_repair_lineage.get("lineage_hash"),
+                "oss_quality_degraded_source_ref": oss_quality_repair_lineage.get("source_oss_ref"),
+                "oss_quality_repaired_artifact_ref": oss_quality_repair_lineage.get(
+                    "repaired_artifact_ref"
+                ),
+                "oss_quality_repair_action": oss_quality_repair_lineage.get("repair_action"),
+                "oss_quality_downweighted_candidate_action": oss_quality_repair_lineage.get(
+                    "downweighted_candidate_action"
                 ),
                 "validation_signature": episode.validation_signature,
                 "historical_ohlcv_fixture": HISTORICAL_OHLCV_FIXTURE,
@@ -7411,6 +7915,15 @@ def _build_operational_context(
         lean_handoff=lean_handoff,
         lean_runtime_feedback=lean_runtime_feedback,
     )
+    oss_quality_repair_handoff = _build_oss_quality_repair_handoff_proof(
+        episode=episode,
+        final_policy=generation_policies[-1],
+        case_upstream_artifacts=case_upstream_artifacts,
+        decision_traces=decision_traces,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        lean_runtime_feedback=lean_runtime_feedback,
+    )
     evolved_strategy_packet_proof = _build_evolved_strategy_packet_proof(
         episode=episode,
         final_policy=generation_policies[-1],
@@ -7451,6 +7964,7 @@ def _build_operational_context(
             risk_analytics_lineage_handoff["proof_id"],
             openclaw_session_handoff["proof_id"],
             alpha_seed_revision_handoff["proof_id"],
+            oss_quality_repair_handoff["proof_id"],
         ),
         "scenario": scenario,
         "market_friction": market_friction,
@@ -7472,6 +7986,7 @@ def _build_operational_context(
         "risk_analytics_lineage_handoff": risk_analytics_lineage_handoff,
         "openclaw_session_handoff": openclaw_session_handoff,
         "alpha_seed_revision_handoff": alpha_seed_revision_handoff,
+        "oss_quality_repair_handoff": oss_quality_repair_handoff,
         "evolved_strategy_packet_proof": evolved_strategy_packet_proof,
         "scheduler_conflict_ooda_proof": scheduler_conflict_ooda_proof,
     }
@@ -8299,6 +8814,7 @@ def _build_lean_object_store_packet_targets(
     policy_oss_lineage = dict(final_policy.get("policy_oss_lineage") or {})
     reflection_oss_lineage = dict(final_policy.get("reflection_oss_lineage") or {})
     risk_analytics_lineage = dict(final_policy.get("risk_analytics_lineage") or {})
+    oss_quality_repair_lineage = dict(final_policy.get("oss_quality_repair_lineage") or {})
     alpha_seed_context = dict(alpha_seed_revision_handoff or {})
     proposal_lineage = copy.deepcopy(
         dict(persona_conflict_resolution.get("proposal_lineage") or {})
@@ -8354,6 +8870,18 @@ def _build_lean_object_store_packet_targets(
             "multi_persona_proposal_lineage_hash": proposal_lineage_hash,
             "multi_persona_proposal_refs": proposal_refs,
             "multi_persona_proposal_persona_ids": proposal_persona_ids,
+            "oss_quality_repair_ref": oss_quality_repair_lineage.get("repair_ref"),
+            "oss_quality_ref": oss_quality_repair_lineage.get("quality_ref"),
+            "oss_quality_repair_lineage_ref": oss_quality_repair_lineage.get("lineage_ref"),
+            "oss_quality_repair_lineage_hash": oss_quality_repair_lineage.get("lineage_hash"),
+            "oss_quality_degraded_source_ref": oss_quality_repair_lineage.get("source_oss_ref"),
+            "oss_quality_repaired_artifact_ref": oss_quality_repair_lineage.get(
+                "repaired_artifact_ref"
+            ),
+            "oss_quality_repair_action": oss_quality_repair_lineage.get("repair_action"),
+            "oss_quality_downweighted_candidate_action": oss_quality_repair_lineage.get(
+                "downweighted_candidate_action"
+            ),
         }
         entry_row = _entry_row_for_generation(window, int(final_policy["generation"]))
         targets.append(
@@ -8394,6 +8922,20 @@ def _build_lean_object_store_packet_targets(
                 "multi_persona_proposal_lineage_hash": proposal_lineage_hash,
                 "multi_persona_proposal_refs": proposal_refs,
                 "multi_persona_proposal_persona_ids": proposal_persona_ids,
+                "oss_quality_repair_ref": oss_quality_repair_lineage.get("repair_ref"),
+                "oss_quality_ref": oss_quality_repair_lineage.get("quality_ref"),
+                "oss_quality_repair_lineage_ref": oss_quality_repair_lineage.get("lineage_ref"),
+                "oss_quality_repair_lineage_hash": oss_quality_repair_lineage.get("lineage_hash"),
+                "oss_quality_degraded_source_ref": oss_quality_repair_lineage.get(
+                    "source_oss_ref"
+                ),
+                "oss_quality_repaired_artifact_ref": oss_quality_repair_lineage.get(
+                    "repaired_artifact_ref"
+                ),
+                "oss_quality_repair_action": oss_quality_repair_lineage.get("repair_action"),
+                "oss_quality_downweighted_candidate_action": oss_quality_repair_lineage.get(
+                    "downweighted_candidate_action"
+                ),
                 "generation": final_policy["generation"],
                 "direction": int(leg["direction"]),
                 "action": signal_payload["action"],
@@ -8443,6 +8985,26 @@ def _build_lean_object_store_packet_readback(
     )
     risk_analytics_lineage_hash = str(risk_analytics_lineage.get("lineage_hash") or "")
     risk_analytics_ref = str(risk_analytics_lineage.get("source_oss_ref") or "")
+    oss_quality_repair_lineage = dict(
+        strategy_packet.get("oss_quality_repair_lineage") or {}
+    )
+    loaded_oss_quality_repair_lineage = dict(
+        loaded_packet.get("oss_quality_repair_lineage") or {}
+    )
+    oss_quality_repair_lineage_hash = str(
+        oss_quality_repair_lineage.get("lineage_hash") or ""
+    )
+    oss_quality_repair_lineage_ref = str(
+        oss_quality_repair_lineage.get("lineage_ref") or ""
+    )
+    oss_quality_repair_ref = str(oss_quality_repair_lineage.get("repair_ref") or "")
+    oss_quality_ref = str(oss_quality_repair_lineage.get("quality_ref") or "")
+    oss_quality_degraded_source_ref = str(
+        oss_quality_repair_lineage.get("source_oss_ref") or ""
+    )
+    oss_quality_repaired_artifact_ref = str(
+        oss_quality_repair_lineage.get("repaired_artifact_ref") or ""
+    )
     multi_persona_proposal_lineage = dict(
         strategy_packet.get("multi_persona_proposal_lineage") or {}
     )
@@ -8607,6 +9169,47 @@ def _build_lean_object_store_packet_readback(
             == risk_analytics_lineage_hash
             for target in loaded_targets
         ),
+        "oss_quality_repair_lineage_present_in_packet": bool(
+            oss_quality_repair_lineage_ref.startswith("oss-quality-repair-lineage://")
+            and oss_quality_repair_lineage_hash
+            and oss_quality_repair_ref.startswith("oss-quality://")
+            and oss_quality_ref.startswith("oss-quality://")
+        ),
+        "loaded_packet_preserves_oss_quality_repair_lineage": (
+            loaded_oss_quality_repair_lineage == oss_quality_repair_lineage
+        ),
+        "loaded_oss_quality_repair_ref_matches_packet": (
+            loaded_packet.get("oss_quality_repair_lineage_ref")
+            == oss_quality_repair_lineage_ref
+            and loaded_packet.get("oss_quality_repair_lineage_hash")
+            == oss_quality_repair_lineage_hash
+            and loaded_packet.get("oss_quality_repair_ref") == oss_quality_repair_ref
+            and loaded_packet.get("oss_quality_ref") == oss_quality_ref
+            and loaded_packet.get("oss_quality_degraded_source_ref")
+            == oss_quality_degraded_source_ref
+            and loaded_packet.get("oss_quality_repaired_artifact_ref")
+            == oss_quality_repaired_artifact_ref
+        ),
+        "all_targets_bind_oss_quality_repair_lineage": all(
+            target.get("oss_quality_repair_lineage_ref")
+            == oss_quality_repair_lineage_ref
+            and target.get("oss_quality_repair_lineage_hash")
+            == oss_quality_repair_lineage_hash
+            and target.get("oss_quality_repair_ref") == oss_quality_repair_ref
+            and target.get("signal", {})
+            .get("metadata", {})
+            .get("oss_quality_repair_lineage_ref")
+            == oss_quality_repair_lineage_ref
+            and target.get("signal", {})
+            .get("metadata", {})
+            .get("oss_quality_repair_lineage_hash")
+            == oss_quality_repair_lineage_hash
+            and target.get("signal", {})
+            .get("metadata", {})
+            .get("oss_quality_repair_ref")
+            == oss_quality_repair_ref
+            for target in loaded_targets
+        ),
         "multi_persona_proposal_lineage_present_in_packet": bool(
             proposal_lineage_ref.startswith("persona-proposal-lineage://")
             and proposal_lineage_hash
@@ -8728,6 +9331,27 @@ def _build_lean_object_store_packet_readback(
             "risk_analytics_lineage_ref"
         ),
         "loaded_risk_analytics_lineage": loaded_risk_analytics_lineage,
+        "oss_quality_repair_lineage_hash": oss_quality_repair_lineage_hash,
+        "loaded_oss_quality_repair_lineage_hash": (
+            loaded_oss_quality_repair_lineage.get("lineage_hash")
+        ),
+        "oss_quality_repair_lineage_ref": oss_quality_repair_lineage_ref,
+        "loaded_oss_quality_repair_lineage_ref": loaded_packet.get(
+            "oss_quality_repair_lineage_ref"
+        ),
+        "oss_quality_repair_ref": oss_quality_repair_ref,
+        "loaded_oss_quality_repair_ref": loaded_packet.get("oss_quality_repair_ref"),
+        "oss_quality_ref": oss_quality_ref,
+        "loaded_oss_quality_ref": loaded_packet.get("oss_quality_ref"),
+        "oss_quality_degraded_source_ref": oss_quality_degraded_source_ref,
+        "loaded_oss_quality_degraded_source_ref": loaded_packet.get(
+            "oss_quality_degraded_source_ref"
+        ),
+        "oss_quality_repaired_artifact_ref": oss_quality_repaired_artifact_ref,
+        "loaded_oss_quality_repaired_artifact_ref": loaded_packet.get(
+            "oss_quality_repaired_artifact_ref"
+        ),
+        "loaded_oss_quality_repair_lineage": loaded_oss_quality_repair_lineage,
         "multi_persona_proposal_lineage_hash": proposal_lineage_hash,
         "loaded_multi_persona_proposal_lineage_hash": (
             loaded_multi_persona_proposal_lineage.get("lineage_hash")
@@ -8800,6 +9424,9 @@ def _run_lean_engine_replay(
     policy_oss_lineage = copy.deepcopy(dict(final_policy.get("policy_oss_lineage") or {}))
     reflection_oss_lineage = copy.deepcopy(dict(final_policy.get("reflection_oss_lineage") or {}))
     risk_analytics_lineage = copy.deepcopy(dict(final_policy.get("risk_analytics_lineage") or {}))
+    oss_quality_repair_lineage = copy.deepcopy(
+        dict(final_policy.get("oss_quality_repair_lineage") or {})
+    )
     multi_persona_proposal_lineage = copy.deepcopy(
         dict(persona_conflict_resolution.get("proposal_lineage") or {})
     )
@@ -8878,6 +9505,20 @@ def _run_lean_engine_replay(
         "risk_analytics_materiality_penalty": risk_analytics_lineage.get(
             "risk_materiality_penalty"
         ),
+        "oss_quality_repair_lineage": oss_quality_repair_lineage,
+        "oss_quality_repair_lineage_hash": oss_quality_repair_lineage.get("lineage_hash"),
+        "oss_quality_repair_lineage_ref": oss_quality_repair_lineage.get("lineage_ref"),
+        "oss_quality_repair_ref": oss_quality_repair_lineage.get("repair_ref"),
+        "oss_quality_ref": oss_quality_repair_lineage.get("quality_ref"),
+        "oss_quality_degraded_source_ref": oss_quality_repair_lineage.get("source_oss_ref"),
+        "oss_quality_repaired_artifact_ref": oss_quality_repair_lineage.get(
+            "repaired_artifact_ref"
+        ),
+        "oss_quality_repair_action": oss_quality_repair_lineage.get("repair_action"),
+        "oss_quality_downweighted_candidate_action": oss_quality_repair_lineage.get(
+            "downweighted_candidate_action"
+        ),
+        "oss_quality_issue_type": oss_quality_repair_lineage.get("issue_type"),
         "multi_persona_proposal_lineage": multi_persona_proposal_lineage,
         "multi_persona_proposal_lineage_hash": multi_persona_proposal_lineage_hash,
         "multi_persona_proposal_lineage_ref": multi_persona_proposal_lineage_ref,
@@ -9171,6 +9812,23 @@ def _build_lean_handoff_packet(
     risk_analytics_ref = str(risk_analytics_lineage.get("source_oss_ref") or "")
     risk_analytics_lineage_ref = str(risk_analytics_lineage.get("lineage_ref") or "")
     risk_analytics_registry_ref = str(risk_analytics_lineage.get("registry_ref") or "")
+    oss_quality_repair_lineage = copy.deepcopy(
+        dict(strategy_packet.get("oss_quality_repair_lineage") or {})
+    )
+    oss_quality_repair_lineage_ref = str(
+        oss_quality_repair_lineage.get("lineage_ref") or ""
+    )
+    oss_quality_repair_lineage_hash = str(
+        oss_quality_repair_lineage.get("lineage_hash") or ""
+    )
+    oss_quality_repair_ref = str(oss_quality_repair_lineage.get("repair_ref") or "")
+    oss_quality_ref = str(oss_quality_repair_lineage.get("quality_ref") or "")
+    oss_quality_degraded_source_ref = str(
+        oss_quality_repair_lineage.get("source_oss_ref") or ""
+    )
+    oss_quality_repaired_artifact_ref = str(
+        oss_quality_repair_lineage.get("repaired_artifact_ref") or ""
+    )
     multi_persona_proposal_lineage = copy.deepcopy(
         dict(strategy_packet.get("multi_persona_proposal_lineage") or {})
     )
@@ -9241,6 +9899,20 @@ def _build_lean_handoff_packet(
         "risk_analytics_materiality_penalty": risk_analytics_lineage.get(
             "risk_materiality_penalty"
         ),
+        "oss_quality_repair_lineage": oss_quality_repair_lineage,
+        "oss_quality_repair_lineage_hash": oss_quality_repair_lineage_hash,
+        "oss_quality_repair_lineage_ref": oss_quality_repair_lineage_ref,
+        "oss_quality_repair_ref": oss_quality_repair_ref,
+        "oss_quality_ref": oss_quality_ref,
+        "oss_quality_degraded_source_ref": oss_quality_degraded_source_ref,
+        "oss_quality_repaired_artifact_ref": oss_quality_repaired_artifact_ref,
+        "oss_quality_repair_action": oss_quality_repair_lineage.get("repair_action"),
+        "oss_quality_downweighted_candidate_action": oss_quality_repair_lineage.get(
+            "downweighted_candidate_action"
+        ),
+        "oss_quality_issue_type": oss_quality_repair_lineage.get("issue_type"),
+        "oss_quality_role": oss_quality_repair_lineage.get("role"),
+        "oss_quality_component": oss_quality_repair_lineage.get("component"),
         "multi_persona_proposal_lineage": multi_persona_proposal_lineage,
         "multi_persona_proposal_lineage_hash": multi_persona_proposal_lineage_hash,
         "multi_persona_proposal_lineage_ref": multi_persona_proposal_lineage_ref,
@@ -9332,6 +10004,11 @@ def _build_lean_handoff_packet(
             risk_analytics_lineage_ref,
             risk_analytics_ref,
             risk_analytics_registry_ref,
+            oss_quality_repair_lineage_ref,
+            oss_quality_repair_ref,
+            oss_quality_ref,
+            oss_quality_degraded_source_ref,
+            oss_quality_repaired_artifact_ref,
             multi_persona_proposal_lineage_ref,
             *multi_persona_proposal_refs,
             openclaw_context_ref,
@@ -9652,6 +10329,26 @@ def _build_lean_runtime_feedback_response(
     risk_analytics_ref = str(lean_handoff.get("risk_analytics_ref", ""))
     risk_analytics_lineage_ref = str(lean_handoff.get("risk_analytics_lineage_ref", ""))
     risk_analytics_registry_ref = str(lean_handoff.get("risk_analytics_registry_ref", ""))
+    oss_quality_repair_lineage_ref = str(
+        lean_handoff.get("oss_quality_repair_lineage_ref", "")
+    )
+    oss_quality_repair_lineage_hash = str(
+        lean_handoff.get("oss_quality_repair_lineage_hash", "")
+    )
+    oss_quality_repair_ref = str(lean_handoff.get("oss_quality_repair_ref", ""))
+    oss_quality_ref = str(lean_handoff.get("oss_quality_ref", ""))
+    oss_quality_degraded_source_ref = str(
+        lean_handoff.get("oss_quality_degraded_source_ref", "")
+    )
+    oss_quality_repaired_artifact_ref = str(
+        lean_handoff.get("oss_quality_repaired_artifact_ref", "")
+    )
+    oss_quality_repair_action = str(
+        lean_handoff.get("oss_quality_repair_action", "")
+    )
+    oss_quality_downweighted_candidate_action = str(
+        lean_handoff.get("oss_quality_downweighted_candidate_action", "")
+    )
     multi_persona_proposal_lineage_ref = str(
         lean_handoff.get("multi_persona_proposal_lineage_ref", "")
     )
@@ -9692,6 +10389,11 @@ def _build_lean_runtime_feedback_response(
         risk_analytics_lineage_ref,
         risk_analytics_ref,
         risk_analytics_registry_ref,
+        oss_quality_repair_lineage_ref,
+        oss_quality_repair_ref,
+        oss_quality_ref,
+        oss_quality_degraded_source_ref,
+        oss_quality_repaired_artifact_ref,
         multi_persona_proposal_lineage_ref,
         *multi_persona_proposal_refs,
         openclaw_context_ref,
@@ -9783,6 +10485,28 @@ def _build_lean_runtime_feedback_response(
             and risk_analytics_registry_ref in evidence_refs
             and lean_handoff.get("risk_analytics_lineage_hash")
             == lean_handoff.get("risk_analytics_lineage", {}).get("lineage_hash")
+        ),
+        "oss_quality_repair_lineage_bound": (
+            bool(oss_quality_repair_lineage_ref)
+            and oss_quality_repair_lineage_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and oss_quality_repair_lineage_ref in evidence_refs
+            and bool(oss_quality_repair_lineage_hash)
+            and oss_quality_repair_lineage_hash
+            == lean_handoff.get("oss_quality_repair_lineage", {}).get("lineage_hash")
+            and bool(oss_quality_repair_ref)
+            and oss_quality_repair_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and oss_quality_repair_ref in evidence_refs
+            and bool(oss_quality_ref)
+            and oss_quality_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and oss_quality_ref in evidence_refs
+            and bool(oss_quality_degraded_source_ref)
+            and oss_quality_degraded_source_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and oss_quality_degraded_source_ref in evidence_refs
+            and bool(oss_quality_repaired_artifact_ref)
+            and oss_quality_repaired_artifact_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and oss_quality_repaired_artifact_ref in evidence_refs
+            and bool(oss_quality_repair_action)
+            and bool(oss_quality_downweighted_candidate_action)
         ),
         "multi_persona_proposal_lineage_bound": (
             bool(multi_persona_proposal_lineage_ref)
@@ -9905,6 +10629,15 @@ def _build_lean_runtime_feedback_response(
             "bind_risk_analytics_lineage_ref": risk_analytics_lineage_ref,
             "bind_risk_analytics_ref": risk_analytics_ref,
             "bind_risk_analytics_registry_ref": risk_analytics_registry_ref,
+            "bind_oss_quality_repair_lineage_ref": oss_quality_repair_lineage_ref,
+            "bind_oss_quality_repair_ref": oss_quality_repair_ref,
+            "bind_oss_quality_ref": oss_quality_ref,
+            "bind_oss_quality_degraded_source_ref": oss_quality_degraded_source_ref,
+            "bind_oss_quality_repaired_artifact_ref": oss_quality_repaired_artifact_ref,
+            "bind_oss_quality_repair_action": oss_quality_repair_action,
+            "bind_oss_quality_downweighted_candidate_action": (
+                oss_quality_downweighted_candidate_action
+            ),
             "bind_multi_persona_proposal_lineage_ref": multi_persona_proposal_lineage_ref,
             "bind_multi_persona_proposal_refs": multi_persona_proposal_refs,
             "bind_multi_persona_proposal_persona_ids": multi_persona_proposal_persona_ids,
@@ -9946,6 +10679,16 @@ def _build_lean_runtime_feedback_response(
                 "risk_analytics_lineage_ref": risk_analytics_lineage_ref,
                 "risk_analytics_ref": risk_analytics_ref,
                 "risk_analytics_registry_ref": risk_analytics_registry_ref,
+                "oss_quality_repair_lineage_ref": oss_quality_repair_lineage_ref,
+                "oss_quality_repair_lineage_hash": oss_quality_repair_lineage_hash,
+                "oss_quality_repair_ref": oss_quality_repair_ref,
+                "oss_quality_ref": oss_quality_ref,
+                "oss_quality_degraded_source_ref": oss_quality_degraded_source_ref,
+                "oss_quality_repaired_artifact_ref": oss_quality_repaired_artifact_ref,
+                "oss_quality_repair_action": oss_quality_repair_action,
+                "oss_quality_downweighted_candidate_action": (
+                    oss_quality_downweighted_candidate_action
+                ),
                 "multi_persona_proposal_lineage_ref": multi_persona_proposal_lineage_ref,
                 "multi_persona_proposal_lineage_hash": multi_persona_proposal_lineage_hash,
                 "multi_persona_proposal_refs": multi_persona_proposal_refs,
@@ -10943,6 +11686,285 @@ def _build_alpha_seed_revision_handoff_proof(
     }
 
 
+def _build_oss_quality_repair_handoff_proof(
+    *,
+    episode: PortfolioEpisode,
+    final_policy: Mapping[str, Any],
+    case_upstream_artifacts: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    lean_runtime_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    degraded_response = case_upstream_artifacts["degraded_oss_response"]
+    persona_response = degraded_response["persona_quality_response"]
+    strategy_packet = lean_engine_replay["case_specific_strategy_packet"]
+    final_policy_lineage = copy.deepcopy(
+        dict(final_policy.get("oss_quality_repair_lineage") or {})
+    )
+    packet_lineage = copy.deepcopy(
+        dict(strategy_packet.get("oss_quality_repair_lineage") or {})
+    )
+    readback = lean_engine_replay["lean_object_store_packet_readback"]
+    loaded_lineage = copy.deepcopy(
+        dict(readback.get("loaded_oss_quality_repair_lineage") or {})
+    )
+    handoff_lineage = copy.deepcopy(
+        dict(lean_handoff.get("oss_quality_repair_lineage") or {})
+    )
+    loaded_targets = list(lean_engine_replay.get("case_specific_packet_targets", []))
+    handoff_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    runtime_feedback_refs = set(
+        lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+    )
+    runtime_state_updates = dict(lean_runtime_feedback.get("state_updates", {}))
+    source_ref = str(degraded_response["source_oss_ref"])
+    quality_ref = str(degraded_response["quality_ref"])
+    repair_ref = str(degraded_response["repair_ref"])
+    output_ref = str(persona_response["output_ref"])
+    repaired_artifact_ref = str(persona_response["repaired_artifact_ref"])
+    lineage_ref = str(final_policy_lineage.get("lineage_ref") or "")
+    lineage_hash = str(final_policy_lineage.get("lineage_hash") or "")
+    repair_action = str(persona_response["repair_action"])
+    downweighted_action = str(persona_response["downweighted_candidate_action"])
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_refs = set(
+            str(ref)
+            for ref in artifact["persona_reasoning"]["request"].get("input_refs", [])
+        )
+        generation_refs = set(
+            str(ref)
+            for ref in artifact["candidate_generation"]["request"].get("input_refs", [])
+        )
+        selected_candidate = trace["selected_candidate"]
+        selected_action = _candidate_action_key(str(selected_candidate["candidate_id"]))
+        selected_refs = set(str(ref) for ref in selected_candidate.get("evidence_refs", []))
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        score_adjustments = dict(scoring_inputs.get("oss_quality_repair_score_adjustments") or {})
+        penalties = dict(scoring_inputs.get("source_quality_penalty_by_action") or {})
+        selected_scorecard = artifact["scorer"]["scorecards"].get(
+            str(selected_candidate["candidate_id"]),
+            {},
+        )
+        scorecard_components = dict(selected_scorecard.get("components") or {})
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "reasoning_consumes_quality_repair": {
+                    quality_ref,
+                    repair_ref,
+                    output_ref,
+                }.issubset(reasoning_refs),
+                "candidate_generation_consumes_quality_repair": {
+                    quality_ref,
+                    repair_ref,
+                    output_ref,
+                    repaired_artifact_ref,
+                }.issubset(generation_refs),
+                "selected_candidate_cites_quality_repair": {
+                    repair_ref,
+                    output_ref,
+                    repaired_artifact_ref,
+                }.issubset(selected_refs),
+                "decision_artifact_replays_quality_repair": artifact["replay"].get(
+                    "uses_degraded_oss_response_repair"
+                )
+                is True,
+                "selected_action": selected_action,
+                "score_adjustment": score_adjustments.get(selected_action),
+                "quality_penalty": penalties.get(selected_action),
+                "affected_action_penalty": penalties.get(downweighted_action),
+                "scorecard_adjustment": scorecard_components.get(
+                    "oss_quality_repair_adjustment"
+                ),
+                "scorecard_penalty": scorecard_components.get(
+                    "oss_quality_degradation_penalty"
+                ),
+            }
+        )
+    lineage_hashes = {
+        "final_policy": str(final_policy.get("oss_quality_repair_lineage_hash") or ""),
+        "final_policy_lineage": lineage_hash,
+        "strategy_packet": str(strategy_packet.get("oss_quality_repair_lineage_hash") or ""),
+        "packet_lineage": str(packet_lineage.get("lineage_hash") or ""),
+        "object_store_readback": str(readback.get("oss_quality_repair_lineage_hash") or ""),
+        "loaded_object_store_readback": str(
+            readback.get("loaded_oss_quality_repair_lineage_hash") or ""
+        ),
+        "lean_handoff": str(lean_handoff.get("oss_quality_repair_lineage_hash") or ""),
+    }
+    replay = {
+        "replayable": True,
+        "source_degraded_response_repaired": _degraded_oss_response_repair_is_usable(
+            degraded_response
+        ),
+        "persona_reasoning_consumes_quality_repair": all(
+            binding["reasoning_consumes_quality_repair"] for binding in trace_bindings
+        ),
+        "candidate_generation_consumes_quality_repair": all(
+            binding["candidate_generation_consumes_quality_repair"]
+            for binding in trace_bindings
+        ),
+        "selected_candidates_cite_quality_repair": all(
+            binding["selected_candidate_cites_quality_repair"]
+            and binding["decision_artifact_replays_quality_repair"]
+            for binding in trace_bindings
+        ),
+        "scorer_applies_quality_repair_adjustment_and_penalty": all(
+            float(binding["score_adjustment"] or 0.0) > 0.0
+            and binding["scorecard_adjustment"] == binding["score_adjustment"]
+            and binding["scorecard_penalty"] == binding["quality_penalty"]
+            and float(binding["affected_action_penalty"] or 0.0) < 0.0
+            for binding in trace_bindings
+        ),
+        "evolved_policy_carries_quality_repair_lineage": (
+            final_policy.get("generation") == 2
+            and final_policy.get("oss_quality_repair_ref") == repair_ref
+            and final_policy.get("oss_quality_repair_lineage_ref") == lineage_ref
+            and final_policy.get("oss_quality_degraded_source_ref") == source_ref
+            and final_policy.get("oss_quality_repair_lineage_hash") == lineage_hash
+            and final_policy_lineage.get("model_id")
+            == PERSONA_OSS_QUALITY_REPAIR_HANDOFF_MODEL_ID
+            and final_policy_lineage.get("quality_ref") == quality_ref
+            and final_policy_lineage.get("repair_ref") == repair_ref
+            and final_policy_lineage.get("repaired_artifact_ref") == repaired_artifact_ref
+        ),
+        "strategy_packet_carries_quality_repair_lineage": (
+            packet_lineage == final_policy_lineage
+            and strategy_packet.get("oss_quality_repair_lineage_ref") == lineage_ref
+            and strategy_packet.get("oss_quality_repair_lineage_hash") == lineage_hash
+            and strategy_packet.get("oss_quality_repair_ref") == repair_ref
+            and strategy_packet.get("oss_quality_ref") == quality_ref
+            and strategy_packet.get("oss_quality_degraded_source_ref") == source_ref
+            and strategy_packet.get("oss_quality_repaired_artifact_ref")
+            == repaired_artifact_ref
+        ),
+        "object_store_readback_preserves_quality_repair_lineage": (
+            loaded_lineage == final_policy_lineage
+            and readback.get("oss_quality_repair_lineage_ref") == lineage_ref
+            and readback.get("loaded_oss_quality_repair_lineage_ref") == lineage_ref
+            and readback.get("oss_quality_repair_ref") == repair_ref
+            and readback.get("loaded_oss_quality_repair_ref") == repair_ref
+            and readback.get("oss_quality_ref") == quality_ref
+            and readback.get("loaded_oss_quality_ref") == quality_ref
+        ),
+        "all_packet_targets_bind_quality_repair_lineage": (
+            len(loaded_targets) == PORTFOLIO_LEG_COUNT
+            and all(
+                target.get("oss_quality_repair_lineage_ref") == lineage_ref
+                and target.get("oss_quality_repair_lineage_hash") == lineage_hash
+                and target.get("oss_quality_repair_ref") == repair_ref
+                and target.get("oss_quality_ref") == quality_ref
+                and target.get("signal", {}).get("metadata", {}).get(
+                    "oss_quality_repair_lineage_ref"
+                )
+                == lineage_ref
+                and target.get("signal", {}).get("metadata", {}).get(
+                    "oss_quality_repair_ref"
+                )
+                == repair_ref
+                and target.get("signal", {}).get("metadata", {}).get("oss_quality_ref")
+                == quality_ref
+                for target in loaded_targets
+            )
+        ),
+        "handoff_runtime_bundle_contains_quality_repair_refs": {
+            source_ref,
+            quality_ref,
+            repair_ref,
+            repaired_artifact_ref,
+            lineage_ref,
+        }.issubset(handoff_refs)
+        and handoff_lineage == final_policy_lineage,
+        "runtime_feedback_cites_quality_repair_lineage": {
+            source_ref,
+            quality_ref,
+            repair_ref,
+            repaired_artifact_ref,
+            lineage_ref,
+        }.issubset(runtime_feedback_refs),
+        "runtime_feedback_state_binds_quality_repair_lineage": (
+            runtime_state_updates.get("bind_oss_quality_repair_lineage_ref")
+            == lineage_ref
+            and runtime_state_updates.get("bind_oss_quality_repair_ref") == repair_ref
+            and runtime_state_updates.get("bind_oss_quality_ref") == quality_ref
+            and runtime_state_updates.get("bind_oss_quality_degraded_source_ref")
+            == source_ref
+            and runtime_state_updates.get("bind_oss_quality_repaired_artifact_ref")
+            == repaired_artifact_ref
+            and runtime_state_updates.get("bind_oss_quality_repair_action")
+            == repair_action
+            and runtime_state_updates.get(
+                "bind_oss_quality_downweighted_candidate_action"
+            )
+            == downweighted_action
+            and lean_runtime_feedback.get("replay", {}).get(
+                "oss_quality_repair_lineage_bound"
+            )
+            is True
+        ),
+        "lineage_hash_stable_across_quality_policy_packet_readback_handoff": (
+            bool(lineage_hash)
+            and len({value for value in lineage_hashes.values() if value}) == 1
+        ),
+    }
+    return {
+        "proof_id": f"oss-quality-repair-handoff-{episode.case_id}",
+        "proof_ref": f"oss-quality-repair-handoff://{episode.case_id}",
+        "model_id": PERSONA_OSS_QUALITY_REPAIR_HANDOFF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "role": degraded_response["role"],
+        "component": degraded_response["component"],
+        "request_id": degraded_response["request_id"],
+        "source_oss_ref": source_ref,
+        "quality_ref": quality_ref,
+        "repair_ref": repair_ref,
+        "output_ref": output_ref,
+        "repaired_artifact_ref": repaired_artifact_ref,
+        "issue_type": degraded_response["issue_type"],
+        "repair_action": repair_action,
+        "downweighted_candidate_action": downweighted_action,
+        "lineage_ref": lineage_ref,
+        "lineage_hash": lineage_hash,
+        "strategy_packet_ref": strategy_packet["packet_ref"],
+        "lean_handoff_ref": f"lean-handoff://{lean_handoff['packet_id']}",
+        "lean_runtime_feedback_ref": f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+        "object_store_readback_ref": readback["readback_id"],
+        "trace_bindings": trace_bindings,
+        "lineage_hashes": lineage_hashes,
+        "input_refs": [
+            source_ref,
+            quality_ref,
+            repair_ref,
+            output_ref,
+            repaired_artifact_ref,
+            lineage_ref,
+            strategy_packet["packet_ref"],
+            f"lean-handoff://{lean_handoff['packet_id']}",
+            f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+            readback["readback_id"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "oss-quality-repair-handoff-proof",
+            {
+                "case_id": episode.case_id,
+                "quality_ref": quality_ref,
+                "repair_ref": repair_ref,
+                "lineage_ref": lineage_ref,
+                "lineage_hashes": lineage_hashes,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
 def _build_evolved_strategy_packet_proof(
     *,
     episode: PortfolioEpisode,
@@ -11537,6 +12559,22 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
         and packet.get("risk_analytics_registry_ref") in runtime_refs
         and packet.get("risk_analytics_lineage_hash")
         == packet.get("risk_analytics_lineage", {}).get("lineage_hash")
+        and packet.get("oss_quality_repair_lineage_ref", "").startswith(
+            "oss-quality-repair-lineage://"
+        )
+        and packet.get("oss_quality_repair_lineage_ref") in runtime_refs
+        and packet.get("oss_quality_repair_ref", "").startswith("oss-quality://")
+        and packet.get("oss_quality_repair_ref") in runtime_refs
+        and packet.get("oss_quality_ref", "").startswith("oss-quality://")
+        and packet.get("oss_quality_ref") in runtime_refs
+        and packet.get("oss_quality_degraded_source_ref", "").startswith("oss://")
+        and packet.get("oss_quality_degraded_source_ref") in runtime_refs
+        and packet.get("oss_quality_repaired_artifact_ref", "").startswith(
+            "quality-repair://persona/"
+        )
+        and packet.get("oss_quality_repaired_artifact_ref") in runtime_refs
+        and packet.get("oss_quality_repair_lineage_hash")
+        == packet.get("oss_quality_repair_lineage", {}).get("lineage_hash")
         and packet.get("multi_persona_proposal_lineage_ref", "").startswith(
             "persona-proposal-lineage://"
         )
@@ -11635,6 +12673,7 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("policy_oss_lineage_bound") is True
         and replay.get("reflection_oss_lineage_bound") is True
         and replay.get("risk_analytics_lineage_bound") is True
+        and replay.get("oss_quality_repair_lineage_bound") is True
         and replay.get("multi_persona_proposal_lineage_bound") is True
         and replay.get("openclaw_session_context_bound") is True
         and replay.get("alpha_seed_revision_handoff_bound") is True
@@ -11872,6 +12911,61 @@ def _alpha_seed_revision_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
     )
 
 
+def _oss_quality_repair_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    trace_bindings = list(proof.get("trace_bindings", []))
+    lineage_hashes = proof.get("lineage_hashes", {})
+    role = str(proof.get("role"))
+    return bool(
+        proof.get("model_id") == PERSONA_OSS_QUALITY_REPAIR_HANDOFF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("oss-quality-repair-handoff://")
+        and role in OSS_QUALITY_ROLES
+        and proof.get("component") in OSS_REQUIRED_COMPONENTS
+        and proof.get("issue_type") == OSS_QUALITY_ISSUE_BY_ROLE.get(role)
+        and proof.get("repair_action") == OSS_QUALITY_REPAIR_ACTION_BY_ROLE.get(role)
+        and proof.get("downweighted_candidate_action")
+        == OSS_QUALITY_AFFECTED_ACTION_BY_ROLE.get(role)
+        and proof.get("source_oss_ref", "").startswith("oss://")
+        and proof.get("quality_ref", "").startswith("oss-quality://")
+        and proof.get("repair_ref", "").startswith("oss-quality://")
+        and proof.get("output_ref", "").startswith("quality-repair://persona/")
+        and proof.get("repaired_artifact_ref", "").startswith(
+            "quality-repair://persona/"
+        )
+        and proof.get("lineage_ref", "").startswith("oss-quality-repair-lineage://")
+        and proof.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_runtime_feedback_ref", "").startswith(
+            "lean-runtime-feedback://"
+        )
+        and proof.get("object_store_readback_ref", "").startswith(
+            "lean-object-store-packet-readback-"
+        )
+        and proof.get("lineage_hash")
+        and proof.get("input_hash")
+        and lineage_hashes
+        and len({str(value) for value in lineage_hashes.values()}) == 1
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "source_degraded_response_repaired",
+            "persona_reasoning_consumes_quality_repair",
+            "candidate_generation_consumes_quality_repair",
+            "selected_candidates_cite_quality_repair",
+            "scorer_applies_quality_repair_adjustment_and_penalty",
+            "evolved_policy_carries_quality_repair_lineage",
+            "strategy_packet_carries_quality_repair_lineage",
+            "object_store_readback_preserves_quality_repair_lineage",
+            "all_packet_targets_bind_quality_repair_lineage",
+            "handoff_runtime_bundle_contains_quality_repair_refs",
+            "runtime_feedback_cites_quality_repair_lineage",
+            "runtime_feedback_state_binds_quality_repair_lineage",
+            "lineage_hash_stable_across_quality_policy_packet_readback_handoff",
+        ))
+    )
+
+
 def _lean_packet_execution_projection_is_usable(projection: Mapping[str, Any]) -> bool:
     replay = projection.get("replay", {})
     leg_projections = list(projection.get("leg_projections", []))
@@ -12014,6 +13108,7 @@ def _lean_engine_result_is_usable(
     tracking_provenance = loaded_packet.get("experiment_tracking_provenance", {})
     policy_oss_lineage = loaded_packet.get("policy_oss_lineage", {})
     reflection_oss_lineage = loaded_packet.get("reflection_oss_lineage", {})
+    oss_quality_repair_lineage = loaded_packet.get("oss_quality_repair_lineage", {})
     alpha_seed_handoff = loaded_packet.get("alpha_seed_revision_handoff", {})
     packet_readback_valid = True
     if loaded_packet:
@@ -12042,6 +13137,13 @@ def _lean_engine_result_is_usable(
             )
             and loaded_packet.get("reflection_oss_lineage_hash")
             == reflection_oss_lineage.get("lineage_hash")
+            and loaded_packet.get("oss_quality_repair_lineage_ref", "").startswith(
+                "oss-quality-repair-lineage://"
+            )
+            and loaded_packet.get("oss_quality_repair_lineage_hash")
+            == oss_quality_repair_lineage.get("lineage_hash")
+            and loaded_packet.get("oss_quality_repair_ref", "").startswith("oss-quality://")
+            and loaded_packet.get("oss_quality_ref", "").startswith("oss-quality://")
             and loaded_packet.get("alpha_seed_revision_handoff_ref", "").startswith(
                 "alpha-seed-revision-handoff://"
             )
@@ -12062,6 +13164,12 @@ def _lean_engine_result_is_usable(
                 == loaded_packet.get("reflection_oss_lineage_hash")
                 and target.get("signal", {}).get("metadata", {}).get("reflection_oss_ref")
                 == loaded_packet.get("reflection_oss_ref")
+                and target.get("oss_quality_repair_lineage_hash")
+                == loaded_packet.get("oss_quality_repair_lineage_hash")
+                and target.get("signal", {})
+                .get("metadata", {})
+                .get("oss_quality_repair_ref")
+                == loaded_packet.get("oss_quality_repair_ref")
                 and target.get("alpha_seed_revision_handoff_hash")
                 == loaded_packet.get("alpha_seed_revision_handoff_hash")
                 and target.get("alpha_seed_revision_ref")
@@ -12124,6 +13232,13 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
         and readback.get("risk_analytics_lineage_ref", "").startswith("risk-analytics-lineage://")
         and readback.get("risk_analytics_lineage_hash")
         == readback.get("loaded_risk_analytics_lineage_hash")
+        and readback.get("oss_quality_repair_lineage_ref", "").startswith(
+            "oss-quality-repair-lineage://"
+        )
+        and readback.get("oss_quality_repair_lineage_hash")
+        == readback.get("loaded_oss_quality_repair_lineage_hash")
+        and readback.get("oss_quality_repair_ref", "").startswith("oss-quality://")
+        and readback.get("oss_quality_ref", "").startswith("oss-quality://")
         and readback.get("multi_persona_proposal_lineage_ref", "").startswith(
             "persona-proposal-lineage://"
         )
@@ -12166,6 +13281,10 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
             "loaded_packet_preserves_risk_analytics_lineage",
             "loaded_risk_analytics_ref_matches_packet",
             "all_targets_bind_risk_analytics_lineage",
+            "oss_quality_repair_lineage_present_in_packet",
+            "loaded_packet_preserves_oss_quality_repair_lineage",
+            "loaded_oss_quality_repair_ref_matches_packet",
+            "all_targets_bind_oss_quality_repair_lineage",
             "multi_persona_proposal_lineage_present_in_packet",
             "loaded_packet_preserves_multi_persona_proposal_lineage",
             "loaded_multi_persona_proposal_ref_matches_packet",
@@ -12186,6 +13305,7 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
     tracking_provenance = strategy_packet.get("experiment_tracking_provenance", {})
     policy_oss_lineage = strategy_packet.get("policy_oss_lineage", {})
     reflection_oss_lineage = strategy_packet.get("reflection_oss_lineage", {})
+    oss_quality_repair_lineage = strategy_packet.get("oss_quality_repair_lineage", {})
     proposal_lineage = strategy_packet.get("multi_persona_proposal_lineage", {})
     alpha_seed_handoff = strategy_packet.get("alpha_seed_revision_handoff", {})
     packet_targets = replay.get("case_specific_packet_targets", [])
@@ -12231,6 +13351,13 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
         and strategy_packet.get("reflection_oss_lineage_hash") == reflection_oss_lineage.get(
             "lineage_hash"
         )
+        and strategy_packet.get("oss_quality_repair_lineage_ref", "").startswith(
+            "oss-quality-repair-lineage://"
+        )
+        and strategy_packet.get("oss_quality_repair_lineage_hash")
+        == oss_quality_repair_lineage.get("lineage_hash")
+        and strategy_packet.get("oss_quality_repair_ref", "").startswith("oss-quality://")
+        and strategy_packet.get("oss_quality_ref", "").startswith("oss-quality://")
         and strategy_packet.get("multi_persona_proposal_lineage_ref", "").startswith(
             "persona-proposal-lineage://"
         )
@@ -12253,6 +13380,10 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
             and target.get("reflection_oss_ref") == strategy_packet.get("reflection_oss_ref")
             and target.get("reflection_oss_lineage_hash")
             == strategy_packet.get("reflection_oss_lineage_hash")
+            and target.get("oss_quality_repair_lineage_hash")
+            == strategy_packet.get("oss_quality_repair_lineage_hash")
+            and target.get("oss_quality_repair_ref")
+            == strategy_packet.get("oss_quality_repair_ref")
             and target.get("multi_persona_proposal_lineage_ref")
             == strategy_packet.get("multi_persona_proposal_lineage_ref")
             and target.get("multi_persona_proposal_lineage_hash")
@@ -12356,6 +13487,11 @@ def _case_upstream_artifacts_are_usable(
         in persona_response.get("evidence_refs", [])
         and _alpha_seed_revision_is_usable(artifacts.get("alpha_seed_revision", {}))
         and artifacts.get("alpha_seed_revision", {}).get("revision_ref")
+        in persona_response.get("evidence_refs", [])
+        and _degraded_oss_response_repair_is_usable(
+            artifacts.get("degraded_oss_response", {})
+        )
+        and artifacts.get("degraded_oss_response", {}).get("repair_ref")
         in persona_response.get("evidence_refs", [])
     )
 
@@ -12524,6 +13660,65 @@ def _alpha_seed_revision_is_usable(alpha_seed_revision: Mapping[str, Any]) -> bo
     )
 
 
+def _degraded_oss_response_repair_is_usable(response: Mapping[str, Any]) -> bool:
+    replay = response.get("replay", {})
+    quality_signal = response.get("quality_signal", {})
+    repair_request = response.get("repair_request", {})
+    persona_response = response.get("persona_quality_response", {})
+    adjustments = response.get("candidate_score_adjustments", {})
+    penalties = response.get("source_quality_penalty_by_action", {})
+    refs_by_action = response.get("candidate_evidence_refs_by_action", {})
+    role = str(response.get("role"))
+    expected_issue = OSS_QUALITY_ISSUE_BY_ROLE.get(role)
+    expected_repair_action = OSS_QUALITY_REPAIR_ACTION_BY_ROLE.get(role)
+    affected_action = OSS_QUALITY_AFFECTED_ACTION_BY_ROLE.get(role)
+    source_ref = str(response.get("source_oss_ref") or "")
+    repair_ref = str(response.get("repair_ref") or "")
+    output_ref = str(persona_response.get("output_ref") or "")
+    return bool(
+        response.get("model_id") == PERSONA_DEGRADED_OSS_RESPONSE_MODEL_ID
+        and response.get("status") == "repaired"
+        and response.get("quality_ref", "").startswith("oss-quality://")
+        and repair_ref.startswith(str(response.get("quality_ref", "")))
+        and response.get("input_hash")
+        and role in OSS_QUALITY_ROLES
+        and response.get("issue_type") == expected_issue
+        and repair_request.get("issue_type") == expected_issue
+        and repair_request.get("requested_after_oss_response") is True
+        and repair_request.get("next_action") == expected_repair_action
+        and persona_response.get("status") == "completed"
+        and persona_response.get("repair_action") == expected_repair_action
+        and persona_response.get("downweighted_candidate_action") == affected_action
+        and persona_response.get("accepted_for_handoff_after_repair") is True
+        and output_ref.startswith("quality-repair://persona/")
+        and persona_response.get("repaired_artifact_ref", "").startswith(output_ref)
+        and source_ref.startswith("oss://")
+        and quality_signal.get("source_status") == "completed"
+        and quality_signal.get("completed_but_degraded") is True
+        and float(quality_signal.get("quality_score", 1.0)) < float(
+            quality_signal.get("threshold", 0.0)
+        )
+        and set(adjustments) == {"feedback-adapt", "retain-observe", "risk-off", "contrarian-check"}
+        and set(penalties) == {"feedback-adapt", "retain-observe", "risk-off", "contrarian-check"}
+        and float(penalties.get(str(affected_action), 0.0)) < 0.0
+        and any(float(value) > 0.0 for value in adjustments.values())
+        and set(refs_by_action) == {"feedback-adapt", "retain-observe", "risk-off", "contrarian-check"}
+        and all(repair_ref in refs_by_action.get(action, []) for action in refs_by_action)
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "source_oss_completed_but_degraded",
+            "quality_issue_detected_after_oss_response",
+            "persona_repair_request_after_oss_response",
+            "persona_repair_response_completed",
+            "source_quality_downweighted_before_scoring",
+            "repair_adjustment_available_to_scorer",
+            "feedback_candidate_receives_repair_ref",
+            "followup_loop_bound_to_quality_repair",
+            "tracking_reconciliation_bound_to_quality_repair",
+        ))
+    )
+
+
 def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
     artifact = trace.get("agent_decision_artifact", {})
     if not isinstance(artifact, Mapping):
@@ -12611,6 +13806,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("uses_oss_disagreement_arbitration") is True
         and replay.get("uses_tracking_reconciliation") is True
         and replay.get("uses_alpha_seed_revision") is True
+        and replay.get("uses_degraded_oss_response_repair") is True
         and replay.get("uses_cross_cycle_runtime_feedback_or_declares_cold_start") is True
         and replay.get("uses_multi_cycle_lineage_or_declares_cold_start") is True
         and replay.get("input_hash")
@@ -12625,6 +13821,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and _trace_oss_disagreement_arbitration_is_usable(trace)
         and _trace_tracking_reconciliation_is_usable(trace)
         and _trace_alpha_seed_revision_is_usable(trace)
+        and _trace_degraded_oss_response_repair_is_usable(trace)
     )
 
 
@@ -12682,6 +13879,9 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
     tracking_reconciliation_usage = response.get("tracking_reconciliation_usage", {})
     alpha_seed_revision_ref = input_context.get("alpha_seed_revision_ref")
     alpha_seed_revision_usage = response.get("alpha_seed_revision_usage", {})
+    oss_quality_ref = input_context.get("oss_quality_ref")
+    oss_quality_repair_ref = input_context.get("oss_quality_repair_ref")
+    oss_quality_repair_usage = response.get("oss_quality_repair_usage", {})
     institutional_memory_status = input_context.get("institutional_memory_status")
     institutional_memory_entry_ref = input_context.get("institutional_memory_entry_ref")
     institutional_memory_contributing_persona_ids = set(
@@ -12725,6 +13925,15 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
         and alpha_seed_revision_usage.get("model_id") == PERSONA_ALPHA_SEED_REVISION_MODEL_ID
         and alpha_seed_revision_ref in request.get("input_refs", [])
         and alpha_seed_revision_ref in generation_request.get("input_refs", [])
+        and request.get("oss_quality_ref") == oss_quality_ref
+        and request.get("oss_quality_repair_ref") == oss_quality_repair_ref
+        and oss_quality_repair_usage.get("quality_ref") == oss_quality_ref
+        and oss_quality_repair_usage.get("repair_ref") == oss_quality_repair_ref
+        and oss_quality_repair_usage.get("model_id") == PERSONA_DEGRADED_OSS_RESPONSE_MODEL_ID
+        and oss_quality_ref in request.get("input_refs", [])
+        and oss_quality_repair_ref in request.get("input_refs", [])
+        and oss_quality_ref in generation_request.get("input_refs", [])
+        and oss_quality_repair_ref in generation_request.get("input_refs", [])
         and institutional_memory_usage.get("model_id") == PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID
         and (
             (
@@ -12895,6 +14104,53 @@ def _trace_alpha_seed_revision_is_usable(trace: Mapping[str, Any]) -> bool:
         and revision_ref in candidate_request.get("input_refs", [])
         and set(expected_refs).issubset(selected_refs)
         and float(score_adjustments.get(selected_action, 0.0)) > 0.0
+    )
+
+
+def _trace_degraded_oss_response_repair_is_usable(trace: Mapping[str, Any]) -> bool:
+    artifact = trace.get("agent_decision_artifact", {})
+    if not isinstance(artifact, Mapping):
+        return False
+    input_context = artifact.get("input_context", {})
+    candidate_request = artifact.get("candidate_generation", {}).get("request", {})
+    scorer_inputs = artifact.get("scorer", {}).get("scoring_inputs", {})
+    selected_candidate = trace.get("selected_candidate", {})
+    selected_action = _candidate_action_key(str(selected_candidate.get("candidate_id")))
+    response = scorer_inputs.get("degraded_oss_response", {})
+    if not isinstance(response, Mapping):
+        return False
+    quality_ref = str(response.get("quality_ref") or "")
+    repair_ref = str(response.get("repair_ref") or "")
+    persona_response = response.get("persona_quality_response", {})
+    affected_action = str(persona_response.get("downweighted_candidate_action") or "")
+    expected_refs = _degraded_oss_response_refs_for_action(response, selected_action)
+    selected_refs = set(selected_candidate.get("evidence_refs", []))
+    score_adjustments = scorer_inputs.get("oss_quality_repair_score_adjustments", {})
+    penalties = scorer_inputs.get("source_quality_penalty_by_action", {})
+    selected_scorecard = artifact.get("scorer", {}).get("scorecards", {}).get(
+        str(selected_candidate.get("candidate_id")),
+        {},
+    )
+    return bool(
+        _degraded_oss_response_repair_is_usable(response)
+        and input_context.get("oss_quality_ref") == quality_ref
+        and input_context.get("oss_quality_repair_ref") == repair_ref
+        and trace.get("decision_inputs", {}).get("oss_quality_ref") == quality_ref
+        and trace.get("decision_inputs", {}).get("oss_quality_repair_ref") == repair_ref
+        and input_context.get("degraded_oss_role") == response.get("role")
+        and input_context.get("degraded_oss_repair_action")
+        == persona_response.get("repair_action")
+        and quality_ref in trace.get("evidence_refs", [])
+        and repair_ref in trace.get("evidence_refs", [])
+        and quality_ref in candidate_request.get("input_refs", [])
+        and repair_ref in candidate_request.get("input_refs", [])
+        and set(expected_refs).issubset(selected_refs)
+        and float(score_adjustments.get(selected_action, 0.0)) > 0.0
+        and float(penalties.get(affected_action, 0.0)) < 0.0
+        and selected_scorecard.get("components", {}).get("oss_quality_repair_adjustment")
+        == score_adjustments.get(selected_action)
+        and selected_scorecard.get("components", {}).get("oss_quality_degradation_penalty")
+        == penalties.get(selected_action)
     )
 
 
@@ -14131,6 +15387,9 @@ def _build_usability_dimensions(
     alpha_seed_revision_handoff = 1.0 if _alpha_seed_revision_handoff_is_usable(
         operational_context["alpha_seed_revision_handoff"]
     ) else 0.0
+    oss_quality_repair_handoff = 1.0 if _oss_quality_repair_handoff_is_usable(
+        operational_context["oss_quality_repair_handoff"]
+    ) else 0.0
     evolved_strategy_packet = 1.0 if _evolved_strategy_packet_proof_is_usable(
         operational_context["evolved_strategy_packet_proof"]
     ) else 0.0
@@ -14181,6 +15440,12 @@ def _build_usability_dimensions(
         _alpha_seed_revision_is_usable(case_upstream_artifacts.get("alpha_seed_revision", {}))
         and all(_trace_alpha_seed_revision_is_usable(trace) for trace in decision_traces)
     ) else 0.0
+    degraded_oss_response_repair = 1.0 if (
+        _degraded_oss_response_repair_is_usable(
+            case_upstream_artifacts.get("degraded_oss_response", {})
+        )
+        and all(_trace_degraded_oss_response_repair_is_usable(trace) for trace in decision_traces)
+    ) else 0.0
     return {
         "return_improvement": return_improvement,
         "multi_generation_improvement": multi_generation_improvement,
@@ -14209,6 +15474,7 @@ def _build_usability_dimensions(
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
         "tracking_reconciliation": tracking_reconciliation,
         "alpha_seed_revision": alpha_seed_revision,
+        "degraded_oss_response_repair": degraded_oss_response_repair,
         "oss_evidence_completeness": min(1.0, oss_evidence_completeness),
         "portfolio_breadth": portfolio_breadth,
         "no_leakage": no_leakage,
@@ -14233,6 +15499,7 @@ def _build_usability_dimensions(
         "risk_analytics_lineage_handoff": risk_analytics_lineage_handoff,
         "openclaw_session_handoff": openclaw_session_handoff,
         "alpha_seed_revision_handoff": alpha_seed_revision_handoff,
+        "oss_quality_repair_handoff": oss_quality_repair_handoff,
         "evolved_strategy_packet_handoff": evolved_strategy_packet,
         "scheduler_conflict_ooda_dispatch": scheduler_conflict_ooda,
     }
@@ -14592,6 +15859,58 @@ def _diagnose_validation_execution(
                 "revision_action": case_upstream_artifacts["alpha_seed_revision"]["revision"]["action"],
                 "revision_ref": case_upstream_artifacts["alpha_seed_revision"]["revision_ref"],
                 "trace_ids": [trace["reflection_id"] for trace in decision_traces],
+            },
+        ),
+        _diagnostic_check(
+            "degraded_oss_response_repair_drives_persona_scoring",
+            _degraded_oss_response_repair_is_usable(
+                case_upstream_artifacts["degraded_oss_response"]
+            )
+            and all(
+                _trace_degraded_oss_response_repair_is_usable(trace)
+                for trace in decision_traces
+            ),
+            {
+                "repair_id": case_upstream_artifacts["degraded_oss_response"]["repair_id"],
+                "role": case_upstream_artifacts["degraded_oss_response"]["role"],
+                "component": case_upstream_artifacts["degraded_oss_response"]["component"],
+                "issue_type": case_upstream_artifacts["degraded_oss_response"][
+                    "issue_type"
+                ],
+                "repair_action": case_upstream_artifacts["degraded_oss_response"][
+                    "persona_quality_response"
+                ]["repair_action"],
+                "downweighted_candidate_action": case_upstream_artifacts[
+                    "degraded_oss_response"
+                ]["persona_quality_response"]["downweighted_candidate_action"],
+                "trace_ids": [trace["reflection_id"] for trace in decision_traces],
+            },
+        ),
+        _diagnostic_check(
+            "oss_quality_repair_reaches_lean_handoff_and_runtime_feedback",
+            _oss_quality_repair_handoff_is_usable(
+                operational_context["oss_quality_repair_handoff"]
+            ),
+            {
+                "proof_id": operational_context["oss_quality_repair_handoff"][
+                    "proof_id"
+                ],
+                "role": operational_context["oss_quality_repair_handoff"]["role"],
+                "component": operational_context["oss_quality_repair_handoff"][
+                    "component"
+                ],
+                "repair_ref": operational_context["oss_quality_repair_handoff"][
+                    "repair_ref"
+                ],
+                "lineage_ref": operational_context["oss_quality_repair_handoff"][
+                    "lineage_ref"
+                ],
+                "lineage_hashes": copy.deepcopy(
+                    dict(operational_context["oss_quality_repair_handoff"]["lineage_hashes"])
+                ),
+                "replay": copy.deepcopy(
+                    dict(operational_context["oss_quality_repair_handoff"]["replay"])
+                ),
             },
         ),
         _diagnostic_check(
@@ -15075,6 +16394,7 @@ def _case_upstream_artifacts_case_summary(artifacts: Mapping[str, Any]) -> dict[
         "alpha_seed_revision": copy.deepcopy(artifacts["alpha_seed_revision"]),
         "oss_disagreement_arbitration": copy.deepcopy(artifacts["oss_disagreement_arbitration"]),
         "tracking_reconciliation": copy.deepcopy(artifacts["tracking_reconciliation"]),
+        "degraded_oss_response": copy.deepcopy(artifacts["degraded_oss_response"]),
         "persona_response": copy.deepcopy(artifacts["persona_response"]),
     }
 
@@ -15320,6 +16640,9 @@ def _build_case_result(
             "multi_oss_disagreement_arbitrated": usability_dimensions["oss_disagreement_arbitration"] == 1.0,
             "tracking_reconciliation_drives_decision": usability_dimensions["tracking_reconciliation"] == 1.0,
             "alpha_seed_revision_drives_decision": usability_dimensions["alpha_seed_revision"] == 1.0,
+            "degraded_oss_response_repaired": usability_dimensions[
+                "degraded_oss_response_repair"
+            ] == 1.0,
             "persona_decision_artifacts_replay": usability_dimensions["persona_decision_artifact"] == 1.0,
             "persona_reasoning_drives_candidate_generation": usability_dimensions[
                 "persona_reasoning_generation"
@@ -15360,6 +16683,9 @@ def _build_case_result(
             ] == 1.0,
             "alpha_seed_revision_reaches_lean_handoff": usability_dimensions[
                 "alpha_seed_revision_handoff"
+            ] == 1.0,
+            "oss_quality_repair_reaches_lean_handoff": usability_dimensions[
+                "oss_quality_repair_handoff"
             ] == 1.0,
             "lean_packet_execution_projection_replayed": usability_dimensions[
                 "lean_packet_execution_projection"
@@ -15451,6 +16777,9 @@ def _build_summary(
     alpha_seed_revisions = [
         case["case_upstream_artifacts"]["alpha_seed_revision"] for case in cases
     ]
+    degraded_oss_responses = [
+        case["case_upstream_artifacts"]["degraded_oss_response"] for case in cases
+    ]
     broker_adapter_lifecycles = [
         case["operational_context"]["broker_adapter_lifecycle"] for case in cases
     ]
@@ -15488,6 +16817,9 @@ def _build_summary(
     ]
     alpha_seed_revision_handoffs = [
         case["operational_context"]["alpha_seed_revision_handoff"] for case in cases
+    ]
+    oss_quality_repair_handoffs = [
+        case["operational_context"]["oss_quality_repair_handoff"] for case in cases
     ]
     evolved_strategy_packet_proofs = [
         case["operational_context"]["evolved_strategy_packet_proof"] for case in cases
@@ -15755,6 +17087,30 @@ def _build_summary(
         "alpha_seed_revision_handoff_replay_flags": sorted({
             flag
             for proof in alpha_seed_revision_handoffs
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "oss_quality_repair_handoff_models": sorted({
+            proof["model_id"] for proof in oss_quality_repair_handoffs
+        }),
+        "oss_quality_repair_handoff_roles": sorted({
+            proof["role"] for proof in oss_quality_repair_handoffs
+        }),
+        "oss_quality_repair_handoff_components": sorted({
+            proof["component"] for proof in oss_quality_repair_handoffs
+        }),
+        "oss_quality_repair_handoff_issue_types": sorted({
+            proof["issue_type"] for proof in oss_quality_repair_handoffs
+        }),
+        "oss_quality_repair_handoff_actions": sorted({
+            proof["repair_action"] for proof in oss_quality_repair_handoffs
+        }),
+        "oss_quality_repair_handoff_downweighted_actions": sorted({
+            proof["downweighted_candidate_action"] for proof in oss_quality_repair_handoffs
+        }),
+        "oss_quality_repair_handoff_replay_flags": sorted({
+            flag
+            for proof in oss_quality_repair_handoffs
             for flag, value in proof["replay"].items()
             if value is True
         }),
@@ -16089,6 +17445,32 @@ def _build_summary(
             action
             for revision in alpha_seed_revisions
             for action in revision["candidate_evidence_refs_by_action"]
+        }),
+        "degraded_oss_response_models": sorted({
+            response["model_id"] for response in degraded_oss_responses
+        }),
+        "degraded_oss_response_roles": sorted({
+            response["role"] for response in degraded_oss_responses
+        }),
+        "degraded_oss_response_components": sorted({
+            response["component"] for response in degraded_oss_responses
+        }),
+        "degraded_oss_response_issue_types": sorted({
+            response["issue_type"] for response in degraded_oss_responses
+        }),
+        "degraded_oss_response_repair_actions": sorted({
+            response["persona_quality_response"]["repair_action"]
+            for response in degraded_oss_responses
+        }),
+        "degraded_oss_response_downweighted_actions": sorted({
+            response["persona_quality_response"]["downweighted_candidate_action"]
+            for response in degraded_oss_responses
+        }),
+        "degraded_oss_response_replay_flags": sorted({
+            flag
+            for response in degraded_oss_responses
+            for flag, value in response["replay"].items()
+            if value is True
         }),
         "agent_decision_artifact_models": sorted({
             artifact["model_id"] for artifact in decision_artifacts
@@ -16429,6 +17811,15 @@ def _build_summary(
         "alpha_seed_revision_drives_decision_count": sum(
             1 for item in usable if item["alpha_seed_revision_drives_decision"]
         ),
+        "degraded_oss_response_repair_count": len(degraded_oss_responses),
+        "degraded_oss_response_repair_pass_count": sum(
+            1
+            for response in degraded_oss_responses
+            if _degraded_oss_response_repair_is_usable(response)
+        ),
+        "degraded_oss_response_repair_drives_decision_count": sum(
+            1 for item in usable if item["degraded_oss_response_repaired"]
+        ),
         "agent_decision_artifact_count": len(decision_artifacts),
         "agent_decision_artifact_replay_count": sum(
             1 for item in usable if item["persona_decision_artifacts_replay"]
@@ -16597,6 +17988,17 @@ def _build_summary(
             for item in usable
             if item["alpha_seed_revision_reaches_lean_handoff"]
         ),
+        "oss_quality_repair_handoff_count": len(oss_quality_repair_handoffs),
+        "oss_quality_repair_handoff_pass_count": sum(
+            1
+            for proof in oss_quality_repair_handoffs
+            if _oss_quality_repair_handoff_is_usable(proof)
+        ),
+        "oss_quality_repair_handoff_drives_lean_count": sum(
+            1
+            for item in usable
+            if item["oss_quality_repair_reaches_lean_handoff"]
+        ),
         "evolved_strategy_packet_proof_count": len(evolved_strategy_packet_proofs),
         "evolved_strategy_packet_proof_pass_count": sum(
             1
@@ -16669,6 +18071,8 @@ def _build_summary(
             "Every non-cold-start persona case resumes that prior autonomous cycle through persisted checkpoint, schedule, and object-store readback refs before using the runtime feedback.",
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
             "Every case carries the Qlib/vectorbt alpha seed revision into the LEAN strategy packet, Object Store readback, handoff bundle, runtime bundle refs, and runtime feedback state updates.",
+            "Every case detects a completed-but-degraded OSS response, applies persona repair/downweight scoring, and carries the repaired quality ref into selected evidence.",
+            "Every case carries that OSS quality repair lineage through the LEAN strategy packet, Object Store readback, handoff runtime bundle, and persona runtime feedback state updates.",
             "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case reconciles experiment-tracker readback divergence and routes the repaired tracking ref into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case carries the repaired MLflow/W&B experiment lineage from evolution decision evidence into the LEAN strategy packet, Object Store readback, handoff bundle, and runtime feedback.",
