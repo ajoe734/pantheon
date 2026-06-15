@@ -2432,6 +2432,19 @@ class ServiceBackedReadAdapter:
             "keys": ["persona_id", "id"],
             "snapshot_key": "consult_policies",
         },
+        "route_policies": {
+            "env": "PANTHEON_BFF_ROUTE_POLICY_STORE",
+            "dirs": (
+                "PANTHEON_PERSONA_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": (
+                "route_policies.json",
+                "persona_route_policies.json",
+            ),
+            "keys": ["policy_id", "route_policy_id", "id"],
+            "snapshot_key": "route_policies",
+        },
         "incidents": {
             "env": "PANTHEON_BFF_INCIDENT_STORE",
             "dirs": ("INCIDENTS_DATA_DIR", "POSTMORTEMS_DATA_DIR"),
@@ -2686,6 +2699,13 @@ class ServiceBackedReadAdapter:
             ),
             "keys": ["hook_id", "cron_id", "id", "name"],
             "snapshot_key": "hook_registry",
+        },
+        "jobs": {
+            "env": "PANTHEON_BFF_JOB_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["job_id", "run_id", "id"],
+            "snapshot_key": "jobs",
         },
         "loop_runs": {
             "env": "PANTHEON_BFF_LOOP_RUN_STORE",
@@ -6819,6 +6839,7 @@ class ReadSurfaceStore:
         "consultation_sessions": "consultation_sessions",
         "consult_transcripts": "consult_transcripts",
         "consult_policies": "consult_policies",
+        "route_policies": "route_policies",
         "incidents": "incidents",
         "postmortems": "postmortems",
         "evolution_decisions": "evolution_decisions",
@@ -6857,6 +6878,10 @@ class ReadSurfaceStore:
         "consult_memos": "consult_memos",
         "trainer_replays": "trainer_replays",
         "trainer_controls": "trainer_controls",
+        "workflow_templates": "workflow_templates",
+        "hook_registry": "hook_registry",
+        "jobs": "jobs",
+        "bff_jobs": "bff_jobs",
         "decision_journal_entries": "decision_journal_entries",
         "decision_journal_idempotency": "decision_journal_idempotency",
         "agora_journal_audit_events": "agora_journal_audit_events",
@@ -11519,7 +11544,17 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         job_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list((self._local_fallback("jobs") or self._local_fallback("bff_jobs") or {}).values())
+        available, service_records = self._service.list_records("jobs")
+        if available and service_records:
+            items = [dict(record) for record in service_records if isinstance(record, dict)]
+        else:
+            raw = self._local_fallback("jobs") or self._local_fallback("bff_jobs") or {}
+            if isinstance(raw, dict):
+                items = [dict(record) for record in raw.values() if isinstance(record, dict)]
+            elif isinstance(raw, list):
+                items = [dict(record) for record in raw if isinstance(record, dict)]
+            else:
+                items = []
         if status:
             items = [i for i in items if i.get("status") == status]
         if job_type:
@@ -11529,8 +11564,26 @@ class ReadSurfaceStore:
     def get_job_bff(self, job_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not job_id:
             return None
+        available, service_records = self._service.list_records("jobs")
+        if available and service_records:
+            for job in service_records:
+                if not isinstance(job, dict):
+                    continue
+                found = str(job.get("job_id") or job.get("run_id") or job.get("id") or "")
+                if found == str(job_id):
+                    return dict(job)
         jobs = self._local_fallback("jobs") or self._local_fallback("bff_jobs") or {}
-        return jobs.get(job_id)
+        if isinstance(jobs, dict):
+            job = jobs.get(job_id)
+            return dict(job) if isinstance(job, dict) else None
+        if isinstance(jobs, list):
+            for job in jobs:
+                if not isinstance(job, dict):
+                    continue
+                found = str(job.get("job_id") or job.get("run_id") or job.get("id") or "")
+                if found == str(job_id):
+                    return dict(job)
+        return None
 
     def get_job_logs_bff(self, job_id: str) -> List[Dict[str, Any]]:
         job = self.get_job_bff(job_id)
@@ -18821,6 +18874,13 @@ class ReadSurfaceStore:
         return []
 
     def list_route_policies(self) -> List[Dict[str, Any]]:
+        available, service_records = self._service.list_records("route_policies")
+        if available and service_records:
+            return [
+                json.loads(json.dumps(record))
+                for record in service_records
+                if isinstance(record, dict)
+            ]
         raw = self._local_fallback("route_policies")
         if isinstance(raw, dict):
             return [json.loads(json.dumps(v)) for v in raw.values() if isinstance(v, dict)]
