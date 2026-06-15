@@ -36,6 +36,7 @@ from services.persona.agent_usability_validation import (
     ORDER_TYPES,
     PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID,
     STRICT_OOS_EVOLUTION_PROOF_MODEL_ID,
+    BLIND_FUTURE_OOS_AUDIT_MODEL_ID,
     ALPHA_SEED_REVISION_ACTION_BY_COMPONENT,
     OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE,
     OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE,
@@ -121,6 +122,16 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["strict_oos_evolution_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["strict_oos_evolution_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["strict_oos_evolution_count"] == DEFAULT_CASE_COUNT
+    assert summary["blind_future_oos_audit_count"] == DEFAULT_CASE_COUNT
+    assert summary["blind_future_oos_audit_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["blind_future_oos_followup_drives_persona_count"] == DEFAULT_CASE_COUNT
+    assert summary["blind_future_oos_verdict_improved_count"] > 0
+    assert summary["blind_future_oos_verdict_regressed_count"] > 0
+    assert (
+        summary["blind_future_oos_verdict_improved_count"]
+        + summary["blind_future_oos_verdict_regressed_count"]
+        == DEFAULT_CASE_COUNT
+    )
     assert summary["portfolio_trade_generation_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["portfolio_trade_generation_fill_count"] == DEFAULT_CASE_COUNT * GENERATION_COUNT
     assert summary["memory_retrieval_drives_next_decision_count"] == DEFAULT_CASE_COUNT
@@ -1198,6 +1209,30 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "trajectory_agrees_with_oos_steps",
         "uses_two_distinct_validation_windows",
     }
+    assert coverage["blind_future_oos_audit_models"] == [
+        BLIND_FUTURE_OOS_AUDIT_MODEL_ID
+    ]
+    assert coverage["blind_future_oos_admission_source_windows"] == [
+        "observe->feedback->holdout"
+    ]
+    assert coverage["blind_future_oos_forbidden_windows"] == ["future_holdout"]
+    assert coverage["blind_future_oos_verdicts"] == ["improved", "regressed"]
+    assert set(coverage["blind_future_oos_followup_actions"]) == {
+        "promote_blind_holdout_hypothesis_to_paper_candidate",
+        "quarantine_oracle_like_evolution_and_request_new_oss_evidence",
+    }
+    assert set(coverage["blind_future_oos_followup_ooda_steps"]) == {"decide", "orient"}
+    assert set(coverage["blind_future_oos_replay_flags"]) == {
+        "admission_uses_observe_feedback_holdout_only",
+        "blind_verdict_records_pass_or_fail",
+        "future_holdout_absent_from_admission",
+        "future_verdict_emitted_after_blind_decision",
+        "holdout_admission_improves_without_future",
+        "persona_followup_action_matches_verdict",
+        "replayable",
+        "shadow_portfolio_has_three_legs",
+        "strict_curated_proof_kept_separate_from_blind_admission",
+    }
 
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
@@ -1218,6 +1253,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_agent_decision_traces_are_no_leakage(case)
         _assert_no_leakage_temporal_protocol(case)
         _assert_strict_oos_evolution_proof(case)
+        _assert_blind_future_oos_audit(case)
         _assert_memory_and_oss_closed_loop(case)
         _assert_institutional_memory_lineage(case, institutional_writes_by_id)
         _assert_policy_candidate_materiality(case)
@@ -1806,6 +1842,97 @@ def _assert_strict_oos_evolution_proof(case: dict) -> None:
     }
     assert check_by_name["strict_oos_evolution_proof_replays_unseen_windows"]["status"] == "passed"
     assert case["usability_dimensions"]["strict_oos_evolution"] == 1.0
+
+
+def _assert_blind_future_oos_audit(case: dict) -> None:
+    audit = case["evolution"]["blind_future_oos_audit"]
+    verdict = audit["future_verdict"]
+    followup = audit["persona_followup"]
+    admission = audit["admission_contract"]
+    replay = audit["replay"]
+
+    assert audit["model_id"] == BLIND_FUTURE_OOS_AUDIT_MODEL_ID
+    assert audit["status"] == "passed"
+    assert audit["case_id"] == case["case_id"]
+    assert audit["persona_id"] == case["persona_id"]
+    assert audit["audit_id"] == f"blind-future-oos-audit-{case['case_id']}"
+    assert audit["audit_ref"] == f"blind-future-oos://{case['case_id']}"
+    assert audit["decision_trace_ref"] == case["reflection"]["agent_decision_traces"][-1][
+        "reflection_id"
+    ]
+    assert audit["strict_oos_proof_ref"] == case["evolution"]["strict_oos_evolution_proof"][
+        "proof_ref"
+    ]
+    assert admission["source_windows"] == ["observe", "feedback", "holdout"]
+    assert admission["forbidden_windows_not_used"] == ["future_holdout"]
+    assert admission["uses_future_holdout_in_admission"] is False
+    assert admission["future_holdout_rows_available_only_for_verdict"] is True
+    assert set(admission["criteria"]) == {
+        "observe_feedback_direction_available",
+        "generation1_beats_baseline_on_holdout",
+        "portfolio_leg_count",
+    }
+    assert len(admission["shadow_window_refs"]) == PORTFOLIO_LEG_COUNT
+    assert audit["shadow_signature"] == admission["shadow_signature"]
+    assert audit["shadow_portfolio"]["instrument_count"] == PORTFOLIO_LEG_COUNT
+    assert len(audit["shadow_portfolio"]["instruments"]) == PORTFOLIO_LEG_COUNT
+    assert len(audit["shadow_portfolio"]["start_indices"]) == PORTFOLIO_LEG_COUNT
+    assert set(audit["shadow_portfolio"]["feedback_directions"]) == set(
+        audit["shadow_portfolio"]["instruments"]
+    )
+    assert set(audit["shadow_portfolio"]["holdout_directions"]) == set(
+        audit["shadow_portfolio"]["instruments"]
+    )
+    assert set(audit["shadow_portfolio"]["future_directions_visible_after_verdict"]) == set(
+        audit["shadow_portfolio"]["instruments"]
+    )
+    assert audit["generation1_holdout_score"] > audit["baseline_holdout_score"]
+    assert audit["holdout_improvement"] > 0
+    assert verdict["validation_window"] == "future_holdout"
+    assert verdict["verdict"] in {"improved", "regressed"}
+    assert verdict["observed_after_blind_decision"] is True
+    assert verdict["score_improvement"] == audit["future_improvement"]
+    assert verdict["improved"] is (verdict["verdict"] == "improved")
+    assert audit["future_improvement"] == round(
+        audit["generation2_future_holdout_score"]
+        - audit["generation1_future_counterfactual_score"],
+        10,
+    )
+    expected_action = (
+        "promote_blind_holdout_hypothesis_to_paper_candidate"
+        if verdict["verdict"] == "improved"
+        else "quarantine_oracle_like_evolution_and_request_new_oss_evidence"
+    )
+    expected_ooda_step = "decide" if verdict["verdict"] == "improved" else "orient"
+    assert followup["action"] == expected_action
+    assert followup["ooda_step"] == expected_ooda_step
+    assert followup["verdict"] == verdict["verdict"]
+    assert followup["future_verdict_seen_after_decision"] is True
+    assert audit["audit_ref"] in followup["evidence_refs"]
+    assert f"reflection://{audit['decision_trace_ref']}" in followup["evidence_refs"]
+    assert audit["strict_oos_proof_ref"] in followup["evidence_refs"]
+    for window_ref in admission["shadow_window_refs"]:
+        assert window_ref in followup["evidence_refs"]
+
+    assert replay["replayable"] is True
+    assert replay["shadow_portfolio_has_three_legs"] is True
+    assert replay["admission_uses_observe_feedback_holdout_only"] is True
+    assert replay["future_holdout_absent_from_admission"] is True
+    assert replay["holdout_admission_improves_without_future"] is True
+    assert replay["future_verdict_emitted_after_blind_decision"] is True
+    assert replay["blind_verdict_records_pass_or_fail"] is True
+    assert replay["persona_followup_action_matches_verdict"] is True
+    assert replay["strict_curated_proof_kept_separate_from_blind_admission"] is True
+    assert all(replay.values())
+    assert audit["input_hash"]
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["blind_future_oos_audit_drives_persona_followup"]["status"] == "passed"
+    assert case["usability_dimensions"]["blind_future_oos_audit"] == 1.0
+    assert case["usable"]["blind_future_oos_audit_drives_followup"] is True
 
 
 def _candidate_action_from_id(candidate_id: str) -> str:

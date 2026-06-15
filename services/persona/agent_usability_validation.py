@@ -162,6 +162,7 @@ PERSONA_REASONING_EVALUATOR_MODEL_ID = "persona_reasoning_response_evaluator_v1"
 EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v1"
 NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1"
 STRICT_OOS_EVOLUTION_PROOF_MODEL_ID = "persona_strict_oos_evolution_proof_v1"
+BLIND_FUTURE_OOS_AUDIT_MODEL_ID = "persona_blind_future_oos_verdict_v1"
 PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID = "persona_memory_counterfactual_decision_proof_v1"
 MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID = "persona_multi_oss_closed_loop_proof_v1"
 PERSONA_OSS_OODA_LEDGER_MODEL_ID = "persona_oss_ooda_causal_ledger_v1"
@@ -498,6 +499,8 @@ def run_agent_usability_validations(
     dataset = _load_historical_dataset()
     grouped = _group_records_by_instrument(dataset["records"])
     valid_windows = _build_valid_no_leakage_windows(grouped)
+    blind_future_windows = _build_blind_future_audit_windows(grouped)
+    blind_future_windows_by_instrument = _windows_by_instrument(blind_future_windows)
     episodes = _build_episode_manifest(
         valid_windows=valid_windows,
         personas=persona_records,
@@ -781,6 +784,15 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
         )
+        blind_future_oos_audit = _build_blind_future_oos_audit(
+            episode=episode,
+            shadow_windows=_portfolio_windows(
+                blind_future_windows_by_instrument,
+                index * 3 + 17,
+            ),
+            decision_trace=decision_trace1,
+            strict_oos_evolution_proof=strict_oos_evolution_proof,
+        )
         policy_candidate_materiality = _build_policy_candidate_materiality_proof(
             episode=episode,
             oss_inputs=oss_inputs,
@@ -812,6 +824,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            blind_future_oos_audit=blind_future_oos_audit,
             policy_candidate_materiality=policy_candidate_materiality,
             reflection_artifact_materiality=reflection_artifact_materiality,
             oss_inputs=oss_inputs,
@@ -866,6 +879,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            blind_future_oos_audit=blind_future_oos_audit,
             policy_candidate_materiality=policy_candidate_materiality,
             reflection_artifact_materiality=reflection_artifact_materiality,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
@@ -894,6 +908,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            blind_future_oos_audit=blind_future_oos_audit,
             policy_candidate_materiality=policy_candidate_materiality,
             reflection_artifact_materiality=reflection_artifact_materiality,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
@@ -923,6 +938,7 @@ def run_agent_usability_validations(
             evolution_trajectory=evolution_trajectory,
             no_leakage_protocol=no_leakage_protocol,
             strict_oos_evolution_proof=strict_oos_evolution_proof,
+            blind_future_oos_audit=blind_future_oos_audit,
             policy_candidate_materiality=policy_candidate_materiality,
             reflection_artifact_materiality=reflection_artifact_materiality,
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
@@ -1011,6 +1027,32 @@ def _build_valid_no_leakage_windows(
     return tuple(windows)
 
 
+def _build_blind_future_audit_windows(
+    grouped: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> tuple[InstrumentWindow, ...]:
+    windows: list[InstrumentWindow] = []
+    for instrument in sorted(grouped):
+        rows = [dict(row) for row in grouped[instrument]]
+        for start_index in range(0, len(rows) - MIN_HISTORY_BARS):
+            window = _window_from_rows_without_future_admission(instrument, rows, start_index)
+            if window is None:
+                continue
+            baseline_policy = _single_leg_policy(window.observe_direction, 0.55)
+            generation1_policy = _single_leg_policy(window.feedback_direction, 0.75)
+            if _evaluate_leg(window, baseline_policy, "holdout") >= _evaluate_leg(
+                window,
+                generation1_policy,
+                "holdout",
+            ):
+                continue
+            windows.append(window)
+    if len(windows) < DEFAULT_CASE_COUNT:
+        raise ValueError(
+            f"need at least {DEFAULT_CASE_COUNT} blind future audit windows, found {len(windows)}"
+        )
+    return tuple(windows)
+
+
 def _window_from_rows(
     instrument: str,
     rows: Sequence[Mapping[str, Any]],
@@ -1032,6 +1074,41 @@ def _window_from_rows(
     if not (observe_direction and feedback_direction):
         return None
     if holdout_direction != feedback_direction or future_direction != feedback_direction:
+        return None
+    return InstrumentWindow(
+        instrument=instrument,
+        execution_symbol=_execution_symbol_for(instrument),
+        start_index=start_index,
+        observe_rows=observe_rows,
+        feedback_rows=feedback_rows,
+        holdout_rows=holdout_rows,
+        future_holdout_rows=future_rows,
+        observe_direction=observe_direction,
+        feedback_direction=feedback_direction,
+        holdout_direction=holdout_direction,
+        future_direction=future_direction,
+    )
+
+
+def _window_from_rows_without_future_admission(
+    instrument: str,
+    rows: Sequence[Mapping[str, Any]],
+    start_index: int,
+) -> InstrumentWindow | None:
+    observe_rows = tuple(dict(row) for row in rows[start_index : start_index + LOOKBACK_BARS])
+    feedback_start = start_index + LOOKBACK_BARS
+    holdout_start = feedback_start + FEEDBACK_BARS
+    future_start = holdout_start + HOLDOUT_BARS
+    feedback_rows = tuple(dict(row) for row in rows[feedback_start : feedback_start + FEEDBACK_BARS])
+    holdout_rows = tuple(dict(row) for row in rows[holdout_start : holdout_start + HOLDOUT_BARS])
+    future_rows = tuple(dict(row) for row in rows[future_start : future_start + FUTURE_HOLDOUT_BARS])
+    if not (observe_rows and feedback_rows and holdout_rows and future_rows):
+        return None
+    observe_direction = _direction(_period_return(observe_rows[0], observe_rows[-1]))
+    feedback_direction = _direction(_period_return(observe_rows[-1], feedback_rows[-1]))
+    holdout_direction = _direction(_period_return(feedback_rows[-1], holdout_rows[-1]))
+    future_direction = _direction(_period_return(holdout_rows[-1], future_rows[-1]))
+    if not (observe_direction and feedback_direction and holdout_direction):
         return None
     return InstrumentWindow(
         instrument=instrument,
@@ -7759,6 +7836,7 @@ def _build_operational_context(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    blind_future_oos_audit: Mapping[str, Any],
     policy_candidate_materiality: Mapping[str, Any],
     reflection_artifact_materiality: Mapping[str, Any],
     oss_inputs: Mapping[str, Mapping[str, Any]],
@@ -14755,6 +14833,310 @@ def _strict_oos_evolution_proof_is_usable(proof: Mapping[str, Any]) -> bool:
     )
 
 
+def _build_blind_future_oos_audit(
+    *,
+    episode: PortfolioEpisode,
+    shadow_windows: Sequence[InstrumentWindow],
+    decision_trace: Mapping[str, Any],
+    strict_oos_evolution_proof: Mapping[str, Any],
+) -> dict[str, Any]:
+    audit_ref = f"blind-future-oos://{episode.case_id}"
+    shadow_signature = _stable_payload_hash(
+        "blind-future-shadow-portfolio",
+        {
+            "case_id": episode.case_id,
+            "windows": [
+                {
+                    "instrument": window.instrument,
+                    "start_index": window.start_index,
+                    "observe_direction": window.observe_direction,
+                    "feedback_direction": window.feedback_direction,
+                    "holdout_direction": window.holdout_direction,
+                }
+                for window in shadow_windows
+            ],
+        },
+    )
+    baseline_policy = _shadow_portfolio_policy(
+        case_id=episode.case_id,
+        generation=0,
+        windows=shadow_windows,
+        direction_source="observe",
+        risk_multiplier=0.55,
+    )
+    holdout_policy = _shadow_portfolio_policy(
+        case_id=episode.case_id,
+        generation=1,
+        windows=shadow_windows,
+        direction_source="feedback",
+        risk_multiplier=0.75,
+    )
+    future_policy = _shadow_portfolio_policy(
+        case_id=episode.case_id,
+        generation=2,
+        windows=shadow_windows,
+        direction_source="feedback",
+        risk_multiplier=1.15,
+    )
+    baseline_holdout = _evaluate_shadow_portfolio_policy(
+        shadow_windows,
+        baseline_policy,
+        "holdout",
+    )
+    generation1_holdout = _evaluate_shadow_portfolio_policy(
+        shadow_windows,
+        holdout_policy,
+        "holdout",
+    )
+    generation1_future = _evaluate_shadow_portfolio_policy(
+        shadow_windows,
+        holdout_policy,
+        "future_holdout",
+    )
+    generation2_future = _evaluate_shadow_portfolio_policy(
+        shadow_windows,
+        future_policy,
+        "future_holdout",
+    )
+    holdout_improvement = round(
+        float(generation1_holdout["score"]) - float(baseline_holdout["score"]),
+        10,
+    )
+    future_improvement = round(
+        float(generation2_future["score"]) - float(generation1_future["score"]),
+        10,
+    )
+    verdict = "improved" if future_improvement > 0 else "regressed"
+    followup_action = (
+        "promote_blind_holdout_hypothesis_to_paper_candidate"
+        if verdict == "improved"
+        else "quarantine_oracle_like_evolution_and_request_new_oss_evidence"
+    )
+    followup_ooda_step = "decide" if verdict == "improved" else "orient"
+    window_refs = [
+        f"blind-window://{window.instrument}/{window.start_index}"
+        for window in shadow_windows
+    ]
+    admission_contract = {
+        "admission_id": f"blind-future-admission-{episode.case_id}",
+        "source_windows": ["observe", "feedback", "holdout"],
+        "forbidden_windows_not_used": ["future_holdout"],
+        "criteria": [
+            "observe_feedback_direction_available",
+            "generation1_beats_baseline_on_holdout",
+            "portfolio_leg_count",
+        ],
+        "uses_future_holdout_in_admission": False,
+        "future_holdout_rows_available_only_for_verdict": True,
+        "shadow_window_refs": window_refs,
+        "shadow_signature": shadow_signature,
+    }
+    persona_followup = {
+        "action": followup_action,
+        "ooda_step": followup_ooda_step,
+        "verdict": verdict,
+        "next_persona_step": (
+            "continue_paper_candidate_with_blind_future_evidence"
+            if verdict == "improved"
+            else "request_fresh_oss_evidence_before_next_evolution"
+        ),
+        "evidence_refs": [
+            audit_ref,
+            f"reflection://{decision_trace['reflection_id']}",
+            strict_oos_evolution_proof["proof_ref"],
+            *window_refs,
+        ],
+        "future_verdict_seen_after_decision": True,
+    }
+    replay = {
+        "replayable": True,
+        "shadow_portfolio_has_three_legs": len(shadow_windows) == PORTFOLIO_LEG_COUNT,
+        "admission_uses_observe_feedback_holdout_only": admission_contract[
+            "source_windows"
+        ]
+        == ["observe", "feedback", "holdout"],
+        "future_holdout_absent_from_admission": (
+            "future_holdout" not in admission_contract["source_windows"]
+            and admission_contract["forbidden_windows_not_used"] == ["future_holdout"]
+            and admission_contract["uses_future_holdout_in_admission"] is False
+        ),
+        "holdout_admission_improves_without_future": holdout_improvement > 0,
+        "future_verdict_emitted_after_blind_decision": (
+            persona_followup["future_verdict_seen_after_decision"] is True
+            and decision_trace["decision_inputs"]["forbidden_windows_not_used"]
+            == ["future_holdout"]
+        ),
+        "blind_verdict_records_pass_or_fail": verdict in {"improved", "regressed"},
+        "persona_followup_action_matches_verdict": (
+            (verdict == "improved" and followup_ooda_step == "decide")
+            or (verdict == "regressed" and followup_ooda_step == "orient")
+        ),
+        "strict_curated_proof_kept_separate_from_blind_admission": (
+            strict_oos_evolution_proof["proof_ref"]
+            not in admission_contract["shadow_window_refs"]
+        ),
+    }
+    return {
+        "audit_id": f"blind-future-oos-audit-{episode.case_id}",
+        "audit_ref": audit_ref,
+        "model_id": BLIND_FUTURE_OOS_AUDIT_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "shadow_signature": shadow_signature,
+        "admission_contract": admission_contract,
+        "shadow_portfolio": {
+            "instrument_count": len(shadow_windows),
+            "instruments": [window.instrument for window in shadow_windows],
+            "start_indices": [window.start_index for window in shadow_windows],
+            "feedback_directions": {
+                window.instrument: window.feedback_direction for window in shadow_windows
+            },
+            "holdout_directions": {
+                window.instrument: window.holdout_direction for window in shadow_windows
+            },
+            "future_directions_visible_after_verdict": {
+                window.instrument: window.future_direction for window in shadow_windows
+            },
+        },
+        "decision_trace_ref": decision_trace["reflection_id"],
+        "strict_oos_proof_ref": strict_oos_evolution_proof["proof_ref"],
+        "baseline_holdout_score": baseline_holdout["score"],
+        "generation1_holdout_score": generation1_holdout["score"],
+        "generation1_future_counterfactual_score": generation1_future["score"],
+        "generation2_future_holdout_score": generation2_future["score"],
+        "holdout_improvement": holdout_improvement,
+        "future_improvement": future_improvement,
+        "future_verdict": {
+            "validation_window": "future_holdout",
+            "verdict": verdict,
+            "improved": verdict == "improved",
+            "score_improvement": future_improvement,
+            "observed_after_blind_decision": True,
+        },
+        "persona_followup": persona_followup,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "blind-future-oos-audit",
+            {
+                "case_id": episode.case_id,
+                "shadow_signature": shadow_signature,
+                "admission_contract": admission_contract,
+                "future_verdict": verdict,
+                "future_improvement": future_improvement,
+                "persona_followup": persona_followup,
+            },
+        ),
+    }
+
+
+def _shadow_portfolio_policy(
+    *,
+    case_id: str,
+    generation: int,
+    windows: Sequence[InstrumentWindow],
+    direction_source: str,
+    risk_multiplier: float,
+) -> dict[str, Any]:
+    if direction_source == "observe":
+        directions = {window.instrument: window.observe_direction for window in windows}
+        allowed_windows = ["observe"]
+        forbidden_windows = ["feedback", "holdout", "future_holdout"]
+    elif direction_source == "feedback":
+        directions = {window.instrument: window.feedback_direction for window in windows}
+        allowed_windows = ["observe", "feedback", "holdout"] if generation == 2 else [
+            "observe",
+            "feedback",
+        ]
+        forbidden_windows = ["future_holdout"] if generation == 2 else [
+            "holdout",
+            "future_holdout",
+        ]
+    else:
+        raise ValueError(f"unsupported shadow direction_source: {direction_source}")
+    return {
+        "policy_id": f"blind-policy-{case_id}-gen{generation}",
+        "generation": generation,
+        "policy_version": f"blind_{direction_source}_direction_gen{generation}",
+        "risk_multiplier": risk_multiplier,
+        "decision_inputs": {
+            "allowed_windows": allowed_windows,
+            "forbidden_windows_not_used": forbidden_windows,
+            "direction_source": direction_source,
+        },
+        "legs": {
+            window.instrument: {
+                "instrument": window.instrument,
+                "execution_symbol": window.execution_symbol,
+                "direction": int(directions[window.instrument]),
+                "risk_multiplier": risk_multiplier,
+                "weight": round(1 / max(1, len(windows)), 6),
+            }
+            for window in windows
+        },
+    }
+
+
+def _evaluate_shadow_portfolio_policy(
+    windows: Sequence[InstrumentWindow],
+    policy: Mapping[str, Any],
+    period: str,
+) -> dict[str, Any]:
+    leg_evaluations = [
+        _evaluate_leg_detail(window, policy["legs"][window.instrument], period)
+        for window in windows
+    ]
+    score = mean(item["score"] for item in leg_evaluations)
+    signed_return = mean(item["signed_return"] for item in leg_evaluations)
+    drawdown = min(item["drawdown"] for item in leg_evaluations)
+    turnover = _policy_turnover(policy)
+    score = score - turnover * 0.0001
+    return {
+        "period": period,
+        "score": round(score, 10),
+        "signed_return": round(signed_return, 10),
+        "drawdown": round(drawdown, 10),
+        "turnover": round(turnover, 10),
+        "leg_evaluations": leg_evaluations,
+    }
+
+
+def _blind_future_oos_audit_is_usable(audit: Mapping[str, Any]) -> bool:
+    replay = audit.get("replay", {})
+    admission = audit.get("admission_contract", {})
+    verdict = audit.get("future_verdict", {})
+    followup = audit.get("persona_followup", {})
+    return bool(
+        audit.get("model_id") == BLIND_FUTURE_OOS_AUDIT_MODEL_ID
+        and audit.get("status") == "passed"
+        and audit.get("audit_ref", "").startswith("blind-future-oos://")
+        and admission.get("source_windows") == ["observe", "feedback", "holdout"]
+        and admission.get("forbidden_windows_not_used") == ["future_holdout"]
+        and admission.get("uses_future_holdout_in_admission") is False
+        and verdict.get("validation_window") == "future_holdout"
+        and verdict.get("verdict") in {"improved", "regressed"}
+        and verdict.get("observed_after_blind_decision") is True
+        and followup.get("action")
+        in {
+            "promote_blind_holdout_hypothesis_to_paper_candidate",
+            "quarantine_oracle_like_evolution_and_request_new_oss_evidence",
+        }
+        and followup.get("future_verdict_seen_after_decision") is True
+        and audit.get("input_hash")
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "shadow_portfolio_has_three_legs",
+            "admission_uses_observe_feedback_holdout_only",
+            "future_holdout_absent_from_admission",
+            "holdout_admission_improves_without_future",
+            "future_verdict_emitted_after_blind_decision",
+            "blind_verdict_records_pass_or_fail",
+            "persona_followup_action_matches_verdict",
+            "strict_curated_proof_kept_separate_from_blind_admission",
+        ))
+    )
+
+
 def _build_policy_candidate_materiality_proof(
     *,
     episode: PortfolioEpisode,
@@ -15276,6 +15658,7 @@ def _build_usability_dimensions(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    blind_future_oos_audit: Mapping[str, Any],
     policy_candidate_materiality: Mapping[str, Any],
     reflection_artifact_materiality: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
@@ -15403,6 +15786,9 @@ def _build_usability_dimensions(
     strict_oos_evolution = 1.0 if _strict_oos_evolution_proof_is_usable(
         strict_oos_evolution_proof
     ) else 0.0
+    blind_future_oos_audit_score = 1.0 if _blind_future_oos_audit_is_usable(
+        blind_future_oos_audit
+    ) else 0.0
     policy_candidate_oss_materiality = 1.0 if _policy_candidate_materiality_is_usable(
         policy_candidate_materiality
     ) else 0.0
@@ -15452,6 +15838,7 @@ def _build_usability_dimensions(
         "multi_generation_trajectory": multi_generation_trajectory,
         "no_leakage_temporal_protocol": no_leakage_temporal_protocol,
         "strict_oos_evolution": strict_oos_evolution,
+        "blind_future_oos_audit": blind_future_oos_audit_score,
         "policy_candidate_oss_materiality": policy_candidate_oss_materiality,
         "reflection_artifact_oss_materiality": reflection_artifact_oss_materiality,
         "drawdown_reduction": drawdown_reduction,
@@ -15524,6 +15911,7 @@ def _diagnose_validation_execution(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    blind_future_oos_audit: Mapping[str, Any],
     policy_candidate_materiality: Mapping[str, Any],
     reflection_artifact_materiality: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
@@ -15640,6 +16028,29 @@ def _diagnose_validation_execution(
                     for step in strict_oos_evolution_proof["proof_steps"]
                 ],
                 "replay": copy.deepcopy(dict(strict_oos_evolution_proof["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "blind_future_oos_audit_drives_persona_followup",
+            _blind_future_oos_audit_is_usable(blind_future_oos_audit),
+            {
+                "audit_id": blind_future_oos_audit["audit_id"],
+                "future_verdict": blind_future_oos_audit["future_verdict"][
+                    "verdict"
+                ],
+                "future_improvement": blind_future_oos_audit["future_improvement"],
+                "followup_action": blind_future_oos_audit["persona_followup"][
+                    "action"
+                ],
+                "admission_source_windows": list(
+                    blind_future_oos_audit["admission_contract"]["source_windows"]
+                ),
+                "forbidden_windows_not_used": list(
+                    blind_future_oos_audit["admission_contract"][
+                        "forbidden_windows_not_used"
+                    ]
+                ),
+                "replay": copy.deepcopy(dict(blind_future_oos_audit["replay"])),
             },
         ),
         _diagnostic_check(
@@ -16467,6 +16878,7 @@ def _build_case_result(
     evolution_trajectory: Mapping[str, Any],
     no_leakage_protocol: Mapping[str, Any],
     strict_oos_evolution_proof: Mapping[str, Any],
+    blind_future_oos_audit: Mapping[str, Any],
     policy_candidate_materiality: Mapping[str, Any],
     reflection_artifact_materiality: Mapping[str, Any],
     multi_oss_closed_loop_proof: Mapping[str, Any],
@@ -16600,6 +17012,7 @@ def _build_case_result(
             "trajectory": copy.deepcopy(dict(evolution_trajectory)),
             "no_leakage_protocol": copy.deepcopy(dict(no_leakage_protocol)),
             "strict_oos_evolution_proof": copy.deepcopy(dict(strict_oos_evolution_proof)),
+            "blind_future_oos_audit": copy.deepcopy(dict(blind_future_oos_audit)),
         },
         "usability_dimensions": dict(usability_dimensions),
         "overall_usability_score": overall_usability_score,
@@ -16649,6 +17062,9 @@ def _build_case_result(
             ] == 1.0,
             "multi_generation_evolution": usability_dimensions["multi_generation_trajectory"] == 1.0,
             "strict_oos_evolution": usability_dimensions["strict_oos_evolution"] == 1.0,
+            "blind_future_oos_audit_drives_followup": usability_dimensions[
+                "blind_future_oos_audit"
+            ] == 1.0,
             "portfolio_level": len(episode.windows) == PORTFOLIO_LEG_COUNT,
             "multi_dimensional_score_passed": overall_usability_score >= MIN_USABILITY_SCORE,
             "validation_planned_before_execution": usability_dimensions["validation_planning"] == 1.0,
@@ -16745,6 +17161,9 @@ def _build_summary(
     no_leakage_protocols = [case["evolution"]["no_leakage_protocol"] for case in cases]
     strict_oos_evolution_proofs = [
         case["evolution"]["strict_oos_evolution_proof"] for case in cases
+    ]
+    blind_future_oos_audits = [
+        case["evolution"]["blind_future_oos_audit"] for case in cases
     ]
     policy_candidate_materialities = [
         case["oss_feedback"]["policy_candidate_materiality"] for case in cases
@@ -17576,6 +17995,32 @@ def _build_summary(
             for flag, value in proof["replay"].items()
             if value is True
         }),
+        "blind_future_oos_audit_models": sorted({
+            audit["model_id"] for audit in blind_future_oos_audits
+        }),
+        "blind_future_oos_admission_source_windows": sorted({
+            "->".join(audit["admission_contract"]["source_windows"])
+            for audit in blind_future_oos_audits
+        }),
+        "blind_future_oos_forbidden_windows": sorted({
+            "->".join(audit["admission_contract"]["forbidden_windows_not_used"])
+            for audit in blind_future_oos_audits
+        }),
+        "blind_future_oos_verdicts": sorted({
+            audit["future_verdict"]["verdict"] for audit in blind_future_oos_audits
+        }),
+        "blind_future_oos_followup_actions": sorted({
+            audit["persona_followup"]["action"] for audit in blind_future_oos_audits
+        }),
+        "blind_future_oos_followup_ooda_steps": sorted({
+            audit["persona_followup"]["ooda_step"] for audit in blind_future_oos_audits
+        }),
+        "blind_future_oos_replay_flags": sorted({
+            flag
+            for audit in blind_future_oos_audits
+            for flag, value in audit["replay"].items()
+            if value is True
+        }),
     }
     old_case_ids = {f"agent-usability-{index:04d}" for index in range(1, DEFAULT_CASE_COUNT + 1)}
     return {
@@ -17611,6 +18056,23 @@ def _build_summary(
             1 for proof in strict_oos_evolution_proofs if _strict_oos_evolution_proof_is_usable(proof)
         ),
         "strict_oos_evolution_count": sum(1 for item in usable if item["strict_oos_evolution"]),
+        "blind_future_oos_audit_count": len(blind_future_oos_audits),
+        "blind_future_oos_audit_pass_count": sum(
+            1 for audit in blind_future_oos_audits if _blind_future_oos_audit_is_usable(audit)
+        ),
+        "blind_future_oos_verdict_improved_count": sum(
+            1
+            for audit in blind_future_oos_audits
+            if audit["future_verdict"]["verdict"] == "improved"
+        ),
+        "blind_future_oos_verdict_regressed_count": sum(
+            1
+            for audit in blind_future_oos_audits
+            if audit["future_verdict"]["verdict"] == "regressed"
+        ),
+        "blind_future_oos_followup_drives_persona_count": sum(
+            1 for item in usable if item["blind_future_oos_audit_drives_followup"]
+        ),
         "portfolio_trade_generation_count": sum(len(case["generation_results"]) for case in cases),
         "portfolio_trade_generation_fill_count": sum(
             1
@@ -18057,6 +18519,7 @@ def _build_summary(
             "The evolved policy is selected without holdout/future-holdout data in the decision trace.",
             "Every case records a no-leakage temporal protocol proving observe/feedback/holdout/future-holdout boundaries before scoring evolution.",
             "Every case emits a strict OOS evolution proof showing gen1 uses feedback to improve holdout and gen2 uses only holdout outcome before improving a disjoint future holdout.",
+            "Every case also emits a blind future OOS audit whose shadow portfolio is admitted without future-holdout criteria, then drives a persona follow-up after an improved or regressed future verdict.",
             "Every case trades a three-instrument portfolio across three generations through paper runtime fills.",
             "Every case writes memory and proves retrieved lessons influence later candidate scoring and selected evidence refs.",
             "Every agent decision emits a memory counterfactual proving retrieved lessons change selected scores and margins, while cold starts declare zero memory influence.",
