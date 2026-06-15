@@ -663,6 +663,7 @@ services:
       PANTHEON_BFF_TOOLS_STORE: ${PANTHEON_BFF_TOOLS_STORE:-/data/bff/tools.json}
       PANTHEON_BFF_MCP_SERVERS_STORE: ${PANTHEON_BFF_MCP_SERVERS_STORE:-/data/bff/mcp_servers.json}
       PANTHEON_BFF_MCP_TOOLS_STORE: ${PANTHEON_BFF_MCP_TOOLS_STORE:-/data/bff/mcp_tools.json}
+      PANTHEON_BFF_OODA_PACKET_STORE: ${PANTHEON_BFF_OODA_PACKET_STORE:-/data/bff/ooda_packets.json}
       PANTHEON_BFF_INCIDENT_STORE: ${PANTHEON_BFF_INCIDENT_STORE:-/data/incidents/incidents.json}
       PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
       PANTHEON_BFF_APPROVAL_DECISION_STORE: ${PANTHEON_BFF_APPROVAL_DECISION_STORE:-/data/governance/approval_decisions.json}
