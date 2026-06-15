@@ -79,6 +79,9 @@ case "$MODE" in
     if [[ -f scripts/test_verify_e2e_binding_provenance.py ]]; then
       run_step "e2e-provenance-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_binding_provenance.py || echo "provenance verifier tests reported failures"
     fi
+    if [[ -f scripts/test_verify_e2e_telemetry_drift_consistency.py ]]; then
+      run_step "e2e-telemetry-drift-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_telemetry_drift_consistency.py || echo "telemetry-drift verifier tests reported failures"
+    fi
     ;;
   wave)
     REF="${TARGET_REF:-HEAD}"
