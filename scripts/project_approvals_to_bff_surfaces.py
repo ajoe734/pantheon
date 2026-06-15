@@ -18,8 +18,13 @@ Acceptance posture (stub dispatch, dev safety):
 - no live broker orders are issued
 - no capital allocation side-effects
 
+Fail-safe: if the HTTP fetch fails, the script exits non-zero and does NOT write
+or overwrite the BFF store file. This prevents a failed fetch from poisoning the
+store with an empty approval_decisions.json that would shadow existing data and
+keep /bff/approvals at count=0.
+
 Usage (run where the promotion service API is reachable):
-    PROMOTION_URL=http://promotion-svc:8089 OUT_DIR=/data/bff \\
+    PROMOTION_URL=http://promotion:8089 OUT_DIR=/data/bff \\
         python3 scripts/project_approvals_to_bff_surfaces.py
 
     # or with defaults (docker-compose service names):
@@ -32,6 +37,10 @@ import os
 import sys
 import urllib.request
 
+# Sentinel returned by project() when the HTTP call itself failed (distinct from
+# a legitimate empty result set).
+_FETCH_FAILED = None
+
 
 def _get(url: str) -> object:
     try:
@@ -39,12 +48,19 @@ def _get(url: str) -> object:
             return json.loads(r.read())
     except Exception as exc:  # noqa: BLE001
         print(f"  warn: GET {url} failed: {exc}", file=sys.stderr)
-        return None
+        return _FETCH_FAILED
 
 
-def project(promotion_url: str) -> dict:
-    """Return a dict keyed by decision_id with real approval decision records."""
+def project(promotion_url: str) -> "dict | None":
+    """Return a dict keyed by decision_id, or None when the HTTP call failed.
+
+    None means the fetch itself errored — do not write to disk.
+    An empty dict means the service responded with 0 approvals — safe to write.
+    """
     payload = _get(f"{promotion_url}/api/v1/approvals")
+    if payload is _FETCH_FAILED:
+        # HTTP call failed; signal the caller not to write.
+        return None
     if not isinstance(payload, dict):
         return {}
     items = payload.get("items") or []
@@ -60,12 +76,22 @@ def project(promotion_url: str) -> dict:
 
 
 def main() -> int:
+    # Default matches the docker-compose service name "promotion" on port 8089.
     promotion_url = os.environ.get(
-        "PROMOTION_URL", "http://promotion-svc:8089"
+        "PROMOTION_URL", "http://promotion:8089"
     ).rstrip("/")
     out_dir = os.environ.get("OUT_DIR", "/data/bff")
 
     decisions = project(promotion_url)
+    if decisions is None:
+        # HTTP fetch failed — refuse to write so we cannot poison the BFF store.
+        print(
+            f"  error: fetch from {promotion_url}/api/v1/approvals failed; "
+            "store NOT updated to avoid poisoning /bff/approvals",
+            file=sys.stderr,
+        )
+        return 1
+
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "approval_decisions.json")
     with open(out_path, "w") as f:
