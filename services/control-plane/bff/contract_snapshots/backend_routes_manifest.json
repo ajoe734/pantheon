@@ -3,7 +3,7 @@
     "snapshot_date": "2026-06-15",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 500,
+    "total_routes": 505,
     "status_values": [
       "implemented",
       "alias",
@@ -1673,6 +1673,30 @@
     },
     {
       "method": "GET",
+      "path": "/bff/management/consult-rules",
+      "family": "governance-sub-rules",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/memory-governance",
+      "family": "governance-sub-rules",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/permissions",
+      "family": "governance-sub-rules",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/route-policies",
+      "family": "governance-sub-rules",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/capabilities",
       "family": "health",
       "status": "implemented"
@@ -1747,6 +1771,12 @@
       "method": "GET",
       "path": "/redoc",
       "family": "health",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/data-sources",
+      "family": "management-console",
       "status": "implemented"
     },
     {

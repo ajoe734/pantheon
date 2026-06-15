@@ -18743,6 +18743,40 @@ class ReadSurfaceStore:
             return None
         return json.loads(json.dumps(record))
 
+    # --- governance sub-rules read surfaces (BFFGAP-GOVRULES) ---
+
+    def list_governance_permissions(self) -> List[Dict[str, Any]]:
+        raw = self._local_fallback("governance_permissions")
+        if isinstance(raw, dict):
+            return [json.loads(json.dumps(v)) for v in raw.values() if isinstance(v, dict)]
+        if isinstance(raw, list):
+            return [json.loads(json.dumps(v)) for v in raw if isinstance(v, dict)]
+        return []
+
+    def list_memory_governance_rules(self) -> List[Dict[str, Any]]:
+        raw = self._local_fallback("memory_governance_rules")
+        if isinstance(raw, dict):
+            return [json.loads(json.dumps(v)) for v in raw.values() if isinstance(v, dict)]
+        if isinstance(raw, list):
+            return [json.loads(json.dumps(v)) for v in raw if isinstance(v, dict)]
+        return []
+
+    def list_consult_rules(self) -> List[Dict[str, Any]]:
+        raw = self._local_fallback("consult_rules")
+        if isinstance(raw, dict):
+            return [json.loads(json.dumps(v)) for v in raw.values() if isinstance(v, dict)]
+        if isinstance(raw, list):
+            return [json.loads(json.dumps(v)) for v in raw if isinstance(v, dict)]
+        return []
+
+    def list_route_policies(self) -> List[Dict[str, Any]]:
+        raw = self._local_fallback("route_policies")
+        if isinstance(raw, dict):
+            return [json.loads(json.dumps(v)) for v in raw.values() if isinstance(v, dict)]
+        if isinstance(raw, list):
+            return [json.loads(json.dumps(v)) for v in raw if isinstance(v, dict)]
+        return []
+
     def list_alpha_factory_cards(
         self,
         *,
