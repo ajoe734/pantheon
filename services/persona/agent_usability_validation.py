@@ -149,6 +149,7 @@ PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID = "persona_reflection_artifact_
 PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID = "persona_reflection_oss_lineage_handoff_v1"
 PERSONA_OPENCLAW_SESSION_HANDOFF_MODEL_ID = "persona_openclaw_session_handoff_v1"
 PERSONA_CONFLICT_RESOLUTION_MODEL_ID = "persona_multi_persona_conflict_resolution_v1"
+PERSONA_MULTI_PERSONA_PROPOSAL_LINEAGE_MODEL_ID = "persona_multi_persona_proposal_lineage_v1"
 PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID = "persona_scheduler_conflict_ooda_dispatch_v1"
 PERSONA_DECISION_ARTIFACT_MODEL_ID = "persona_replayable_candidate_decision_v1"
 PERSONA_CANDIDATE_GENERATOR_MODEL_ID = "persona_candidate_generation_from_oss_feedback_v1"
@@ -7283,6 +7284,7 @@ def _build_operational_context(
         market_friction=market_friction,
         decision_traces=decision_traces,
         oss_inputs=oss_inputs,
+        case_upstream_artifacts=case_upstream_artifacts,
     )
     restart_recovery = _build_restart_recovery_report(
         episode=episode,
@@ -7603,41 +7605,155 @@ def _build_persona_conflict_resolution(
     market_friction: Mapping[str, Any],
     decision_traces: Sequence[Mapping[str, Any]],
     oss_inputs: Mapping[str, Mapping[str, Any]],
+    case_upstream_artifacts: Mapping[str, Any],
 ) -> dict[str, Any]:
     primary_persona = _persona_id(episode.persona)
+    fixed_council_personas = {"p-risk-analyst", "p-execution-lead", "p-macro-observer"}
+    alpha_sponsor_persona = (
+        primary_persona if primary_persona not in fixed_council_personas else "persona-alpha"
+    )
     final_directions = {
         instrument: int(leg["direction"]) for instrument, leg in final_policy["legs"].items()
     }
     risk_scale = 0.85 if market_friction["scenario"] in {"liquidity_cap_scale", "risk_reject_reduce"} else 0.95
-    council_votes = [
+    resolution_ref = f"persona-conflict://{episode.case_id}"
+    selected_action_ref = (
+        f"selected-action://{episode.case_id}/{decision_traces[-1]['selected_candidate_id']}"
+    )
+    decision_ref = f"reflection://{decision_traces[-1]['reflection_id']}"
+    risk_oss_ref = f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}"
+    selected_oss = dict(case_upstream_artifacts.get("selected_oss") or {})
+    alpha_revision = dict(case_upstream_artifacts.get("alpha_seed_revision") or {})
+    tracking_reconciliation = dict(case_upstream_artifacts.get("tracking_reconciliation") or {})
+    policy_oss_lineage = dict(final_policy.get("policy_oss_lineage") or {})
+    reflection_oss_lineage = dict(final_policy.get("reflection_oss_lineage") or {})
+    risk_analytics_lineage = dict(final_policy.get("risk_analytics_lineage") or {})
+
+    def _selected_oss_ref(role: str) -> str | None:
+        entry = selected_oss.get(role)
+        if not isinstance(entry, Mapping):
+            return None
+        return f"oss://{entry['component']}/{entry['request_id']}"
+
+    def _scaled_weights(scale: float) -> dict[str, float]:
+        weights = {
+            instrument: round(float(leg["weight"]) * scale, 6)
+            for instrument, leg in final_policy["legs"].items()
+        }
+        total = sum(weights.values())
+        if total > 1.0:
+            weights = {
+                instrument: round(weight / total, 6)
+                for instrument, weight in weights.items()
+            }
+        return weights
+
+    proposal_specs = [
         {
-            "persona_id": primary_persona,
+            "persona_id": alpha_sponsor_persona,
             "role": "alpha_sponsor",
             "direction_by_instrument": final_directions,
             "weight_scale": 1.0,
+            "source_roles": ["alpha_model", "policy_candidate", "reflection_artifact"],
+            "source_refs": [
+                selected_action_ref,
+                decision_ref,
+                _selected_oss_ref("alpha_model"),
+                alpha_revision.get("revision_ref"),
+                policy_oss_lineage.get("lineage_ref"),
+                reflection_oss_lineage.get("lineage_ref"),
+            ],
+            "constraints": ["preserve_selected_alpha_seed", "respect_generation2_policy"],
         },
         {
             "persona_id": "p-risk-analyst",
             "role": "risk",
             "direction_by_instrument": final_directions,
             "weight_scale": risk_scale,
+            "source_roles": ["risk_analytics", "policy_candidate"],
+            "source_refs": [
+                selected_action_ref,
+                decision_ref,
+                risk_oss_ref,
+                risk_analytics_lineage.get("lineage_ref"),
+                risk_analytics_lineage.get("registry_ref"),
+                _selected_oss_ref("policy_candidate"),
+            ],
+            "constraints": ["cap_drawdown_budget", "reduce_risk_materiality_penalty"],
         },
         {
             "persona_id": "p-execution-lead",
             "role": "execution",
             "direction_by_instrument": final_directions,
             "weight_scale": 0.9,
+            "source_roles": ["backtest", "tracker", "handoff"],
+            "source_refs": [
+                selected_action_ref,
+                decision_ref,
+                f"oss://{oss_inputs['backtest']['component']}/{oss_inputs['backtest']['request_id']}",
+                f"oss://{oss_inputs['tracker']['component']}/{oss_inputs['tracker']['request_id']}",
+                f"oss://{oss_inputs['handoff']['component']}/{oss_inputs['handoff']['request_id']}",
+                tracking_reconciliation.get("reconciliation_ref"),
+            ],
+            "constraints": ["limit_turnover", "respect_liquidity_cap", "paper_handoff_only"],
         },
         {
             "persona_id": "p-macro-observer",
             "role": "macro",
             "direction_by_instrument": _macro_conflict_directions(episode, final_directions),
             "weight_scale": 0.75,
+            "source_roles": ["session", "reflection_artifact", "risk_analytics"],
+            "source_refs": [
+                selected_action_ref,
+                decision_ref,
+                f"oss://{oss_inputs['session']['component']}/{oss_inputs['session']['request_id']}",
+                _selected_oss_ref("reflection_artifact"),
+                risk_analytics_lineage.get("lineage_ref"),
+            ],
+            "constraints": ["regime_gate_direction", "stage_macro_risk"],
         },
     ]
+    proposal_records: list[dict[str, Any]] = []
+    for spec in proposal_specs:
+        proposal_ref = f"persona-proposal://{episode.case_id}/{spec['role']}"
+        proposal_weights = _scaled_weights(float(spec["weight_scale"]))
+        proposal_seed = {
+            "proposal_ref": proposal_ref,
+            "case_id": episode.case_id,
+            "persona_id": spec["persona_id"],
+            "requesting_persona_id": primary_persona,
+            "role": spec["role"],
+            "model_id": PERSONA_MULTI_PERSONA_PROPOSAL_LINEAGE_MODEL_ID,
+            "source_roles": list(spec["source_roles"]),
+            "source_refs": [str(ref) for ref in spec["source_refs"] if ref],
+            "direction_by_instrument": copy.deepcopy(
+                dict(spec["direction_by_instrument"])
+            ),
+            "weight_by_instrument": proposal_weights,
+            "weight_scale": float(spec["weight_scale"]),
+            "capital_budget_pct": round(sum(proposal_weights.values()), 6),
+            "turnover_budget": 1.25 if spec["role"] != "execution" else 1.0,
+            "constraints": list(spec["constraints"]),
+        }
+        proposal_records.append(
+            {
+                **proposal_seed,
+                "proposal_hash": _stable_payload_hash(
+                    "persona-proposal",
+                    proposal_seed,
+                ),
+            }
+        )
+    proposal_refs = [proposal["proposal_ref"] for proposal in proposal_records]
+    proposal_hashes = {
+        proposal["proposal_ref"]: proposal["proposal_hash"]
+        for proposal in proposal_records
+    }
+    proposal_lineage_ref = f"persona-proposal-lineage://{episode.case_id}/generation{final_policy['generation']}"
     conflict_types = ["weight_conflict"]
+    macro_proposal = proposal_records[-1]
     if any(
-        council_votes[-1]["direction_by_instrument"][instrument] != direction
+        macro_proposal["direction_by_instrument"][instrument] != direction
         for instrument, direction in final_directions.items()
     ):
         conflict_types.append("direction_conflict")
@@ -7650,8 +7766,10 @@ def _build_persona_conflict_resolution(
             "severity": "medium" if conflict_type == "weight_conflict" else "high",
             "resolved_by": "sponsor_risk_execution_scored_vote",
             "evidence_refs": [
-                f"reflection://{decision_traces[-1]['reflection_id']}",
-                f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}",
+                decision_ref,
+                risk_oss_ref,
+                proposal_lineage_ref,
+                *proposal_refs,
             ],
         }
         for conflict_type in conflict_types
@@ -7666,15 +7784,107 @@ def _build_persona_conflict_resolution(
             instrument: round(weight / total_weight, 6)
             for instrument, weight in resolved_weights.items()
         }
-    resolution_ref = f"persona-conflict://{episode.case_id}"
-    selected_action_ref = (
-        f"selected-action://{episode.case_id}/{decision_traces[-1]['selected_candidate_id']}"
+    proposal_lineage_seed = {
+        "lineage_ref": proposal_lineage_ref,
+        "case_id": episode.case_id,
+        "policy_id": final_policy["policy_id"],
+        "generation": final_policy["generation"],
+        "resolution_ref": resolution_ref,
+        "selected_action_ref": selected_action_ref,
+        "proposal_hashes": proposal_hashes,
+        "conflict_types": sorted(conflict_types),
+    }
+    proposal_lineage_hash = _stable_payload_hash(
+        "persona-proposal-lineage",
+        proposal_lineage_seed,
     )
-    risk_oss_ref = f"oss://{oss_inputs['risk_analytics']['component']}/{oss_inputs['risk_analytics']['request_id']}"
+    proposal_lineage = {
+        "model_id": PERSONA_MULTI_PERSONA_PROPOSAL_LINEAGE_MODEL_ID,
+        "lineage_ref": proposal_lineage_ref,
+        "lineage_hash": proposal_lineage_hash,
+        "case_id": episode.case_id,
+        "policy_id": final_policy["policy_id"],
+        "generation": final_policy["generation"],
+        "resolution_ref": resolution_ref,
+        "selected_action_ref": selected_action_ref,
+        "proposal_count": len(proposal_records),
+        "proposal_records": proposal_records,
+        "proposal_refs": proposal_refs,
+        "proposal_hashes": proposal_hashes,
+        "proposal_persona_ids": [proposal["persona_id"] for proposal in proposal_records],
+        "proposal_roles": [proposal["role"] for proposal in proposal_records],
+        "source_refs": sorted({
+            ref
+            for proposal in proposal_records
+            for ref in proposal["source_refs"]
+        }),
+        "proposal_conflict_axes": [
+            "direction_by_instrument",
+            "weight_by_instrument",
+            "capital_budget_pct",
+            "execution_constraints",
+        ],
+        "replay": {
+            "all_proposals_have_refs_and_hashes": all(
+                proposal["proposal_ref"].startswith("persona-proposal://")
+                and proposal["proposal_hash"].startswith("persona-proposal-")
+                for proposal in proposal_records
+            ),
+            "proposal_refs_unique": len(set(proposal_refs)) == len(proposal_refs),
+            "proposal_personas_distinct": len({
+                proposal["persona_id"] for proposal in proposal_records
+            }) == len(proposal_records),
+            "each_proposal_cites_selected_action": all(
+                selected_action_ref in proposal["source_refs"]
+                for proposal in proposal_records
+            ),
+            "risk_proposal_cites_risk_analytics": any(
+                proposal["role"] == "risk"
+                and risk_oss_ref in proposal["source_refs"]
+                and risk_analytics_lineage.get("lineage_ref") in proposal["source_refs"]
+                for proposal in proposal_records
+            ),
+            "macro_proposal_can_disagree_on_direction": "direction_by_instrument"
+            in [
+                "direction_by_instrument",
+                "weight_by_instrument",
+                "capital_budget_pct",
+                "execution_constraints",
+            ],
+            "execution_proposal_cites_handoff_and_tracking": any(
+                proposal["role"] == "execution"
+                and f"oss://{oss_inputs['handoff']['component']}/{oss_inputs['handoff']['request_id']}"
+                in proposal["source_refs"]
+                and tracking_reconciliation.get("reconciliation_ref") in proposal["source_refs"]
+                for proposal in proposal_records
+            ),
+        },
+        "input_hash": proposal_lineage_hash,
+    }
+    council_votes = [
+        {
+            "persona_id": proposal["persona_id"],
+            "role": proposal["role"],
+            "direction_by_instrument": copy.deepcopy(
+                dict(proposal["direction_by_instrument"])
+            ),
+            "weight_scale": proposal["weight_scale"],
+            "proposal_ref": proposal["proposal_ref"],
+            "proposal_hash": proposal["proposal_hash"],
+        }
+        for proposal in proposal_records
+    ]
     return {
         "resolution_id": f"conflict-resolution-{episode.case_id}",
         "resolution_ref": resolution_ref,
         "model_id": PERSONA_CONFLICT_RESOLUTION_MODEL_ID,
+        "proposal_lineage": proposal_lineage,
+        "proposal_lineage_ref": proposal_lineage_ref,
+        "proposal_lineage_hash": proposal_lineage_hash,
+        "proposal_refs": proposal_refs,
+        "proposal_hashes": proposal_hashes,
+        "proposal_persona_ids": proposal_lineage["proposal_persona_ids"],
+        "proposal_roles": proposal_lineage["proposal_roles"],
         "council_votes": council_votes,
         "classified_conflicts": classified_conflicts,
         "conflict_types": sorted(conflict_types),
@@ -7690,8 +7900,10 @@ def _build_persona_conflict_resolution(
         "oss_risk_ref": risk_oss_ref,
         "evidence_refs": [
             selected_action_ref,
-            f"reflection://{decision_traces[-1]['reflection_id']}",
+            decision_ref,
             risk_oss_ref,
+            proposal_lineage_ref,
+            *proposal_refs,
             *[
                 conflict["conflict_id"]
                 for conflict in classified_conflicts
@@ -8088,6 +8300,13 @@ def _build_lean_object_store_packet_targets(
     reflection_oss_lineage = dict(final_policy.get("reflection_oss_lineage") or {})
     risk_analytics_lineage = dict(final_policy.get("risk_analytics_lineage") or {})
     alpha_seed_context = dict(alpha_seed_revision_handoff or {})
+    proposal_lineage = copy.deepcopy(
+        dict(persona_conflict_resolution.get("proposal_lineage") or {})
+    )
+    proposal_lineage_ref = str(proposal_lineage.get("lineage_ref") or "")
+    proposal_lineage_hash = str(proposal_lineage.get("lineage_hash") or "")
+    proposal_refs = list(proposal_lineage.get("proposal_refs") or [])
+    proposal_persona_ids = list(proposal_lineage.get("proposal_persona_ids") or [])
     signals = _build_signals(
         episode=episode,
         policy=final_policy,
@@ -8131,6 +8350,10 @@ def _build_lean_object_store_packet_targets(
             "alpha_seed_source_oss_ref": alpha_seed_context.get("source_oss_ref"),
             "alpha_seed_revision_action": alpha_seed_context.get("revision_action"),
             "alpha_seed_component": alpha_seed_context.get("alpha_component"),
+            "multi_persona_proposal_lineage_ref": proposal_lineage_ref,
+            "multi_persona_proposal_lineage_hash": proposal_lineage_hash,
+            "multi_persona_proposal_refs": proposal_refs,
+            "multi_persona_proposal_persona_ids": proposal_persona_ids,
         }
         entry_row = _entry_row_for_generation(window, int(final_policy["generation"]))
         targets.append(
@@ -8167,6 +8390,10 @@ def _build_lean_object_store_packet_targets(
                 "alpha_seed_source_oss_ref": alpha_seed_context.get("source_oss_ref"),
                 "alpha_seed_revision_action": alpha_seed_context.get("revision_action"),
                 "alpha_seed_component": alpha_seed_context.get("alpha_component"),
+                "multi_persona_proposal_lineage_ref": proposal_lineage_ref,
+                "multi_persona_proposal_lineage_hash": proposal_lineage_hash,
+                "multi_persona_proposal_refs": proposal_refs,
+                "multi_persona_proposal_persona_ids": proposal_persona_ids,
                 "generation": final_policy["generation"],
                 "direction": int(leg["direction"]),
                 "action": signal_payload["action"],
@@ -8216,6 +8443,20 @@ def _build_lean_object_store_packet_readback(
     )
     risk_analytics_lineage_hash = str(risk_analytics_lineage.get("lineage_hash") or "")
     risk_analytics_ref = str(risk_analytics_lineage.get("source_oss_ref") or "")
+    multi_persona_proposal_lineage = dict(
+        strategy_packet.get("multi_persona_proposal_lineage") or {}
+    )
+    loaded_multi_persona_proposal_lineage = dict(
+        loaded_packet.get("multi_persona_proposal_lineage") or {}
+    )
+    proposal_lineage_ref = str(multi_persona_proposal_lineage.get("lineage_ref") or "")
+    proposal_lineage_hash = str(
+        multi_persona_proposal_lineage.get("lineage_hash") or ""
+    )
+    proposal_refs = list(multi_persona_proposal_lineage.get("proposal_refs") or [])
+    proposal_persona_ids = list(
+        multi_persona_proposal_lineage.get("proposal_persona_ids") or []
+    )
     alpha_seed_handoff = dict(strategy_packet.get("alpha_seed_revision_handoff") or {})
     loaded_alpha_seed_handoff = dict(
         loaded_packet.get("alpha_seed_revision_handoff") or {}
@@ -8366,6 +8607,37 @@ def _build_lean_object_store_packet_readback(
             == risk_analytics_lineage_hash
             for target in loaded_targets
         ),
+        "multi_persona_proposal_lineage_present_in_packet": bool(
+            proposal_lineage_ref.startswith("persona-proposal-lineage://")
+            and proposal_lineage_hash
+            and len(proposal_refs) >= 4
+        ),
+        "loaded_packet_preserves_multi_persona_proposal_lineage": (
+            loaded_multi_persona_proposal_lineage == multi_persona_proposal_lineage
+        ),
+        "loaded_multi_persona_proposal_ref_matches_packet": (
+            loaded_packet.get("multi_persona_proposal_lineage_ref")
+            == proposal_lineage_ref
+            and loaded_packet.get("multi_persona_proposal_lineage_hash")
+            == proposal_lineage_hash
+            and loaded_packet.get("multi_persona_proposal_refs") == proposal_refs
+            and loaded_packet.get("multi_persona_proposal_persona_ids")
+            == proposal_persona_ids
+        ),
+        "all_targets_bind_multi_persona_proposal_lineage": all(
+            target.get("multi_persona_proposal_lineage_ref") == proposal_lineage_ref
+            and target.get("multi_persona_proposal_lineage_hash") == proposal_lineage_hash
+            and target.get("multi_persona_proposal_refs") == proposal_refs
+            and target.get("signal", {})
+            .get("metadata", {})
+            .get("multi_persona_proposal_lineage_ref")
+            == proposal_lineage_ref
+            and target.get("signal", {})
+            .get("metadata", {})
+            .get("multi_persona_proposal_lineage_hash")
+            == proposal_lineage_hash
+            for target in loaded_targets
+        ),
         "alpha_seed_revision_handoff_present_in_packet": bool(
             alpha_seed_handoff.get("model_id")
             == PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID
@@ -8456,6 +8728,23 @@ def _build_lean_object_store_packet_readback(
             "risk_analytics_lineage_ref"
         ),
         "loaded_risk_analytics_lineage": loaded_risk_analytics_lineage,
+        "multi_persona_proposal_lineage_hash": proposal_lineage_hash,
+        "loaded_multi_persona_proposal_lineage_hash": (
+            loaded_multi_persona_proposal_lineage.get("lineage_hash")
+        ),
+        "multi_persona_proposal_lineage_ref": proposal_lineage_ref,
+        "loaded_multi_persona_proposal_lineage_ref": loaded_packet.get(
+            "multi_persona_proposal_lineage_ref"
+        ),
+        "multi_persona_proposal_refs": proposal_refs,
+        "loaded_multi_persona_proposal_refs": loaded_packet.get(
+            "multi_persona_proposal_refs"
+        ),
+        "multi_persona_proposal_persona_ids": proposal_persona_ids,
+        "loaded_multi_persona_proposal_persona_ids": loaded_packet.get(
+            "multi_persona_proposal_persona_ids"
+        ),
+        "loaded_multi_persona_proposal_lineage": loaded_multi_persona_proposal_lineage,
         "alpha_seed_revision_handoff_hash": alpha_seed_handoff_hash,
         "loaded_alpha_seed_revision_handoff_hash": loaded_alpha_seed_handoff.get(
             "lineage_hash"
@@ -8511,6 +8800,15 @@ def _run_lean_engine_replay(
     policy_oss_lineage = copy.deepcopy(dict(final_policy.get("policy_oss_lineage") or {}))
     reflection_oss_lineage = copy.deepcopy(dict(final_policy.get("reflection_oss_lineage") or {}))
     risk_analytics_lineage = copy.deepcopy(dict(final_policy.get("risk_analytics_lineage") or {}))
+    multi_persona_proposal_lineage = copy.deepcopy(
+        dict(persona_conflict_resolution.get("proposal_lineage") or {})
+    )
+    multi_persona_proposal_lineage_ref = str(
+        multi_persona_proposal_lineage.get("lineage_ref") or ""
+    )
+    multi_persona_proposal_lineage_hash = str(
+        multi_persona_proposal_lineage.get("lineage_hash") or ""
+    )
     alpha_seed_revision_handoff = _build_alpha_seed_revision_handoff_context(
         episode=episode,
         alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
@@ -8579,6 +8877,18 @@ def _run_lean_engine_replay(
         "risk_analytics_request_id": risk_analytics_lineage.get("request_id"),
         "risk_analytics_materiality_penalty": risk_analytics_lineage.get(
             "risk_materiality_penalty"
+        ),
+        "multi_persona_proposal_lineage": multi_persona_proposal_lineage,
+        "multi_persona_proposal_lineage_hash": multi_persona_proposal_lineage_hash,
+        "multi_persona_proposal_lineage_ref": multi_persona_proposal_lineage_ref,
+        "multi_persona_proposal_refs": list(
+            multi_persona_proposal_lineage.get("proposal_refs") or []
+        ),
+        "multi_persona_proposal_hashes": dict(
+            multi_persona_proposal_lineage.get("proposal_hashes") or {}
+        ),
+        "multi_persona_proposal_persona_ids": list(
+            multi_persona_proposal_lineage.get("proposal_persona_ids") or []
         ),
         "alpha_seed_revision_handoff": alpha_seed_revision_handoff,
         "alpha_seed_revision_handoff_hash": alpha_seed_revision_handoff["lineage_hash"],
@@ -8861,6 +9171,24 @@ def _build_lean_handoff_packet(
     risk_analytics_ref = str(risk_analytics_lineage.get("source_oss_ref") or "")
     risk_analytics_lineage_ref = str(risk_analytics_lineage.get("lineage_ref") or "")
     risk_analytics_registry_ref = str(risk_analytics_lineage.get("registry_ref") or "")
+    multi_persona_proposal_lineage = copy.deepcopy(
+        dict(strategy_packet.get("multi_persona_proposal_lineage") or {})
+    )
+    multi_persona_proposal_lineage_ref = str(
+        multi_persona_proposal_lineage.get("lineage_ref") or ""
+    )
+    multi_persona_proposal_lineage_hash = str(
+        multi_persona_proposal_lineage.get("lineage_hash") or ""
+    )
+    multi_persona_proposal_refs = list(
+        multi_persona_proposal_lineage.get("proposal_refs") or []
+    )
+    multi_persona_proposal_hashes = dict(
+        multi_persona_proposal_lineage.get("proposal_hashes") or {}
+    )
+    multi_persona_proposal_persona_ids = list(
+        multi_persona_proposal_lineage.get("proposal_persona_ids") or []
+    )
     alpha_seed_handoff = copy.deepcopy(
         dict(strategy_packet.get("alpha_seed_revision_handoff") or {})
     )
@@ -8913,6 +9241,12 @@ def _build_lean_handoff_packet(
         "risk_analytics_materiality_penalty": risk_analytics_lineage.get(
             "risk_materiality_penalty"
         ),
+        "multi_persona_proposal_lineage": multi_persona_proposal_lineage,
+        "multi_persona_proposal_lineage_hash": multi_persona_proposal_lineage_hash,
+        "multi_persona_proposal_lineage_ref": multi_persona_proposal_lineage_ref,
+        "multi_persona_proposal_refs": multi_persona_proposal_refs,
+        "multi_persona_proposal_hashes": multi_persona_proposal_hashes,
+        "multi_persona_proposal_persona_ids": multi_persona_proposal_persona_ids,
         "openclaw_session_context": openclaw_session_context,
         "openclaw_session_context_hash": openclaw_session_context["context_hash"],
         "openclaw_session_context_ref": openclaw_context_ref,
@@ -8998,6 +9332,8 @@ def _build_lean_handoff_packet(
             risk_analytics_lineage_ref,
             risk_analytics_ref,
             risk_analytics_registry_ref,
+            multi_persona_proposal_lineage_ref,
+            *multi_persona_proposal_refs,
             openclaw_context_ref,
             openclaw_session_ref,
             openclaw_source_oss_ref,
@@ -9316,6 +9652,18 @@ def _build_lean_runtime_feedback_response(
     risk_analytics_ref = str(lean_handoff.get("risk_analytics_ref", ""))
     risk_analytics_lineage_ref = str(lean_handoff.get("risk_analytics_lineage_ref", ""))
     risk_analytics_registry_ref = str(lean_handoff.get("risk_analytics_registry_ref", ""))
+    multi_persona_proposal_lineage_ref = str(
+        lean_handoff.get("multi_persona_proposal_lineage_ref", "")
+    )
+    multi_persona_proposal_lineage_hash = str(
+        lean_handoff.get("multi_persona_proposal_lineage_hash", "")
+    )
+    multi_persona_proposal_refs = list(
+        lean_handoff.get("multi_persona_proposal_refs", [])
+    )
+    multi_persona_proposal_persona_ids = list(
+        lean_handoff.get("multi_persona_proposal_persona_ids", [])
+    )
     openclaw_context_ref = str(lean_handoff.get("openclaw_session_context_ref", ""))
     openclaw_session_ref = str(lean_handoff.get("openclaw_session_ref", ""))
     openclaw_source_oss_ref = str(lean_handoff.get("openclaw_source_oss_ref", ""))
@@ -9344,6 +9692,8 @@ def _build_lean_runtime_feedback_response(
         risk_analytics_lineage_ref,
         risk_analytics_ref,
         risk_analytics_registry_ref,
+        multi_persona_proposal_lineage_ref,
+        *multi_persona_proposal_refs,
         openclaw_context_ref,
         openclaw_session_ref,
         openclaw_source_oss_ref,
@@ -9433,6 +9783,25 @@ def _build_lean_runtime_feedback_response(
             and risk_analytics_registry_ref in evidence_refs
             and lean_handoff.get("risk_analytics_lineage_hash")
             == lean_handoff.get("risk_analytics_lineage", {}).get("lineage_hash")
+        ),
+        "multi_persona_proposal_lineage_bound": (
+            bool(multi_persona_proposal_lineage_ref)
+            and multi_persona_proposal_lineage_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and multi_persona_proposal_lineage_ref in evidence_refs
+            and multi_persona_proposal_lineage_ref.startswith("persona-proposal-lineage://")
+            and bool(multi_persona_proposal_lineage_hash)
+            and multi_persona_proposal_lineage_hash
+            == lean_handoff.get("multi_persona_proposal_lineage", {}).get("lineage_hash")
+            and len(multi_persona_proposal_refs) >= 4
+            and all(
+                ref in lean_handoff.get("runtime_bundle_refs", [])
+                and ref in evidence_refs
+                and str(ref).startswith("persona-proposal://")
+                for ref in multi_persona_proposal_refs
+            )
+            and {"p-risk-analyst", "p-execution-lead", "p-macro-observer"}.issubset(
+                set(multi_persona_proposal_persona_ids)
+            )
         ),
         "openclaw_session_context_bound": (
             bool(openclaw_context_ref)
@@ -9536,6 +9905,9 @@ def _build_lean_runtime_feedback_response(
             "bind_risk_analytics_lineage_ref": risk_analytics_lineage_ref,
             "bind_risk_analytics_ref": risk_analytics_ref,
             "bind_risk_analytics_registry_ref": risk_analytics_registry_ref,
+            "bind_multi_persona_proposal_lineage_ref": multi_persona_proposal_lineage_ref,
+            "bind_multi_persona_proposal_refs": multi_persona_proposal_refs,
+            "bind_multi_persona_proposal_persona_ids": multi_persona_proposal_persona_ids,
             "bind_openclaw_session_context_ref": openclaw_context_ref,
             "bind_openclaw_session_ref": openclaw_session_ref,
             "bind_openclaw_source_oss_ref": openclaw_source_oss_ref,
@@ -9574,6 +9946,10 @@ def _build_lean_runtime_feedback_response(
                 "risk_analytics_lineage_ref": risk_analytics_lineage_ref,
                 "risk_analytics_ref": risk_analytics_ref,
                 "risk_analytics_registry_ref": risk_analytics_registry_ref,
+                "multi_persona_proposal_lineage_ref": multi_persona_proposal_lineage_ref,
+                "multi_persona_proposal_lineage_hash": multi_persona_proposal_lineage_hash,
+                "multi_persona_proposal_refs": multi_persona_proposal_refs,
+                "multi_persona_proposal_persona_ids": multi_persona_proposal_persona_ids,
                 "openclaw_context_ref": openclaw_context_ref,
                 "openclaw_session_ref": openclaw_session_ref,
                 "openclaw_source_oss_ref": openclaw_source_oss_ref,
@@ -11022,6 +11398,10 @@ def _broker_adapter_followup_is_usable(followup: Mapping[str, Any]) -> bool:
 
 def _persona_conflicts_are_resolved(conflict_resolution: Mapping[str, Any]) -> bool:
     allocation = conflict_resolution.get("resolved_allocation", {})
+    proposal_lineage = conflict_resolution.get("proposal_lineage", {})
+    proposal_records = list(proposal_lineage.get("proposal_records", []))
+    proposal_refs = list(proposal_lineage.get("proposal_refs", []))
+    evidence_refs = set(conflict_resolution.get("evidence_refs", []))
     return bool(
         conflict_resolution.get("model_id") == PERSONA_CONFLICT_RESOLUTION_MODEL_ID
         and conflict_resolution.get("resolution_ref", "").startswith("persona-conflict://")
@@ -11032,6 +11412,56 @@ def _persona_conflicts_are_resolved(conflict_resolution: Mapping[str, Any]) -> b
         == set(allocation.get("weight_by_instrument", {}))
         and conflict_resolution.get("selected_action_ref", "").startswith("selected-action://")
         and conflict_resolution.get("oss_risk_ref", "").startswith("oss://")
+        and proposal_lineage.get("model_id") == PERSONA_MULTI_PERSONA_PROPOSAL_LINEAGE_MODEL_ID
+        and proposal_lineage.get("lineage_ref", "").startswith("persona-proposal-lineage://")
+        and conflict_resolution.get("proposal_lineage_ref") == proposal_lineage.get("lineage_ref")
+        and conflict_resolution.get("proposal_lineage_hash") == proposal_lineage.get("lineage_hash")
+        and len(proposal_records) >= 4
+        and len(proposal_refs) == len(proposal_records)
+        and set(proposal_refs).issubset(evidence_refs)
+        and proposal_lineage.get("lineage_ref") in evidence_refs
+        and all(proposal_lineage.get("replay", {}).values())
+        and {"p-risk-analyst", "p-execution-lead", "p-macro-observer"}.issubset(
+            set(proposal_lineage.get("proposal_persona_ids", []))
+        )
+    )
+
+
+def _multi_persona_proposal_lineage_is_usable(
+    operational_context: Mapping[str, Any],
+) -> bool:
+    conflict_resolution = operational_context.get("persona_conflict_resolution", {})
+    lean_handoff = operational_context.get("lean_handoff", {})
+    runtime_feedback = operational_context.get("lean_runtime_feedback", {})
+    readback = (
+        operational_context.get("lean_engine_replay", {})
+        .get("lean_object_store_packet_readback", {})
+    )
+    proposal_lineage = conflict_resolution.get("proposal_lineage", {})
+    proposal_refs = list(proposal_lineage.get("proposal_refs", []))
+    lineage_ref = str(proposal_lineage.get("lineage_ref") or "")
+    lineage_hash = str(proposal_lineage.get("lineage_hash") or "")
+    runtime_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    evidence_refs = set(
+        runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+    )
+    state_updates = runtime_feedback.get("state_updates", {})
+    return bool(
+        _persona_conflicts_are_resolved(conflict_resolution)
+        and lineage_ref.startswith("persona-proposal-lineage://")
+        and lineage_hash
+        and lean_handoff.get("multi_persona_proposal_lineage_ref") == lineage_ref
+        and lean_handoff.get("multi_persona_proposal_lineage_hash") == lineage_hash
+        and readback.get("multi_persona_proposal_lineage_ref") == lineage_ref
+        and readback.get("multi_persona_proposal_lineage_hash") == lineage_hash
+        and readback.get("loaded_multi_persona_proposal_lineage") == proposal_lineage
+        and runtime_feedback.get("replay", {}).get("multi_persona_proposal_lineage_bound")
+        is True
+        and state_updates.get("bind_multi_persona_proposal_lineage_ref") == lineage_ref
+        and state_updates.get("bind_multi_persona_proposal_refs") == proposal_refs
+        and lineage_ref in runtime_refs
+        and lineage_ref in evidence_refs
+        and all(ref in runtime_refs and ref in evidence_refs for ref in proposal_refs)
     )
 
 
@@ -11107,6 +11537,20 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
         and packet.get("risk_analytics_registry_ref") in runtime_refs
         and packet.get("risk_analytics_lineage_hash")
         == packet.get("risk_analytics_lineage", {}).get("lineage_hash")
+        and packet.get("multi_persona_proposal_lineage_ref", "").startswith(
+            "persona-proposal-lineage://"
+        )
+        and packet.get("multi_persona_proposal_lineage_ref") in runtime_refs
+        and packet.get("multi_persona_proposal_lineage_hash")
+        == packet.get("multi_persona_proposal_lineage", {}).get("lineage_hash")
+        and len(packet.get("multi_persona_proposal_refs", [])) >= 4
+        and all(
+            str(ref).startswith("persona-proposal://") and ref in runtime_refs
+            for ref in packet.get("multi_persona_proposal_refs", [])
+        )
+        and {"p-risk-analyst", "p-execution-lead", "p-macro-observer"}.issubset(
+            set(packet.get("multi_persona_proposal_persona_ids", []))
+        )
         and packet.get("openclaw_session_context_ref", "").startswith("openclaw-context://")
         and packet.get("openclaw_session_context_ref") in runtime_refs
         and packet.get("openclaw_session_ref", "").startswith("openclaw-session://")
@@ -11191,6 +11635,7 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("policy_oss_lineage_bound") is True
         and replay.get("reflection_oss_lineage_bound") is True
         and replay.get("risk_analytics_lineage_bound") is True
+        and replay.get("multi_persona_proposal_lineage_bound") is True
         and replay.get("openclaw_session_context_bound") is True
         and replay.get("alpha_seed_revision_handoff_bound") is True
         and replay.get("lean_packet_execution_projection_consumed") is True
@@ -11679,6 +12124,12 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
         and readback.get("risk_analytics_lineage_ref", "").startswith("risk-analytics-lineage://")
         and readback.get("risk_analytics_lineage_hash")
         == readback.get("loaded_risk_analytics_lineage_hash")
+        and readback.get("multi_persona_proposal_lineage_ref", "").startswith(
+            "persona-proposal-lineage://"
+        )
+        and readback.get("multi_persona_proposal_lineage_hash")
+        == readback.get("loaded_multi_persona_proposal_lineage_hash")
+        and len(readback.get("multi_persona_proposal_refs", [])) >= 4
         and readback.get("alpha_seed_revision_handoff_ref", "").startswith(
             "alpha-seed-revision-handoff://"
         )
@@ -11715,6 +12166,10 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
             "loaded_packet_preserves_risk_analytics_lineage",
             "loaded_risk_analytics_ref_matches_packet",
             "all_targets_bind_risk_analytics_lineage",
+            "multi_persona_proposal_lineage_present_in_packet",
+            "loaded_packet_preserves_multi_persona_proposal_lineage",
+            "loaded_multi_persona_proposal_ref_matches_packet",
+            "all_targets_bind_multi_persona_proposal_lineage",
             "alpha_seed_revision_handoff_present_in_packet",
             "loaded_packet_preserves_alpha_seed_revision_handoff",
             "loaded_alpha_seed_revision_ref_matches_packet",
@@ -11731,6 +12186,7 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
     tracking_provenance = strategy_packet.get("experiment_tracking_provenance", {})
     policy_oss_lineage = strategy_packet.get("policy_oss_lineage", {})
     reflection_oss_lineage = strategy_packet.get("reflection_oss_lineage", {})
+    proposal_lineage = strategy_packet.get("multi_persona_proposal_lineage", {})
     alpha_seed_handoff = strategy_packet.get("alpha_seed_revision_handoff", {})
     packet_targets = replay.get("case_specific_packet_targets", [])
     packet_readback = replay.get("lean_object_store_packet_readback", {})
@@ -11775,6 +12231,12 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
         and strategy_packet.get("reflection_oss_lineage_hash") == reflection_oss_lineage.get(
             "lineage_hash"
         )
+        and strategy_packet.get("multi_persona_proposal_lineage_ref", "").startswith(
+            "persona-proposal-lineage://"
+        )
+        and strategy_packet.get("multi_persona_proposal_lineage_hash")
+        == proposal_lineage.get("lineage_hash")
+        and len(strategy_packet.get("multi_persona_proposal_refs", [])) >= 4
         and strategy_packet.get("alpha_seed_revision_handoff_ref", "").startswith(
             "alpha-seed-revision-handoff://"
         )
@@ -11791,6 +12253,10 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
             and target.get("reflection_oss_ref") == strategy_packet.get("reflection_oss_ref")
             and target.get("reflection_oss_lineage_hash")
             == strategy_packet.get("reflection_oss_lineage_hash")
+            and target.get("multi_persona_proposal_lineage_ref")
+            == strategy_packet.get("multi_persona_proposal_lineage_ref")
+            and target.get("multi_persona_proposal_lineage_hash")
+            == strategy_packet.get("multi_persona_proposal_lineage_hash")
             and target.get("alpha_seed_revision_ref")
             == strategy_packet.get("alpha_seed_revision_ref")
             and target.get("alpha_seed_revision_handoff_hash")
@@ -13627,6 +14093,9 @@ def _build_usability_dimensions(
         operational_context["broker_adapter_followup"]
     ) else 0.0
     persona_conflicts = 1.0 if _persona_conflicts_are_resolved(operational_context["persona_conflict_resolution"]) else 0.0
+    multi_persona_proposal_lineage = 1.0 if _multi_persona_proposal_lineage_is_usable(
+        operational_context
+    ) else 0.0
     restart_recovery = 1.0 if _restart_recovery_is_usable(operational_context["restart_recovery"]) else 0.0
     autonomous_scheduler = 1.0 if _autonomous_schedule_is_usable(operational_context["autonomous_schedule"]) else 0.0
     lean_engine_replay = 1.0 if _lean_engine_replay_is_usable(operational_context["lean_engine_replay"]) else 0.0
@@ -13749,6 +14218,7 @@ def _build_usability_dimensions(
         "broker_adapter_lifecycle": broker_adapter_lifecycle,
         "broker_adapter_followup": broker_adapter_followup,
         "persona_conflict_resolution": persona_conflicts,
+        "multi_persona_proposal_lineage": multi_persona_proposal_lineage,
         "restart_recovery": restart_recovery,
         "autonomous_scheduler": autonomous_scheduler,
         "lean_engine_replay": lean_engine_replay,
@@ -14178,6 +14648,24 @@ def _diagnose_validation_execution(
             {
                 "conflict_types": operational_context["persona_conflict_resolution"]["conflict_types"],
                 "open_conflicts": operational_context["persona_conflict_resolution"]["open_conflicts"],
+            },
+        ),
+        _diagnostic_check(
+            "multi_persona_proposal_lineage_reaches_runtime_feedback",
+            _multi_persona_proposal_lineage_is_usable(operational_context),
+            {
+                "lineage_ref": operational_context["persona_conflict_resolution"][
+                    "proposal_lineage_ref"
+                ],
+                "proposal_roles": operational_context["persona_conflict_resolution"][
+                    "proposal_roles"
+                ],
+                "proposal_refs": operational_context["persona_conflict_resolution"][
+                    "proposal_refs"
+                ],
+                "runtime_replay_bound": operational_context["lean_runtime_feedback"][
+                    "replay"
+                ].get("multi_persona_proposal_lineage_bound"),
             },
         ),
         _diagnostic_check(
@@ -14848,6 +15336,9 @@ def _build_case_result(
             "broker_adapter_lifecycle_replayed": usability_dimensions["broker_adapter_lifecycle"] == 1.0,
             "broker_adapter_response_drives_followup": usability_dimensions["broker_adapter_followup"] == 1.0,
             "persona_conflicts_resolved": usability_dimensions["persona_conflict_resolution"] == 1.0,
+            "multi_persona_proposal_lineage_reaches_runtime": usability_dimensions[
+                "multi_persona_proposal_lineage"
+            ] == 1.0,
             "restart_recovery_restores_loop": usability_dimensions["restart_recovery"] == 1.0,
             "autonomous_scheduler_orders_next_cycle": usability_dimensions["autonomous_scheduler"] == 1.0,
             "lean_engine_replay_uses_runtime_binding": usability_dimensions["lean_engine_replay"] == 1.0,
@@ -14966,6 +15457,9 @@ def _build_summary(
     broker_adapter_followups = [
         case["operational_context"]["broker_adapter_followup"] for case in cases
     ]
+    persona_conflict_resolutions = [
+        case["operational_context"]["persona_conflict_resolution"] for case in cases
+    ]
     lean_packet_execution_projections = [
         case["operational_context"]["lean_packet_execution_projection"] for case in cases
     ]
@@ -15061,6 +15555,37 @@ def _build_summary(
             conflict_type
             for case in cases
             for conflict_type in case["operational_context"]["persona_conflict_resolution"]["conflict_types"]
+        }),
+        "multi_persona_proposal_lineage_models": sorted({
+            conflict["proposal_lineage"]["model_id"]
+            for conflict in persona_conflict_resolutions
+        }),
+        "multi_persona_proposal_roles": sorted({
+            role
+            for conflict in persona_conflict_resolutions
+            for role in conflict["proposal_roles"]
+        }),
+        "multi_persona_proposal_persona_ids": sorted({
+            persona_id
+            for conflict in persona_conflict_resolutions
+            for persona_id in conflict["proposal_persona_ids"]
+        }),
+        "multi_persona_proposal_source_roles": sorted({
+            source_role
+            for conflict in persona_conflict_resolutions
+            for proposal in conflict["proposal_lineage"]["proposal_records"]
+            for source_role in proposal["source_roles"]
+        }),
+        "multi_persona_proposal_conflict_axes": sorted({
+            axis
+            for conflict in persona_conflict_resolutions
+            for axis in conflict["proposal_lineage"]["proposal_conflict_axes"]
+        }),
+        "multi_persona_proposal_lineage_replay_flags": sorted({
+            flag
+            for conflict in persona_conflict_resolutions
+            for flag, value in conflict["proposal_lineage"]["replay"].items()
+            if value is True
         }),
         "scheduler_phases": sorted({
             phase["phase"]
@@ -15939,6 +16464,20 @@ def _build_summary(
             1 for item in usable if item["broker_adapter_response_drives_followup"]
         ),
         "persona_conflict_resolved_count": sum(1 for item in usable if item["persona_conflicts_resolved"]),
+        "multi_persona_proposal_lineage_count": len(persona_conflict_resolutions),
+        "multi_persona_proposal_lineage_pass_count": sum(
+            1
+            for case in cases
+            if _multi_persona_proposal_lineage_is_usable(case["operational_context"])
+        ),
+        "multi_persona_proposal_lineage_proposal_count": sum(
+            len(conflict["proposal_refs"]) for conflict in persona_conflict_resolutions
+        ),
+        "multi_persona_proposal_lineage_drives_runtime_count": sum(
+            1
+            for item in usable
+            if item["multi_persona_proposal_lineage_reaches_runtime"]
+        ),
         "restart_recovery_count": sum(1 for item in usable if item["restart_recovery_restores_loop"]),
         "autonomous_scheduler_count": sum(1 for item in usable if item["autonomous_scheduler_orders_next_cycle"]),
         "lean_engine_replay_count": sum(1 for item in usable if item["lean_engine_replay_uses_runtime_binding"]),
@@ -16139,6 +16678,7 @@ def _build_summary(
             "Every case has a case-specific vectorbt historical backtest artifact and a case-specific experiment tracking readback before persona decisions.",
             "Every case runs its selected alpha, policy, reflection, and risk OSS route as case-specific persona feedback and uses those refs in the selected decision trace.",
             "Every case applies market friction, reconciles paper broker lifecycle readback, resolves persona conflicts, recovers from a restart checkpoint, and schedules the next autonomous cycle.",
+            "Every case records alpha, risk, execution, and macro persona proposal lineage, resolves their conflicts, and carries the proposal refs through LEAN Object Store, handoff, and runtime feedback.",
             "Every case emits a persona-visible broker adapter lifecycle packet tying paper order status paths, Shioaji sandbox place/cancel/readback, live-disabled rejection, and restart recovery into a replayable response.",
             "Every broker adapter response triggers a scenario-specific persona follow-up action before the next autonomous paper cycle.",
             "Every LEAN runtime response is consumed by the persona and drives a scenario-specific next OODA action with runtime binding, object-store readback, and handoff refs.",
