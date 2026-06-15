@@ -9041,9 +9041,9 @@ class ReadSurfaceStore:
         ]
         entries.sort(
             key=lambda entry: (
-                _parse_rfc3339(entry.get("updatedAt"))
+                (_parse_rfc3339(entry.get("updatedAt"))
                 or _parse_rfc3339(entry.get("createdAt"))
-                or datetime.min
+                or datetime.min).replace(tzinfo=None)
             ),
             reverse=True,
         )
@@ -9103,11 +9103,11 @@ class ReadSurfaceStore:
     @staticmethod
     def _recent_sort_value(record: Dict[str, Any]) -> datetime:
         return (
-            _parse_rfc3339(record.get("updated_at"))
+            (_parse_rfc3339(record.get("updated_at"))
             or _parse_rfc3339(record.get("updatedAt"))
             or _parse_rfc3339(record.get("created_at"))
             or _parse_rfc3339(record.get("createdAt"))
-            or datetime.min
+            or datetime.min).replace(tzinfo=None)
         )
 
     def list_agora_signals(self, *, review_status: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -11278,13 +11278,13 @@ class ReadSurfaceStore:
             ]
         items.sort(
             key=lambda packet: (
-                _parse_rfc3339(
+                (_parse_rfc3339(
                     packet.get("updated_at")
                     or packet.get("closed_at")
                     or packet.get("created_at")
                     or packet.get("started_at")
                 )
-                or datetime.min
+                or datetime.min).replace(tzinfo=None)
             ),
             reverse=True,
         )
@@ -11375,13 +11375,13 @@ class ReadSurfaceStore:
             items = [log for log in items if self._synthesis_conflict_log_matches_proposal(log, proposal_id)]
         items.sort(
             key=lambda log: (
-                _parse_rfc3339(
+                (_parse_rfc3339(
                     log.get("timestamp")
                     or log.get("created_at")
                     or log.get("recorded_at")
                     or log.get("updated_at")
                 )
-                or datetime.min
+                or datetime.min).replace(tzinfo=None)
             ),
             reverse=True,
         )
@@ -11420,7 +11420,7 @@ class ReadSurfaceStore:
                 if str(item.get("kind") or "").strip().lower() == str(kind).strip().lower()
             ]
         items.sort(
-            key=lambda item: _parse_rfc3339(item.get("triggered_at")) or datetime.min,
+            key=lambda item: (_parse_rfc3339(item.get("triggered_at")) or datetime.min).replace(tzinfo=None),
             reverse=True,
         )
         return json.loads(json.dumps(items))
@@ -11962,7 +11962,7 @@ class ReadSurfaceStore:
 
         tickets.sort(
             key=lambda ticket: (
-                _parse_rfc3339(ticket.get("updated_at")) or _parse_rfc3339(ticket.get("created_at")) or datetime.min
+                (_parse_rfc3339(ticket.get("updated_at")) or _parse_rfc3339(ticket.get("created_at")) or datetime.min).replace(tzinfo=None)
             ),
             reverse=True,
         )
@@ -11992,7 +11992,7 @@ class ReadSurfaceStore:
         notes = self._read_dataset_records("research_notes")
         notes.sort(
             key=lambda note: (
-                _parse_rfc3339(note.get("updated_at")) or _parse_rfc3339(note.get("created_at")) or datetime.min
+                (_parse_rfc3339(note.get("updated_at")) or _parse_rfc3339(note.get("created_at")) or datetime.min).replace(tzinfo=None)
             ),
             reverse=True,
         )
@@ -12400,11 +12400,11 @@ class ReadSurfaceStore:
         ]
         evidence_refs.sort(
             key=lambda evidence_ref: (
-                _parse_rfc3339(
+                (_parse_rfc3339(
                     ((evidence_ref.get("source_document") or {}).get("captured_at"))
                     or evidence_ref.get("created_at")
                 )
-                or datetime.min,
+                or datetime.min).replace(tzinfo=None),
                 str(evidence_ref.get("ref_id") or ""),
             ),
             reverse=True,
@@ -12620,12 +12620,12 @@ class ReadSurfaceStore:
         insight_cards = self._read_dataset_records("insight_cards")
         insight_cards.sort(
             key=lambda insight_card: (
-                _parse_rfc3339(
+                (_parse_rfc3339(
                     ((insight_card.get("aggregation_provenance") or {}).get("aggregated_at"))
                 )
                 or _parse_rfc3339(insight_card.get("updated_at"))
                 or _parse_rfc3339(insight_card.get("created_at"))
-                or datetime.min,
+                or datetime.min).replace(tzinfo=None),
                 str(insight_card.get("insight_id") or ""),
             ),
             reverse=True,
@@ -12715,7 +12715,7 @@ class ReadSurfaceStore:
         return sorted(
             versions,
             key=lambda version: (
-                _parse_rfc3339(version.get("created_at")) or datetime.min,
+                (_parse_rfc3339(version.get("created_at")) or datetime.min).replace(tzinfo=None),
                 str(version.get("spec_version_id") or ""),
             ),
             reverse=True,
@@ -12957,7 +12957,7 @@ class ReadSurfaceStore:
 
         items.sort(
             key=lambda item: (
-                _parse_rfc3339(item.get("last_modified_at")) or datetime.min,
+                (_parse_rfc3339(item.get("last_modified_at")) or datetime.min).replace(tzinfo=None),
                 str(item.get("strategy_id") or ""),
             ),
             reverse=True,
@@ -13330,7 +13330,7 @@ class ReadSurfaceStore:
             return []
         entries.sort(
             key=lambda entry: (
-                _parse_rfc3339(entry.get("written_at")) or datetime.min,
+                (_parse_rfc3339(entry.get("written_at")) or datetime.min).replace(tzinfo=None),
                 int(self._institutional_memory_usage(entry).get("reuse_count") or 0),
             ),
             reverse=True,
@@ -13641,7 +13641,7 @@ class ReadSurfaceStore:
                 if str(exp.get("status") or "").strip().lower() == requested_status
             ]
         experiments.sort(
-            key=lambda exp: _parse_rfc3339(exp.get("queued_at")) or datetime.min,
+            key=lambda exp: (_parse_rfc3339(exp.get("queued_at")) or datetime.min).replace(tzinfo=None),
             reverse=True,
         )
         return [self._project_research_experiment_summary(exp) for exp in experiments]
@@ -13932,7 +13932,7 @@ class ReadSurfaceStore:
             ]
         artifacts.sort(
             key=lambda artifact: (
-                _parse_rfc3339(artifact.get("created_at")) or datetime.min,
+                (_parse_rfc3339(artifact.get("created_at")) or datetime.min).replace(tzinfo=None),
                 int(artifact.get("version") or 0),
             ),
             reverse=True,
@@ -15903,9 +15903,9 @@ class ReadSurfaceStore:
             items = [item for item in items if str(item.get("status") or "").strip().lower() == normalized]
         items.sort(
             key=lambda item: (
-                _parse_rfc3339(item.get("last_event_at"))
+                (_parse_rfc3339(item.get("last_event_at"))
                 or _parse_rfc3339(item.get("started_at"))
-                or datetime.min
+                or datetime.min).replace(tzinfo=None)
             ),
             reverse=True,
         )
@@ -16902,7 +16902,7 @@ class ReadSurfaceStore:
             ]
 
         rows.sort(
-            key=lambda row: _parse_rfc3339(row.get("started_at")) or datetime.min,
+            key=lambda row: (_parse_rfc3339(row.get("started_at")) or datetime.min).replace(tzinfo=None),
             reverse=True,
         )
         return rows
@@ -17317,7 +17317,7 @@ class ReadSurfaceStore:
                 if str(r.get("consultation_type") or "").strip().lower() == requested_ct
             ]
         requests.sort(
-            key=lambda r: _parse_rfc3339(r.get("created_at")) or datetime.min,
+            key=lambda r: (_parse_rfc3339(r.get("created_at")) or datetime.min).replace(tzinfo=None),
             reverse=True,
         )
         return [self._project_consult_request_summary(r) for r in requests]
@@ -17609,8 +17609,8 @@ class ReadSurfaceStore:
             ]
         memos.sort(
             key=lambda memo: (
-                _parse_rfc3339(memo.get("published_at") or memo.get("created_at")) or datetime.min,
-                _parse_rfc3339(memo.get("created_at")) or datetime.min,
+                (_parse_rfc3339(memo.get("published_at") or memo.get("created_at")) or datetime.min).replace(tzinfo=None),
+                (_parse_rfc3339(memo.get("created_at")) or datetime.min).replace(tzinfo=None),
                 str(memo.get("memo_id") or ""),
             ),
             reverse=True,
@@ -18373,7 +18373,7 @@ class ReadSurfaceStore:
             items = [item for item in items if str(item.get("status") or "").strip().lower() == normalized]
         items.sort(
             key=lambda item: (
-                _parse_rfc3339(item.get("ended_at")) or datetime.min
+                (_parse_rfc3339(item.get("ended_at")) or datetime.min).replace(tzinfo=None)
             ),
             reverse=True,
         )
