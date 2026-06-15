@@ -722,6 +722,10 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      # Wire approval read path directly to the real approval producer.
+      # BFF will try http://promotion:8089/api/v1/approvals before the governance
+      # service URL when PANTHEON_BFF_APPROVAL_DECISION_STORE is not set/empty.
+      PANTHEON_PROMOTION_API_URL: http://promotion:8089
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_CAPITAL_API_URL: http://capital:8092
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
