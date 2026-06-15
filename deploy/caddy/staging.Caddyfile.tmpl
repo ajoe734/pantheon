@@ -6,5 +6,11 @@
 #
 # Upstream is the operator-bff service on the staging-control VM.
 __BFF_HOST__ {
+	# Edge HSTS + drop the upstream Server banner. The BFF app sets
+	# X-Content-Type-Options / X-Frame-Options / Referrer-Policy itself.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
 	reverse_proxy 127.0.0.1:38001
 }
