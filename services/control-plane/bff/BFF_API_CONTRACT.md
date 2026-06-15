@@ -403,6 +403,31 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 | `/api/v1/freeze-orders` | GET | EV-03 | `{ items: [FreezeOrder], meta: { snapshot_at } }` | `status`, `scope` |
 | `/api/v1/rollbacks` | GET | EV-04 | `{ items: [RollbackRecord], meta: { snapshot_at } }` | `runtime_id`, `action_type`, `time_range` |
 
+### 9.9 Automation Registry BFF Surfaces (AR-01–AR-02)
+
+**Canonical sources**: LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md, services/control-plane/cron workflow registry, OpenClaw adapter workflow policy
+
+These `/bff/*` surfaces are read-only console aliases for frontend automation
+registry screens. They expose registered workflow templates and cron/hook
+entries only; they do not trigger, schedule, approve, or mutate workflow state.
+
+| Route | Method | Surface | Response | Filterable Fields |
+|---|---|---|---|---|
+| `/bff/workflows` | GET | AR-01 | `{ data: [WorkflowTemplate], items: [WorkflowTemplate], page_info: { next_page_token, total, returned }, meta: { snapshot_at, surfaces.workflow_templates } }` | `page_token`, `page_size` |
+| `/bff/hooks` | GET | AR-02 | `{ data: [HookRegistryEntry], items: [HookRegistryEntry], page_info: { next_page_token, total, returned }, meta: { snapshot_at, surfaces.hook_registry } }` | `page_token`, `page_size` |
+
+If the backing automation registry store is absent, these endpoints still return
+HTTP 200 with the canonical list envelope and empty `data`/`items`; they must not
+return a bare `[]`. The unavailable condition is explicit in
+`meta.surfaces.<surface_key>`:
+
+```json
+{
+  "status": "unavailable",
+  "source": "missing"
+}
+```
+
 ---
 
 ## 10. Composed Views
@@ -433,6 +458,7 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 |---|---|---|---|
 | `/bff/alerts` | `/api/v1/operator/alerts` | `{ alerts, summary, meta }` with backend-owned severity, category, target refs, and surface degradation metadata | `operator` |
 | `/bff/alerts/{id}` | `/api/v1/operator/alerts` | `{ data: AlertProjection, meta }` for a single projected alert id | `operator` |
+| `/bff/knowledge` | Composed Knowledge inbox over `/api/v1/knowledge/notes`, `/api/v1/knowledge/evidence`, `/api/v1/knowledge/insights`, `/api/v1/knowledge/strategy-specs`, and `/api/v1/knowledge/memory` | `{ data, items, page_info, meta }`; when no backing knowledge store is readable, returns an empty `data/items` list with `meta.surfaces.knowledge_inbox.status: unavailable` and `source: missing` rather than a bare array | `operator` |
 
 ### 10.1.2 BFF Management Endpoints (BFFGAP-CONSOLE Series)
 

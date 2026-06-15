@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-06-12",
+    "snapshot_date": "2026-06-15",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 497,
+    "total_routes": 500,
     "status_values": [
       "implemented",
       "alias",
@@ -1000,6 +1000,18 @@
       "method": "POST",
       "path": "/api/v1/trainer/sessions/{param}/rapid-eval",
       "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/hooks",
+      "family": "automation-registry",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/workflows",
+      "family": "automation-registry",
       "status": "implemented"
     },
     {
@@ -2505,6 +2517,12 @@
     {
       "method": "GET",
       "path": "/bff/assistant/tools",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/knowledge",
       "family": "unknown",
       "status": "implemented"
     },

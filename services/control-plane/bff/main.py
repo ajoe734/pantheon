@@ -50903,6 +50903,17 @@ def _include_assistant_routes() -> None:
     )
 
 
+from console_gap.workflows_hooks import create_workflows_hooks_router
+
+app.include_router(
+    create_workflows_hooks_router(
+        read_store_provider=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_now=utc_now,
+    )
+)
+
 _include_assistant_routes()
 
 # BFFGAP-DATASOURCES: data-source registry endpoint via isolated module
@@ -50916,6 +50927,23 @@ app.include_router(
         utc_now=utc_now,
     )
 )
+
+
+def _include_knowledge_routes() -> None:
+    from console_gap.knowledge import create_knowledge_router
+
+    app.include_router(
+        create_knowledge_router(
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            read_store_getter=lambda: read_store,
+            utc_now=utc_now,
+            dataset_surface_status=_dataset_surface_status,
+        )
+    )
+
+
+_include_knowledge_routes()
 
 
 if __name__ == "__main__":
