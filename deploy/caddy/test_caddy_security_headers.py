@@ -58,3 +58,9 @@ def test_template_validates(tmp_path, template):
         capture_output=True, text=True,
     )
     assert "Valid configuration" in (out.stdout + out.stderr), out.stdout + out.stderr
+
+
+def test_bff_sites_have_body_size_limit():
+    for tmpl in (DEV, STAGING):
+        text = tmpl.read_text()
+        assert "request_body" in text and "max_size" in text, f"{tmpl.name} missing request_body max_size"

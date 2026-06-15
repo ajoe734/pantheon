@@ -12,5 +12,9 @@ __BFF_HOST__ {
 		Strict-Transport-Security "max-age=31536000"
 		-Server
 	}
+	# DoS backstop: JSON-only operator API; 10MB is far above any legit body.
+	request_body {
+		max_size 10MB
+	}
 	reverse_proxy 127.0.0.1:38001
 }

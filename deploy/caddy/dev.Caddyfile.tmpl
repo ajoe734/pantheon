@@ -14,6 +14,12 @@ __BFF_HOST__ {
 		Strict-Transport-Security "max-age=31536000"
 		-Server
 	}
+	# DoS backstop: the operator API only takes JSON command/metadata bodies
+	# (no multipart uploads), so 10MB is far above any legitimate request and
+	# rejects memory-exhausting oversized bodies at the edge.
+	request_body {
+		max_size 10MB
+	}
 	reverse_proxy 127.0.0.1:18001
 }
 
