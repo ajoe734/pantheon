@@ -2657,6 +2657,36 @@ class ServiceBackedReadAdapter:
             "keys": ["session_id", "id"],
             "snapshot_key": "trainer_controls",
         },
+        "workflow_templates": {
+            "env": "PANTHEON_BFF_WORKFLOW_TEMPLATE_STORE",
+            "dirs": (
+                "PANTHEON_AUTOMATION_DATA_DIR",
+                "PANTHEON_CRON_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": (
+                "workflow_templates.json",
+                "workflow_registry.json",
+                "workflows.json",
+            ),
+            "keys": ["workflow_id", "template_id", "id", "name"],
+            "snapshot_key": "workflow_templates",
+        },
+        "hook_registry": {
+            "env": "PANTHEON_BFF_HOOK_REGISTRY_STORE",
+            "dirs": (
+                "PANTHEON_AUTOMATION_DATA_DIR",
+                "PANTHEON_CRON_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": (
+                "hook_registry.json",
+                "cron_hooks.json",
+                "hooks.json",
+            ),
+            "keys": ["hook_id", "cron_id", "id", "name"],
+            "snapshot_key": "hook_registry",
+        },
         "loop_runs": {
             "env": "PANTHEON_BFF_LOOP_RUN_STORE",
             "dirs": (),
@@ -6954,6 +6984,36 @@ class ReadSurfaceStore:
             return json.loads(text)
         except (TypeError, ValueError, json.JSONDecodeError):
             return None
+
+    @staticmethod
+    def _automation_record_sort_key(record: Dict[str, Any]) -> str:
+        return str(
+            record.get("workflow_id")
+            or record.get("hook_id")
+            or record.get("cron_id")
+            or record.get("template_id")
+            or record.get("id")
+            or record.get("name")
+            or ""
+        )
+
+    def list_workflow_templates(self) -> List[Dict[str, Any]]:
+        available, records = self._service.list_records("workflow_templates")
+        if not available:
+            return []
+        return sorted(
+            [dict(record) for record in records if isinstance(record, dict)],
+            key=self._automation_record_sort_key,
+        )
+
+    def list_hook_registry(self) -> List[Dict[str, Any]]:
+        available, records = self._service.list_records("hook_registry")
+        if not available:
+            return []
+        return sorted(
+            [dict(record) for record in records if isinstance(record, dict)],
+            key=self._automation_record_sort_key,
+        )
 
     def _dormant_artifact_refs_from_worker_stdout(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
         payload = self._dormant_json_payload(record.get("stdout"))

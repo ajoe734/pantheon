@@ -1,1 +1,1 @@
-# console_gap: per-feature BFF router modules for conflict-free extension of main.py.
+"""Small BFF console-gap routers kept outside the monolithic main module."""
