@@ -62,6 +62,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID,
     PERSONA_REASONING_EVALUATOR_MODEL_ID,
     PERSONA_REASONING_MODEL_ID,
+    PERSONA_RISK_ANALYTICS_LINEAGE_HANDOFF_MODEL_ID,
     PERSONA_RISK_EVALUATOR_MODEL_ID,
     PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID,
     PERSONA_TRACKING_RECONCILIATION_MODEL_ID,
@@ -236,6 +237,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["reflection_oss_lineage_handoff_count"] == DEFAULT_CASE_COUNT
     assert summary["reflection_oss_lineage_handoff_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["reflection_oss_lineage_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
+    assert summary["risk_analytics_lineage_handoff_count"] == DEFAULT_CASE_COUNT
+    assert summary["risk_analytics_lineage_handoff_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["risk_analytics_lineage_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
     assert summary["openclaw_session_handoff_count"] == DEFAULT_CASE_COUNT
     assert summary["openclaw_session_handoff_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["openclaw_session_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
@@ -373,14 +377,18 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "loaded_tracking_ref_matches_packet",
         "all_targets_bind_policy_oss_lineage",
         "all_targets_bind_reflection_oss_lineage",
+        "all_targets_bind_risk_analytics_lineage",
         "loaded_packet_preserves_policy_oss_lineage",
         "loaded_packet_preserves_reflection_oss_lineage",
+        "loaded_packet_preserves_risk_analytics_lineage",
         "loaded_packet_preserves_alpha_seed_revision_handoff",
         "loaded_alpha_seed_revision_ref_matches_packet",
         "loaded_policy_oss_ref_matches_packet",
         "loaded_reflection_oss_ref_matches_packet",
+        "loaded_risk_analytics_ref_matches_packet",
         "policy_oss_lineage_present_in_packet",
         "reflection_oss_lineage_present_in_packet",
+        "risk_analytics_lineage_present_in_packet",
         "alpha_seed_revision_handoff_present_in_packet",
         "tracking_provenance_present_in_packet",
     }
@@ -443,6 +451,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "paper_runtime_guard_retained",
         "policy_oss_lineage_bound",
         "reflection_oss_lineage_bound",
+        "risk_analytics_lineage_bound",
         "runtime_binding_readback_verified",
         "runtime_feedback_consumed",
     }
@@ -509,6 +518,31 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "replayable",
         "runtime_feedback_cites_reflection_oss_lineage",
         "strategy_packet_carries_reflection_oss_lineage",
+    }
+    assert coverage["risk_analytics_lineage_handoff_models"] == [
+        PERSONA_RISK_ANALYTICS_LINEAGE_HANDOFF_MODEL_ID
+    ]
+    assert set(coverage["risk_analytics_lineage_handoff_components"]) == {
+        "quantlib",
+        "statsmodels",
+    }
+    assert set(coverage["risk_analytics_lineage_handoff_artifact_families"]) == {
+        "pricing_report",
+        "regime_report",
+    }
+    assert set(coverage["risk_analytics_lineage_handoff_replay_flags"]) == {
+        "all_packet_targets_bind_risk_analytics_lineage",
+        "evolved_policy_carries_risk_analytics_lineage",
+        "handoff_runtime_bundle_contains_risk_analytics_refs",
+        "lineage_hash_stable_across_risk_policy_packet_readback_handoff",
+        "object_store_readback_preserves_risk_analytics_lineage",
+        "replayable",
+        "risk_analytics_role_completed",
+        "risk_evaluator_consumes_risk_analytics",
+        "runtime_feedback_cites_risk_analytics_lineage",
+        "runtime_feedback_state_binds_risk_analytics_lineage",
+        "selected_candidates_cite_risk_analytics",
+        "strategy_packet_carries_risk_analytics_lineage",
     }
     assert coverage["openclaw_session_handoff_models"] == [
         PERSONA_OPENCLAW_SESSION_HANDOFF_MODEL_ID
@@ -1078,6 +1112,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_experiment_tracking_lineage_handoff(case)
         _assert_policy_oss_lineage_handoff(case)
         _assert_reflection_oss_lineage_handoff(case)
+        _assert_risk_analytics_lineage_handoff(case)
         _assert_openclaw_session_handoff(case)
         _assert_alpha_seed_revision_handoff(case)
         _assert_lean_packet_execution_projection(case)
@@ -3280,6 +3315,32 @@ def _assert_operational_context(case: dict) -> None:
     )
     assert replay["case_specific_strategy_packet"]["reflection_oss_component"] == reflection_entry["component"]
     assert replay["case_specific_strategy_packet"]["reflection_oss_request_id"] == reflection_entry["request_id"]
+    risk_entry = case["case_upstream_artifacts"]["selected_oss"]["risk_analytics"]
+    risk_analytics_ref = f"oss://{risk_entry['component']}/{risk_entry['request_id']}"
+    packet_risk_lineage = replay["case_specific_strategy_packet"]["risk_analytics_lineage"]
+    assert packet_risk_lineage["model_id"] == PERSONA_RISK_ANALYTICS_LINEAGE_HANDOFF_MODEL_ID
+    assert packet_risk_lineage["component"] == risk_entry["component"]
+    assert packet_risk_lineage["request_id"] == risk_entry["request_id"]
+    assert packet_risk_lineage["source_oss_ref"] == risk_analytics_ref
+    assert packet_risk_lineage["artifact_family"] == risk_entry["artifact_family"]
+    assert packet_risk_lineage["registry_id"] == risk_entry["registry_id"]
+    assert packet_risk_lineage["producer_run_id"] == risk_entry["producer_run_id"]
+    assert packet_risk_lineage["lineage_ref"].startswith(
+        f"risk-analytics-lineage://{case['case_id']}/generation2/"
+    )
+    assert packet_risk_lineage["lineage_hash"]
+    assert replay["case_specific_strategy_packet"]["risk_analytics_ref"] == risk_analytics_ref
+    assert replay["case_specific_strategy_packet"]["risk_analytics_lineage_ref"] == (
+        packet_risk_lineage["lineage_ref"]
+    )
+    assert replay["case_specific_strategy_packet"]["risk_analytics_lineage_hash"] == (
+        packet_risk_lineage["lineage_hash"]
+    )
+    assert replay["case_specific_strategy_packet"]["risk_analytics_registry_ref"] == (
+        packet_risk_lineage["registry_ref"]
+    )
+    assert replay["case_specific_strategy_packet"]["risk_analytics_component"] == risk_entry["component"]
+    assert replay["case_specific_strategy_packet"]["risk_analytics_request_id"] == risk_entry["request_id"]
     packet_alpha_handoff = replay["case_specific_strategy_packet"]["alpha_seed_revision_handoff"]
     assert packet_alpha_handoff["model_id"] == PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID
     assert packet_alpha_handoff["revision_ref"] == alpha_revision["revision_ref"]
@@ -3364,6 +3425,13 @@ def _assert_operational_context(case: dict) -> None:
     assert packet_readback["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
     assert packet_readback["loaded_reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
     assert packet_readback["loaded_reflection_oss_lineage"] == packet_reflection_lineage
+    assert packet_readback["risk_analytics_ref"] == risk_analytics_ref
+    assert packet_readback["loaded_risk_analytics_ref"] == risk_analytics_ref
+    assert packet_readback["risk_analytics_lineage_ref"] == packet_risk_lineage["lineage_ref"]
+    assert packet_readback["loaded_risk_analytics_lineage_ref"] == packet_risk_lineage["lineage_ref"]
+    assert packet_readback["risk_analytics_lineage_hash"] == packet_risk_lineage["lineage_hash"]
+    assert packet_readback["loaded_risk_analytics_lineage_hash"] == packet_risk_lineage["lineage_hash"]
+    assert packet_readback["loaded_risk_analytics_lineage"] == packet_risk_lineage
     assert packet_readback["alpha_seed_revision_handoff_ref"] == packet_alpha_handoff["handoff_ref"]
     assert packet_readback["loaded_alpha_seed_revision_handoff_ref"] == packet_alpha_handoff["handoff_ref"]
     assert packet_readback["alpha_seed_revision_ref"] == alpha_revision["revision_ref"]
@@ -3403,6 +3471,11 @@ def _assert_operational_context(case: dict) -> None:
         assert target["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
         assert target["reflection_oss_component"] == reflection_entry["component"]
         assert target["reflection_oss_request_id"] == reflection_entry["request_id"]
+        assert target["risk_analytics_ref"] == risk_analytics_ref
+        assert target["risk_analytics_lineage_ref"] == packet_risk_lineage["lineage_ref"]
+        assert target["risk_analytics_lineage_hash"] == packet_risk_lineage["lineage_hash"]
+        assert target["risk_analytics_component"] == risk_entry["component"]
+        assert target["risk_analytics_request_id"] == risk_entry["request_id"]
         assert target["alpha_seed_revision_handoff_ref"] == packet_alpha_handoff["handoff_ref"]
         assert target["alpha_seed_revision_ref"] == alpha_revision["revision_ref"]
         assert target["alpha_seed_revision_handoff_hash"] == packet_alpha_handoff["lineage_hash"]
@@ -3421,6 +3494,9 @@ def _assert_operational_context(case: dict) -> None:
         assert target["signal"]["metadata"]["reflection_oss_ref"] == reflection_oss_ref
         assert target["signal"]["metadata"]["reflection_oss_lineage_ref"] == packet_reflection_lineage["lineage_ref"]
         assert target["signal"]["metadata"]["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
+        assert target["signal"]["metadata"]["risk_analytics_ref"] == risk_analytics_ref
+        assert target["signal"]["metadata"]["risk_analytics_lineage_ref"] == packet_risk_lineage["lineage_ref"]
+        assert target["signal"]["metadata"]["risk_analytics_lineage_hash"] == packet_risk_lineage["lineage_hash"]
         assert target["signal"]["metadata"]["alpha_seed_revision_handoff_ref"] == (
             packet_alpha_handoff["handoff_ref"]
         )
@@ -3589,6 +3665,13 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["reflection_oss_registry_ref"] == packet_reflection_lineage["registry_ref"]
     assert handoff["reflection_oss_component"] == reflection_entry["component"]
     assert handoff["reflection_oss_request_id"] == reflection_entry["request_id"]
+    assert handoff["risk_analytics_lineage"] == packet_risk_lineage
+    assert handoff["risk_analytics_lineage_hash"] == packet_risk_lineage["lineage_hash"]
+    assert handoff["risk_analytics_lineage_ref"] == packet_risk_lineage["lineage_ref"]
+    assert handoff["risk_analytics_ref"] == risk_analytics_ref
+    assert handoff["risk_analytics_registry_ref"] == packet_risk_lineage["registry_ref"]
+    assert handoff["risk_analytics_component"] == risk_entry["component"]
+    assert handoff["risk_analytics_request_id"] == risk_entry["request_id"]
     openclaw_context = handoff["openclaw_session_context"]
     assert openclaw_context["model_id"] == PERSONA_OPENCLAW_SESSION_HANDOFF_MODEL_ID
     assert openclaw_context["component"] == "openclaw"
@@ -3647,6 +3730,9 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["reflection_oss_lineage_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["reflection_oss_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["reflection_oss_registry_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["risk_analytics_lineage_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["risk_analytics_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["risk_analytics_registry_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["openclaw_session_context_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["openclaw_session_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["openclaw_source_oss_ref"] in handoff["runtime_bundle_refs"]
@@ -3712,6 +3798,9 @@ def _assert_operational_context(case: dict) -> None:
         handoff["reflection_oss_lineage_ref"],
         handoff["reflection_oss_ref"],
         handoff["reflection_oss_registry_ref"],
+        handoff["risk_analytics_lineage_ref"],
+        handoff["risk_analytics_ref"],
+        handoff["risk_analytics_registry_ref"],
         handoff["openclaw_session_context_ref"],
         handoff["openclaw_session_ref"],
         handoff["openclaw_source_oss_ref"],
@@ -3738,6 +3827,15 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["state_updates"]["bind_reflection_oss_ref"] == handoff["reflection_oss_ref"]
     assert runtime_feedback["state_updates"]["bind_reflection_oss_registry_ref"] == handoff[
         "reflection_oss_registry_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_risk_analytics_lineage_ref"] == handoff[
+        "risk_analytics_lineage_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_risk_analytics_ref"] == handoff[
+        "risk_analytics_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_risk_analytics_registry_ref"] == handoff[
+        "risk_analytics_registry_ref"
     ]
     assert runtime_feedback["state_updates"]["bind_openclaw_session_context_ref"] == handoff[
         "openclaw_session_context_ref"
@@ -3775,6 +3873,7 @@ def _assert_operational_context(case: dict) -> None:
     assert case["usability_dimensions"]["experiment_tracking_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["policy_oss_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["reflection_oss_lineage_handoff"] == 1.0
+    assert case["usability_dimensions"]["risk_analytics_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["openclaw_session_handoff"] == 1.0
     assert case["usability_dimensions"]["alpha_seed_revision_handoff"] == 1.0
     assert case["usability_dimensions"]["evolved_strategy_packet_handoff"] == 1.0
@@ -3782,6 +3881,7 @@ def _assert_operational_context(case: dict) -> None:
     assert case["usable"]["experiment_tracking_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["policy_oss_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["reflection_oss_lineage_reaches_lean_handoff"] is True
+    assert case["usable"]["risk_analytics_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["openclaw_session_reaches_lean_handoff"] is True
     assert case["usable"]["alpha_seed_revision_reaches_lean_handoff"] is True
     assert case["usable"]["evolved_strategy_packet_reaches_lean_handoff"] is True
@@ -3790,6 +3890,7 @@ def _assert_operational_context(case: dict) -> None:
     assert check_by_name["tracking_experiment_lineage_reaches_evolution_and_lean_packet"]["status"] == "passed"
     assert check_by_name["policy_oss_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
     assert check_by_name["reflection_oss_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
+    assert check_by_name["risk_analytics_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
     assert check_by_name["openclaw_session_context_reaches_lean_handoff"]["status"] == "passed"
     assert check_by_name["alpha_seed_revision_reaches_lean_handoff"]["status"] == "passed"
     assert check_by_name["evolved_strategy_packet_reaches_lean_handoff"]["status"] == "passed"
@@ -3954,6 +4055,73 @@ def _assert_reflection_oss_lineage_handoff(case: dict) -> None:
     assert lineage_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
     assert registry_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
     assert packet_readback["loaded_reflection_oss_lineage"] == packet_reflection_lineage
+    assert all(proof["replay"].values())
+    assert proof["input_hash"]
+
+
+def _assert_risk_analytics_lineage_handoff(case: dict) -> None:
+    operational = case["operational_context"]
+    proof = operational["risk_analytics_lineage_handoff"]
+    replay = operational["lean_engine_replay"]
+    handoff = operational["lean_handoff"]
+    runtime_feedback = operational["lean_runtime_feedback"]
+    packet_readback = replay["lean_object_store_packet_readback"]
+    risk_entry = case["case_upstream_artifacts"]["selected_oss"]["risk_analytics"]
+    packet_risk_lineage = replay["case_specific_strategy_packet"]["risk_analytics_lineage"]
+    source_ref = f"oss://{risk_entry['component']}/{risk_entry['request_id']}"
+    lineage_ref = packet_risk_lineage["lineage_ref"]
+    registry_ref = packet_risk_lineage["registry_ref"]
+    lineage_hash = packet_risk_lineage["lineage_hash"]
+
+    assert proof["proof_id"] == f"risk-analytics-lineage-handoff-{case['case_id']}"
+    assert proof["proof_ref"] == f"risk-analytics-lineage-handoff://{case['case_id']}"
+    assert proof["model_id"] == PERSONA_RISK_ANALYTICS_LINEAGE_HANDOFF_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["component"] == risk_entry["component"]
+    assert proof["request_id"] == risk_entry["request_id"]
+    assert proof["source_oss_ref"] == source_ref
+    assert proof["lineage_ref"] == lineage_ref
+    assert proof["registry_ref"] == registry_ref
+    assert proof["artifact_family"] == risk_entry["artifact_family"]
+    assert proof["expected_artifact_family"] in {"pricing_report", "regime_report"}
+    assert proof["risk_materiality_penalty"] == packet_risk_lineage["risk_materiality_penalty"]
+    assert proof["strategy_packet_ref"] == replay["case_specific_strategy_packet"]["packet_ref"]
+    assert proof["lean_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert proof["lean_runtime_feedback_ref"] == (
+        f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
+    )
+    assert proof["object_store_readback_ref"] == packet_readback["readback_id"]
+    assert set(proof["lineage_hashes"].values()) == {lineage_hash}
+    assert set(proof["input_refs"]) == {
+        source_ref,
+        lineage_ref,
+        registry_ref,
+        proof["strategy_packet_ref"],
+        proof["lean_handoff_ref"],
+        proof["lean_runtime_feedback_ref"],
+        proof["object_store_readback_ref"],
+    }
+    assert [binding["generation"] for binding in proof["trace_bindings"]] == [1, 2]
+    assert all(
+        binding["candidate_generation_consumes_risk_analytics"]
+        and binding["risk_evaluator_source_ref"] == source_ref
+        and binding["risk_evaluator_passed"]
+        and binding["risk_evaluator_selected_candidate_check_passed"]
+        and binding["selected_candidate_cites_risk_analytics"]
+        for binding in proof["trace_bindings"]
+    )
+    assert source_ref in handoff["runtime_bundle_refs"]
+    assert lineage_ref in handoff["runtime_bundle_refs"]
+    assert registry_ref in handoff["runtime_bundle_refs"]
+    assert source_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
+    assert lineage_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
+    assert registry_ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
+    assert runtime_feedback["state_updates"]["bind_risk_analytics_lineage_ref"] == lineage_ref
+    assert runtime_feedback["state_updates"]["bind_risk_analytics_ref"] == source_ref
+    assert runtime_feedback["state_updates"]["bind_risk_analytics_registry_ref"] == registry_ref
+    assert packet_readback["loaded_risk_analytics_lineage"] == packet_risk_lineage
     assert all(proof["replay"].values())
     assert proof["input_hash"]
 
