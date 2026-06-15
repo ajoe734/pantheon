@@ -1,0 +1,20 @@
+{
+  "mcp-server-research-worker-gateway": {
+    "id": "mcp-server-research-worker-gateway",
+    "server_id": "mcp-server-research-worker-gateway",
+    "name": "Research Worker Gateway",
+    "status": "registered",
+    "endpoint": "http://research-worker-gateway-svc:8103",
+    "server_version": "1.0.0",
+    "description": "MCP server bridging the Pantheon control plane to research worker backends (qlib, vectorbt, finrl, quantlib, stub).",
+    "governance": {
+      "paper_only": true,
+      "live_execution_allowed": false
+    },
+    "capabilities_reported": null,
+    "source": "research_worker_gateway",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  }
+}
