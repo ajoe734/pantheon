@@ -50903,6 +50903,17 @@ def _include_assistant_routes() -> None:
     )
 
 
+from console_gap.workflows_hooks import create_workflows_hooks_router
+
+app.include_router(
+    create_workflows_hooks_router(
+        read_store_provider=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_now=utc_now,
+    )
+)
+
 _include_assistant_routes()
 
 
