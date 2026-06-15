@@ -22186,7 +22186,8 @@ async def list_bff_approvals(
         items = []
     pending = [
         item for item in items
-        if str(item.get("decision_state") or "").lower() in {"pending", "in_review"}
+        if str(item.get("decision_state") or "").lower()
+        in {"pending", "in_review", "proposed", "under_review", "reviewed"}
     ]
     return {
         "items": pending,
