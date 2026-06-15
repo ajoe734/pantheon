@@ -408,6 +408,82 @@ function analyzeAuthSmoke(stepOutcomes) {
   };
 }
 
+function analyzeStrictAuthEvidence(stepOutcomes) {
+  const step = stepInfo(stepOutcomes, "auth_smoke", ".lovable/audits/bff-authenticated-live-smoke.log");
+  const stepEvidence = evidencePath(step.evidence);
+  const file = latestAuditFile([
+    /^BFF-LUV-AUTHED-LIVE-001-live-smoke\.json$/,
+    /^BFF-LUV-AUTHED-LIVE-001.*\.json$/,
+    /authenticated.*live.*smoke.*\.json$/i,
+  ]) || (/\.json$/i.test(stepEvidence) ? stepEvidence : "");
+  const json = readJson(file);
+  const summary = json?.summary || {};
+  const rbacMatrix = Array.isArray(json?.rbac_matrix) ? json.rbac_matrix : [];
+  const dryRun = Array.isArray(json?.dry_run) ? json.dry_run : [];
+  const approvalRace = json?.approval_race && typeof json.approval_race === "object" ? json.approval_race : null;
+  const authSource = json?.auth_source && typeof json.auth_source === "object" ? json.auth_source : {};
+  const rbacAuthSource = json?.rbac_auth_source && typeof json.rbac_auth_source === "object" ? json.rbac_auth_source : {};
+  const rbacCases = rbacAuthSource?.cases && typeof rbacAuthSource.cases === "object" ? Object.entries(rbacAuthSource.cases) : [];
+  const providedRbacCases = rbacCases.filter(([label, info]) => label !== "anonymous" && info?.kind === "provided_bearer");
+  const expectedProvidedCases = rbacCases.filter(([label]) => label !== "anonymous").length;
+  const total = Number(summary.total ?? 0);
+  const passed = Number(summary.passed ?? 0);
+  const failed = Number(summary.failed ?? 1);
+  const strict = json?.strict_live_evidence === true;
+  const providedBearer = authSource?.kind === "provided_bearer";
+  const includesRequired = json?.include_rbac_matrix === true
+    && json?.include_dry_run === true
+    && json?.include_approval_race === true;
+  const summaryPassed = total > 0 && failed === 0 && passed === total;
+  const baseOk = strict && providedBearer && includesRequired && summaryPassed;
+  const rbacProbeCount = Number(summary.rbac_matrix_probes ?? 0);
+  const dryRunProbeCount = Number(summary.dry_run_probes ?? 0);
+  const approvalRaceProbeCount = Number(summary.approval_race_probes ?? 0);
+  const invalidDryRuns = dryRun.filter((item) => String(item?.family || "").startsWith("dry-run-invalid-"));
+  const readbackDryRuns = dryRun.filter((item) => String(item?.family || "").endsWith("-readback-not-persisted"));
+  const allRbacOk = rbacMatrix.length > 0 && rbacMatrix.every((item) => item?.ok === true);
+  const allDryRunOk = dryRun.length > 0 && dryRun.every((item) => item?.ok === true);
+  const invalidDryRunsEnvelope = invalidDryRuns.length >= 2 && invalidDryRuns.every((item) => item?.error_envelope === true);
+  const readbackNoPersistence = readbackDryRuns.length >= 2 && readbackDryRuns.every((item) => item?.error_envelope === true);
+  const fullRbacMatrix = rbacProbeCount >= 56 && expectedProvidedCases >= 7;
+  const providedRbac = fullRbacMatrix && providedRbacCases.length === expectedProvidedCases;
+  const approvalTokenPair = approvalRace?.token_source?.kind === "provided_bearer_pair";
+
+  return {
+    exists: Boolean(json),
+    file,
+    strict,
+    providedBearer,
+    includesRequired,
+    summaryPassed,
+    rbacOk: baseOk && providedRbac && rbacProbeCount > 0 && allRbacOk,
+    dryRunOk: baseOk
+      && dryRunProbeCount >= 7
+      && allDryRunOk
+      && invalidDryRunsEnvelope
+      && readbackNoPersistence
+      && summary.live_capital_side_effects === false,
+    approvalRaceOk: baseOk
+      && approvalRaceProbeCount === 1
+      && summary.approval_race_bounded === true
+      && approvalRace?.ok === true
+      && approvalRace?.bounded === true
+      && approvalRace?.duplicate_winners === false
+      && approvalTokenPair,
+    note: {
+      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} providedCases:${providedRbacCases.length}/${expectedProvidedCases}`,
+      dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
+      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair}`,
+    },
+    missingStatus: missingEvidenceStatus(step.status),
+    missingNote: step.outcome
+      ? `authenticated strict live evidence outcome: ${step.outcome}; JSON evidence missing`
+      : "authenticated strict live evidence JSON missing",
+    stepStatus: step.status,
+    stepOutcome: step.outcome,
+  };
+}
+
 function analyzeSseSmoke(stepOutcomes) {
   const step = stepInfo(stepOutcomes, "sse_smoke", ".lovable/audits/bff-sse-replay-smoke.log");
   const file = latestAuditFile([
@@ -453,9 +529,10 @@ function analyzeSseSmoke(stepOutcomes) {
   };
 }
 
-function buildGate3(routeProbe, authSmoke, sseSmoke) {
+function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth) {
   const routeEvidence = routeProbe.file || routeProbe.stepEvidence;
   const authEvidence = authSmoke.file || routeEvidence;
+  const strictAuthEvidence = strictAuth.file || authEvidence || routeEvidence;
   const healthStatus = [routeProbe.rows.get("/health")?.status, routeProbe.rows.get("/healthz")?.status].includes("200");
   const openapiStatus = routeProbe.rows.get("/openapi.json")?.status === "200";
   const streamStatus = routeProbe.rows.get("/bff/events/stream")?.status;
@@ -511,6 +588,9 @@ function buildGate3(routeProbe, authSmoke, sseSmoke) {
   const sseNote = sseSmoke.exists
     ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} duplicates:${sseSmoke.duplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length}`
     : sseSmoke.missingNote;
+  const strictAuthStatus = (condition) => strictAuth.exists ? condition ? "pass" : "fail" : strictAuth.missingStatus;
+  const strictAuthOwner = (condition) => strictAuth.exists && condition ? "" : GATE_OWNERS[3];
+  const strictAuthNote = (key) => strictAuth.exists ? strictAuth.note[key] : strictAuth.missingNote;
   const listResult = authSmoke.exists ? allRowsPass(authSmoke.rows, readListPaths) : authMissingResult;
   const v5Result = authSmoke.exists ? allRowsPass(authSmoke.rows, v5Paths) : authMissingResult;
   const writeResult = authSmoke.exists ? allRowsPass(authSmoke.rows, writePaths) : authMissingResult;
@@ -552,6 +632,21 @@ function buildGate3(routeProbe, authSmoke, sseSmoke) {
       owner: sseStatus === "pass" ? "" : GATE_OWNERS[3],
       evidence: sseSmoke.file || authEvidence || routeEvidence,
       note: sseNote,
+    }),
+    makeCheck("Authenticated: strict bearer RBAC matrix evidence passed.", strictAuthStatus(strictAuth.rbacOk), {
+      owner: strictAuthOwner(strictAuth.rbacOk),
+      evidence: strictAuthEvidence,
+      note: strictAuthNote("rbac"),
+    }),
+    makeCheck("Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects.", strictAuthStatus(strictAuth.dryRunOk), {
+      owner: strictAuthOwner(strictAuth.dryRunOk),
+      evidence: strictAuthEvidence,
+      note: strictAuthNote("dryRun"),
+    }),
+    makeCheck("Authenticated: strict multi-operator approval race evidence is bounded.", strictAuthStatus(strictAuth.approvalRaceOk), {
+      owner: strictAuthOwner(strictAuth.approvalRaceOk),
+      evidence: strictAuthEvidence,
+      note: strictAuthNote("approvalRace"),
     }),
     makeCheck("Anonymous: canonical protected routes return 401/403, not 404.", routeStatus(protectedValid), {
       owner: routeOwner(protectedValid),
@@ -906,6 +1001,7 @@ function main() {
   const stepOutcomes = getStepOutcomes();
   const routeProbe = analyzeRouteProbe(stepOutcomes);
   const authSmoke = analyzeAuthSmoke(stepOutcomes);
+  const strictAuth = analyzeStrictAuthEvidence(stepOutcomes);
   const sseSmoke = analyzeSseSmoke(stepOutcomes);
   const hosted = analyzeHostedProbe(stepOutcomes);
   const playwright = analyzePlaywright();
@@ -914,7 +1010,7 @@ function main() {
     0: buildGate0(hosted),
     1: buildGate1(stepOutcomes),
     2: buildGate2(stepOutcomes),
-    3: buildGate3(routeProbe, authSmoke, sseSmoke),
+    3: buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth),
     4: buildGate4(hosted),
     5: buildGate5(playwright),
     6: buildGate6(playwright),
