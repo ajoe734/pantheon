@@ -102,6 +102,16 @@ POLICY_OSS_COMPONENTS = ("finrl", "rllib", "ray_tune")
 REFLECTION_OSS_COMPONENTS = ("dspy", "trl", "imitation")
 TRACKING_OSS_COMPONENTS = ("mlflow", "wandb")
 RISK_OSS_COMPONENTS = ("statsmodels", "quantlib")
+OSS_ROLE_COMPONENT_MATRIX: dict[str, tuple[str, ...]] = {
+    "session": ("openclaw",),
+    "alpha_model": ("qlib", "vectorbt"),
+    "backtest": ("vectorbt",),
+    "policy_candidate": POLICY_OSS_COMPONENTS,
+    "reflection_artifact": REFLECTION_OSS_COMPONENTS,
+    "tracker": TRACKING_OSS_COMPONENTS,
+    "risk_analytics": RISK_OSS_COMPONENTS,
+    "handoff": ("lean_handoff",),
+}
 OPERATIONAL_SCENARIOS = (
     "partial_fill_reconcile",
     "limit_miss_reprice",
@@ -1388,6 +1398,14 @@ def _oss_inputs_for_episode(
     }
 
 
+def _expected_oss_role_component_pairs() -> tuple[str, ...]:
+    return tuple(
+        f"{role}:{component}"
+        for role, components in OSS_ROLE_COMPONENT_MATRIX.items()
+        for component in components
+    )
+
+
 def _build_case_upstream_artifact_feedback(
     *,
     episode: PortfolioEpisode,
@@ -2453,6 +2471,8 @@ def _build_multi_oss_closed_loop_proof(
         component = str(result["component"])
         request_id = str(result["request_id"])
         source_oss_ref = f"oss://{component}/{request_id}"
+        expected_components = OSS_ROLE_COMPONENT_MATRIX[role]
+        role_component_cell = f"{role}:{component}"
         score_adjustments = {
             action: float(value)
             for action, value in followup["response"]["score_adjustments"].items()
@@ -2468,6 +2488,9 @@ def _build_multi_oss_closed_loop_proof(
             {
                 "role": role,
                 "component": component,
+                "role_component_cell": role_component_cell,
+                "expected_components_for_role": list(expected_components),
+                "role_component_allowed": component in expected_components,
                 "source_oss_request_id": request_id,
                 "source_oss_ref": source_oss_ref,
                 "source_status": result.get("status"),
@@ -2576,6 +2599,9 @@ def _build_multi_oss_closed_loop_proof(
         and {
             record["role"] for record in role_records if record["selected_oss_ref"]
         } == {"alpha_model", "policy_candidate", "reflection_artifact", "risk_analytics"},
+        "all_role_components_match_matrix": all(
+            record["role_component_allowed"] for record in role_records
+        ),
         "all_source_oss_refs_consumed_by_reasoning": all(
             binding["reasoning_request_consumes_all_source_oss_refs"]
             for binding in trace_bindings
@@ -2643,6 +2669,7 @@ def _multi_oss_closed_loop_proof_is_usable(proof: Mapping[str, Any]) -> bool:
         and [record.get("role") for record in role_records] == list(required_roles)
         and len(trace_bindings) == 2
         and all(record.get("source_status") == "completed" for record in role_records)
+        and all(record.get("role_component_allowed") is True for record in role_records)
         and all(record.get("source_ref_bound_to_followup") is True for record in role_records)
         and all(record.get("followup_requested_after_oss_response") is True for record in role_records)
         and all(record.get("followup_completed") is True for record in role_records)
@@ -2666,6 +2693,7 @@ def _multi_oss_closed_loop_proof_is_usable(proof: Mapping[str, Any]) -> bool:
         and replay.get("all_followup_responses_completed") is True
         and replay.get("all_followup_outputs_used_by_both_generations") is True
         and replay.get("selected_case_oss_roles_bound") is True
+        and replay.get("all_role_components_match_matrix") is True
         and replay.get("all_source_oss_refs_consumed_by_reasoning") is True
         and replay.get("all_followup_outputs_consumed_by_candidate_generation") is True
         and replay.get("all_role_score_adjustments_available_to_scorer") is True
@@ -17315,6 +17343,17 @@ def _build_summary(
         case["operational_context"]["scheduler_conflict_ooda_proof"] for case in cases
     ]
     window_admission_audit = dict(window_admission)
+    expected_oss_role_components = set(_expected_oss_role_component_pairs())
+    observed_oss_role_components = [
+        record["role_component_cell"]
+        for proof in multi_oss_closed_loop_proofs
+        for record in proof["role_records"]
+    ]
+    observed_oss_role_component_set = set(observed_oss_role_components)
+    oss_role_component_case_counts = {
+        pair: observed_oss_role_components.count(pair)
+        for pair in sorted(observed_oss_role_component_set)
+    }
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
@@ -17751,10 +17790,18 @@ def _build_summary(
             for record in proof["role_records"]
         }),
         "multi_oss_closed_loop_role_components": sorted({
-            f"{record['role']}:{record['component']}"
+            record["role_component_cell"]
             for proof in multi_oss_closed_loop_proofs
             for record in proof["role_records"]
         }),
+        "multi_oss_closed_loop_expected_role_components": sorted(expected_oss_role_components),
+        "multi_oss_closed_loop_missing_role_components": sorted(
+            expected_oss_role_components - observed_oss_role_component_set
+        ),
+        "multi_oss_closed_loop_unexpected_role_components": sorted(
+            observed_oss_role_component_set - expected_oss_role_components
+        ),
+        "multi_oss_closed_loop_role_component_case_counts": oss_role_component_case_counts,
         "multi_oss_closed_loop_candidate_actions": sorted({
             record["followup_candidate_action"]
             for proof in multi_oss_closed_loop_proofs
@@ -18270,6 +18317,23 @@ def _build_summary(
         "multi_oss_closed_loop_trace_binding_count": sum(
             len(proof["trace_bindings"]) for proof in multi_oss_closed_loop_proofs
         ),
+        "multi_oss_closed_loop_role_component_matrix_expected_count": len(
+            expected_oss_role_components
+        ),
+        "multi_oss_closed_loop_role_component_matrix_observed_count": len(
+            observed_oss_role_component_set
+        ),
+        "multi_oss_closed_loop_role_component_matrix_missing_count": len(
+            expected_oss_role_components - observed_oss_role_component_set
+        ),
+        "multi_oss_closed_loop_role_component_matrix_unexpected_count": len(
+            observed_oss_role_component_set - expected_oss_role_components
+        ),
+        "multi_oss_closed_loop_role_component_min_case_count": (
+            min(oss_role_component_case_counts.values())
+            if oss_role_component_case_counts
+            else 0
+        ),
         "multi_oss_closed_loop_drives_decision_count": sum(
             1 for item in usable if item["multi_oss_closed_loop_drives_decision"]
         ),
@@ -18633,6 +18697,7 @@ def _build_summary(
             "Every case proves the selected DSPy/TRL/imitation reflection artifact materially changes persona reasoning blueprints, selected rationale, scorer replay, and candidate evidence.",
             "Every case carries the selected statsmodels/QuantLib risk analytics lineage through persona risk evaluation, evolved policy, LEAN Object Store packet readback, handoff bundle, and runtime feedback.",
             "Every case emits a multi-OSS closed-loop proof replaying each role from OSS response through persona follow-up, reasoning inputs, candidate generation, scorer adjustments, and selected evidence.",
+            "The full 3000-case run covers every legal OSS role-component matrix cell with no unexpected pair, and each covered pair participates in the persona closed-loop proof.",
             "Every case emits an OODA causal ledger proving OSS responses, persona follow-up outputs, candidate generation, scorer output, selected action, and LEAN handoff occur in replayable temporal order without future artifact references.",
             "Every non-cold-start persona case consumes the prior autonomous cycle's LEAN runtime feedback in reasoning, candidate generation, selected evidence, and scorer adjustments.",
             "Every non-cold-start persona case resumes that prior autonomous cycle through persisted checkpoint, schedule, and object-store readback refs before using the runtime feedback.",
