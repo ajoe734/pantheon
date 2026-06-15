@@ -35,6 +35,21 @@ def normalize_command(raw: list[str]) -> list[str]:
     return raw
 
 
+import re as _re
+
+
+def derive_agent(run_id: str) -> str:
+    """Agent label from a worker run-id, e.g. 'claude-1-2026...' -> 'claude-1'."""
+    m = _re.match(r"([a-zA-Z][a-zA-Z0-9]*(?:-[0-9]+)?)-[0-9]{8}T", run_id or "")
+    return m.group(1) if m else (run_id or "").split("-")[0]
+
+
+def derive_task_id(cmd):
+    """Parse the dispatched task id ('Task ID: <ID>') from the worker command."""
+    m = _re.search(r"Task ID:\s*([A-Z][A-Z0-9_-]+)", " ".join(str(c) for c in cmd))
+    return m.group(1) if m else None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run an auto-worker command with heartbeat and terminal markers.")
     parser.add_argument("--run-id", required=True)
@@ -49,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
         print("worker_runner: missing command after --", file=sys.stderr)
         return 2
 
+    agent = derive_agent(args.run_id)
+    task_id = derive_task_id(command)
+
     heartbeat_path = Path(args.heartbeat_path)
     status_path = Path(args.status_path)
     interval = max(1.0, float(args.heartbeat_interval_seconds or 15.0))
@@ -58,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
 
     status: dict[str, Any] = {
         "run_id": args.run_id,
+        "agent": agent,
+        "task_id": task_id,
         "status": "starting",
         "pid": os.getpid(),
         "child_pid": None,
@@ -75,6 +95,8 @@ def main(argv: list[str] | None = None) -> int:
         status["last_heartbeat_at"] = now
         write_json(heartbeat_path, {
             "run_id": args.run_id,
+            "agent": agent,
+            "task_id": task_id,
             "status": next_status,
             "pid": os.getpid(),
             "child_pid": status.get("child_pid"),
