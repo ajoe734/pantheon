@@ -66,6 +66,8 @@ and resilience.
 | 13 | Idempotency-Key replay correctness | [round-13-plan.md](round-13-plan.md) | [round-13-results.md](round-13-results.md) | PASS (replay cached, conflict 409, key required) |
 | 14 | Concurrency & idempotency durability | [round-14-plan.md](round-14-plan.md) | [round-14-results.md](round-14-results.md) | PASS (no intra-instance race; guard test); F11 per-process idempotency under HA |
 
+| 15 | Pagination correctness & cursor robustness | [round-15-plan.md](round-15-plan.md) | [round-15-results.md](round-15-results.md) | PASS (complete, no dup/gap; cursor fuzz no 500); O5 scale note |
+
 ## Environment under test
 
 - Dev FE: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
