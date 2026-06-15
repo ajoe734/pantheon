@@ -180,6 +180,7 @@ MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID = "persona_multi_oss_closed_loop_proof_v1"
 PERSONA_OSS_OODA_LEDGER_MODEL_ID = "persona_oss_ooda_causal_ledger_v1"
 PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID = "persona_cross_cycle_runtime_carryover_v1"
 PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID = "persona_portfolio_state_carryover_v1"
+PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID = "persona_broker_adapter_response_carryover_v1"
 PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID = "persona_persisted_cycle_resume_carryover_v1"
 PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID = "persona_multi_cycle_lineage_carryover_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
@@ -882,6 +883,12 @@ def run_agent_usability_validations(
             decision_traces=(decision_trace0, decision_trace1),
             operational_context=operational_context,
         )
+        broker_adapter_carryover = _build_broker_adapter_carryover_proof(
+            episode=episode,
+            cross_cycle_context=cross_cycle_context,
+            decision_traces=(decision_trace0, decision_trace1),
+            operational_context=operational_context,
+        )
         persisted_cycle_resume = _build_persisted_cycle_resume_proof(
             episode=episode,
             cross_cycle_context=cross_cycle_context,
@@ -924,6 +931,7 @@ def run_agent_usability_validations(
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
             portfolio_state_carryover=portfolio_state_carryover,
+            broker_adapter_carryover=broker_adapter_carryover,
             openclaw_session_continuity=openclaw_session_continuity,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
@@ -955,6 +963,7 @@ def run_agent_usability_validations(
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
             portfolio_state_carryover=portfolio_state_carryover,
+            broker_adapter_carryover=broker_adapter_carryover,
             openclaw_session_continuity=openclaw_session_continuity,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
@@ -987,6 +996,7 @@ def run_agent_usability_validations(
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
             portfolio_state_carryover=portfolio_state_carryover,
+            broker_adapter_carryover=broker_adapter_carryover,
             openclaw_session_continuity=openclaw_session_continuity,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
@@ -4182,6 +4192,78 @@ def _portfolio_state_context_from_prior(
     return context
 
 
+def _broker_adapter_carryover_score_adjustments(context: Mapping[str, Any]) -> dict[str, float]:
+    adjustments = {
+        "feedback-adapt": 0.0,
+        "retain-observe": 0.0,
+        "risk-off": 0.0,
+        "contrarian-check": 0.0,
+    }
+    if context.get("broker_adapter_carryover_status") == "applied" and context.get("broker_adapter_carryover_ref"):
+        action_family = str(context.get("previous_broker_adapter_action_family") or "")
+        adjustments["feedback-adapt"] = 0.045
+        if action_family in {"cancel_replace_recovery", "risk_control"}:
+            adjustments["risk-off"] = 0.035
+        elif action_family in {"liquidity_sizing", "position_reconciliation"}:
+            adjustments["risk-off"] = 0.025
+            adjustments["retain-observe"] = 0.015
+        elif action_family == "limit_repricing":
+            adjustments["risk-off"] = 0.015
+        else:
+            adjustments["risk-off"] = 0.01
+    return adjustments
+
+
+def _empty_broker_adapter_carryover_context() -> dict[str, Any]:
+    context = {
+        "broker_adapter_carryover_status": "cold_start",
+        "broker_adapter_carryover_ref": None,
+        "previous_broker_adapter_case_id": None,
+        "previous_broker_adapter_followup_id": None,
+        "previous_broker_adapter_followup_ref": None,
+        "previous_broker_adapter_source_packet_ref": None,
+        "previous_broker_adapter_source_packet_hash": None,
+        "previous_broker_adapter_decision_trace_ref": None,
+        "previous_broker_adapter_checkpoint_ref": None,
+        "previous_broker_adapter_schedule_ref": None,
+        "previous_broker_adapter_scenario": None,
+        "previous_broker_adapter_action": None,
+        "previous_broker_adapter_action_family": None,
+        "previous_broker_adapter_next_step": None,
+        "previous_broker_adapter_evidence_refs": [],
+    }
+    context["broker_adapter_score_adjustments"] = _broker_adapter_carryover_score_adjustments(context)
+    return context
+
+
+def _broker_adapter_carryover_context_from_prior(
+    *,
+    episode: PortfolioEpisode,
+    prior_cycle_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    previous_case_id = str(prior_cycle_state["case_id"])
+    prior_followup = dict(prior_cycle_state.get("broker_adapter_followup") or {})
+    context = {
+        "broker_adapter_carryover_status": "applied",
+        "broker_adapter_carryover_ref": f"broker-adapter-carryover://{previous_case_id}->{episode.case_id}",
+        "previous_broker_adapter_case_id": previous_case_id,
+        "previous_broker_adapter_followup_id": prior_followup.get("followup_id"),
+        "previous_broker_adapter_followup_ref": prior_followup.get("followup_ref"),
+        "previous_broker_adapter_source_packet_ref": prior_followup.get("source_packet_ref"),
+        "previous_broker_adapter_source_packet_hash": prior_followup.get("source_packet_hash"),
+        "previous_broker_adapter_decision_trace_ref": prior_followup.get("decision_trace_ref"),
+        "previous_broker_adapter_checkpoint_ref": prior_followup.get("restart_checkpoint_ref"),
+        "previous_broker_adapter_schedule_ref": prior_followup.get("schedule_ref"),
+        "previous_broker_adapter_scenario": prior_followup.get("scenario"),
+        "previous_broker_adapter_action": prior_followup.get("action"),
+        "previous_broker_adapter_action_family": prior_followup.get("action_family"),
+        "previous_broker_adapter_next_step": prior_followup.get("next_persona_step"),
+        "previous_broker_adapter_evidence_refs": list(prior_followup.get("evidence_refs") or []),
+    }
+    context["broker_adapter_score_adjustments"] = _broker_adapter_carryover_score_adjustments(context)
+    return context
+
+
 def _empty_openclaw_session_continuity_context() -> dict[str, Any]:
     return {
         "openclaw_session_continuity_status": "cold_start",
@@ -4229,6 +4311,7 @@ def _cross_cycle_context_for_episode(
 ) -> dict[str, Any]:
     if not prior_cycle_state:
         portfolio_state_context = _empty_portfolio_state_context()
+        broker_adapter_carryover = _empty_broker_adapter_carryover_context()
         openclaw_session_continuity = _empty_openclaw_session_continuity_context()
         return {
             "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
@@ -4253,6 +4336,7 @@ def _cross_cycle_context_for_episode(
             "next_ooda_action": None,
             "next_scheduler_phase": None,
             **portfolio_state_context,
+            **broker_adapter_carryover,
             **openclaw_session_continuity,
             "prior_case_completed_before_current_case": False,
             "evidence_refs": [],
@@ -4273,6 +4357,10 @@ def _cross_cycle_context_for_episode(
         episode=episode,
         prior_cycle_state=prior_cycle_state,
     )
+    broker_adapter_carryover = _broker_adapter_carryover_context_from_prior(
+        episode=episode,
+        prior_cycle_state=prior_cycle_state,
+    )
     openclaw_session_refs = [
         str(ref)
         for ref in (
@@ -4281,6 +4369,17 @@ def _cross_cycle_context_for_episode(
             openclaw_session_continuity["previous_openclaw_context_ref"],
             openclaw_session_continuity["previous_openclaw_session_ref"],
             openclaw_session_continuity["previous_openclaw_upstream_session_ref"],
+        )
+        if ref
+    ]
+    broker_adapter_refs = [
+        str(ref)
+        for ref in (
+            broker_adapter_carryover["broker_adapter_carryover_ref"],
+            broker_adapter_carryover["previous_broker_adapter_followup_ref"],
+            broker_adapter_carryover["previous_broker_adapter_source_packet_ref"],
+            broker_adapter_carryover["previous_broker_adapter_checkpoint_ref"],
+            broker_adapter_carryover["previous_broker_adapter_schedule_ref"],
         )
         if ref
     ]
@@ -4307,6 +4406,7 @@ def _cross_cycle_context_for_episode(
         "next_ooda_action": prior_cycle_state["next_ooda_action"],
         "next_scheduler_phase": prior_cycle_state["next_scheduler_phase"],
         **portfolio_state_context,
+        **broker_adapter_carryover,
         **openclaw_session_continuity,
         "prior_case_completed_before_current_case": True,
         "evidence_refs": [
@@ -4315,6 +4415,7 @@ def _cross_cycle_context_for_episode(
             str(portfolio_state_context["portfolio_state_carry_ref"]),
             str(portfolio_state_context["portfolio_state_ref"]),
             *openclaw_session_refs,
+            *broker_adapter_refs,
             str(prior_cycle_state["source_runtime_ref"]),
             str(prior_cycle_state["source_handoff_ref"]),
             str(prior_cycle_state["ooda_ledger_ref"]),
@@ -4459,6 +4560,9 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
     persona_followup = feedback["persona_ooda_followup"]
     runtime_readback = feedback["runtime_feedback"]
     portfolio_state = _portfolio_state_from_case(case)
+    broker_adapter_followup = case["operational_context"]["broker_adapter_followup"]
+    broker_persona_followup = broker_adapter_followup["persona_followup"]
+    broker_followup_id = str(broker_adapter_followup["followup_id"])
     openclaw_handoff = case["operational_context"]["openclaw_session_handoff"]
     return {
         "case_id": case["case_id"],
@@ -4491,6 +4595,25 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
             "upstream_session_ref": openclaw_handoff["upstream_session_ref"],
             "upstream_session_id": openclaw_handoff["upstream_session_id"],
             "session_state": openclaw_handoff["session_state"],
+        },
+        "broker_adapter_followup": {
+            "followup_id": broker_followup_id,
+            "followup_ref": f"broker-adapter-followup://{broker_followup_id}",
+            "source_packet_ref": broker_adapter_followup["source_packet_ref"],
+            "source_packet_hash": broker_adapter_followup["source_packet_hash"],
+            "decision_trace_ref": broker_adapter_followup["decision_trace_ref"],
+            "restart_checkpoint_ref": "checkpoint://{}".format(
+                broker_adapter_followup["restart_checkpoint_ref"]
+            ),
+            "schedule_ref": "schedule://{}".format(
+                broker_adapter_followup["schedule_ref"]
+            ),
+            "scenario": broker_adapter_followup["scenario"],
+            "action": broker_persona_followup["action"],
+            "action_family": broker_persona_followup["action_family"],
+            "next_persona_step": broker_persona_followup["next_persona_step"],
+            "evidence_refs": list(broker_persona_followup["evidence_refs"]),
+            "input_hash": broker_adapter_followup["input_hash"],
         },
     }
 
@@ -5041,6 +5164,334 @@ def _portfolio_state_carryover_is_usable(proof: Mapping[str, Any]) -> bool:
         )
     )
 
+
+
+def _build_broker_adapter_carryover_proof(
+    *,
+    episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    operational_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    status = str(cross_cycle_context.get("broker_adapter_carryover_status"))
+    cold_start = status == "cold_start"
+    applied = status == "applied"
+    carryover_ref = cross_cycle_context.get("broker_adapter_carryover_ref")
+    followup_ref = cross_cycle_context.get("previous_broker_adapter_followup_ref")
+    source_packet_ref = cross_cycle_context.get("previous_broker_adapter_source_packet_ref")
+    score_adjustments = _broker_adapter_carryover_score_adjustments(cross_cycle_context)
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        reasoning_response = artifact["persona_reasoning"]["response"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_id = str(trace["selected_candidate_id"])
+        selected_action = _candidate_action_key(selected_id)
+        selected_scorecard = artifact["scorer"]["scorecards"][selected_id]
+        selected_refs = set(selected_candidate.get("evidence_refs", []))
+        request_refs = set(reasoning_request.get("input_refs", []))
+        candidate_refs = set(candidate_request.get("input_refs", []))
+        usage = reasoning_response.get("broker_adapter_carryover_usage", {})
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_action": selected_action,
+                "decision_input_carryover_ref": trace["decision_inputs"].get(
+                    "broker_adapter_carryover_ref"
+                ),
+                "decision_input_followup_ref": trace["decision_inputs"].get(
+                    "previous_broker_adapter_followup_ref"
+                ),
+                "reasoning_consumes_carryover_ref": bool(carryover_ref)
+                and carryover_ref in request_refs,
+                "reasoning_consumes_followup_ref": bool(followup_ref)
+                and followup_ref in request_refs,
+                "reasoning_consumes_source_packet_ref": bool(source_packet_ref)
+                and source_packet_ref in request_refs,
+                "reasoning_usage_ref_matches": usage.get("model_id")
+                == PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID
+                and usage.get("carryover_ref") == carryover_ref
+                and usage.get("previous_followup_ref") == followup_ref
+                and usage.get("previous_source_packet_ref") == source_packet_ref,
+                "candidate_request_consumes_carryover_ref": bool(carryover_ref)
+                and carryover_ref in candidate_refs,
+                "candidate_request_consumes_followup_ref": bool(followup_ref)
+                and followup_ref in candidate_refs,
+                "candidate_request_consumes_source_packet_ref": bool(source_packet_ref)
+                and source_packet_ref in candidate_refs,
+                "selected_candidate_cites_carryover_ref": bool(carryover_ref)
+                and carryover_ref in selected_refs,
+                "selected_candidate_cites_followup_ref": bool(followup_ref)
+                and followup_ref in selected_refs,
+                "selected_candidate_cites_source_packet_ref": bool(source_packet_ref)
+                and source_packet_ref in selected_refs,
+                "scorer_broker_adapter_adjustment": float(
+                    scoring_inputs["broker_adapter_score_adjustments"].get(
+                        selected_action,
+                        0.0,
+                    )
+                ),
+                "scorecard_broker_adapter_adjustment": float(
+                    selected_scorecard["components"].get(
+                        "broker_adapter_adjustment",
+                        0.0,
+                    )
+                ),
+                "decision_replay_uses_broker_adapter": artifact["replay"].get(
+                    "uses_broker_adapter_carryover_or_declares_cold_start"
+                ),
+            }
+        )
+    conflict = operational_context["persona_conflict_resolution"]
+    allocation = conflict["resolved_allocation"]
+    conflict_carryover = dict(conflict.get("broker_adapter_carryover") or {})
+    lean_handoff = operational_context["lean_handoff"]
+    runtime_feedback = operational_context["lean_runtime_feedback"]
+    runtime_updates = runtime_feedback.get("state_updates", {})
+    lean_handoff_ref = "lean-handoff://{}".format(lean_handoff["packet_id"])
+    runtime_feedback_ref = "lean-runtime-feedback://{}".format(runtime_feedback["feedback_id"])
+    broker_refs = [str(ref) for ref in (carryover_ref, followup_ref, source_packet_ref) if ref]
+    replay = {
+        "replayable": True,
+        "cold_start_or_previous_adapter_response_bound": (
+            cold_start
+            and carryover_ref is None
+            and followup_ref is None
+            and source_packet_ref is None
+            and all(float(value) == 0.0 for value in score_adjustments.values())
+        )
+        or (
+            applied
+            and bool(carryover_ref)
+            and bool(followup_ref)
+            and bool(source_packet_ref)
+            and bool(cross_cycle_context.get("previous_broker_adapter_action"))
+            and bool(cross_cycle_context.get("previous_broker_adapter_action_family"))
+        ),
+        "reasoning_consumes_previous_adapter_response": cold_start
+        or all(
+            binding["reasoning_consumes_carryover_ref"]
+            and binding["reasoning_consumes_followup_ref"]
+            and binding["reasoning_consumes_source_packet_ref"]
+            and binding["reasoning_usage_ref_matches"]
+            for binding in trace_bindings
+        ),
+        "candidate_generation_consumes_previous_adapter_response": cold_start
+        or all(
+            binding["candidate_request_consumes_carryover_ref"]
+            and binding["candidate_request_consumes_followup_ref"]
+            and binding["candidate_request_consumes_source_packet_ref"]
+            for binding in trace_bindings
+        ),
+        "selected_candidate_cites_previous_adapter_response": cold_start
+        or all(
+            binding["selected_candidate_cites_carryover_ref"]
+            and binding["selected_candidate_cites_followup_ref"]
+            and binding["selected_candidate_cites_source_packet_ref"]
+            for binding in trace_bindings
+        ),
+        "scorer_applies_broker_adapter_adjustment": cold_start
+        or all(binding["scorer_broker_adapter_adjustment"] > 0.0 for binding in trace_bindings),
+        "scorecard_replays_broker_adapter_adjustment": all(
+            binding["scorecard_broker_adapter_adjustment"]
+            == binding["scorer_broker_adapter_adjustment"]
+            for binding in trace_bindings
+        ),
+        "conflict_resolution_carries_broker_adapter_response": (
+            cold_start
+            and not allocation.get("broker_adapter_carryover_ref")
+            and not conflict_carryover.get("carryover_ref")
+        )
+        or (
+            applied
+            and allocation.get("broker_adapter_carryover_ref") == carryover_ref
+            and allocation.get("previous_broker_adapter_followup_ref") == followup_ref
+            and allocation.get("previous_broker_adapter_source_packet_ref") == source_packet_ref
+            and conflict_carryover.get("carryover_ref") == carryover_ref
+            and conflict_carryover.get("previous_followup_ref") == followup_ref
+            and set(broker_refs).issubset(set(conflict.get("evidence_refs", [])))
+        ),
+        "lean_handoff_carries_broker_adapter_response": (
+            cold_start
+            and not lean_handoff.get("broker_adapter_carryover_ref")
+            and not lean_handoff.get("previous_broker_adapter_followup_ref")
+            and not lean_handoff.get("previous_broker_adapter_source_packet_ref")
+        )
+        or (
+            applied
+            and lean_handoff.get("broker_adapter_carryover_ref") == carryover_ref
+            and lean_handoff.get("previous_broker_adapter_followup_ref") == followup_ref
+            and lean_handoff.get("previous_broker_adapter_source_packet_ref") == source_packet_ref
+            and set(broker_refs).issubset(set(lean_handoff.get("runtime_bundle_refs", [])))
+        ),
+        "runtime_feedback_binds_broker_adapter_response": (
+            cold_start
+            and runtime_updates.get("bind_broker_adapter_carryover_ref") is None
+            and runtime_updates.get("bind_previous_broker_adapter_followup_ref") is None
+        )
+        or (
+            applied
+            and runtime_feedback.get("replay", {}).get("broker_adapter_carryover_bound") is True
+            and runtime_updates.get("bind_broker_adapter_carryover_ref") == carryover_ref
+            and runtime_updates.get("bind_previous_broker_adapter_followup_ref") == followup_ref
+            and runtime_updates.get("bind_previous_broker_adapter_source_packet_ref") == source_packet_ref
+        ),
+        "same_persona_adapter_response_carryover": cold_start
+        or cross_cycle_context.get("persona_id") == _persona_id(episode.persona),
+        "decision_artifact_replays_broker_adapter_carryover": all(
+            binding["decision_replay_uses_broker_adapter"] for binding in trace_bindings
+        ),
+    }
+    return {
+        "proof_id": f"broker-adapter-carryover-{episode.case_id}",
+        "proof_ref": f"broker-adapter-carryover-proof://{episode.case_id}",
+        "model_id": PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "carryover_status": status,
+        "carryover_ref": carryover_ref,
+        "previous_case_id": cross_cycle_context.get("previous_broker_adapter_case_id"),
+        "previous_followup_id": cross_cycle_context.get("previous_broker_adapter_followup_id"),
+        "previous_followup_ref": followup_ref,
+        "previous_source_packet_ref": source_packet_ref,
+        "previous_source_packet_hash": cross_cycle_context.get(
+            "previous_broker_adapter_source_packet_hash"
+        ),
+        "previous_action": cross_cycle_context.get("previous_broker_adapter_action"),
+        "previous_action_family": cross_cycle_context.get(
+            "previous_broker_adapter_action_family"
+        ),
+        "previous_next_step": cross_cycle_context.get("previous_broker_adapter_next_step"),
+        "previous_scenario": cross_cycle_context.get("previous_broker_adapter_scenario"),
+        "previous_checkpoint_ref": cross_cycle_context.get(
+            "previous_broker_adapter_checkpoint_ref"
+        ),
+        "previous_schedule_ref": cross_cycle_context.get("previous_broker_adapter_schedule_ref"),
+        "score_adjustments": score_adjustments,
+        "trace_bindings": trace_bindings,
+        "conflict_resolution_ref": conflict["resolution_ref"],
+        "conflict_broker_adapter_carryover": copy.deepcopy(dict(conflict_carryover)),
+        "resolved_allocation": {
+            "broker_adapter_carryover_ref": allocation.get("broker_adapter_carryover_ref"),
+            "previous_broker_adapter_followup_ref": allocation.get(
+                "previous_broker_adapter_followup_ref"
+            ),
+            "previous_broker_adapter_source_packet_ref": allocation.get(
+                "previous_broker_adapter_source_packet_ref"
+            ),
+            "previous_broker_adapter_action": allocation.get("previous_broker_adapter_action"),
+        },
+        "lean_handoff_ref": lean_handoff_ref,
+        "lean_handoff_broker_adapter_carryover_ref": lean_handoff.get(
+            "broker_adapter_carryover_ref"
+        ),
+        "lean_handoff_previous_followup_ref": lean_handoff.get(
+            "previous_broker_adapter_followup_ref"
+        ),
+        "lean_handoff_previous_source_packet_ref": lean_handoff.get(
+            "previous_broker_adapter_source_packet_ref"
+        ),
+        "runtime_feedback_ref": runtime_feedback_ref,
+        "runtime_state_updates": {
+            "bind_broker_adapter_carryover_ref": runtime_updates.get(
+                "bind_broker_adapter_carryover_ref"
+            ),
+            "bind_broker_adapter_carryover_status": runtime_updates.get(
+                "bind_broker_adapter_carryover_status"
+            ),
+            "bind_previous_broker_adapter_followup_ref": runtime_updates.get(
+                "bind_previous_broker_adapter_followup_ref"
+            ),
+            "bind_previous_broker_adapter_source_packet_ref": runtime_updates.get(
+                "bind_previous_broker_adapter_source_packet_ref"
+            ),
+            "bind_previous_broker_adapter_action": runtime_updates.get(
+                "bind_previous_broker_adapter_action"
+            ),
+            "bind_previous_broker_adapter_action_family": runtime_updates.get(
+                "bind_previous_broker_adapter_action_family"
+            ),
+        },
+        "evidence_refs": [
+            str(ref)
+            for ref in (
+                carryover_ref,
+                followup_ref,
+                source_packet_ref,
+                conflict["resolution_ref"],
+                lean_handoff_ref,
+                runtime_feedback_ref,
+            )
+            if ref
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "broker-adapter-carryover-proof",
+            {
+                "case_id": episode.case_id,
+                "cross_cycle_context": cross_cycle_context,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _broker_adapter_carryover_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("carryover_status")
+    trace_bindings = list(proof.get("trace_bindings", []))
+    score_adjustments = proof.get("score_adjustments", {})
+    return bool(
+        proof.get("model_id") == PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("broker-adapter-carryover-proof://")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_previous_adapter_response_bound",
+            "reasoning_consumes_previous_adapter_response",
+            "candidate_generation_consumes_previous_adapter_response",
+            "selected_candidate_cites_previous_adapter_response",
+            "scorer_applies_broker_adapter_adjustment",
+            "scorecard_replays_broker_adapter_adjustment",
+            "conflict_resolution_carries_broker_adapter_response",
+            "lean_handoff_carries_broker_adapter_response",
+            "runtime_feedback_binds_broker_adapter_response",
+            "same_persona_adapter_response_carryover",
+            "decision_artifact_replays_broker_adapter_carryover",
+        ))
+        and (
+            (
+                status == "cold_start"
+                and proof.get("previous_case_id") is None
+                and proof.get("carryover_ref") is None
+                and proof.get("previous_followup_ref") is None
+                and proof.get("previous_source_packet_ref") is None
+                and all(float(value) == 0.0 for value in score_adjustments.values())
+            )
+            or (
+                status == "applied"
+                and proof.get("previous_case_id")
+                and proof.get("carryover_ref")
+                and proof.get("previous_followup_ref")
+                and proof.get("previous_source_packet_ref")
+                and proof.get("previous_action")
+                and proof.get("previous_action_family")
+                and float(score_adjustments.get("feedback-adapt", 0.0)) > 0.0
+                and all(
+                    binding.get("scorer_broker_adapter_adjustment", 0.0) > 0.0
+                    for binding in trace_bindings
+                )
+            )
+        )
+    )
 
 def _build_persisted_cycle_resume_proof(
     *,
@@ -5917,6 +6368,33 @@ def _build_persona_reasoning_response(
         "portfolio_target_capital_budget_scale": cross_cycle_context.get(
             "portfolio_target_capital_budget_scale"
         ),
+        "broker_adapter_carryover_status": cross_cycle_context.get(
+            "broker_adapter_carryover_status"
+        ),
+        "broker_adapter_carryover_ref": cross_cycle_context.get(
+            "broker_adapter_carryover_ref"
+        ),
+        "previous_broker_adapter_case_id": cross_cycle_context.get(
+            "previous_broker_adapter_case_id"
+        ),
+        "previous_broker_adapter_followup_ref": cross_cycle_context.get(
+            "previous_broker_adapter_followup_ref"
+        ),
+        "previous_broker_adapter_source_packet_ref": cross_cycle_context.get(
+            "previous_broker_adapter_source_packet_ref"
+        ),
+        "previous_broker_adapter_action": cross_cycle_context.get(
+            "previous_broker_adapter_action"
+        ),
+        "previous_broker_adapter_action_family": cross_cycle_context.get(
+            "previous_broker_adapter_action_family"
+        ),
+        "previous_broker_adapter_next_step": cross_cycle_context.get(
+            "previous_broker_adapter_next_step"
+        ),
+        "previous_broker_adapter_scenario": cross_cycle_context.get(
+            "previous_broker_adapter_scenario"
+        ),
         "multi_cycle_lineage_status": multi_cycle_context["status"],
         "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
         "multi_cycle_latest_runtime_feedback_ref": multi_cycle_context.get("latest_runtime_feedback_ref"),
@@ -5964,6 +6442,7 @@ def _build_persona_reasoning_response(
             "reconcile_tracking_readback_before_scoring",
             "repair_degraded_oss_artifact_before_scoring",
             "carry_prior_portfolio_state_into_rebalance_sizing",
+            "carry_prior_broker_adapter_followup_into_next_ooda",
             "draft_candidate_policy_blueprints",
             "send_blueprints_to_scorer_and_risk_evaluator",
         ],
@@ -6089,6 +6568,31 @@ def _build_persona_reasoning_response(
                 cross_cycle_context
             ),
         },
+        "broker_adapter_carryover_usage": {
+            "model_id": PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID,
+            "status": cross_cycle_context.get("broker_adapter_carryover_status"),
+            "carryover_ref": cross_cycle_context.get("broker_adapter_carryover_ref"),
+            "previous_case_id": cross_cycle_context.get("previous_broker_adapter_case_id"),
+            "previous_followup_ref": cross_cycle_context.get(
+                "previous_broker_adapter_followup_ref"
+            ),
+            "previous_source_packet_ref": cross_cycle_context.get(
+                "previous_broker_adapter_source_packet_ref"
+            ),
+            "previous_action": cross_cycle_context.get("previous_broker_adapter_action"),
+            "previous_action_family": cross_cycle_context.get(
+                "previous_broker_adapter_action_family"
+            ),
+            "previous_next_step": cross_cycle_context.get(
+                "previous_broker_adapter_next_step"
+            ),
+            "previous_scenario": cross_cycle_context.get(
+                "previous_broker_adapter_scenario"
+            ),
+            "candidate_score_adjustments": _broker_adapter_carryover_score_adjustments(
+                cross_cycle_context
+            ),
+        },
         "multi_cycle_lineage_usage": {
             "model_id": multi_cycle_context["model_id"],
             "status": multi_cycle_context["status"],
@@ -6166,6 +6670,33 @@ def _persona_reasoning_candidate_blueprints(
         if float(cross_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0
         else []
     )
+    broker_adapter_score_adjustments = _broker_adapter_carryover_score_adjustments(
+        cross_cycle_context
+    )
+    broker_adapter_refs = [
+        str(ref)
+        for ref in (
+            cross_cycle_context.get("broker_adapter_carryover_ref"),
+            cross_cycle_context.get("previous_broker_adapter_followup_ref"),
+            cross_cycle_context.get("previous_broker_adapter_source_packet_ref"),
+        )
+        if ref
+    ]
+    feedback_broker_adapter_refs = (
+        broker_adapter_refs
+        if float(broker_adapter_score_adjustments.get("feedback-adapt", 0.0)) > 0.0
+        else []
+    )
+    retain_broker_adapter_refs = (
+        broker_adapter_refs
+        if float(broker_adapter_score_adjustments.get("retain-observe", 0.0)) > 0.0
+        else []
+    )
+    risk_broker_adapter_refs = (
+        broker_adapter_refs
+        if float(broker_adapter_score_adjustments.get("risk-off", 0.0)) > 0.0
+        else []
+    )
     multi_cycle_refs = list(multi_cycle_context.get("evidence_refs", []))
     multi_cycle_score_adjustments = _multi_cycle_lineage_score_adjustments(multi_cycle_context)
     risk_multi_cycle_refs = (
@@ -6229,6 +6760,7 @@ def _persona_reasoning_candidate_blueprints(
                 *memory_refs,
                 *institutional_memory_refs,
                 *cross_cycle_refs,
+                *feedback_broker_adapter_refs,
                 *multi_cycle_refs,
             ],
             "memory_adjustment_key": "feedback-adapt",
@@ -6250,6 +6782,7 @@ def _persona_reasoning_candidate_blueprints(
                 *retain_tracking_refs,
                 *retain_alpha_refs,
                 *retain_quality_refs,
+                *retain_broker_adapter_refs,
             ],
             "memory_adjustment_key": "retain-observe",
             "rationale": "Keep the observe-only baseline as a scored alternative before rejecting it.",
@@ -6270,6 +6803,7 @@ def _persona_reasoning_candidate_blueprints(
                 *memory_refs,
                 *risk_institutional_memory_refs,
                 *risk_cross_cycle_refs,
+                *risk_broker_adapter_refs,
                 *risk_multi_cycle_refs,
             ]
             if (
@@ -6559,6 +7093,50 @@ def _evaluate_persona_reasoning_response(
             },
         ),
         _persona_risk_check(
+            "reasoning_uses_broker_adapter_carryover_or_declares_cold_start",
+            (
+                request.get("broker_adapter_carryover_status") == "cold_start"
+                and response.get("broker_adapter_carryover_usage", {}).get("status") == "cold_start"
+                and request.get("broker_adapter_carryover_ref") is None
+                and request.get("previous_broker_adapter_followup_ref") is None
+            )
+            or (
+                request.get("broker_adapter_carryover_status") == "applied"
+                and response.get("broker_adapter_carryover_usage", {}).get("status") == "applied"
+                and request.get("broker_adapter_carryover_ref")
+                == response.get("broker_adapter_carryover_usage", {}).get("carryover_ref")
+                and request.get("previous_broker_adapter_followup_ref")
+                == response.get("broker_adapter_carryover_usage", {}).get("previous_followup_ref")
+                and request.get("previous_broker_adapter_source_packet_ref")
+                == response.get("broker_adapter_carryover_usage", {}).get("previous_source_packet_ref")
+                and request.get("previous_broker_adapter_action")
+                == response.get("broker_adapter_carryover_usage", {}).get("previous_action")
+                and request.get("broker_adapter_carryover_ref") in request.get("input_refs", [])
+                and request.get("previous_broker_adapter_followup_ref") in request.get("input_refs", [])
+                and request.get("previous_broker_adapter_source_packet_ref") in request.get("input_refs", [])
+                and float(
+                    response.get("broker_adapter_carryover_usage", {})
+                    .get("candidate_score_adjustments", {})
+                    .get("feedback-adapt", 0.0)
+                )
+                > 0.0
+            ),
+            {
+                "broker_adapter_carryover_status": request.get(
+                    "broker_adapter_carryover_status"
+                ),
+                "broker_adapter_carryover_ref": request.get(
+                    "broker_adapter_carryover_ref"
+                ),
+                "previous_followup_ref": request.get(
+                    "previous_broker_adapter_followup_ref"
+                ),
+                "usage": copy.deepcopy(
+                    dict(response.get("broker_adapter_carryover_usage", {}))
+                ),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_uses_multi_cycle_lineage_or_declares_cold_start",
             (
                 request.get("multi_cycle_lineage_status") == "cold_start"
@@ -6723,6 +7301,33 @@ def _build_agent_decision_trace(
         "portfolio_target_capital_budget_scale": cross_cycle_context.get(
             "portfolio_target_capital_budget_scale"
         ),
+        "broker_adapter_carryover_status": cross_cycle_context.get(
+            "broker_adapter_carryover_status"
+        ),
+        "broker_adapter_carryover_ref": cross_cycle_context.get(
+            "broker_adapter_carryover_ref"
+        ),
+        "previous_broker_adapter_case_id": cross_cycle_context.get(
+            "previous_broker_adapter_case_id"
+        ),
+        "previous_broker_adapter_followup_ref": cross_cycle_context.get(
+            "previous_broker_adapter_followup_ref"
+        ),
+        "previous_broker_adapter_source_packet_ref": cross_cycle_context.get(
+            "previous_broker_adapter_source_packet_ref"
+        ),
+        "previous_broker_adapter_action": cross_cycle_context.get(
+            "previous_broker_adapter_action"
+        ),
+        "previous_broker_adapter_action_family": cross_cycle_context.get(
+            "previous_broker_adapter_action_family"
+        ),
+        "previous_broker_adapter_next_step": cross_cycle_context.get(
+            "previous_broker_adapter_next_step"
+        ),
+        "previous_broker_adapter_scenario": cross_cycle_context.get(
+            "previous_broker_adapter_scenario"
+        ),
         "multi_cycle_lineage_status": multi_cycle_context["status"],
         "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
         "multi_cycle_latest_runtime_feedback_ref": multi_cycle_context.get("latest_runtime_feedback_ref"),
@@ -6836,6 +7441,7 @@ def _score_agent_candidates(
     source_quality_penalty_by_action = dict(degraded_oss_response["source_quality_penalty_by_action"])
     cross_cycle_score_adjustments = _cross_cycle_score_adjustments(cross_cycle_context)
     portfolio_state_score_adjustments = _portfolio_state_score_adjustments(cross_cycle_context)
+    broker_adapter_score_adjustments = _broker_adapter_carryover_score_adjustments(cross_cycle_context)
     multi_cycle_lineage_score_adjustments = _multi_cycle_lineage_score_adjustments(multi_cycle_context)
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_score_adjustments = dict(memory_influence["candidate_score_adjustments"])
@@ -6873,6 +7479,22 @@ def _score_agent_candidates(
     feedback_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
     if float(cross_cycle_score_adjustments.get("risk-off", 0.0)) > 0.0:
         risk_off_evidence_refs.extend(str(ref) for ref in cross_cycle_context.get("evidence_refs", []))
+    broker_adapter_refs = [
+        str(ref)
+        for ref in (
+            cross_cycle_context.get("broker_adapter_carryover_ref"),
+            cross_cycle_context.get("previous_broker_adapter_followup_ref"),
+            cross_cycle_context.get("previous_broker_adapter_source_packet_ref"),
+        )
+        if ref
+    ]
+    retain_observe_evidence_refs = [
+        "policy://{}".format(baseline_policy["policy_id"])
+    ]
+    if float(broker_adapter_score_adjustments.get("retain-observe", 0.0)) > 0.0:
+        retain_observe_evidence_refs.extend(broker_adapter_refs)
+    if float(broker_adapter_score_adjustments.get("risk-off", 0.0)) > 0.0:
+        risk_off_evidence_refs.extend(broker_adapter_refs)
     feedback_evidence_refs.extend(str(ref) for ref in multi_cycle_context.get("evidence_refs", []))
     if float(multi_cycle_lineage_score_adjustments.get("risk-off", 0.0)) > 0.0:
         risk_off_evidence_refs.extend(str(ref) for ref in multi_cycle_context.get("evidence_refs", []))
@@ -6892,6 +7514,7 @@ def _score_agent_candidates(
                 + float(source_quality_penalty_by_action["feedback-adapt"])
                 + float(cross_cycle_score_adjustments["feedback-adapt"])
                 + float(portfolio_state_score_adjustments["feedback-adapt"])
+                + float(broker_adapter_score_adjustments["feedback-adapt"])
                 + float(multi_cycle_lineage_score_adjustments["feedback-adapt"])
                 + feedback_score
                 + policy_quality
@@ -6914,6 +7537,7 @@ def _score_agent_candidates(
                 + float(quality_repair_score_adjustments["retain-observe"])
                 + float(source_quality_penalty_by_action["retain-observe"])
                 + float(portfolio_state_score_adjustments["retain-observe"])
+                + float(broker_adapter_score_adjustments["retain-observe"])
                 + max(feedback_score, 0)
             ),
             "fallback_evidence_refs": (f"policy://{baseline_policy['policy_id']}",),
@@ -6933,6 +7557,7 @@ def _score_agent_candidates(
                 + float(source_quality_penalty_by_action["risk-off"])
                 + float(cross_cycle_score_adjustments["risk-off"])
                 + float(portfolio_state_score_adjustments["risk-off"])
+                + float(broker_adapter_score_adjustments["risk-off"])
                 + float(multi_cycle_lineage_score_adjustments["risk-off"])
                 + max(0.0, risk_penalty)
             ),
@@ -6952,6 +7577,7 @@ def _score_agent_candidates(
                 + float(quality_repair_score_adjustments["contrarian-check"])
                 + float(source_quality_penalty_by_action["contrarian-check"])
                 + float(portfolio_state_score_adjustments["contrarian-check"])
+                + float(broker_adapter_score_adjustments["contrarian-check"])
             ),
             "fallback_evidence_refs": (
                 f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",
@@ -7104,6 +7730,40 @@ def _build_persona_decision_artifact(
         "portfolio_state_score_adjustments": _portfolio_state_score_adjustments(
             cross_cycle_context
         ),
+        "broker_adapter_carryover": {
+            "model_id": PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID,
+            "status": cross_cycle_context.get("broker_adapter_carryover_status"),
+            "carryover_ref": cross_cycle_context.get("broker_adapter_carryover_ref"),
+            "previous_case_id": cross_cycle_context.get("previous_broker_adapter_case_id"),
+            "previous_followup_ref": cross_cycle_context.get(
+                "previous_broker_adapter_followup_ref"
+            ),
+            "previous_source_packet_ref": cross_cycle_context.get(
+                "previous_broker_adapter_source_packet_ref"
+            ),
+            "previous_source_packet_hash": cross_cycle_context.get(
+                "previous_broker_adapter_source_packet_hash"
+            ),
+            "previous_action": cross_cycle_context.get("previous_broker_adapter_action"),
+            "previous_action_family": cross_cycle_context.get(
+                "previous_broker_adapter_action_family"
+            ),
+            "previous_next_step": cross_cycle_context.get(
+                "previous_broker_adapter_next_step"
+            ),
+            "previous_scenario": cross_cycle_context.get(
+                "previous_broker_adapter_scenario"
+            ),
+            "previous_checkpoint_ref": cross_cycle_context.get(
+                "previous_broker_adapter_checkpoint_ref"
+            ),
+            "previous_schedule_ref": cross_cycle_context.get(
+                "previous_broker_adapter_schedule_ref"
+            ),
+        },
+        "broker_adapter_score_adjustments": _broker_adapter_carryover_score_adjustments(
+            cross_cycle_context
+        ),
         "multi_cycle_lineage_context": copy.deepcopy(dict(multi_cycle_context)),
         "multi_cycle_lineage_score_adjustments": _multi_cycle_lineage_score_adjustments(
             multi_cycle_context
@@ -7228,6 +7888,33 @@ def _build_persona_decision_artifact(
         "portfolio_rebalance_action": cross_cycle_context.get("portfolio_rebalance_action"),
         "portfolio_target_capital_budget_scale": cross_cycle_context.get(
             "portfolio_target_capital_budget_scale"
+        ),
+        "broker_adapter_carryover_status": cross_cycle_context.get(
+            "broker_adapter_carryover_status"
+        ),
+        "broker_adapter_carryover_ref": cross_cycle_context.get(
+            "broker_adapter_carryover_ref"
+        ),
+        "previous_broker_adapter_case_id": cross_cycle_context.get(
+            "previous_broker_adapter_case_id"
+        ),
+        "previous_broker_adapter_followup_ref": cross_cycle_context.get(
+            "previous_broker_adapter_followup_ref"
+        ),
+        "previous_broker_adapter_source_packet_ref": cross_cycle_context.get(
+            "previous_broker_adapter_source_packet_ref"
+        ),
+        "previous_broker_adapter_action": cross_cycle_context.get(
+            "previous_broker_adapter_action"
+        ),
+        "previous_broker_adapter_action_family": cross_cycle_context.get(
+            "previous_broker_adapter_action_family"
+        ),
+        "previous_broker_adapter_next_step": cross_cycle_context.get(
+            "previous_broker_adapter_next_step"
+        ),
+        "previous_broker_adapter_scenario": cross_cycle_context.get(
+            "previous_broker_adapter_scenario"
         ),
         "multi_cycle_lineage_status": multi_cycle_context["status"],
         "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
@@ -7545,6 +8232,36 @@ def _build_persona_decision_artifact(
                 > 0.0
             )
         ),
+        "uses_broker_adapter_carryover_or_declares_cold_start": (
+            (
+                cross_cycle_context.get("broker_adapter_carryover_status") == "cold_start"
+                and not cross_cycle_context.get("broker_adapter_carryover_ref")
+                and not cross_cycle_context.get("previous_broker_adapter_followup_ref")
+                and all(
+                    float(value) == 0.0
+                    for value in scoring_inputs["broker_adapter_score_adjustments"].values()
+                )
+            )
+            or (
+                cross_cycle_context.get("broker_adapter_carryover_status") == "applied"
+                and str(cross_cycle_context["broker_adapter_carryover_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(cross_cycle_context["previous_broker_adapter_followup_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(cross_cycle_context["previous_broker_adapter_source_packet_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(cross_cycle_context["broker_adapter_carryover_ref"])
+                in selected_candidate.get("evidence_refs", [])
+                and str(cross_cycle_context["previous_broker_adapter_followup_ref"])
+                in selected_candidate.get("evidence_refs", [])
+                and float(
+                    scoring_inputs["broker_adapter_score_adjustments"][
+                        _candidate_action_key(str(selected_candidate["candidate_id"]))
+                    ]
+                )
+                > 0.0
+            )
+        ),
         "uses_multi_cycle_lineage_or_declares_cold_start": (
             (
                 multi_cycle_context["status"] == "cold_start"
@@ -7634,6 +8351,7 @@ def _persona_candidate_scorecard(
     source_quality_penalty_by_action = dict(scoring_inputs["source_quality_penalty_by_action"])
     cross_cycle_score_adjustments = dict(scoring_inputs["cross_cycle_score_adjustments"])
     portfolio_state_score_adjustments = dict(scoring_inputs["portfolio_state_score_adjustments"])
+    broker_adapter_score_adjustments = dict(scoring_inputs["broker_adapter_score_adjustments"])
     multi_cycle_lineage_score_adjustments = dict(scoring_inputs["multi_cycle_lineage_score_adjustments"])
     if candidate_id.endswith("-feedback-adapt"):
         formula_id = "feedback_adapt_score_v1"
@@ -7649,6 +8367,7 @@ def _persona_candidate_scorecard(
         source_quality_penalty = float(source_quality_penalty_by_action["feedback-adapt"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["feedback-adapt"])
         portfolio_state_adjustment = float(portfolio_state_score_adjustments["feedback-adapt"])
+        broker_adapter_adjustment = float(broker_adapter_score_adjustments["feedback-adapt"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["feedback-adapt"]
         )
@@ -7664,6 +8383,7 @@ def _persona_candidate_scorecard(
             + source_quality_penalty
             + cross_cycle_adjustment
             + portfolio_state_adjustment
+            + broker_adapter_adjustment
             + multi_cycle_lineage_adjustment
             + feedback_score
             + policy_quality
@@ -7683,6 +8403,7 @@ def _persona_candidate_scorecard(
             "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
             "portfolio_state_adjustment": portfolio_state_adjustment,
+            "broker_adapter_adjustment": broker_adapter_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "feedback_score": feedback_score,
             "policy_quality": policy_quality,
@@ -7703,6 +8424,7 @@ def _persona_candidate_scorecard(
         source_quality_penalty = float(source_quality_penalty_by_action["retain-observe"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["retain-observe"])
         portfolio_state_adjustment = float(portfolio_state_score_adjustments["retain-observe"])
+        broker_adapter_adjustment = float(broker_adapter_score_adjustments["retain-observe"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["retain-observe"]
         )
@@ -7718,6 +8440,7 @@ def _persona_candidate_scorecard(
             + source_quality_penalty
             + cross_cycle_adjustment
             + portfolio_state_adjustment
+            + broker_adapter_adjustment
             + multi_cycle_lineage_adjustment
             + max(feedback_score, 0.0),
             10,
@@ -7734,6 +8457,7 @@ def _persona_candidate_scorecard(
             "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
             "portfolio_state_adjustment": portfolio_state_adjustment,
+            "broker_adapter_adjustment": broker_adapter_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "positive_feedback_score": round(max(feedback_score, 0.0), 10),
         }
@@ -7751,6 +8475,7 @@ def _persona_candidate_scorecard(
         source_quality_penalty = float(source_quality_penalty_by_action["risk-off"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["risk-off"])
         portfolio_state_adjustment = float(portfolio_state_score_adjustments["risk-off"])
+        broker_adapter_adjustment = float(broker_adapter_score_adjustments["risk-off"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["risk-off"]
         )
@@ -7766,6 +8491,7 @@ def _persona_candidate_scorecard(
             + source_quality_penalty
             + cross_cycle_adjustment
             + portfolio_state_adjustment
+            + broker_adapter_adjustment
             + multi_cycle_lineage_adjustment
             + max(0.0, risk_penalty),
             10,
@@ -7782,6 +8508,7 @@ def _persona_candidate_scorecard(
             "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
             "portfolio_state_adjustment": portfolio_state_adjustment,
+            "broker_adapter_adjustment": broker_adapter_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
         }
@@ -7799,6 +8526,7 @@ def _persona_candidate_scorecard(
         source_quality_penalty = float(source_quality_penalty_by_action["contrarian-check"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["contrarian-check"])
         portfolio_state_adjustment = float(portfolio_state_score_adjustments["contrarian-check"])
+        broker_adapter_adjustment = float(broker_adapter_score_adjustments["contrarian-check"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["contrarian-check"]
         )
@@ -7814,6 +8542,7 @@ def _persona_candidate_scorecard(
             + source_quality_penalty
             + cross_cycle_adjustment
             + portfolio_state_adjustment
+            + broker_adapter_adjustment
             + multi_cycle_lineage_adjustment,
             10,
         )
@@ -7829,6 +8558,7 @@ def _persona_candidate_scorecard(
             "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
             "portfolio_state_adjustment": portfolio_state_adjustment,
+            "broker_adapter_adjustment": broker_adapter_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
         }
     candidate_score = round(float(candidate["score"]), 10)
@@ -9407,6 +10137,50 @@ def _build_persona_conflict_resolution(
             if ref
         ],
     }
+    broker_adapter_carryover_ref = cross_cycle_context.get("broker_adapter_carryover_ref")
+    broker_adapter_followup_ref = cross_cycle_context.get(
+        "previous_broker_adapter_followup_ref"
+    )
+    broker_adapter_source_packet_ref = cross_cycle_context.get(
+        "previous_broker_adapter_source_packet_ref"
+    )
+    broker_adapter_carryover = {
+        "model_id": PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID,
+        "status": cross_cycle_context.get("broker_adapter_carryover_status"),
+        "carryover_ref": broker_adapter_carryover_ref,
+        "previous_case_id": cross_cycle_context.get("previous_broker_adapter_case_id"),
+        "previous_followup_ref": broker_adapter_followup_ref,
+        "previous_source_packet_ref": broker_adapter_source_packet_ref,
+        "previous_source_packet_hash": cross_cycle_context.get(
+            "previous_broker_adapter_source_packet_hash"
+        ),
+        "previous_action": cross_cycle_context.get("previous_broker_adapter_action"),
+        "previous_action_family": cross_cycle_context.get(
+            "previous_broker_adapter_action_family"
+        ),
+        "previous_next_step": cross_cycle_context.get(
+            "previous_broker_adapter_next_step"
+        ),
+        "previous_scenario": cross_cycle_context.get("previous_broker_adapter_scenario"),
+        "previous_checkpoint_ref": cross_cycle_context.get(
+            "previous_broker_adapter_checkpoint_ref"
+        ),
+        "previous_schedule_ref": cross_cycle_context.get(
+            "previous_broker_adapter_schedule_ref"
+        ),
+        "candidate_score_adjustments": _broker_adapter_carryover_score_adjustments(
+            cross_cycle_context
+        ),
+        "evidence_refs": [
+            str(ref)
+            for ref in (
+                broker_adapter_carryover_ref,
+                broker_adapter_followup_ref,
+                broker_adapter_source_packet_ref,
+            )
+            if ref
+        ],
+    }
     resolved_weights = {
         instrument: round(
             float(leg["weight"]) * min(1.0, risk_scale + 0.1) * portfolio_state_scale,
@@ -9533,8 +10307,13 @@ def _build_persona_conflict_resolution(
             "portfolio_state_target_capital_budget_scale": portfolio_state_scale,
             "portfolio_state_carryover_ref": portfolio_state_carry_ref,
             "portfolio_state_ref": portfolio_state_ref,
+            "broker_adapter_carryover_ref": broker_adapter_carryover_ref,
+            "previous_broker_adapter_followup_ref": broker_adapter_followup_ref,
+            "previous_broker_adapter_source_packet_ref": broker_adapter_source_packet_ref,
+            "previous_broker_adapter_action": broker_adapter_carryover.get("previous_action"),
         },
         "portfolio_state_carryover": portfolio_state_carryover,
+        "broker_adapter_carryover": broker_adapter_carryover,
         "decision_trace_ref": decision_traces[-1]["reflection_id"],
         "selected_action_ref": selected_action_ref,
         "oss_risk_ref": risk_oss_ref,
@@ -9545,6 +10324,7 @@ def _build_persona_conflict_resolution(
             proposal_lineage_ref,
             *proposal_refs,
             *portfolio_state_carryover["evidence_refs"],
+            *broker_adapter_carryover["evidence_refs"],
             *[
                 conflict["conflict_id"]
                 for conflict in classified_conflicts
@@ -10950,6 +11730,18 @@ def _build_lean_handoff_packet(
         )
         if ref
     ]
+    broker_adapter_carryover = copy.deepcopy(
+        dict(persona_conflict_resolution.get("broker_adapter_carryover") or {})
+    )
+    broker_adapter_refs = [
+        str(ref)
+        for ref in (
+            broker_adapter_carryover.get("carryover_ref"),
+            broker_adapter_carryover.get("previous_followup_ref"),
+            broker_adapter_carryover.get("previous_source_packet_ref"),
+        )
+        if ref
+    ]
     final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
     strategy_packet = copy.deepcopy(dict(lean_engine_replay["case_specific_strategy_packet"]))
     strategy_packet_ref = str(strategy_packet["packet_ref"])
@@ -11177,6 +11969,31 @@ def _build_lean_handoff_packet(
         "portfolio_state_target_capital_budget_scale": portfolio_state_carryover.get(
             "target_capital_budget_scale"
         ),
+        "broker_adapter_carryover": broker_adapter_carryover,
+        "broker_adapter_carryover_status": broker_adapter_carryover.get(
+            "status",
+            "cold_start",
+        ),
+        "broker_adapter_carryover_ref": broker_adapter_carryover.get("carryover_ref"),
+        "previous_broker_adapter_followup_ref": broker_adapter_carryover.get(
+            "previous_followup_ref"
+        ),
+        "previous_broker_adapter_source_packet_ref": broker_adapter_carryover.get(
+            "previous_source_packet_ref"
+        ),
+        "previous_broker_adapter_source_packet_hash": broker_adapter_carryover.get(
+            "previous_source_packet_hash"
+        ),
+        "previous_broker_adapter_action": broker_adapter_carryover.get("previous_action"),
+        "previous_broker_adapter_action_family": broker_adapter_carryover.get(
+            "previous_action_family"
+        ),
+        "previous_broker_adapter_next_step": broker_adapter_carryover.get(
+            "previous_next_step"
+        ),
+        "previous_broker_adapter_scenario": broker_adapter_carryover.get(
+            "previous_scenario"
+        ),
         "schedule_ref": schedule_ref,
         "next_cycle_due_at": autonomous_schedule["next_cycle_due_at"],
         "lean_engine_replay_id": lean_engine_replay["replay_id"],
@@ -11228,6 +12045,7 @@ def _build_lean_handoff_packet(
             tracking_repair_ref,
             conflict_ref,
             *portfolio_state_refs,
+            *broker_adapter_refs,
             schedule_ref,
             *selected_oss_refs,
             f"lean-engine://{lean_engine_replay['replay_id']}",
@@ -11577,6 +12395,46 @@ def _build_lean_runtime_feedback_response(
         lean_handoff.get("portfolio_state_target_capital_budget_scale"),
         1.0,
     )
+    broker_adapter_carryover = dict(lean_handoff.get("broker_adapter_carryover") or {})
+    broker_adapter_status = str(
+        lean_handoff.get("broker_adapter_carryover_status")
+        or broker_adapter_carryover.get("status")
+        or "cold_start"
+    )
+    broker_adapter_carryover_ref = str(
+        lean_handoff.get("broker_adapter_carryover_ref")
+        or broker_adapter_carryover.get("carryover_ref")
+        or ""
+    )
+    broker_adapter_followup_ref = str(
+        lean_handoff.get("previous_broker_adapter_followup_ref")
+        or broker_adapter_carryover.get("previous_followup_ref")
+        or ""
+    )
+    broker_adapter_source_packet_ref = str(
+        lean_handoff.get("previous_broker_adapter_source_packet_ref")
+        or broker_adapter_carryover.get("previous_source_packet_ref")
+        or ""
+    )
+    broker_adapter_previous_action = str(
+        lean_handoff.get("previous_broker_adapter_action")
+        or broker_adapter_carryover.get("previous_action")
+        or ""
+    )
+    broker_adapter_previous_action_family = str(
+        lean_handoff.get("previous_broker_adapter_action_family")
+        or broker_adapter_carryover.get("previous_action_family")
+        or ""
+    )
+    broker_adapter_refs = [
+        ref
+        for ref in (
+            broker_adapter_carryover_ref,
+            broker_adapter_followup_ref,
+            broker_adapter_source_packet_ref,
+        )
+        if ref
+    ]
     openclaw_context_ref = str(lean_handoff.get("openclaw_session_context_ref", ""))
     openclaw_session_ref = str(lean_handoff.get("openclaw_session_ref", ""))
     openclaw_source_oss_ref = str(lean_handoff.get("openclaw_source_oss_ref", ""))
@@ -11661,6 +12519,7 @@ def _build_lean_runtime_feedback_response(
             for ref in (portfolio_state_carry_ref, portfolio_state_ref)
             if ref
         ],
+        *broker_adapter_refs,
         openclaw_context_ref,
         openclaw_session_ref,
         openclaw_source_oss_ref,
@@ -11812,6 +12671,26 @@ def _build_lean_runtime_feedback_response(
                 and portfolio_state_target_scale < 1.0
             )
         ),
+        "broker_adapter_carryover_bound": (
+            (
+                broker_adapter_status == "cold_start"
+                and not broker_adapter_carryover_ref
+                and not broker_adapter_followup_ref
+                and not broker_adapter_source_packet_ref
+            )
+            or (
+                broker_adapter_status == "applied"
+                and bool(broker_adapter_carryover_ref)
+                and bool(broker_adapter_followup_ref)
+                and bool(broker_adapter_source_packet_ref)
+                and set(broker_adapter_refs).issubset(
+                    set(lean_handoff.get("runtime_bundle_refs", []))
+                )
+                and set(broker_adapter_refs).issubset(set(evidence_refs))
+                and bool(broker_adapter_previous_action)
+                and bool(broker_adapter_previous_action_family)
+            )
+        ),
         "openclaw_session_context_bound": (
             bool(openclaw_context_ref)
             and openclaw_context_ref in lean_handoff.get("runtime_bundle_refs", [])
@@ -11958,6 +12837,12 @@ def _build_lean_runtime_feedback_response(
             "bind_portfolio_state_ref": portfolio_state_ref or None,
             "bind_portfolio_state_rebalance_action": portfolio_state_rebalance_action or None,
             "bind_portfolio_state_target_capital_budget_scale": portfolio_state_target_scale,
+            "bind_broker_adapter_carryover_ref": broker_adapter_carryover_ref or None,
+            "bind_broker_adapter_carryover_status": broker_adapter_status,
+            "bind_previous_broker_adapter_followup_ref": broker_adapter_followup_ref or None,
+            "bind_previous_broker_adapter_source_packet_ref": broker_adapter_source_packet_ref or None,
+            "bind_previous_broker_adapter_action": broker_adapter_previous_action or None,
+            "bind_previous_broker_adapter_action_family": broker_adapter_previous_action_family or None,
             "bind_openclaw_session_context_ref": openclaw_context_ref,
             "bind_openclaw_session_ref": openclaw_session_ref,
             "bind_openclaw_source_oss_ref": openclaw_source_oss_ref,
@@ -12023,6 +12908,12 @@ def _build_lean_runtime_feedback_response(
                 "portfolio_state_ref": portfolio_state_ref,
                 "portfolio_state_rebalance_action": portfolio_state_rebalance_action,
                 "portfolio_state_target_scale": portfolio_state_target_scale,
+                "broker_adapter_status": broker_adapter_status,
+                "broker_adapter_carryover_ref": broker_adapter_carryover_ref,
+                "broker_adapter_followup_ref": broker_adapter_followup_ref,
+                "broker_adapter_source_packet_ref": broker_adapter_source_packet_ref,
+                "broker_adapter_previous_action": broker_adapter_previous_action,
+                "broker_adapter_previous_action_family": broker_adapter_previous_action_family,
                 "openclaw_context_ref": openclaw_context_ref,
                 "openclaw_session_ref": openclaw_session_ref,
                 "openclaw_source_oss_ref": openclaw_source_oss_ref,
@@ -14165,6 +15056,31 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
         and {"p-risk-analyst", "p-execution-lead", "p-macro-observer"}.issubset(
             set(packet.get("multi_persona_proposal_persona_ids", []))
         )
+        and (
+            (
+                packet.get("broker_adapter_carryover_status") == "cold_start"
+                and not packet.get("broker_adapter_carryover_ref")
+                and not packet.get("previous_broker_adapter_followup_ref")
+                and not packet.get("previous_broker_adapter_source_packet_ref")
+            )
+            or (
+                packet.get("broker_adapter_carryover_status") == "applied"
+                and str(packet.get("broker_adapter_carryover_ref", "")).startswith(
+                    "broker-adapter-carryover://"
+                )
+                and packet.get("broker_adapter_carryover_ref") in runtime_refs
+                and str(packet.get("previous_broker_adapter_followup_ref", "")).startswith(
+                    "broker-adapter-followup://"
+                )
+                and packet.get("previous_broker_adapter_followup_ref") in runtime_refs
+                and str(packet.get("previous_broker_adapter_source_packet_ref", "")).startswith(
+                    "broker-adapter://"
+                )
+                and packet.get("previous_broker_adapter_source_packet_ref") in runtime_refs
+                and packet.get("previous_broker_adapter_action")
+                and packet.get("previous_broker_adapter_action_family")
+            )
+        )
         and packet.get("openclaw_session_context_ref", "").startswith("openclaw-context://")
         and packet.get("openclaw_session_context_ref") in runtime_refs
         and packet.get("openclaw_session_ref", "").startswith("openclaw-session://")
@@ -14252,6 +15168,7 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("oss_quality_repair_lineage_bound") is True
         and replay.get("multi_persona_proposal_lineage_bound") is True
         and replay.get("portfolio_state_carryover_bound") is True
+        and replay.get("broker_adapter_carryover_bound") is True
         and replay.get("openclaw_session_context_bound") is True
         and replay.get("openclaw_session_continuity_bound") is True
         and replay.get("alpha_seed_revision_handoff_bound") is True
@@ -15443,6 +16360,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("uses_degraded_oss_response_repair") is True
         and replay.get("uses_cross_cycle_runtime_feedback_or_declares_cold_start") is True
         and replay.get("uses_portfolio_state_carryover_or_declares_cold_start") is True
+        and replay.get("uses_broker_adapter_carryover_or_declares_cold_start") is True
         and replay.get("uses_multi_cycle_lineage_or_declares_cold_start") is True
         and replay.get("input_hash")
         and replay.get("candidate_hash")
@@ -15527,6 +16445,13 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
     portfolio_state_ref = input_context.get("portfolio_state_ref")
     portfolio_state_carry_ref = input_context.get("portfolio_state_carry_ref")
     portfolio_state_usage = response.get("portfolio_state_usage", {})
+    broker_adapter_status = input_context.get("broker_adapter_carryover_status")
+    broker_adapter_carryover_ref = input_context.get("broker_adapter_carryover_ref")
+    broker_adapter_followup_ref = input_context.get("previous_broker_adapter_followup_ref")
+    broker_adapter_source_packet_ref = input_context.get(
+        "previous_broker_adapter_source_packet_ref"
+    )
+    broker_adapter_usage = response.get("broker_adapter_carryover_usage", {})
     multi_cycle_lineage_status = input_context.get("multi_cycle_lineage_status")
     multi_cycle_lineage_ref = input_context.get("multi_cycle_lineage_ref")
     multi_cycle_latest_runtime_feedback_ref = input_context.get(
@@ -15610,6 +16535,29 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
                 == PORTFOLIO_LEG_COUNT
                 and float(portfolio_state_usage.get("target_capital_budget_scale", 1.0))
                 < 1.0
+            )
+        )
+        and broker_adapter_usage.get("model_id") == PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID
+        and (
+            (
+                broker_adapter_status == "cold_start"
+                and broker_adapter_usage.get("status") == "cold_start"
+                and broker_adapter_carryover_ref is None
+                and broker_adapter_followup_ref is None
+            )
+            or (
+                broker_adapter_status == "applied"
+                and broker_adapter_usage.get("status") == "applied"
+                and broker_adapter_usage.get("carryover_ref") == broker_adapter_carryover_ref
+                and broker_adapter_usage.get("previous_followup_ref") == broker_adapter_followup_ref
+                and broker_adapter_usage.get("previous_source_packet_ref")
+                == broker_adapter_source_packet_ref
+                and broker_adapter_carryover_ref in request.get("input_refs", [])
+                and broker_adapter_carryover_ref in generation_request.get("input_refs", [])
+                and broker_adapter_followup_ref in request.get("input_refs", [])
+                and broker_adapter_followup_ref in generation_request.get("input_refs", [])
+                and broker_adapter_source_packet_ref in request.get("input_refs", [])
+                and broker_adapter_source_packet_ref in generation_request.get("input_refs", [])
             )
         )
         and multi_cycle_lineage_usage.get("model_id") == PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID
@@ -17249,6 +18197,7 @@ def _build_usability_dimensions(
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
     portfolio_state_carryover: Mapping[str, Any],
+    broker_adapter_carryover: Mapping[str, Any],
     openclaw_session_continuity: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
@@ -17397,6 +18346,9 @@ def _build_usability_dimensions(
     portfolio_state_carryover_score = 1.0 if _portfolio_state_carryover_is_usable(
         portfolio_state_carryover
     ) else 0.0
+    broker_adapter_carryover_score = 1.0 if _broker_adapter_carryover_is_usable(
+        broker_adapter_carryover
+    ) else 0.0
     openclaw_session_continuity_score = 1.0 if _openclaw_session_continuity_is_usable(
         openclaw_session_continuity
     ) else 0.0
@@ -17449,6 +18401,7 @@ def _build_usability_dimensions(
         "persona_oss_ooda_causality": persona_oss_ooda_causality,
         "cross_cycle_runtime_carryover": cross_cycle_runtime_carryover,
         "portfolio_state_carryover": portfolio_state_carryover_score,
+        "broker_adapter_carryover": broker_adapter_carryover_score,
         "openclaw_session_continuity": openclaw_session_continuity_score,
         "persisted_cycle_resume_carryover": persisted_cycle_resume_carryover,
         "multi_cycle_lineage_carryover": multi_cycle_lineage_carryover,
@@ -17512,6 +18465,7 @@ def _diagnose_validation_execution(
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
     portfolio_state_carryover: Mapping[str, Any],
+    broker_adapter_carryover: Mapping[str, Any],
     openclaw_session_continuity: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
@@ -17818,6 +18772,19 @@ def _diagnose_validation_execution(
                 ),
                 "trace_binding_count": len(portfolio_state_carryover["trace_bindings"]),
                 "replay": copy.deepcopy(dict(portfolio_state_carryover["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "broker_adapter_response_carryover_drives_next_case_ooda",
+            _broker_adapter_carryover_is_usable(broker_adapter_carryover),
+            {
+                "proof_id": broker_adapter_carryover["proof_id"],
+                "carryover_status": broker_adapter_carryover["carryover_status"],
+                "previous_case_id": broker_adapter_carryover.get("previous_case_id"),
+                "previous_followup_ref": broker_adapter_carryover.get("previous_followup_ref"),
+                "previous_action": broker_adapter_carryover.get("previous_action"),
+                "trace_binding_count": len(broker_adapter_carryover["trace_bindings"]),
+                "replay": copy.deepcopy(dict(broker_adapter_carryover["replay"])),
             },
         ),
         _diagnostic_check(
@@ -18520,6 +19487,7 @@ def _build_case_result(
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
     portfolio_state_carryover: Mapping[str, Any],
+    broker_adapter_carryover: Mapping[str, Any],
     openclaw_session_continuity: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
@@ -18626,6 +19594,7 @@ def _build_case_result(
         "cross_cycle": {
             "runtime_feedback_carryover": copy.deepcopy(dict(cross_cycle_carryover)),
             "portfolio_state_carryover": copy.deepcopy(dict(portfolio_state_carryover)),
+            "broker_adapter_carryover": copy.deepcopy(dict(broker_adapter_carryover)),
             "openclaw_session_continuity": copy.deepcopy(
                 dict(openclaw_session_continuity)
             ),
@@ -18684,6 +19653,9 @@ def _build_case_result(
             ] == 1.0,
             "portfolio_state_carryover_drives_next_case": usability_dimensions[
                 "portfolio_state_carryover"
+            ] == 1.0,
+            "broker_adapter_carryover_drives_next_case": usability_dimensions[
+                "broker_adapter_carryover"
             ] == 1.0,
             "openclaw_session_continuity_drives_next_case": usability_dimensions[
                 "openclaw_session_continuity"
@@ -18831,6 +19803,9 @@ def _build_summary(
     ]
     portfolio_state_carryovers = [
         case["cross_cycle"]["portfolio_state_carryover"] for case in cases
+    ]
+    broker_adapter_carryovers = [
+        case["cross_cycle"]["broker_adapter_carryover"] for case in cases
     ]
     openclaw_session_continuities = [
         case["cross_cycle"]["openclaw_session_continuity"] for case in cases
@@ -19457,6 +20432,39 @@ def _build_summary(
             for flag, value in proof["replay"].items()
             if value is True
         }),
+        "broker_adapter_carryover_models": sorted({
+            proof["model_id"] for proof in broker_adapter_carryovers
+        }),
+        "broker_adapter_carryover_statuses": sorted({
+            proof["carryover_status"] for proof in broker_adapter_carryovers
+        }),
+        "broker_adapter_carryover_actions": sorted({
+            str(proof["previous_action"])
+            for proof in broker_adapter_carryovers
+            if proof.get("previous_action")
+        }),
+        "broker_adapter_carryover_action_families": sorted({
+            str(proof["previous_action_family"])
+            for proof in broker_adapter_carryovers
+            if proof.get("previous_action_family")
+        }),
+        "broker_adapter_carryover_next_steps": sorted({
+            str(proof["previous_next_step"])
+            for proof in broker_adapter_carryovers
+            if proof.get("previous_next_step")
+        }),
+        "broker_adapter_carryover_score_adjusted_actions": sorted({
+            action
+            for proof in broker_adapter_carryovers
+            for action, value in proof["score_adjustments"].items()
+            if float(value) > 0.0
+        }),
+        "broker_adapter_carryover_replay_flags": sorted({
+            flag
+            for proof in broker_adapter_carryovers
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
         "persisted_cycle_resume_models": sorted({
             proof["model_id"] for proof in persisted_cycle_resumes
         }),
@@ -19993,6 +21001,33 @@ def _build_summary(
         "portfolio_state_carryover_position_count": sum(
             int(proof.get("previous_position_count") or 0)
             for proof in portfolio_state_carryovers
+        ),
+        "broker_adapter_carryover_count": len(broker_adapter_carryovers),
+        "broker_adapter_carryover_pass_count": sum(
+            1
+            for proof in broker_adapter_carryovers
+            if _broker_adapter_carryover_is_usable(proof)
+        ),
+        "broker_adapter_carryover_applied_count": sum(
+            1
+            for proof in broker_adapter_carryovers
+            if proof["carryover_status"] == "applied"
+        ),
+        "broker_adapter_carryover_cold_start_count": sum(
+            1
+            for proof in broker_adapter_carryovers
+            if proof["carryover_status"] == "cold_start"
+        ),
+        "broker_adapter_carryover_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in broker_adapter_carryovers
+        ),
+        "broker_adapter_carryover_drives_next_case_count": sum(
+            1 for item in usable if item["broker_adapter_carryover_drives_next_case"]
+        ),
+        "broker_adapter_carryover_prior_followup_ref_count": sum(
+            1
+            for proof in broker_adapter_carryovers
+            if proof.get("previous_followup_ref")
         ),
         "openclaw_session_continuity_count": len(openclaw_session_continuities),
         "openclaw_session_continuity_pass_count": sum(
