@@ -86,6 +86,15 @@ jobs:
       - name: Authenticated BFF smoke
         run: node scripts/probe-bff-authenticated-live.mjs
 
+      - name: Strict SSE live soak
+        run: |
+          python3 scripts/probe_bff_sse_stream.py \
+            --base-url "$PANTHEON_BFF_BASE_URL" \
+            --strict-live-evidence \
+            --soak-seconds 75 \
+            --soak-min-heartbeats 1 \
+            --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json"
+
       - name: Install Playwright
         run: npx playwright install chromium --with-deps
 
