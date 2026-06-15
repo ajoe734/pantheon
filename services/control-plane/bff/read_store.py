@@ -2802,6 +2802,26 @@ class ServiceBackedReadAdapter:
             "keys": ["log_id", "id", "conflict_resolution_log_id"],
             "snapshot_key": "synthesis_conflict_logs",
         },
+        "ranking_formulas": {
+            "env": "PANTHEON_BFF_RANKING_FORMULA_STORE",
+            "dirs": (
+                "PANTHEON_CAPITAL_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": ("ranking_formulas.json",),
+            "keys": ["formula_id", "id"],
+            "snapshot_key": "ranking_formulas",
+        },
+        "rankings": {
+            "env": "PANTHEON_BFF_RANKING_STORE",
+            "dirs": (
+                "PANTHEON_CAPITAL_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": ("rankings.json",),
+            "keys": ["ranking_id", "id"],
+            "snapshot_key": "rankings",
+        },
         "skills": {
             "env": "PANTHEON_BFF_SKILLS_STORE",
             "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
@@ -10945,7 +10965,11 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list(self._local_overlay_records("ranking_formulas").values())
+        # Prefer service store (projected file); merge overlay writes on top.
+        all_records = self._read_dataset_records("ranking_formulas")
+        if not all_records:
+            all_records = list(self._local_overlay_records("ranking_formulas").values())
+        items = [json.loads(json.dumps(r)) for r in all_records if isinstance(r, dict)]
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: x.get("id", ""))
@@ -10953,7 +10977,18 @@ class ReadSurfaceStore:
     def get_ranking_formula(self, formula_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not formula_id:
             return None
-        return self._local_overlay_records("ranking_formulas").get(formula_id)
+        overlay = self._local_overlay_records("ranking_formulas").get(formula_id)
+        if overlay is not None:
+            return overlay
+        available, service_records = self._service.list_records("ranking_formulas")
+        if available and service_records:
+            for record in service_records:
+                if not isinstance(record, dict):
+                    continue
+                rid = str(record.get("formula_id") or record.get("id") or "")
+                if rid == formula_id:
+                    return json.loads(json.dumps(record))
+        return None
 
     def create_ranking_formula(
         self,
@@ -11079,7 +11114,11 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list(self._local_overlay_records("rankings").values())
+        # Prefer service store (projected file); merge overlay writes on top.
+        all_records = self._read_dataset_records("rankings")
+        if not all_records:
+            all_records = list(self._local_overlay_records("rankings").values())
+        items = [json.loads(json.dumps(r)) for r in all_records if isinstance(r, dict)]
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: x.get("id", ""))
@@ -11087,7 +11126,18 @@ class ReadSurfaceStore:
     def get_ranking(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ranking_id:
             return None
-        return self._local_overlay_records("rankings").get(ranking_id)
+        overlay = self._local_overlay_records("rankings").get(ranking_id)
+        if overlay is not None:
+            return overlay
+        available, service_records = self._service.list_records("rankings")
+        if available and service_records:
+            for record in service_records:
+                if not isinstance(record, dict):
+                    continue
+                rid = str(record.get("ranking_id") or record.get("id") or "")
+                if rid == ranking_id:
+                    return json.loads(json.dumps(record))
+        return None
 
     # ------------------------------------------------------------------ #
     # Persona League / Management fleet projection
