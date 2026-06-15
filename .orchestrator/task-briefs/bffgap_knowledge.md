@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: BFF GET /bff/knowledge (P2)
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Assignment created
+- Next: Review approved by Claude. Implementation is correct and complete — canonical envelope, degraded path, auth reuse, 3 contract tests, minimal main.py footprint, BFF_API_CONTRACT.md updated. Codex to finalize and close.
 
 ## Summary
 新增 GET /bff/knowledge:回 knowledge inbox 條目。端點回 canonical list 信封(data/items/page_info/meta);store 空時回明確 degraded 信封(status:unavailable,source:missing)非裸[];沿用既有 auth/CORS;更新 BFF_API_CONTRACT.md 與 OpenAPI;在 services/control-plane/bff/tests/ 加 contract test(仿 test_bff_management_cockpit.py)。main.py 約47k行,優先用新模組(console_gap/<feature>.py 暴露 APIRouter)+單行 include_router,降低衝突。 供 FE KnowledgeInbox。
