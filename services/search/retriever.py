@@ -52,5 +52,15 @@ class KeywordRetriever:
                 )
             )
 
-        matches.sort(key=lambda item: (item.score, item.updated_at or datetime.min), reverse=True)
+        # Normalize the datetime tie-breaker to naive: updated_at is parsed from
+        # the index (aware for "...Z", naive otherwise), and mixing it with the
+        # naive datetime.min floor would raise TypeError when two matches tie on
+        # score. Strip tzinfo so the key is uniform.
+        matches.sort(
+            key=lambda item: (
+                item.score,
+                (item.updated_at or datetime.min).replace(tzinfo=None),
+            ),
+            reverse=True,
+        )
         return matches[:top_k]
