@@ -1270,6 +1270,7 @@ services:
       dockerfile: services/execution/lean_runtime/Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
     environment:
       PORT: "8010"
       PANTHEON_RUNTIME_ROLE: pantheon-paper-execution-runtime
