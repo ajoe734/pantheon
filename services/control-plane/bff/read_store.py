@@ -2621,6 +2621,41 @@ class ServiceBackedReadAdapter:
             "keys": ["runId", "run_id", "id"],
             "snapshot_key": "agora_evaluation_runs",
         },
+        "agora_watchlist": {
+            "env": "PANTHEON_BFF_AGORA_WATCHLIST_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["watchlist_id", "symbol", "id"],
+            "snapshot_key": "agora_watchlist",
+        },
+        "agora_committee_evidence_packs": {
+            "env": "PANTHEON_BFF_AGORA_COMMITTEE_EVIDENCE_PACK_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["packId", "pack_id", "id", "sessionId", "session_id"],
+            "snapshot_key": "agora_committee_evidence_packs",
+        },
+        "agora_handoffs": {
+            "env": "PANTHEON_BFF_AGORA_HANDOFF_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["handoffId", "handoff_id", "id"],
+            "snapshot_key": "agora_handoffs",
+        },
+        "agora_training_examples": {
+            "env": "PANTHEON_BFF_AGORA_TRAINING_EXAMPLE_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["trainingExampleId", "training_example_id", "example_id", "id"],
+            "snapshot_key": "agora_training_examples",
+        },
+        "agora_audit_events": {
+            "env": "PANTHEON_BFF_AGORA_AUDIT_EVENT_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["auditId", "audit_id", "eventId", "event_id", "id"],
+            "snapshot_key": "agora_audit_events",
+        },
         "institutional_memory_entries": {
             "env": "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE",
             "dirs": ("PANTHEON_MEMORY_DATA_DIR",),
@@ -2713,6 +2748,13 @@ class ServiceBackedReadAdapter:
             "filenames": (),
             "keys": ["job_id", "run_id", "id"],
             "snapshot_key": "jobs",
+        },
+        "decision_journal_entries": {
+            "env": "PANTHEON_BFF_DECISION_JOURNAL_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["entry_id", "id"],
+            "snapshot_key": "decision_journal_entries",
         },
         "loop_runs": {
             "env": "PANTHEON_BFF_LOOP_RUN_STORE",
@@ -8894,6 +8936,22 @@ class ReadSurfaceStore:
             self._data[local_key] = records
         return records
 
+    def _decision_journal_read_records(self) -> Dict[str, Dict[str, Any]]:
+        records: Dict[str, Dict[str, Any]] = {}
+        if "decision_journal_entries" in ServiceBackedReadAdapter._DATASETS:
+            available, service_records = self._service.list_records(
+                "decision_journal_entries",
+                include_snapshot_fallback=self._allow_local_snapshot_fallback,
+            )
+            if available:
+                for index, record in enumerate(service_records):
+                    if not isinstance(record, dict):
+                        continue
+                    key = _record_key(record, ["entry_id", "id"]) or str(index)
+                    records[key] = json.loads(json.dumps(record))
+        records.update(self._decision_journal_records())
+        return records
+
     def _decision_journal_idempotency_records(self) -> Dict[str, Dict[str, Any]]:
         local_key = self._LOCAL_DATA_KEYS.get(
             "decision_journal_idempotency",
@@ -9068,7 +9126,7 @@ class ReadSurfaceStore:
     def list_decision_journal_entries(self) -> List[Dict[str, Any]]:
         entries = [
             self._project_decision_journal_entry(record)
-            for record in self._decision_journal_records().values()
+            for record in self._decision_journal_read_records().values()
             if isinstance(record, dict)
         ]
         entries.sort(
