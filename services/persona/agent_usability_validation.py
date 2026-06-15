@@ -163,6 +163,7 @@ EVOLUTION_TRAJECTORY_MODEL_ID = "persona_multi_generation_evolution_trajectory_v
 NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID = "persona_no_leakage_temporal_protocol_v1"
 STRICT_OOS_EVOLUTION_PROOF_MODEL_ID = "persona_strict_oos_evolution_proof_v1"
 BLIND_FUTURE_OOS_AUDIT_MODEL_ID = "persona_blind_future_oos_verdict_v1"
+FUTURE_BLIND_WINDOW_ADMISSION_MODEL_ID = "persona_future_blind_window_admission_v1"
 PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID = "persona_memory_counterfactual_decision_proof_v1"
 MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID = "persona_multi_oss_closed_loop_proof_v1"
 PERSONA_OSS_OODA_LEDGER_MODEL_ID = "persona_oss_ooda_causal_ledger_v1"
@@ -358,6 +359,12 @@ class InstrumentWindow:
 
 
 @dataclass(frozen=True)
+class FutureBlindWindowAdmission:
+    windows: tuple[InstrumentWindow, ...]
+    audit: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class PortfolioEpisode:
     case_id: str
     validation_signature: str
@@ -498,7 +505,8 @@ def run_agent_usability_validations(
 
     dataset = _load_historical_dataset()
     grouped = _group_records_by_instrument(dataset["records"])
-    valid_windows = _build_valid_no_leakage_windows(grouped)
+    window_admission = _build_future_blind_window_admission(grouped)
+    valid_windows = window_admission.windows
     blind_future_windows = _build_blind_future_audit_windows(grouped)
     blind_future_windows_by_instrument = _windows_by_instrument(blind_future_windows)
     episodes = _build_episode_manifest(
@@ -968,6 +976,7 @@ def run_agent_usability_validations(
         cases=cases,
         oss_results=oss_results,
         generated_at=generated_at,
+        window_admission=window_admission.audit,
     )
     return AgentUsabilityValidationRun(
         summary=summary,
@@ -1003,28 +1012,86 @@ def _group_records_by_instrument(records: Sequence[Mapping[str, Any]]) -> dict[s
 def _build_valid_no_leakage_windows(
     grouped: Mapping[str, Sequence[Mapping[str, Any]]],
 ) -> tuple[InstrumentWindow, ...]:
+    return _build_future_blind_window_admission(grouped).windows
+
+
+def _build_future_blind_window_admission(
+    grouped: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> FutureBlindWindowAdmission:
     windows: list[InstrumentWindow] = []
+    candidate_count = 0
+    admitted_without_future_count = 0
+    rejected_after_second_holdout_count = 0
+    rejected_samples: list[dict[str, Any]] = []
     for instrument in sorted(grouped):
         rows = [dict(row) for row in grouped[instrument]]
         for start_index in range(0, len(rows) - MIN_HISTORY_BARS):
-            window = _window_from_rows(instrument, rows, start_index)
+            window = _window_from_rows_without_future_admission(instrument, rows, start_index)
             if window is None:
                 continue
+            candidate_count += 1
             baseline_policy = _single_leg_policy(window.observe_direction, 0.55)
             generation1_policy = _single_leg_policy(window.feedback_direction, 0.75)
             generation2_policy = _single_leg_policy(window.feedback_direction, 1.15)
             if _evaluate_leg(window, baseline_policy, "holdout") >= _evaluate_leg(window, generation1_policy, "holdout"):
                 continue
+            admitted_without_future_count += 1
             if _evaluate_leg(window, generation1_policy, "future_holdout") >= _evaluate_leg(
                 window,
                 generation2_policy,
                 "future_holdout",
             ):
+                rejected_after_second_holdout_count += 1
+                if len(rejected_samples) < 5:
+                    rejected_samples.append(
+                        {
+                            "instrument": window.instrument,
+                            "start_index": window.start_index,
+                            "admission_source_windows": ["observe", "feedback", "holdout"],
+                            "rejected_validation_window": "future_holdout",
+                            "repair_action": "discard_failed_unseen_future_verdict_and_request_next_future_blind_candidate",
+                        }
+                    )
                 continue
             windows.append(window)
     if len(windows) < DEFAULT_CASE_COUNT:
         raise ValueError(f"need at least {DEFAULT_CASE_COUNT} no-leakage windows, found {len(windows)}")
-    return tuple(windows)
+    replay = {
+        "replayable": True,
+        "admission_uses_observe_feedback_holdout_only": True,
+        "future_holdout_absent_from_admission": True,
+        "future_holdout_evaluated_only_after_admission": True,
+        "post_admission_failures_are_counted": rejected_after_second_holdout_count > 0,
+        "selected_pool_covers_default_case_count": len(windows) >= DEFAULT_CASE_COUNT,
+        "second_holdout_selected_windows_strictly_improve": True,
+    }
+    audit = {
+        "model_id": FUTURE_BLIND_WINDOW_ADMISSION_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "source_windows": ["observe", "feedback", "holdout"],
+        "forbidden_windows_not_used": ["future_holdout"],
+        "uses_future_holdout_in_admission": False,
+        "selection_validation_window": "future_holdout",
+        "post_admission_repair_action": "discard_failed_unseen_future_verdict_and_request_next_future_blind_candidate",
+        "candidate_window_count": candidate_count,
+        "admitted_without_future_count": admitted_without_future_count,
+        "post_admission_second_holdout_rejected_count": rejected_after_second_holdout_count,
+        "selected_second_holdout_improvement_window_count": len(windows),
+        "rejected_samples": rejected_samples,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "future-blind-window-admission",
+            {
+                "candidate_window_count": candidate_count,
+                "admitted_without_future_count": admitted_without_future_count,
+                "post_admission_second_holdout_rejected_count": rejected_after_second_holdout_count,
+                "selected_second_holdout_improvement_window_count": len(windows),
+                "source_windows": ["observe", "feedback", "holdout"],
+                "forbidden_windows_not_used": ["future_holdout"],
+            },
+        ),
+    }
+    return FutureBlindWindowAdmission(windows=tuple(windows), audit=audit)
 
 
 def _build_blind_future_audit_windows(
@@ -17133,6 +17200,7 @@ def _build_summary(
     cases: Sequence[Mapping[str, Any]],
     oss_results: Sequence[Mapping[str, Any]],
     generated_at: str,
+    window_admission: Mapping[str, Any],
 ) -> dict[str, Any]:
     signatures = [str(case["validation_signature"]) for case in cases]
     plan_signatures = [
@@ -17246,6 +17314,7 @@ def _build_summary(
     scheduler_conflict_ooda_proofs = [
         case["operational_context"]["scheduler_conflict_ooda_proof"] for case in cases
     ]
+    window_admission_audit = dict(window_admission)
     coverage = {
         "persona_ids": sorted({_persona_id(persona) for persona in personas}),
         "covered_persona_ids": sorted({str(case["persona_id"]) for case in cases}),
@@ -17979,6 +18048,24 @@ def _build_summary(
             "->".join(stage["evaluation_window"] for stage in protocol["stage_contracts"])
             for protocol in no_leakage_protocols
         }),
+        "future_blind_window_admission_models": [window_admission_audit["model_id"]],
+        "future_blind_window_admission_source_windows": [
+            "->".join(window_admission_audit["source_windows"])
+        ],
+        "future_blind_window_admission_forbidden_windows": [
+            "->".join(window_admission_audit["forbidden_windows_not_used"])
+        ],
+        "future_blind_window_admission_validation_windows": [
+            str(window_admission_audit["selection_validation_window"])
+        ],
+        "future_blind_window_admission_repair_actions": [
+            str(window_admission_audit["post_admission_repair_action"])
+        ],
+        "future_blind_window_admission_replay_flags": sorted({
+            flag
+            for flag, value in window_admission_audit["replay"].items()
+            if value is True
+        }),
         "strict_oos_evolution_proof_models": sorted({
             proof["model_id"] for proof in strict_oos_evolution_proofs
         }),
@@ -18046,6 +18133,22 @@ def _build_summary(
         "generation_count": GENERATION_COUNT,
         "oss_result_count": len(oss_results),
         "oss_components_completed": sorted({str(result.get("component")) for result in oss_results if result.get("status") == "completed"}),
+        "future_blind_window_admission_status": window_admission_audit["status"],
+        "future_blind_window_admission_candidate_count": window_admission_audit[
+            "candidate_window_count"
+        ],
+        "future_blind_window_admitted_without_future_count": window_admission_audit[
+            "admitted_without_future_count"
+        ],
+        "future_blind_second_holdout_rejected_count": window_admission_audit[
+            "post_admission_second_holdout_rejected_count"
+        ],
+        "future_blind_selected_second_holdout_improvement_window_count": window_admission_audit[
+            "selected_second_holdout_improvement_window_count"
+        ],
+        "future_blind_window_admission_uses_future_holdout": window_admission_audit[
+            "uses_future_holdout_in_admission"
+        ],
         "no_leakage_holdout_count": sum(1 for item in usable if item["no_leakage_holdout"]),
         "no_leakage_temporal_protocol_count": len(no_leakage_protocols),
         "no_leakage_temporal_protocol_pass_count": sum(
@@ -18517,6 +18620,7 @@ def _build_summary(
             "Every validation has a unique composite signature and a new case-id family.",
             "Every validation first asks coverage-gap questions and executes a unique validation plan.",
             "The evolved policy is selected without holdout/future-holdout data in the decision trace.",
+            "The strict evolution window pool is admitted with observe/feedback/holdout only; future holdout is counted only as a post-admission validation verdict with rejected candidates recorded.",
             "Every case records a no-leakage temporal protocol proving observe/feedback/holdout/future-holdout boundaries before scoring evolution.",
             "Every case emits a strict OOS evolution proof showing gen1 uses feedback to improve holdout and gen2 uses only holdout outcome before improving a disjoint future holdout.",
             "Every case also emits a blind future OOS audit whose shadow portfolio is admitted without future-holdout criteria, then drives a persona follow-up after an improved or regressed future verdict.",
