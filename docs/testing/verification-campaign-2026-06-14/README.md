@@ -69,6 +69,39 @@ and resilience.
 | 15 | Pagination correctness & cursor robustness | [round-15-plan.md](round-15-plan.md) | [round-15-results.md](round-15-results.md) | PASS (complete, no dup/gap; cursor fuzz no 500); O5 scale note |
 
 | 16 | Broad query-param fuzz (500-hunt + injection) | [round-16-plan.md](round-16-plan.md) | [round-16-results.md](round-16-results.md) | F12: audit from_ts/to_ts 500 on every value (NameError) — fixed; H2 injection PASS |
+| 17 | Static undefined-symbol audit | [round-17-plan.md](round-17-plan.md) | [round-17-results.md](round-17-results.md) | PASS (F12 sole instance in 655 files); guard test |
+| 18 | Header + parameterized-route query fuzz | [round-18-plan.md](round-18-plan.md) | [round-18-results.md](round-18-results.md) | PASS (0 5xx) |
+| 19 | Graceful degradation & signal consistency | [round-19-plan.md](round-19-plan.md) | [round-19-results.md](round-19-results.md) | PASS (F2 generalized: 0 false-green/722 surfaces) |
+| 20 | Phase-2 close-out: regression consolidation | [round-20-plan.md](round-20-plan.md) | [round-20-results.md](round-20-results.md) | PASS; [SUMMARY-PHASE2.md](SUMMARY-PHASE2.md) |
+
+**Phase 2 close-out (rounds 11–20):** [SUMMARY-PHASE2.md](SUMMARY-PHASE2.md) — 1
+defect fixed (F12), findings F10/F11/F13/O4-O5, 3 regression test files; entire
+BFF input surface fuzzed (only 500 anywhere was F12).
+
+### Phase 3 — fleet, edge, security hardening, systemic bug classes (rounds 21–35)
+
+| # | Theme | Plan | Results | Fix |
+|---|---|---|---|---|
+| 21 | Fleet route-resolution audit | [round-21-plan.md](round-21-plan.md) | [round-21-results.md](round-21-results.md) | PASS (21 services, 0 shadow/dup) |
+| 22 | Non-BFF fleet input 500-hunt | [round-22-plan.md](round-22-plan.md) | [round-22-results.md](round-22-results.md) | PASS (21 services, 0 500s) |
+| 23 | CORS configuration correctness | [round-23-plan.md](round-23-plan.md) | [round-23-results.md](round-23-results.md) | PASS (exact-match allowlist, no bypass) |
+| 24 | BFF security response headers | [round-24-plan.md](round-24-plan.md) | [round-24-results.md](round-24-results.md) | F14: no security headers — fixed (SSE-safe) |
+| 25 | Edge security headers (Caddy) | [round-25-plan.md](round-25-plan.md) | [round-25-results.md](round-25-results.md) | F15: FE/edge headers — fixed (caddy validate) |
+| 26 | Canonical state cross-consistency | [round-26-plan.md](round-26-plan.md) | [round-26-results.md](round-26-results.md) | PASS |
+| 27 | Request body-size limit (DoS) | [round-27-plan.md](round-27-plan.md) | [round-27-results.md](round-27-results.md) | F16: no body limit — fixed (10MB edge) |
+| 28 | Complete fleet audit (deferred services) | [round-28-plan.md](round-28-plan.md) | [round-28-results.md](round-28-results.md) | PASS (all 26 services clean) |
+| 29 | Error-handling discipline | [round-29-plan.md](round-29-plan.md) | [round-29-results.md](round-29-results.md) | PASS (0 bare except; O6) |
+| 30 | Python footguns | [round-30-plan.md](round-30-plan.md) | [round-30-results.md](round-30-results.md) | PASS (0 mutable defaults; O7) |
+| 31 | Naive/aware datetime mixing | [round-31-plan.md](round-31-plan.md) | [round-31-results.md](round-31-results.md) | F17: research-analyses sort 500 — fixed |
+| 32 | Generalize F17 across read_store | [round-32-plan.md](round-32-plan.md) | [round-32-results.md](round-32-results.md) | F18: 20 more sort-key 500s — fixed + guard |
+| 33 | Fleet-wide aware/naive sort audit | [round-33-plan.md](round-33-plan.md) | [round-33-results.md](round-33-results.md) | F19: search retriever sort 500 — fixed |
+| 34 | ZeroDivisionError audit | [round-34-plan.md](round-34-plan.md) | [round-34-results.md](round-34-results.md) | PASS (reachable divisions guarded; O8) |
+| 35 | Phase-3 close-out: consolidation + summary | [round-35-plan.md](round-35-plan.md) | [round-35-results.md](round-35-results.md) | PASS; [SUMMARY-PHASE3.md](SUMMARY-PHASE3.md) |
+
+**Phase 3 close-out (rounds 21–35):** [SUMMARY-PHASE3.md](SUMMARY-PHASE3.md) — 6
+defects fixed (F14–F19), findings O6/O7/O8, 5 regression test files; whole-fleet
+route/input audits clean, security/edge hardened, systemic aware/naive sort-key
+500 class (22 sites) closed.
 
 ## Environment under test
 
