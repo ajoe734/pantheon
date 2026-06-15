@@ -205,6 +205,54 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(telemetry.events[1]["event_type"], "heartbeat")
         self.assertEqual(telemetry.events[2]["event_type"], "pnl_snapshot")
 
+    def test_drain_once_does_not_execute_when_binding_halted(self):
+        """Safety gate: a paused/halted binding must not fill orders.
+
+        Regression for the E2E-R4 finding that a paused binding kept executing
+        signals (kill-switch / operator pause not enforced at the paper loop).
+        """
+        for halt_status in ("paused", "pending_pause", "failed", "retired"):
+            store = InMemoryPendingSignalStore([self._signal()])
+            telemetry = _FakeTelemetryEmitter()
+            binding = self._binding()
+            binding["status"] = halt_status
+            service = PaperRuntimeService(
+                store=store,
+                identity=self._identity(),
+                runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+                telemetry_emitter=telemetry,
+                poll_interval_seconds=3600,
+                max_batch_size=10,
+            )
+
+            snapshot = service.drain_once()
+
+            self.assertEqual(
+                snapshot["paper_state"]["processed_signal_count"], 0,
+                f"{halt_status}: must not execute",
+            )
+            self.assertEqual(snapshot["paper_state"]["execution_event_count"], 0)
+            self.assertEqual(snapshot["paper_state"]["last_skipped_status"], halt_status)
+            # signal is held on the queue so it replays once the binding resumes
+            self.assertEqual(snapshot["signal_store"]["queue_depth"], 1)
+
+    def test_drain_once_resumes_execution_when_binding_active(self):
+        """Sanity: once the halt clears, an active binding executes normally."""
+        store = InMemoryPendingSignalStore([self._signal()])
+        service = PaperRuntimeService(
+            store=store,
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        snapshot = service.drain_once()
+
+        self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
+        self.assertIsNone(snapshot["paper_state"]["last_skipped_status"])
+
     def test_cash_value_llm_alpha_for_new_symbol_executes_with_fill_provenance(self):
         signal = self._signal()
         signal.update(
