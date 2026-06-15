@@ -94,6 +94,9 @@ case "$MODE" in
     if [[ -f scripts/test_verify_e2e_evolution_loop.py ]]; then
       run_step "e2e-evolution-loop-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_evolution_loop.py || echo "evolution-loop verifier tests reported failures"
     fi
+    if [[ -f scripts/test_verify_e2e_sentinel_integrity.py ]]; then
+      run_step "e2e-sentinel-integrity-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_sentinel_integrity.py || echo "sentinel-integrity verifier tests reported failures"
+    fi
     if [[ -f scripts/test_verify_e2e_telemetry_dlq_health.py ]]; then
       run_step "e2e-telemetry-dlq-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_telemetry_dlq_health.py || echo "telemetry-dlq verifier tests reported failures"
     fi
