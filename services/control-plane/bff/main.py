@@ -5098,6 +5098,21 @@ def _epoch_to_iso(value: Any) -> Optional[str]:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _parse_rfc3339(value: Any) -> Optional[datetime]:
+    """Best-effort RFC3339/ISO-8601 parse; None on empty or unparseable input.
+
+    Mirrors read_store._parse_rfc3339 so callers in this module resolve a defined
+    symbol. Returning None (rather than raising) keeps malformed optional time
+    filters from surfacing as 500s — an unparseable bound is simply not applied.
+    """
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
 def _sem_session_id(identity: OperatorIdentity) -> str:
     claims = identity.claims if isinstance(identity.claims, dict) else {}
     return _first_nonblank(
@@ -44631,8 +44646,8 @@ async def bff_list_audit_events(
     snapshot_at = utc_now()
     action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
 
-    from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
-    to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
+    from_dt = _parse_rfc3339(from_ts) if from_ts else None
+    to_dt = _parse_rfc3339(to_ts) if to_ts else None
 
     events = _list_governance_audit_events(
         actor=actor,
@@ -44697,8 +44712,8 @@ async def bff_audit_export(
 
     snapshot_at = utc_now()
     action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
-    from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
-    to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
+    from_dt = _parse_rfc3339(from_ts) if from_ts else None
+    to_dt = _parse_rfc3339(to_ts) if to_ts else None
 
     events = _list_governance_audit_events(
         actor=actor,
