@@ -50867,6 +50867,22 @@ def _assistant_provider_reauth_status(
         raise _openclaw_client_error(exc) from exc
 
 
+def _include_governance_subrules_routes() -> None:
+    from console_gap.permissions import create_permissions_router
+    from console_gap.memory_governance import create_memory_governance_router
+    from console_gap.consult_rules import create_consult_rules_router
+    from console_gap.route_policies import create_route_policies_router
+    _get_store = lambda: read_store
+    _kw = dict(get_read_store=_get_store, extract_identity=_extract_identity, require_read_role=_require_read_role)
+    app.include_router(create_permissions_router(**_kw))
+    app.include_router(create_memory_governance_router(**_kw))
+    app.include_router(create_consult_rules_router(**_kw))
+    app.include_router(create_route_policies_router(**_kw))
+
+
+_include_governance_subrules_routes()
+
+
 def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
     from assistant.control_mode import ControlModeStore
@@ -50916,6 +50932,18 @@ app.include_router(
 
 _include_assistant_routes()
 
+# BFFGAP-DATASOURCES: data-source registry endpoint via isolated module
+from console_gap.datasources import create_datasources_router  # noqa: E402
+app.include_router(
+    create_datasources_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_meta=_snapshot_meta,
+        utc_now=utc_now,
+    )
+)
+
 
 def _include_knowledge_routes() -> None:
     from console_gap.knowledge import create_knowledge_router
@@ -50932,6 +50960,27 @@ def _include_knowledge_routes() -> None:
 
 
 _include_knowledge_routes()
+
+
+# BFFGAP-LINEAGE: lineage graph endpoint via isolated module
+from console_gap.lineage import create_lineage_router  # noqa: E402
+app.include_router(
+    create_lineage_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_meta=_snapshot_meta,
+        utc_now=utc_now,
+    )
+)
+
+from console_gap.alpha_factory import create_alpha_factory_router as _create_alpha_factory_router  # noqa: E402
+app.include_router(_create_alpha_factory_router(
+    get_read_store=lambda: read_store,
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    utc_now=utc_now,
+))
 
 
 if __name__ == "__main__":

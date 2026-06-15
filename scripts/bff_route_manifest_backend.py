@@ -120,6 +120,13 @@ FAMILY_RULES: list[tuple[str, str]] = [
     # ── automation registry ─────────────────────────────────────────────────
     ("/bff/workflows", "automation-registry"),
     ("/bff/hooks", "automation-registry"),
+    # ── governance sub-rules ────────────────────────────────────────────────
+    ("/bff/management/permissions", "governance-sub-rules"),
+    ("/bff/management/memory-governance", "governance-sub-rules"),
+    ("/bff/management/consult-rules", "governance-sub-rules"),
+    ("/bff/route-policies", "governance-sub-rules"),
+    # ── management console registry ────────────────────────────────────────
+    ("/bff/management/data-sources", "management-console"),
     # ── SSE compatibility (must precede /bff/events) ─────────────────────────
     ("/bff/events/stream", "sse-compatibility"),
     ("/bff/sse", "sse-compatibility"),
