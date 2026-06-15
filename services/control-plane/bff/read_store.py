@@ -18776,3 +18776,12 @@ class ReadSurfaceStore:
         if isinstance(raw, list):
             return [json.loads(json.dumps(v)) for v in raw if isinstance(v, dict)]
         return []
+
+    def list_alpha_factory_cards(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        lane: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        return []
