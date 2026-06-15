@@ -91,6 +91,9 @@ case "$MODE" in
     if [[ -f scripts/test_verify_e2e_surface_consistency.py ]]; then
       run_step "e2e-surface-consistency-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_surface_consistency.py || echo "surface-consistency verifier tests reported failures"
     fi
+    if [[ -f scripts/test_verify_e2e_evolution_loop.py ]]; then
+      run_step "e2e-evolution-loop-verifier" "$PYTHON" -m pytest -q scripts/test_verify_e2e_evolution_loop.py || echo "evolution-loop verifier tests reported failures"
+    fi
     ;;
   wave)
     REF="${TARGET_REF:-HEAD}"
