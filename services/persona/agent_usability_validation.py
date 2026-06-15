@@ -158,6 +158,7 @@ PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID = "persona_policy_oss_lineage_handof
 PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID = "persona_reflection_artifact_oss_materiality_v1"
 PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID = "persona_reflection_oss_lineage_handoff_v1"
 PERSONA_OPENCLAW_SESSION_HANDOFF_MODEL_ID = "persona_openclaw_session_handoff_v1"
+PERSONA_OPENCLAW_SESSION_CONTINUITY_MODEL_ID = "persona_openclaw_session_continuity_v1"
 PERSONA_CONFLICT_RESOLUTION_MODEL_ID = "persona_multi_persona_conflict_resolution_v1"
 PERSONA_MULTI_PERSONA_PROPOSAL_LINEAGE_MODEL_ID = "persona_multi_persona_proposal_lineage_v1"
 PERSONA_SCHEDULER_CONFLICT_OODA_MODEL_ID = "persona_scheduler_conflict_ooda_dispatch_v1"
@@ -545,7 +546,11 @@ def run_agent_usability_validations(
             episode=episode,
             prior_cycle_states=prior_cycle_history,
         )
-        oss_inputs = _oss_inputs_for_episode(episode, oss_by_component)
+        oss_inputs = _oss_inputs_for_episode(
+            episode,
+            oss_by_component,
+            cross_cycle_context=cross_cycle_context,
+        )
         case_upstream_artifacts = _build_case_upstream_artifact_feedback(
             episode=episode,
             oss_inputs=oss_inputs,
@@ -870,6 +875,13 @@ def run_agent_usability_validations(
             decision_traces=(decision_trace0, decision_trace1),
             operational_context=operational_context,
         )
+        openclaw_session_continuity = _build_openclaw_session_continuity_proof(
+            episode=episode,
+            cross_cycle_context=cross_cycle_context,
+            oss_inputs=oss_inputs,
+            decision_traces=(decision_trace0, decision_trace1),
+            operational_context=operational_context,
+        )
         persisted_cycle_resume = _build_persisted_cycle_resume_proof(
             episode=episode,
             cross_cycle_context=cross_cycle_context,
@@ -912,6 +924,7 @@ def run_agent_usability_validations(
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
             portfolio_state_carryover=portfolio_state_carryover,
+            openclaw_session_continuity=openclaw_session_continuity,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
             institutional_memory_lineage=institutional_memory_lineage,
@@ -942,6 +955,7 @@ def run_agent_usability_validations(
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
             portfolio_state_carryover=portfolio_state_carryover,
+            openclaw_session_continuity=openclaw_session_continuity,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
             institutional_memory_lineage=institutional_memory_lineage,
@@ -973,6 +987,7 @@ def run_agent_usability_validations(
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
             portfolio_state_carryover=portfolio_state_carryover,
+            openclaw_session_continuity=openclaw_session_continuity,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
             institutional_memory_lineage=institutional_memory_lineage,
@@ -1389,9 +1404,68 @@ def _oss_persona_step(component: str) -> str:
     return "session_context"
 
 
+def _openclaw_session_continuity_request(
+    *,
+    episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    context = dict(cross_cycle_context or {})
+    status = str(context.get("openclaw_session_continuity_status") or "cold_start")
+    continuity_ref = context.get("openclaw_session_continuity_ref")
+    previous_refs = [
+        str(ref)
+        for ref in (
+            context.get("previous_openclaw_source_oss_ref"),
+            context.get("previous_openclaw_context_ref"),
+            context.get("previous_openclaw_session_ref"),
+            context.get("previous_openclaw_upstream_session_ref"),
+        )
+        if ref
+    ]
+    input_refs = [
+        str(ref)
+        for ref in (
+            continuity_ref,
+            *previous_refs,
+            context.get("runtime_feedback_ref"),
+            context.get("previous_schedule_ref"),
+        )
+        if ref
+    ]
+    return {
+        "model_id": PERSONA_OPENCLAW_SESSION_CONTINUITY_MODEL_ID,
+        "status": status,
+        "continuity_ref": continuity_ref,
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "previous_case_id": context.get("previous_openclaw_case_id"),
+        "previous_source_oss_ref": context.get("previous_openclaw_source_oss_ref"),
+        "previous_context_ref": context.get("previous_openclaw_context_ref"),
+        "previous_context_hash": context.get("previous_openclaw_context_hash"),
+        "previous_session_ref": context.get("previous_openclaw_session_ref"),
+        "previous_session_id": context.get("previous_openclaw_session_id"),
+        "previous_upstream_session_ref": context.get(
+            "previous_openclaw_upstream_session_ref"
+        ),
+        "previous_upstream_session_id": context.get(
+            "previous_openclaw_upstream_session_id"
+        ),
+        "previous_session_state": context.get("previous_openclaw_session_state"),
+        "input_refs": input_refs,
+        "request_action": (
+            "start_openclaw_session"
+            if status == "cold_start"
+            else "continue_prior_openclaw_session"
+        ),
+        "requested_before_persona_reasoning": True,
+    }
+
+
 def _oss_inputs_for_episode(
     episode: PortfolioEpisode,
     oss_by_component: Mapping[str, Mapping[str, Any]],
+    *,
+    cross_cycle_context: Mapping[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     selected_components = {
         "session": "openclaw",
@@ -1403,10 +1477,43 @@ def _oss_inputs_for_episode(
         "risk_analytics": episode.oss_route["risk_analytics"],
         "handoff": "lean_handoff",
     }
-    return {
+    selected = {
         role: copy.deepcopy(dict(oss_by_component[component]))
         for role, component in selected_components.items()
     }
+    continuity_request = _openclaw_session_continuity_request(
+        episode=episode,
+        cross_cycle_context=cross_cycle_context,
+    )
+    session_input = selected["session"]
+    session_primary_output = copy.deepcopy(dict(session_input.get("primary_output") or {}))
+    context_bundle = copy.deepcopy(dict(session_primary_output.get("context_bundle") or {}))
+    context_bundle["session_continuity_request"] = copy.deepcopy(continuity_request)
+    session_primary_output["context_bundle"] = context_bundle
+    session_primary_output["continuity_status"] = continuity_request["status"]
+    session_primary_output["continuity_ref"] = continuity_request["continuity_ref"]
+    session_primary_output["previous_session_ref"] = continuity_request[
+        "previous_session_ref"
+    ]
+    session_primary_output["previous_context_ref"] = continuity_request[
+        "previous_context_ref"
+    ]
+    session_primary_output["previous_upstream_session_ref"] = continuity_request[
+        "previous_upstream_session_ref"
+    ]
+    session_input["primary_output"] = session_primary_output
+    session_input["session_continuation_request"] = continuity_request
+    session_input.setdefault("refs", {})
+    session_input["refs"] = {
+        **dict(session_input.get("refs") or {}),
+        "openclaw_session_continuity_ref": continuity_request["continuity_ref"],
+        "previous_openclaw_session_ref": continuity_request["previous_session_ref"],
+        "previous_openclaw_context_ref": continuity_request["previous_context_ref"],
+        "previous_openclaw_upstream_session_ref": continuity_request[
+            "previous_upstream_session_ref"
+        ],
+    }
+    return selected
 
 
 def _expected_oss_role_component_pairs() -> tuple[str, ...]:
@@ -4075,6 +4182,46 @@ def _portfolio_state_context_from_prior(
     return context
 
 
+def _empty_openclaw_session_continuity_context() -> dict[str, Any]:
+    return {
+        "openclaw_session_continuity_status": "cold_start",
+        "openclaw_session_continuity_ref": None,
+        "previous_openclaw_case_id": None,
+        "previous_openclaw_source_oss_ref": None,
+        "previous_openclaw_context_ref": None,
+        "previous_openclaw_context_hash": None,
+        "previous_openclaw_session_ref": None,
+        "previous_openclaw_session_id": None,
+        "previous_openclaw_upstream_session_ref": None,
+        "previous_openclaw_upstream_session_id": None,
+        "previous_openclaw_session_state": None,
+    }
+
+
+def _openclaw_session_continuity_context_from_prior(
+    *,
+    episode: PortfolioEpisode,
+    prior_cycle_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    previous_case_id = str(prior_cycle_state["case_id"])
+    prior_openclaw = dict(prior_cycle_state.get("openclaw_session") or {})
+    return {
+        "openclaw_session_continuity_status": "applied",
+        "openclaw_session_continuity_ref": (
+            f"openclaw-session-continuity://{previous_case_id}->{episode.case_id}"
+        ),
+        "previous_openclaw_case_id": previous_case_id,
+        "previous_openclaw_source_oss_ref": prior_openclaw.get("source_oss_ref"),
+        "previous_openclaw_context_ref": prior_openclaw.get("context_ref"),
+        "previous_openclaw_context_hash": prior_openclaw.get("context_hash"),
+        "previous_openclaw_session_ref": prior_openclaw.get("session_ref"),
+        "previous_openclaw_session_id": prior_openclaw.get("session_id"),
+        "previous_openclaw_upstream_session_ref": prior_openclaw.get("upstream_session_ref"),
+        "previous_openclaw_upstream_session_id": prior_openclaw.get("upstream_session_id"),
+        "previous_openclaw_session_state": prior_openclaw.get("session_state"),
+    }
+
+
 def _cross_cycle_context_for_episode(
     *,
     episode: PortfolioEpisode,
@@ -4082,6 +4229,7 @@ def _cross_cycle_context_for_episode(
 ) -> dict[str, Any]:
     if not prior_cycle_state:
         portfolio_state_context = _empty_portfolio_state_context()
+        openclaw_session_continuity = _empty_openclaw_session_continuity_context()
         return {
             "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
             "status": "cold_start",
@@ -4105,6 +4253,7 @@ def _cross_cycle_context_for_episode(
             "next_ooda_action": None,
             "next_scheduler_phase": None,
             **portfolio_state_context,
+            **openclaw_session_continuity,
             "prior_case_completed_before_current_case": False,
             "evidence_refs": [],
             "candidate_score_adjustments": _cross_cycle_score_adjustments({"status": "cold_start"}),
@@ -4120,6 +4269,21 @@ def _cross_cycle_context_for_episode(
         episode=episode,
         prior_cycle_state=prior_cycle_state,
     )
+    openclaw_session_continuity = _openclaw_session_continuity_context_from_prior(
+        episode=episode,
+        prior_cycle_state=prior_cycle_state,
+    )
+    openclaw_session_refs = [
+        str(ref)
+        for ref in (
+            openclaw_session_continuity["openclaw_session_continuity_ref"],
+            openclaw_session_continuity["previous_openclaw_source_oss_ref"],
+            openclaw_session_continuity["previous_openclaw_context_ref"],
+            openclaw_session_continuity["previous_openclaw_session_ref"],
+            openclaw_session_continuity["previous_openclaw_upstream_session_ref"],
+        )
+        if ref
+    ]
     return {
         "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
         "status": "applied",
@@ -4143,12 +4307,14 @@ def _cross_cycle_context_for_episode(
         "next_ooda_action": prior_cycle_state["next_ooda_action"],
         "next_scheduler_phase": prior_cycle_state["next_scheduler_phase"],
         **portfolio_state_context,
+        **openclaw_session_continuity,
         "prior_case_completed_before_current_case": True,
         "evidence_refs": [
             state_ref,
             runtime_feedback_ref,
             str(portfolio_state_context["portfolio_state_carry_ref"]),
             str(portfolio_state_context["portfolio_state_ref"]),
+            *openclaw_session_refs,
             str(prior_cycle_state["source_runtime_ref"]),
             str(prior_cycle_state["source_handoff_ref"]),
             str(prior_cycle_state["ooda_ledger_ref"]),
@@ -4293,6 +4459,7 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
     persona_followup = feedback["persona_ooda_followup"]
     runtime_readback = feedback["runtime_feedback"]
     portfolio_state = _portfolio_state_from_case(case)
+    openclaw_handoff = case["operational_context"]["openclaw_session_handoff"]
     return {
         "case_id": case["case_id"],
         "persona_id": case["persona_id"],
@@ -4314,6 +4481,17 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
         "portfolio_state": portfolio_state,
         "portfolio_state_ref": portfolio_state["state_ref"],
         "portfolio_state_hash": portfolio_state["state_hash"],
+        "openclaw_session": {
+            "proof_ref": openclaw_handoff["proof_ref"],
+            "source_oss_ref": openclaw_handoff["source_oss_ref"],
+            "context_ref": openclaw_handoff["context_ref"],
+            "context_hash": openclaw_handoff["context_hash"],
+            "session_ref": openclaw_handoff["session_ref"],
+            "session_id": openclaw_handoff["session_id"],
+            "upstream_session_ref": openclaw_handoff["upstream_session_ref"],
+            "upstream_session_id": openclaw_handoff["upstream_session_id"],
+            "session_state": openclaw_handoff["session_state"],
+        },
     }
 
 
@@ -10658,6 +10836,9 @@ def _build_openclaw_session_context(
     session_id = str(primary_output.get("session_id") or session_result.get("session_id") or "")
     upstream_session_id = str(primary_output.get("upstream_session_id") or "")
     context_bundle = copy.deepcopy(dict(primary_output.get("context_bundle") or {}))
+    continuity_request = copy.deepcopy(
+        dict(session_result.get("session_continuation_request") or {})
+    )
     session_ref = f"openclaw-session://{session_id}"
     upstream_session_ref = f"openclaw-upstream-session://{upstream_session_id}"
     context_ref = f"openclaw-context://{episode.case_id}/{session_result['request_id']}"
@@ -10672,6 +10853,7 @@ def _build_openclaw_session_context(
         "state": primary_output.get("state"),
         "session_type": primary_output.get("session_type"),
         "context_bundle": context_bundle,
+        "session_continuity_request": continuity_request,
     }
     context_hash = _stable_payload_hash("openclaw-session-context", context_seed)
     return {
@@ -10692,6 +10874,14 @@ def _build_openclaw_session_context(
         "session_type": primary_output.get("session_type"),
         "audit_events": primary_output.get("audit_events"),
         "context_bundle": context_bundle,
+        "session_continuity": continuity_request,
+        "session_continuity_status": continuity_request.get("status", "cold_start"),
+        "session_continuity_ref": continuity_request.get("continuity_ref"),
+        "previous_session_ref": continuity_request.get("previous_session_ref"),
+        "previous_context_ref": continuity_request.get("previous_context_ref"),
+        "previous_upstream_session_ref": continuity_request.get(
+            "previous_upstream_session_ref"
+        ),
         "input_hash": context_hash,
     }
 
@@ -10723,6 +10913,23 @@ def _build_lean_handoff_packet(
     openclaw_context_ref = str(openclaw_session_context["context_ref"])
     openclaw_upstream_session_ref = str(openclaw_session_context["upstream_session_ref"])
     openclaw_source_oss_ref = str(openclaw_session_context["source_oss_ref"])
+    openclaw_session_continuity = copy.deepcopy(
+        dict(openclaw_session_context.get("session_continuity") or {})
+    )
+    openclaw_session_continuity_ref = (
+        openclaw_session_continuity.get("continuity_ref")
+    )
+    openclaw_continuity_refs = [
+        str(ref)
+        for ref in (
+            openclaw_session_continuity_ref,
+            openclaw_session_continuity.get("previous_source_oss_ref"),
+            openclaw_session_continuity.get("previous_context_ref"),
+            openclaw_session_continuity.get("previous_session_ref"),
+            openclaw_session_continuity.get("previous_upstream_session_ref"),
+        )
+        if ref
+    ]
     vectorbt = case_upstream_artifacts["vectorbt"]
     tracker = case_upstream_artifacts["tracker"]
     selected_oss_refs = [
@@ -10888,6 +11095,33 @@ def _build_lean_handoff_packet(
         "openclaw_upstream_session_id": openclaw_session_context["upstream_session_id"],
         "openclaw_session_state": openclaw_session_context["session_state"],
         "openclaw_session_artifact_family": openclaw_session_context["artifact_family"],
+        "openclaw_session_continuity": openclaw_session_continuity,
+        "openclaw_session_continuity_status": openclaw_session_continuity.get(
+            "status",
+            "cold_start",
+        ),
+        "openclaw_session_continuity_ref": openclaw_session_continuity_ref,
+        "openclaw_previous_source_oss_ref": openclaw_session_continuity.get(
+            "previous_source_oss_ref"
+        ),
+        "openclaw_previous_context_ref": openclaw_session_continuity.get(
+            "previous_context_ref"
+        ),
+        "openclaw_previous_context_hash": openclaw_session_continuity.get(
+            "previous_context_hash"
+        ),
+        "openclaw_previous_session_ref": openclaw_session_continuity.get(
+            "previous_session_ref"
+        ),
+        "openclaw_previous_session_id": openclaw_session_continuity.get(
+            "previous_session_id"
+        ),
+        "openclaw_previous_upstream_session_ref": openclaw_session_continuity.get(
+            "previous_upstream_session_ref"
+        ),
+        "openclaw_previous_upstream_session_id": openclaw_session_continuity.get(
+            "previous_upstream_session_id"
+        ),
         "alpha_seed_revision_handoff": alpha_seed_handoff,
         "alpha_seed_revision_handoff_hash": alpha_seed_handoff_hash,
         "alpha_seed_revision_handoff_ref": alpha_seed_handoff_ref,
@@ -10984,6 +11218,7 @@ def _build_lean_handoff_packet(
             openclaw_session_ref,
             openclaw_source_oss_ref,
             openclaw_upstream_session_ref,
+            *openclaw_continuity_refs,
             alpha_seed_handoff_ref,
             alpha_seed_revision_ref,
             alpha_seed_source_ref,
@@ -11346,6 +11581,50 @@ def _build_lean_runtime_feedback_response(
     openclaw_session_ref = str(lean_handoff.get("openclaw_session_ref", ""))
     openclaw_source_oss_ref = str(lean_handoff.get("openclaw_source_oss_ref", ""))
     openclaw_upstream_session_ref = str(lean_handoff.get("openclaw_upstream_session_ref", ""))
+    openclaw_session_continuity = dict(
+        lean_handoff.get("openclaw_session_continuity") or {}
+    )
+    openclaw_session_continuity_status = str(
+        lean_handoff.get("openclaw_session_continuity_status")
+        or openclaw_session_continuity.get("status")
+        or "cold_start"
+    )
+    openclaw_session_continuity_ref = str(
+        lean_handoff.get("openclaw_session_continuity_ref")
+        or openclaw_session_continuity.get("continuity_ref")
+        or ""
+    )
+    openclaw_previous_source_oss_ref = str(
+        lean_handoff.get("openclaw_previous_source_oss_ref")
+        or openclaw_session_continuity.get("previous_source_oss_ref")
+        or ""
+    )
+    openclaw_previous_context_ref = str(
+        lean_handoff.get("openclaw_previous_context_ref")
+        or openclaw_session_continuity.get("previous_context_ref")
+        or ""
+    )
+    openclaw_previous_session_ref = str(
+        lean_handoff.get("openclaw_previous_session_ref")
+        or openclaw_session_continuity.get("previous_session_ref")
+        or ""
+    )
+    openclaw_previous_upstream_session_ref = str(
+        lean_handoff.get("openclaw_previous_upstream_session_ref")
+        or openclaw_session_continuity.get("previous_upstream_session_ref")
+        or ""
+    )
+    openclaw_continuity_refs = [
+        ref
+        for ref in (
+            openclaw_session_continuity_ref,
+            openclaw_previous_source_oss_ref,
+            openclaw_previous_context_ref,
+            openclaw_previous_session_ref,
+            openclaw_previous_upstream_session_ref,
+        )
+        if ref
+    ]
     alpha_seed_handoff_ref = str(lean_handoff.get("alpha_seed_revision_handoff_ref", ""))
     alpha_seed_revision_ref = str(lean_handoff.get("alpha_seed_revision_ref", ""))
     alpha_seed_source_ref = str(lean_handoff.get("alpha_seed_source_ref", ""))
@@ -11386,6 +11665,7 @@ def _build_lean_runtime_feedback_response(
         openclaw_session_ref,
         openclaw_source_oss_ref,
         openclaw_upstream_session_ref,
+        *openclaw_continuity_refs,
         alpha_seed_handoff_ref,
         alpha_seed_revision_ref,
         alpha_seed_source_ref,
@@ -11549,6 +11829,34 @@ def _build_lean_runtime_feedback_response(
             == lean_handoff.get("openclaw_session_context", {}).get("context_hash")
             and lean_handoff.get("openclaw_session_state") == "active"
         ),
+        "openclaw_session_continuity_bound": (
+            (
+                openclaw_session_continuity_status == "cold_start"
+                and not openclaw_session_continuity_ref
+                and not openclaw_previous_session_ref
+                and not openclaw_previous_context_ref
+            )
+            or (
+                openclaw_session_continuity_status == "applied"
+                and bool(openclaw_session_continuity_ref)
+                and bool(openclaw_previous_session_ref)
+                and bool(openclaw_previous_context_ref)
+                and {
+                    openclaw_session_continuity_ref,
+                    openclaw_previous_source_oss_ref,
+                    openclaw_previous_context_ref,
+                    openclaw_previous_session_ref,
+                    openclaw_previous_upstream_session_ref,
+                }.issubset(set(lean_handoff.get("runtime_bundle_refs", [])))
+                and {
+                    openclaw_session_continuity_ref,
+                    openclaw_previous_source_oss_ref,
+                    openclaw_previous_context_ref,
+                    openclaw_previous_session_ref,
+                    openclaw_previous_upstream_session_ref,
+                }.issubset(set(evidence_refs))
+            )
+        ),
         "alpha_seed_revision_handoff_bound": (
             bool(alpha_seed_handoff_ref)
             and alpha_seed_handoff_ref in lean_handoff.get("runtime_bundle_refs", [])
@@ -11654,6 +11962,14 @@ def _build_lean_runtime_feedback_response(
             "bind_openclaw_session_ref": openclaw_session_ref,
             "bind_openclaw_source_oss_ref": openclaw_source_oss_ref,
             "bind_openclaw_upstream_session_ref": openclaw_upstream_session_ref,
+            "bind_openclaw_session_continuity_ref": openclaw_session_continuity_ref or None,
+            "bind_openclaw_session_continuity_status": openclaw_session_continuity_status,
+            "bind_openclaw_previous_source_oss_ref": openclaw_previous_source_oss_ref or None,
+            "bind_openclaw_previous_context_ref": openclaw_previous_context_ref or None,
+            "bind_openclaw_previous_session_ref": openclaw_previous_session_ref or None,
+            "bind_openclaw_previous_upstream_session_ref": (
+                openclaw_previous_upstream_session_ref or None
+            ),
             "bind_alpha_seed_revision_handoff_ref": alpha_seed_handoff_ref,
             "bind_alpha_seed_revision_ref": alpha_seed_revision_ref,
             "bind_alpha_seed_source_ref": alpha_seed_source_ref,
@@ -11711,6 +12027,12 @@ def _build_lean_runtime_feedback_response(
                 "openclaw_session_ref": openclaw_session_ref,
                 "openclaw_source_oss_ref": openclaw_source_oss_ref,
                 "openclaw_upstream_session_ref": openclaw_upstream_session_ref,
+                "openclaw_session_continuity_status": openclaw_session_continuity_status,
+                "openclaw_session_continuity_ref": openclaw_session_continuity_ref,
+                "openclaw_previous_source_oss_ref": openclaw_previous_source_oss_ref,
+                "openclaw_previous_context_ref": openclaw_previous_context_ref,
+                "openclaw_previous_session_ref": openclaw_previous_session_ref,
+                "openclaw_previous_upstream_session_ref": openclaw_previous_upstream_session_ref,
                 "alpha_seed_handoff_ref": alpha_seed_handoff_ref,
                 "alpha_seed_revision_ref": alpha_seed_revision_ref,
                 "alpha_seed_source_ref": alpha_seed_source_ref,
@@ -12474,6 +12796,246 @@ def _build_openclaw_session_handoff_proof(
                 "source_oss_ref": source_oss_ref,
                 "context_ref": context_ref,
                 "context_hash": context_hash,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _build_openclaw_session_continuity_proof(
+    *,
+    episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
+    oss_inputs: Mapping[str, Mapping[str, Any]],
+    decision_traces: Sequence[Mapping[str, Any]],
+    operational_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    session_result = oss_inputs["session"]
+    request = copy.deepcopy(
+        dict(session_result.get("session_continuation_request") or {})
+    )
+    handoff = operational_context["lean_handoff"]
+    runtime_feedback = operational_context["lean_runtime_feedback"]
+    openclaw_handoff = operational_context["openclaw_session_handoff"]
+    status = str(cross_cycle_context.get("openclaw_session_continuity_status") or "cold_start")
+    continuity_ref = cross_cycle_context.get("openclaw_session_continuity_ref")
+    previous_refs = [
+        str(ref)
+        for ref in (
+            cross_cycle_context.get("previous_openclaw_source_oss_ref"),
+            cross_cycle_context.get("previous_openclaw_context_ref"),
+            cross_cycle_context.get("previous_openclaw_session_ref"),
+            cross_cycle_context.get("previous_openclaw_upstream_session_ref"),
+        )
+        if ref
+    ]
+    continuity_refs = [
+        str(ref)
+        for ref in (continuity_ref, *previous_refs)
+        if ref
+    ]
+    current_refs = [
+        str(openclaw_handoff["source_oss_ref"]),
+        str(openclaw_handoff["context_ref"]),
+        str(openclaw_handoff["session_ref"]),
+        str(openclaw_handoff["upstream_session_ref"]),
+    ]
+    trace_bindings = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_refs = set(
+            str(ref)
+            for ref in artifact["persona_reasoning"]["request"].get("input_refs", [])
+        )
+        generation_refs = set(
+            str(ref)
+            for ref in artifact["candidate_generation"]["request"].get("input_refs", [])
+        )
+        selected_refs = set(str(ref) for ref in trace["selected_candidate"].get("evidence_refs", []))
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "reasoning_consumes_prior_openclaw_session": (
+                    status == "cold_start"
+                    or set(continuity_refs).issubset(reasoning_refs)
+                ),
+                "candidate_generation_consumes_prior_openclaw_session": (
+                    status == "cold_start"
+                    or set(continuity_refs).issubset(generation_refs)
+                ),
+                "selected_candidate_cites_prior_openclaw_session": (
+                    status == "cold_start"
+                    or set(continuity_refs).issubset(selected_refs)
+                ),
+                "reasoning_consumes_current_openclaw_source": (
+                    openclaw_handoff["source_oss_ref"] in reasoning_refs
+                ),
+                "candidate_generation_consumes_current_openclaw_session": (
+                    openclaw_handoff["source_oss_ref"] in generation_refs
+                ),
+                "selected_candidate_cites_current_openclaw_followup": any(
+                    str(ref).startswith("followup://")
+                    and "/session/" in str(ref)
+                    and "/openclaw/" in str(ref)
+                    for ref in selected_refs
+                ),
+            }
+        )
+    runtime_refs = set(
+        runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+    )
+    runtime_state_updates = dict(runtime_feedback.get("state_updates", {}))
+    handoff_refs = set(handoff.get("runtime_bundle_refs", []))
+    cold_start = status == "cold_start"
+    replay = {
+        "replayable": True,
+        "cold_start_or_previous_session_bound": (
+            (
+                cold_start
+                and request.get("status") == "cold_start"
+                and not continuity_ref
+                and not previous_refs
+            )
+            or (
+                status == "applied"
+                and request.get("status") == "applied"
+                and request.get("continuity_ref") == continuity_ref
+                and request.get("previous_session_ref")
+                == cross_cycle_context.get("previous_openclaw_session_ref")
+                and request.get("previous_context_ref")
+                == cross_cycle_context.get("previous_openclaw_context_ref")
+                and request.get("previous_upstream_session_ref")
+                == cross_cycle_context.get("previous_openclaw_upstream_session_ref")
+                and set(continuity_refs).issubset(set(request.get("input_refs", [])))
+            )
+        ),
+        "current_openclaw_session_response_completed": _openclaw_session_handoff_is_usable(
+            openclaw_handoff
+        ),
+        "same_persona_session_continuity": cold_start
+        or (
+            cross_cycle_context.get("previous_openclaw_case_id")
+            != episode.case_id
+            and cross_cycle_context.get("persona_id") == _persona_id(episode.persona)
+        ),
+        "reasoning_consumes_session_continuity": all(
+            binding["reasoning_consumes_prior_openclaw_session"]
+            and binding["reasoning_consumes_current_openclaw_source"]
+            for binding in trace_bindings
+        ),
+        "candidate_generation_consumes_session_continuity": all(
+            binding["candidate_generation_consumes_prior_openclaw_session"]
+            and binding["candidate_generation_consumes_current_openclaw_session"]
+            for binding in trace_bindings
+        ),
+        "selected_candidate_cites_session_continuity": all(
+            binding["selected_candidate_cites_prior_openclaw_session"]
+            and binding["selected_candidate_cites_current_openclaw_followup"]
+            for binding in trace_bindings
+        ),
+        "handoff_carries_session_continuity": (
+            (
+                cold_start
+                and handoff.get("openclaw_session_continuity_status") == "cold_start"
+                and not handoff.get("openclaw_session_continuity_ref")
+            )
+            or (
+                status == "applied"
+                and handoff.get("openclaw_session_continuity_status") == "applied"
+                and handoff.get("openclaw_session_continuity_ref") == continuity_ref
+                and handoff.get("openclaw_previous_session_ref")
+                == cross_cycle_context.get("previous_openclaw_session_ref")
+                and set(continuity_refs).issubset(handoff_refs)
+            )
+        ),
+        "runtime_feedback_binds_session_continuity": (
+            runtime_feedback.get("replay", {}).get("openclaw_session_continuity_bound")
+            is True
+            and (
+                (
+                    cold_start
+                    and runtime_state_updates.get(
+                        "bind_openclaw_session_continuity_ref"
+                    )
+                    is None
+                )
+                or (
+                    status == "applied"
+                    and runtime_state_updates.get(
+                        "bind_openclaw_session_continuity_ref"
+                    )
+                    == continuity_ref
+                    and runtime_state_updates.get(
+                        "bind_openclaw_previous_session_ref"
+                    )
+                    == cross_cycle_context.get("previous_openclaw_session_ref")
+                    and set(continuity_refs).issubset(runtime_refs)
+                )
+            )
+        ),
+    }
+    return {
+        "proof_id": f"openclaw-session-continuity-{episode.case_id}",
+        "proof_ref": f"openclaw-session-continuity://{episode.case_id}",
+        "model_id": PERSONA_OPENCLAW_SESSION_CONTINUITY_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "continuity_status": status,
+        "continuity_ref": continuity_ref,
+        "previous_case_id": cross_cycle_context.get("previous_openclaw_case_id"),
+        "previous_source_oss_ref": cross_cycle_context.get(
+            "previous_openclaw_source_oss_ref"
+        ),
+        "previous_context_ref": cross_cycle_context.get("previous_openclaw_context_ref"),
+        "previous_context_hash": cross_cycle_context.get("previous_openclaw_context_hash"),
+        "previous_session_ref": cross_cycle_context.get("previous_openclaw_session_ref"),
+        "previous_session_id": cross_cycle_context.get("previous_openclaw_session_id"),
+        "previous_upstream_session_ref": cross_cycle_context.get(
+            "previous_openclaw_upstream_session_ref"
+        ),
+        "previous_upstream_session_id": cross_cycle_context.get(
+            "previous_openclaw_upstream_session_id"
+        ),
+        "current_source_oss_ref": openclaw_handoff["source_oss_ref"],
+        "current_context_ref": openclaw_handoff["context_ref"],
+        "current_context_hash": openclaw_handoff["context_hash"],
+        "current_session_ref": openclaw_handoff["session_ref"],
+        "current_session_id": openclaw_handoff["session_id"],
+        "current_upstream_session_ref": openclaw_handoff["upstream_session_ref"],
+        "current_upstream_session_id": openclaw_handoff["upstream_session_id"],
+        "current_session_state": openclaw_handoff["session_state"],
+        "openclaw_request": request,
+        "trace_bindings": trace_bindings,
+        "handoff_continuity": copy.deepcopy(
+            dict(handoff.get("openclaw_session_continuity") or {})
+        ),
+        "runtime_state_updates": {
+            "bind_openclaw_session_continuity_ref": runtime_state_updates.get(
+                "bind_openclaw_session_continuity_ref"
+            ),
+            "bind_openclaw_previous_session_ref": runtime_state_updates.get(
+                "bind_openclaw_previous_session_ref"
+            ),
+            "bind_openclaw_previous_context_ref": runtime_state_updates.get(
+                "bind_openclaw_previous_context_ref"
+            ),
+            "bind_openclaw_previous_upstream_session_ref": runtime_state_updates.get(
+                "bind_openclaw_previous_upstream_session_ref"
+            ),
+        },
+        "input_refs": list(dict.fromkeys([*continuity_refs, *current_refs])),
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "openclaw-session-continuity",
+            {
+                "case_id": episode.case_id,
+                "status": status,
+                "continuity_ref": continuity_ref,
+                "previous_refs": previous_refs,
+                "current_refs": current_refs,
                 "trace_bindings": trace_bindings,
                 "replay": replay,
             },
@@ -13691,6 +14253,7 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("multi_persona_proposal_lineage_bound") is True
         and replay.get("portfolio_state_carryover_bound") is True
         and replay.get("openclaw_session_context_bound") is True
+        and replay.get("openclaw_session_continuity_bound") is True
         and replay.get("alpha_seed_revision_handoff_bound") is True
         and replay.get("lean_packet_execution_projection_consumed") is True
         and replay.get("next_cycle_scheduled") is True
@@ -13876,6 +14439,62 @@ def _openclaw_session_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
             "runtime_feedback_cites_openclaw_session",
             "runtime_feedback_state_binds_openclaw_session",
             "openclaw_context_hash_stable_across_handoff",
+        ))
+    )
+
+
+def _openclaw_session_continuity_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    trace_bindings = list(proof.get("trace_bindings", []))
+    status = proof.get("continuity_status")
+    cold_start = status == "cold_start"
+    applied = status == "applied"
+    return bool(
+        proof.get("model_id") == PERSONA_OPENCLAW_SESSION_CONTINUITY_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("openclaw-session-continuity://")
+        and proof.get("current_source_oss_ref", "").startswith("oss://openclaw/")
+        and proof.get("current_context_ref", "").startswith("openclaw-context://")
+        and proof.get("current_session_ref", "").startswith("openclaw-session://")
+        and proof.get("current_upstream_session_ref", "").startswith(
+            "openclaw-upstream-session://"
+        )
+        and proof.get("current_session_state") == "active"
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and (
+            (
+                cold_start
+                and proof.get("continuity_ref") is None
+                and proof.get("previous_session_ref") is None
+                and proof.get("openclaw_request", {}).get("status") == "cold_start"
+            )
+            or (
+                applied
+                and proof.get("continuity_ref", "").startswith(
+                    "openclaw-session-continuity://"
+                )
+                and proof.get("previous_source_oss_ref", "").startswith("oss://openclaw/")
+                and proof.get("previous_context_ref", "").startswith("openclaw-context://")
+                and proof.get("previous_session_ref", "").startswith(
+                    "openclaw-session://"
+                )
+                and proof.get("previous_upstream_session_ref", "").startswith(
+                    "openclaw-upstream-session://"
+                )
+                and proof.get("openclaw_request", {}).get("status") == "applied"
+            )
+        )
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_previous_session_bound",
+            "current_openclaw_session_response_completed",
+            "same_persona_session_continuity",
+            "reasoning_consumes_session_continuity",
+            "candidate_generation_consumes_session_continuity",
+            "selected_candidate_cites_session_continuity",
+            "handoff_carries_session_continuity",
+            "runtime_feedback_binds_session_continuity",
         ))
     )
 
@@ -16630,6 +17249,7 @@ def _build_usability_dimensions(
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
     portfolio_state_carryover: Mapping[str, Any],
+    openclaw_session_continuity: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
     institutional_memory_lineage: Mapping[str, Any],
@@ -16777,6 +17397,9 @@ def _build_usability_dimensions(
     portfolio_state_carryover_score = 1.0 if _portfolio_state_carryover_is_usable(
         portfolio_state_carryover
     ) else 0.0
+    openclaw_session_continuity_score = 1.0 if _openclaw_session_continuity_is_usable(
+        openclaw_session_continuity
+    ) else 0.0
     persisted_cycle_resume_carryover = 1.0 if _persisted_cycle_resume_is_usable(
         persisted_cycle_resume
     ) else 0.0
@@ -16826,6 +17449,7 @@ def _build_usability_dimensions(
         "persona_oss_ooda_causality": persona_oss_ooda_causality,
         "cross_cycle_runtime_carryover": cross_cycle_runtime_carryover,
         "portfolio_state_carryover": portfolio_state_carryover_score,
+        "openclaw_session_continuity": openclaw_session_continuity_score,
         "persisted_cycle_resume_carryover": persisted_cycle_resume_carryover,
         "multi_cycle_lineage_carryover": multi_cycle_lineage_carryover,
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
@@ -16888,6 +17512,7 @@ def _diagnose_validation_execution(
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
     portfolio_state_carryover: Mapping[str, Any],
+    openclaw_session_continuity: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
     institutional_memory_lineage: Mapping[str, Any],
@@ -17193,6 +17818,26 @@ def _diagnose_validation_execution(
                 ),
                 "trace_binding_count": len(portfolio_state_carryover["trace_bindings"]),
                 "replay": copy.deepcopy(dict(portfolio_state_carryover["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "openclaw_session_continuity_drives_next_case_request",
+            _openclaw_session_continuity_is_usable(openclaw_session_continuity),
+            {
+                "proof_id": openclaw_session_continuity["proof_id"],
+                "continuity_status": openclaw_session_continuity["continuity_status"],
+                "previous_case_id": openclaw_session_continuity.get("previous_case_id"),
+                "continuity_ref": openclaw_session_continuity.get("continuity_ref"),
+                "previous_session_ref": openclaw_session_continuity.get(
+                    "previous_session_ref"
+                ),
+                "current_session_ref": openclaw_session_continuity.get(
+                    "current_session_ref"
+                ),
+                "trace_binding_count": len(
+                    openclaw_session_continuity["trace_bindings"]
+                ),
+                "replay": copy.deepcopy(dict(openclaw_session_continuity["replay"])),
             },
         ),
         _diagnostic_check(
@@ -17875,6 +18520,7 @@ def _build_case_result(
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
     portfolio_state_carryover: Mapping[str, Any],
+    openclaw_session_continuity: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
     institutional_memory_lineage: Mapping[str, Any],
@@ -17980,6 +18626,9 @@ def _build_case_result(
         "cross_cycle": {
             "runtime_feedback_carryover": copy.deepcopy(dict(cross_cycle_carryover)),
             "portfolio_state_carryover": copy.deepcopy(dict(portfolio_state_carryover)),
+            "openclaw_session_continuity": copy.deepcopy(
+                dict(openclaw_session_continuity)
+            ),
             "persisted_cycle_resume": copy.deepcopy(dict(persisted_cycle_resume)),
             "multi_cycle_lineage": copy.deepcopy(dict(multi_cycle_lineage)),
         },
@@ -18035,6 +18684,9 @@ def _build_case_result(
             ] == 1.0,
             "portfolio_state_carryover_drives_next_case": usability_dimensions[
                 "portfolio_state_carryover"
+            ] == 1.0,
+            "openclaw_session_continuity_drives_next_case": usability_dimensions[
+                "openclaw_session_continuity"
             ] == 1.0,
             "persisted_cycle_resume_drives_next_case": usability_dimensions[
                 "persisted_cycle_resume_carryover"
@@ -18179,6 +18831,9 @@ def _build_summary(
     ]
     portfolio_state_carryovers = [
         case["cross_cycle"]["portfolio_state_carryover"] for case in cases
+    ]
+    openclaw_session_continuities = [
+        case["cross_cycle"]["openclaw_session_continuity"] for case in cases
     ]
     persisted_cycle_resumes = [
         case["cross_cycle"]["persisted_cycle_resume"] for case in cases
@@ -18502,6 +19157,22 @@ def _build_summary(
         "openclaw_session_handoff_replay_flags": sorted({
             flag
             for proof in openclaw_session_handoffs
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "openclaw_session_continuity_models": sorted({
+            proof["model_id"] for proof in openclaw_session_continuities
+        }),
+        "openclaw_session_continuity_statuses": sorted({
+            proof["continuity_status"] for proof in openclaw_session_continuities
+        }),
+        "openclaw_session_continuity_request_actions": sorted({
+            proof["openclaw_request"]["request_action"]
+            for proof in openclaw_session_continuities
+        }),
+        "openclaw_session_continuity_replay_flags": sorted({
+            flag
+            for proof in openclaw_session_continuities
             for flag, value in proof["replay"].items()
             if value is True
         }),
@@ -19323,6 +19994,33 @@ def _build_summary(
             int(proof.get("previous_position_count") or 0)
             for proof in portfolio_state_carryovers
         ),
+        "openclaw_session_continuity_count": len(openclaw_session_continuities),
+        "openclaw_session_continuity_pass_count": sum(
+            1
+            for proof in openclaw_session_continuities
+            if _openclaw_session_continuity_is_usable(proof)
+        ),
+        "openclaw_session_continuity_applied_count": sum(
+            1
+            for proof in openclaw_session_continuities
+            if proof["continuity_status"] == "applied"
+        ),
+        "openclaw_session_continuity_cold_start_count": sum(
+            1
+            for proof in openclaw_session_continuities
+            if proof["continuity_status"] == "cold_start"
+        ),
+        "openclaw_session_continuity_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in openclaw_session_continuities
+        ),
+        "openclaw_session_continuity_drives_next_case_count": sum(
+            1 for item in usable if item["openclaw_session_continuity_drives_next_case"]
+        ),
+        "openclaw_session_continuity_prior_session_ref_count": sum(
+            1
+            for proof in openclaw_session_continuities
+            if proof.get("previous_session_ref")
+        ),
         "persisted_cycle_resume_count": len(persisted_cycle_resumes),
         "persisted_cycle_resume_pass_count": sum(
             1 for proof in persisted_cycle_resumes if _persisted_cycle_resume_is_usable(proof)
@@ -19653,6 +20351,7 @@ def _build_summary(
             "Every case emits an OODA causal ledger proving OSS responses, persona follow-up outputs, candidate generation, scorer output, selected action, and LEAN handoff occur in replayable temporal order without future artifact references.",
             "Every non-cold-start persona case consumes the prior autonomous cycle's LEAN runtime feedback in reasoning, candidate generation, selected evidence, and scorer adjustments.",
             "Every non-cold-start persona case carries the prior portfolio position state into reasoning, candidate generation, scorer adjustments, selected evidence, resolved allocation sizing, LEAN handoff, projection, and runtime feedback.",
+            "Every non-cold-start persona case carries the prior OpenClaw session into the next OpenClaw request, persona reasoning, candidate generation, selected evidence, LEAN handoff, and runtime feedback.",
             "Every non-cold-start persona case resumes that prior autonomous cycle through persisted checkpoint, schedule, and object-store readback refs before using the runtime feedback.",
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
             "Every case carries the Qlib/vectorbt alpha seed revision into the LEAN strategy packet, Object Store readback, handoff bundle, runtime bundle refs, and runtime feedback state updates.",
