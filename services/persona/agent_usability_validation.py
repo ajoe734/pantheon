@@ -178,6 +178,7 @@ PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID = "persona_memory_counterfactual_decision
 MULTI_OSS_CLOSED_LOOP_PROOF_MODEL_ID = "persona_multi_oss_closed_loop_proof_v1"
 PERSONA_OSS_OODA_LEDGER_MODEL_ID = "persona_oss_ooda_causal_ledger_v1"
 PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID = "persona_cross_cycle_runtime_carryover_v1"
+PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID = "persona_portfolio_state_carryover_v1"
 PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID = "persona_persisted_cycle_resume_carryover_v1"
 PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID = "persona_multi_cycle_lineage_carryover_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
@@ -833,6 +834,7 @@ def run_agent_usability_validations(
         )
         operational_context = _build_operational_context(
             episode=episode,
+            cross_cycle_context=cross_cycle_context,
             generation_policies=(generation0_policy, generation1_policy, generation2_policy),
             executions=(generation0_exec, generation1_exec, generation2_exec),
             evaluations=(generation0_eval, generation1_eval, generation2_eval),
@@ -861,6 +863,12 @@ def run_agent_usability_validations(
             cross_cycle_context=cross_cycle_context,
             decision_traces=(decision_trace0, decision_trace1),
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
+        )
+        portfolio_state_carryover = _build_portfolio_state_carryover_proof(
+            episode=episode,
+            cross_cycle_context=cross_cycle_context,
+            decision_traces=(decision_trace0, decision_trace1),
+            operational_context=operational_context,
         )
         persisted_cycle_resume = _build_persisted_cycle_resume_proof(
             episode=episode,
@@ -903,6 +911,7 @@ def run_agent_usability_validations(
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
+            portfolio_state_carryover=portfolio_state_carryover,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
             institutional_memory_lineage=institutional_memory_lineage,
@@ -932,6 +941,7 @@ def run_agent_usability_validations(
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
+            portfolio_state_carryover=portfolio_state_carryover,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
             institutional_memory_lineage=institutional_memory_lineage,
@@ -962,6 +972,7 @@ def run_agent_usability_validations(
             multi_oss_closed_loop_proof=multi_oss_closed_loop_proof,
             persona_oss_ooda_ledger=persona_oss_ooda_ledger,
             cross_cycle_carryover=cross_cycle_carryover,
+            portfolio_state_carryover=portfolio_state_carryover,
             persisted_cycle_resume=persisted_cycle_resume,
             multi_cycle_lineage=multi_cycle_lineage,
             institutional_memory_lineage=institutional_memory_lineage,
@@ -3952,12 +3963,125 @@ def _multi_cycle_lineage_score_adjustments(context: Mapping[str, Any]) -> dict[s
     return adjustments
 
 
+def _portfolio_state_score_adjustments(context: Mapping[str, Any]) -> dict[str, float]:
+    adjustments = {
+        "feedback-adapt": 0.0,
+        "retain-observe": 0.0,
+        "risk-off": 0.0,
+        "contrarian-check": 0.0,
+    }
+    if context.get("portfolio_state_status") == "applied" and context.get("portfolio_state_ref"):
+        gross_exposure = _finite_float(context.get("previous_portfolio_gross_exposure_pct"), 0.0)
+        adjustments["feedback-adapt"] = round(0.05 + min(0.03, gross_exposure * 0.02), 6)
+        adjustments["risk-off"] = round(0.03 + min(0.02, gross_exposure * 0.015), 6)
+        adjustments["retain-observe"] = 0.01
+    return adjustments
+
+
+def _portfolio_state_target_scale(context: Mapping[str, Any]) -> float:
+    if context.get("portfolio_state_status") != "applied" or not context.get("portfolio_state_ref"):
+        return 1.0
+    gross_exposure = _finite_float(context.get("previous_portfolio_gross_exposure_pct"), 0.0)
+    scale = 1.0 - min(0.08, max(0.02, gross_exposure * 0.04))
+    return round(max(0.88, min(0.98, scale)), 6)
+
+
+def _portfolio_state_rebalance_action(context: Mapping[str, Any]) -> str:
+    if context.get("portfolio_state_status") != "applied" or not context.get("portfolio_state_ref"):
+        return "cold_start_no_prior_positions"
+    if context.get("portfolio_overlap_instruments"):
+        return "rebalance_overlapping_positions_with_carried_exposure"
+    return "carry_prior_gross_exposure_budget_to_new_portfolio"
+
+
+def _empty_portfolio_state_context() -> dict[str, Any]:
+    return {
+        "portfolio_state_status": "cold_start",
+        "portfolio_state_ref": None,
+        "portfolio_state_carry_ref": None,
+        "portfolio_state_hash": None,
+        "previous_portfolio_case_id": None,
+        "previous_portfolio_instruments": [],
+        "previous_portfolio_positions_by_instrument": {},
+        "previous_portfolio_position_count": 0,
+        "previous_portfolio_gross_exposure_pct": 0.0,
+        "previous_portfolio_net_exposure_pct": 0.0,
+        "previous_portfolio_abs_market_value": 0.0,
+        "previous_portfolio_net_market_value": 0.0,
+        "previous_portfolio_capital_budget_pct": 0.0,
+        "portfolio_overlap_instruments": [],
+        "portfolio_rebalance_action": "cold_start_no_prior_positions",
+        "portfolio_target_capital_budget_scale": 1.0,
+        "portfolio_state_score_adjustments": _portfolio_state_score_adjustments(
+            {"portfolio_state_status": "cold_start"}
+        ),
+    }
+
+
+def _portfolio_state_context_from_prior(
+    *,
+    episode: PortfolioEpisode,
+    prior_cycle_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    previous_case_id = str(prior_cycle_state["case_id"])
+    prior_portfolio = dict(prior_cycle_state.get("portfolio_state") or {})
+    positions = {
+        str(instrument): copy.deepcopy(dict(position))
+        for instrument, position in sorted(
+            (prior_portfolio.get("positions_by_instrument") or {}).items()
+        )
+    }
+    previous_instruments = list(
+        prior_portfolio.get("instruments")
+        or sorted(positions)
+    )
+    current_instruments = [window.instrument for window in episode.windows]
+    context = {
+        "portfolio_state_status": "applied",
+        "portfolio_state_ref": prior_portfolio.get("state_ref"),
+        "portfolio_state_carry_ref": f"portfolio-state-carryover://{previous_case_id}->{episode.case_id}",
+        "portfolio_state_hash": prior_portfolio.get("state_hash"),
+        "previous_portfolio_case_id": previous_case_id,
+        "previous_portfolio_instruments": previous_instruments,
+        "previous_portfolio_positions_by_instrument": positions,
+        "previous_portfolio_position_count": len(positions),
+        "previous_portfolio_gross_exposure_pct": round(
+            _finite_float(prior_portfolio.get("gross_exposure_pct"), 0.0),
+            6,
+        ),
+        "previous_portfolio_net_exposure_pct": round(
+            _finite_float(prior_portfolio.get("net_exposure_pct"), 0.0),
+            6,
+        ),
+        "previous_portfolio_abs_market_value": round(
+            _finite_float(prior_portfolio.get("total_abs_market_value"), 0.0),
+            6,
+        ),
+        "previous_portfolio_net_market_value": round(
+            _finite_float(prior_portfolio.get("net_market_value"), 0.0),
+            6,
+        ),
+        "previous_portfolio_capital_budget_pct": round(
+            _finite_float(prior_portfolio.get("capital_budget_pct"), 0.0),
+            6,
+        ),
+        "portfolio_overlap_instruments": sorted(
+            set(previous_instruments).intersection(current_instruments)
+        ),
+    }
+    context["portfolio_rebalance_action"] = _portfolio_state_rebalance_action(context)
+    context["portfolio_target_capital_budget_scale"] = _portfolio_state_target_scale(context)
+    context["portfolio_state_score_adjustments"] = _portfolio_state_score_adjustments(context)
+    return context
+
+
 def _cross_cycle_context_for_episode(
     *,
     episode: PortfolioEpisode,
     prior_cycle_state: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if not prior_cycle_state:
+        portfolio_state_context = _empty_portfolio_state_context()
         return {
             "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
             "status": "cold_start",
@@ -3980,6 +4104,7 @@ def _cross_cycle_context_for_episode(
             "next_ooda_step": None,
             "next_ooda_action": None,
             "next_scheduler_phase": None,
+            **portfolio_state_context,
             "prior_case_completed_before_current_case": False,
             "evidence_refs": [],
             "candidate_score_adjustments": _cross_cycle_score_adjustments({"status": "cold_start"}),
@@ -3991,6 +4116,10 @@ def _cross_cycle_context_for_episode(
     schedule_ref = str(prior_cycle_state["schedule_ref"])
     object_store_metadata_ref = str(prior_cycle_state["object_store_metadata_ref"])
     object_store_artifact_ref = str(prior_cycle_state["object_store_artifact_ref"])
+    portfolio_state_context = _portfolio_state_context_from_prior(
+        episode=episode,
+        prior_cycle_state=prior_cycle_state,
+    )
     return {
         "model_id": PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
         "status": "applied",
@@ -4013,10 +4142,13 @@ def _cross_cycle_context_for_episode(
         "next_ooda_step": prior_cycle_state["next_ooda_step"],
         "next_ooda_action": prior_cycle_state["next_ooda_action"],
         "next_scheduler_phase": prior_cycle_state["next_scheduler_phase"],
+        **portfolio_state_context,
         "prior_case_completed_before_current_case": True,
         "evidence_refs": [
             state_ref,
             runtime_feedback_ref,
+            str(portfolio_state_context["portfolio_state_carry_ref"]),
+            str(portfolio_state_context["portfolio_state_ref"]),
             str(prior_cycle_state["source_runtime_ref"]),
             str(prior_cycle_state["source_handoff_ref"]),
             str(prior_cycle_state["ooda_ledger_ref"]),
@@ -4160,6 +4292,7 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
     )
     persona_followup = feedback["persona_ooda_followup"]
     runtime_readback = feedback["runtime_feedback"]
+    portfolio_state = _portfolio_state_from_case(case)
     return {
         "case_id": case["case_id"],
         "persona_id": case["persona_id"],
@@ -4178,6 +4311,95 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
         "next_ooda_step": persona_followup["ooda_step"],
         "next_ooda_action": persona_followup["action"],
         "next_scheduler_phase": persona_followup["next_scheduler_phase"],
+        "portfolio_state": portfolio_state,
+        "portfolio_state_ref": portfolio_state["state_ref"],
+        "portfolio_state_hash": portfolio_state["state_hash"],
+    }
+
+
+def _portfolio_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
+    projection = case["operational_context"]["lean_packet_execution_projection"]
+    conflict = case["operational_context"]["persona_conflict_resolution"]
+    allocation = conflict["resolved_allocation"]
+    generation = int(projection["generation"])
+    state_ref = f"portfolio-state://{case['case_id']}/generation{generation}"
+    positions_by_instrument: dict[str, dict[str, Any]] = {}
+    for leg in projection["leg_projections"]:
+        instrument = str(leg["instrument"])
+        direction = int(leg["direction"])
+        fill_quantity = round(abs(_finite_float(leg.get("fill_quantity"), 0.0)), 6)
+        signed_quantity = round(fill_quantity * direction, 6)
+        fill_price = round(_finite_float(leg.get("fill_price"), 0.0), 6)
+        market_value = round(signed_quantity * fill_price, 6)
+        positions_by_instrument[instrument] = {
+            "position_ref": f"{state_ref}/position/{instrument}",
+            "instrument": instrument,
+            "execution_symbol": leg["execution_symbol"],
+            "lean_symbol": leg["lean_symbol"],
+            "direction": direction,
+            "quantity": fill_quantity,
+            "signed_quantity": signed_quantity,
+            "fill_price": fill_price,
+            "market_value": market_value,
+            "abs_market_value": round(abs(market_value), 6),
+            "target_weight": leg["target_weight"],
+            "resolved_weight": leg["resolved_weight"],
+            "capital_budget_pct": leg["capital_budget_pct"],
+            "target_ref": leg["target_ref"],
+            "order_ref": leg["order_ref"],
+            "fill_ref": leg["fill_ref"],
+            "readback_ref": leg["readback_ref"],
+        }
+    gross_exposure_pct = round(
+        sum(abs(float(position["resolved_weight"])) for position in positions_by_instrument.values()),
+        6,
+    )
+    net_exposure_pct = round(
+        sum(
+            int(position["direction"]) * float(position["resolved_weight"])
+            for position in positions_by_instrument.values()
+        ),
+        6,
+    )
+    total_abs_market_value = round(
+        sum(float(position["abs_market_value"]) for position in positions_by_instrument.values()),
+        6,
+    )
+    net_market_value = round(
+        sum(float(position["market_value"]) for position in positions_by_instrument.values()),
+        6,
+    )
+    state_seed = {
+        "case_id": case["case_id"],
+        "persona_id": case["persona_id"],
+        "generation": generation,
+        "state_ref": state_ref,
+        "positions_by_instrument": positions_by_instrument,
+        "gross_exposure_pct": gross_exposure_pct,
+        "net_exposure_pct": net_exposure_pct,
+        "capital_budget_pct": allocation["capital_budget_pct"],
+    }
+    state_hash = _stable_payload_hash("portfolio-state", state_seed)
+    return {
+        "model_id": PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID,
+        "state_ref": state_ref,
+        "state_hash": state_hash,
+        "case_id": case["case_id"],
+        "persona_id": case["persona_id"],
+        "generation": generation,
+        "policy_id": projection["policy_id"],
+        "projection_ref": projection["projection_ref"],
+        "source_handoff_ref": projection["source_handoff_ref"],
+        "source_runtime_ref": projection["source_runtime_ref"],
+        "instruments": sorted(positions_by_instrument),
+        "position_count": len(positions_by_instrument),
+        "positions_by_instrument": positions_by_instrument,
+        "gross_exposure_pct": gross_exposure_pct,
+        "net_exposure_pct": net_exposure_pct,
+        "total_abs_market_value": total_abs_market_value,
+        "net_market_value": net_market_value,
+        "capital_budget_pct": allocation["capital_budget_pct"],
+        "input_hash": state_hash,
     }
 
 
@@ -4326,6 +4548,317 @@ def _cross_cycle_carryover_is_usable(proof: Mapping[str, Any]) -> bool:
                 and proof.get("state_ref")
                 and float(proof.get("score_adjustments", {}).get("feedback-adapt", 0.0)) > 0.0
                 and all(binding.get("scorer_cross_cycle_adjustment", 0.0) > 0.0 for binding in trace_bindings)
+            )
+        )
+    )
+
+
+def _build_portfolio_state_carryover_proof(
+    *,
+    episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    operational_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    state_ref = cross_cycle_context.get("portfolio_state_ref")
+    carry_ref = cross_cycle_context.get("portfolio_state_carry_ref")
+    score_adjustments = _portfolio_state_score_adjustments(cross_cycle_context)
+    trace_bindings: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_request = artifact["persona_reasoning"]["request"]
+        reasoning_response = artifact["persona_reasoning"]["response"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scoring_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_candidate = trace["selected_candidate"]
+        selected_id = str(trace["selected_candidate_id"])
+        selected_action = _candidate_action_key(selected_id)
+        selected_scorecard = artifact["scorer"]["scorecards"][selected_id]
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "selected_action": selected_action,
+                "decision_input_portfolio_state_ref": trace["decision_inputs"].get(
+                    "portfolio_state_ref"
+                ),
+                "decision_input_portfolio_carry_ref": trace["decision_inputs"].get(
+                    "portfolio_state_carry_ref"
+                ),
+                "reasoning_consumes_portfolio_state_ref": (
+                    state_ref is not None and state_ref in reasoning_request["input_refs"]
+                ),
+                "reasoning_consumes_portfolio_carry_ref": (
+                    carry_ref is not None and carry_ref in reasoning_request["input_refs"]
+                ),
+                "reasoning_usage_ref_matches": (
+                    reasoning_response.get("portfolio_state_usage", {}).get("state_ref")
+                    == state_ref
+                    and reasoning_response.get("portfolio_state_usage", {}).get("carry_ref")
+                    == carry_ref
+                ),
+                "candidate_request_consumes_portfolio_state_ref": (
+                    state_ref is not None and state_ref in candidate_request["input_refs"]
+                ),
+                "candidate_request_consumes_portfolio_carry_ref": (
+                    carry_ref is not None and carry_ref in candidate_request["input_refs"]
+                ),
+                "selected_candidate_cites_portfolio_state_ref": (
+                    state_ref is not None and state_ref in selected_candidate["evidence_refs"]
+                ),
+                "selected_candidate_cites_portfolio_carry_ref": (
+                    carry_ref is not None and carry_ref in selected_candidate["evidence_refs"]
+                ),
+                "scorer_portfolio_state_adjustment": float(
+                    scoring_inputs["portfolio_state_score_adjustments"].get(selected_action, 0.0)
+                ),
+                "scorecard_portfolio_state_adjustment": float(
+                    selected_scorecard["components"].get("portfolio_state_adjustment", 0.0)
+                ),
+                "decision_replay_uses_portfolio_state": artifact["replay"].get(
+                    "uses_portfolio_state_carryover_or_declares_cold_start"
+                )
+                is True,
+            }
+        )
+
+    status = str(cross_cycle_context.get("portfolio_state_status"))
+    cold_start = status == "cold_start"
+    applied = status == "applied"
+    conflict = operational_context["persona_conflict_resolution"]
+    allocation = conflict["resolved_allocation"]
+    conflict_carryover = conflict["portfolio_state_carryover"]
+    lean_handoff = operational_context["lean_handoff"]
+    projection = operational_context["lean_packet_execution_projection"]
+    runtime_feedback = operational_context["lean_runtime_feedback"]
+    previous_positions = dict(
+        cross_cycle_context.get("previous_portfolio_positions_by_instrument", {})
+    )
+    replay = {
+        "replayable": True,
+        "cold_start_or_prior_portfolio_state_bound": cold_start
+        or (
+            applied
+            and bool(state_ref)
+            and bool(carry_ref)
+            and bool(cross_cycle_context.get("previous_portfolio_case_id"))
+        ),
+        "prior_positions_available": cold_start
+        or (
+            len(previous_positions) == PORTFOLIO_LEG_COUNT
+            and all(
+                position.get("position_ref")
+                and float(position.get("abs_market_value", 0.0)) > 0.0
+                and float(position.get("resolved_weight", 0.0)) > 0.0
+                for position in previous_positions.values()
+            )
+        ),
+        "reasoning_consumes_prior_positions": cold_start
+        or all(binding["reasoning_consumes_portfolio_state_ref"] for binding in trace_bindings),
+        "candidate_generation_consumes_prior_positions": cold_start
+        or all(binding["candidate_request_consumes_portfolio_state_ref"] for binding in trace_bindings),
+        "selected_candidate_cites_prior_positions": cold_start
+        or all(
+            binding["selected_candidate_cites_portfolio_state_ref"]
+            and binding["selected_candidate_cites_portfolio_carry_ref"]
+            for binding in trace_bindings
+        ),
+        "scorer_applies_portfolio_state_adjustment": cold_start
+        or all(binding["scorer_portfolio_state_adjustment"] > 0.0 for binding in trace_bindings),
+        "scorecard_replays_portfolio_state_adjustment": all(
+            binding["scorecard_portfolio_state_adjustment"]
+            == binding["scorer_portfolio_state_adjustment"]
+            for binding in trace_bindings
+        ),
+        "resolved_allocation_uses_carried_state": (
+            cold_start
+            and allocation.get("portfolio_state_target_capital_budget_scale") == 1.0
+        )
+        or (
+            applied
+            and allocation.get("portfolio_state_carryover_ref") == carry_ref
+            and allocation.get("portfolio_state_ref") == state_ref
+            and float(allocation.get("portfolio_state_target_capital_budget_scale", 1.0))
+            < 1.0
+            and float(allocation.get("capital_budget_pct", 0.0)) < 1.0
+        ),
+        "lean_handoff_carries_portfolio_state_ref": (
+            cold_start
+            and not lean_handoff.get("portfolio_state_carryover_ref")
+            and not lean_handoff.get("portfolio_state_ref")
+        )
+        or (
+            applied
+            and lean_handoff.get("portfolio_state_carryover_ref") == carry_ref
+            and lean_handoff.get("portfolio_state_ref") == state_ref
+            and carry_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and state_ref in lean_handoff.get("runtime_bundle_refs", [])
+        ),
+        "projection_uses_adjusted_allocation": (
+            projection.get("capital_budget_pct") == allocation.get("capital_budget_pct")
+            and all(
+                leg["target_weight"]
+                == allocation["weight_by_instrument"][leg["instrument"]]
+                for leg in projection["leg_projections"]
+            )
+        ),
+        "runtime_feedback_binds_portfolio_state": (
+            cold_start
+            and runtime_feedback.get("state_updates", {}).get("bind_portfolio_state_ref") is None
+        )
+        or (
+            applied
+            and runtime_feedback.get("state_updates", {}).get("bind_portfolio_state_ref")
+            == state_ref
+            and runtime_feedback.get("state_updates", {}).get(
+                "bind_portfolio_state_carryover_ref"
+            )
+            == carry_ref
+            and runtime_feedback.get("replay", {}).get(
+                "portfolio_state_carryover_bound"
+            )
+            is True
+        ),
+        "same_persona_portfolio_state": cold_start
+        or cross_cycle_context.get("persona_id") == _persona_id(episode.persona),
+        "decision_artifact_replays_portfolio_state": all(
+            binding["decision_replay_uses_portfolio_state"] for binding in trace_bindings
+        ),
+    }
+    return {
+        "proof_id": f"portfolio-state-carryover-{episode.case_id}",
+        "proof_ref": f"portfolio-state-carryover://{episode.case_id}",
+        "model_id": PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "carryover_status": status,
+        "previous_case_id": cross_cycle_context.get("previous_portfolio_case_id"),
+        "state_ref": state_ref,
+        "carry_ref": carry_ref,
+        "state_hash": cross_cycle_context.get("portfolio_state_hash"),
+        "previous_instruments": list(
+            cross_cycle_context.get("previous_portfolio_instruments", [])
+        ),
+        "previous_positions_by_instrument": copy.deepcopy(previous_positions),
+        "previous_position_count": cross_cycle_context.get(
+            "previous_portfolio_position_count"
+        ),
+        "previous_gross_exposure_pct": cross_cycle_context.get(
+            "previous_portfolio_gross_exposure_pct"
+        ),
+        "previous_net_exposure_pct": cross_cycle_context.get(
+            "previous_portfolio_net_exposure_pct"
+        ),
+        "previous_abs_market_value": cross_cycle_context.get(
+            "previous_portfolio_abs_market_value"
+        ),
+        "portfolio_overlap_instruments": list(
+            cross_cycle_context.get("portfolio_overlap_instruments", [])
+        ),
+        "rebalance_action": cross_cycle_context.get("portfolio_rebalance_action"),
+        "target_capital_budget_scale": cross_cycle_context.get(
+            "portfolio_target_capital_budget_scale"
+        ),
+        "score_adjustments": score_adjustments,
+        "trace_bindings": trace_bindings,
+        "resolved_allocation": {
+            "capital_budget_pct": allocation["capital_budget_pct"],
+            "weight_by_instrument": copy.deepcopy(dict(allocation["weight_by_instrument"])),
+            "portfolio_state_target_capital_budget_scale": allocation[
+                "portfolio_state_target_capital_budget_scale"
+            ],
+            "portfolio_state_carryover_ref": allocation.get(
+                "portfolio_state_carryover_ref"
+            ),
+            "portfolio_state_ref": allocation.get("portfolio_state_ref"),
+        },
+        "conflict_resolution_ref": conflict["resolution_ref"],
+        "conflict_portfolio_state_carryover": copy.deepcopy(dict(conflict_carryover)),
+        "lean_handoff_ref": f"lean-handoff://{lean_handoff['packet_id']}",
+        "lean_handoff_portfolio_state_ref": lean_handoff.get("portfolio_state_ref"),
+        "lean_handoff_portfolio_state_carryover_ref": lean_handoff.get(
+            "portfolio_state_carryover_ref"
+        ),
+        "lean_projection_ref": projection["projection_ref"],
+        "runtime_feedback_ref": f"lean-runtime-feedback://{runtime_feedback['feedback_id']}",
+        "evidence_refs": [
+            str(ref)
+            for ref in (
+                carry_ref,
+                state_ref,
+                conflict["resolution_ref"],
+                f"lean-handoff://{lean_handoff['packet_id']}",
+                projection["projection_ref"],
+                f"lean-runtime-feedback://{runtime_feedback['feedback_id']}",
+            )
+            if ref
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "portfolio-state-carryover-proof",
+            {
+                "case_id": episode.case_id,
+                "cross_cycle_context": cross_cycle_context,
+                "trace_bindings": trace_bindings,
+                "resolved_allocation": allocation,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _portfolio_state_carryover_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("carryover_status")
+    trace_bindings = list(proof.get("trace_bindings", []))
+    score_adjustments = proof.get("score_adjustments", {})
+    return bool(
+        proof.get("model_id") == PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("portfolio-state-carryover://")
+        and proof.get("input_hash")
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "cold_start_or_prior_portfolio_state_bound",
+            "prior_positions_available",
+            "reasoning_consumes_prior_positions",
+            "candidate_generation_consumes_prior_positions",
+            "selected_candidate_cites_prior_positions",
+            "scorer_applies_portfolio_state_adjustment",
+            "scorecard_replays_portfolio_state_adjustment",
+            "resolved_allocation_uses_carried_state",
+            "lean_handoff_carries_portfolio_state_ref",
+            "projection_uses_adjusted_allocation",
+            "runtime_feedback_binds_portfolio_state",
+            "same_persona_portfolio_state",
+            "decision_artifact_replays_portfolio_state",
+        ))
+        and (
+            (
+                status == "cold_start"
+                and proof.get("previous_case_id") is None
+                and proof.get("state_ref") is None
+                and proof.get("carry_ref") is None
+                and proof.get("previous_position_count") == 0
+                and all(float(value) == 0.0 for value in score_adjustments.values())
+                and float(proof.get("target_capital_budget_scale", 1.0)) == 1.0
+            )
+            or (
+                status == "applied"
+                and proof.get("previous_case_id")
+                and proof.get("state_ref")
+                and proof.get("carry_ref")
+                and proof.get("state_hash")
+                and int(proof.get("previous_position_count", 0)) == PORTFOLIO_LEG_COUNT
+                and float(proof.get("previous_gross_exposure_pct", 0.0)) > 0.0
+                and float(proof.get("target_capital_budget_scale", 1.0)) < 1.0
+                and float(score_adjustments.get("feedback-adapt", 0.0)) > 0.0
+                and all(
+                    binding.get("scorer_portfolio_state_adjustment", 0.0) > 0.0
+                    for binding in trace_bindings
+                )
             )
         )
     )
@@ -5188,6 +5721,24 @@ def _build_persona_reasoning_response(
         "cross_cycle_status": cross_cycle_context["status"],
         "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
         "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+        "portfolio_state_status": cross_cycle_context.get("portfolio_state_status"),
+        "portfolio_state_ref": cross_cycle_context.get("portfolio_state_ref"),
+        "portfolio_state_carry_ref": cross_cycle_context.get("portfolio_state_carry_ref"),
+        "portfolio_state_hash": cross_cycle_context.get("portfolio_state_hash"),
+        "previous_portfolio_case_id": cross_cycle_context.get("previous_portfolio_case_id"),
+        "previous_portfolio_position_count": cross_cycle_context.get(
+            "previous_portfolio_position_count"
+        ),
+        "previous_portfolio_instruments": list(
+            cross_cycle_context.get("previous_portfolio_instruments", [])
+        ),
+        "portfolio_overlap_instruments": list(
+            cross_cycle_context.get("portfolio_overlap_instruments", [])
+        ),
+        "portfolio_rebalance_action": cross_cycle_context.get("portfolio_rebalance_action"),
+        "portfolio_target_capital_budget_scale": cross_cycle_context.get(
+            "portfolio_target_capital_budget_scale"
+        ),
         "multi_cycle_lineage_status": multi_cycle_context["status"],
         "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
         "multi_cycle_latest_runtime_feedback_ref": multi_cycle_context.get("latest_runtime_feedback_ref"),
@@ -5234,6 +5785,7 @@ def _build_persona_reasoning_response(
             "arbitrate_multi_oss_disagreement",
             "reconcile_tracking_readback_before_scoring",
             "repair_degraded_oss_artifact_before_scoring",
+            "carry_prior_portfolio_state_into_rebalance_sizing",
             "draft_candidate_policy_blueprints",
             "send_blueprints_to_scorer_and_risk_evaluator",
         ],
@@ -5334,6 +5886,30 @@ def _build_persona_reasoning_response(
             "previous_case_id": cross_cycle_context.get("previous_case_id"),
             "next_ooda_step": cross_cycle_context.get("next_ooda_step"),
             "candidate_score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
+        },
+        "portfolio_state_usage": {
+            "model_id": PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID,
+            "status": cross_cycle_context.get("portfolio_state_status"),
+            "state_ref": cross_cycle_context.get("portfolio_state_ref"),
+            "carry_ref": cross_cycle_context.get("portfolio_state_carry_ref"),
+            "state_hash": cross_cycle_context.get("portfolio_state_hash"),
+            "previous_case_id": cross_cycle_context.get("previous_portfolio_case_id"),
+            "previous_position_count": cross_cycle_context.get(
+                "previous_portfolio_position_count"
+            ),
+            "previous_instruments": list(
+                cross_cycle_context.get("previous_portfolio_instruments", [])
+            ),
+            "overlap_instruments": list(
+                cross_cycle_context.get("portfolio_overlap_instruments", [])
+            ),
+            "rebalance_action": cross_cycle_context.get("portfolio_rebalance_action"),
+            "target_capital_budget_scale": cross_cycle_context.get(
+                "portfolio_target_capital_budget_scale"
+            ),
+            "candidate_score_adjustments": _portfolio_state_score_adjustments(
+                cross_cycle_context
+            ),
         },
         "multi_cycle_lineage_usage": {
             "model_id": multi_cycle_context["model_id"],
@@ -5760,6 +6336,51 @@ def _evaluate_persona_reasoning_response(
             },
         ),
         _persona_risk_check(
+            "reasoning_uses_portfolio_state_carryover_or_declares_cold_start",
+            (
+                request.get("portfolio_state_status") == "cold_start"
+                and response.get("portfolio_state_usage", {}).get("status") == "cold_start"
+                and request.get("portfolio_state_ref") is None
+                and request.get("portfolio_state_carry_ref") is None
+            )
+            or (
+                request.get("portfolio_state_status") == "applied"
+                and response.get("portfolio_state_usage", {}).get("status") == "applied"
+                and request.get("portfolio_state_ref")
+                == response.get("portfolio_state_usage", {}).get("state_ref")
+                and request.get("portfolio_state_carry_ref")
+                == response.get("portfolio_state_usage", {}).get("carry_ref")
+                and request.get("portfolio_state_ref") in request.get("input_refs", [])
+                and request.get("portfolio_state_carry_ref") in request.get("input_refs", [])
+                and int(request.get("previous_portfolio_position_count") or 0)
+                == PORTFOLIO_LEG_COUNT
+                and response.get("portfolio_state_usage", {}).get(
+                    "rebalance_action"
+                )
+                == request.get("portfolio_rebalance_action")
+                and float(
+                    response.get("portfolio_state_usage", {})
+                    .get("candidate_score_adjustments", {})
+                    .get("feedback-adapt", 0.0)
+                )
+                > 0.0
+                and float(
+                    response.get("portfolio_state_usage", {}).get(
+                        "target_capital_budget_scale",
+                        1.0,
+                    )
+                )
+                < 1.0
+            ),
+            {
+                "portfolio_state_status": request.get("portfolio_state_status"),
+                "portfolio_state_ref": request.get("portfolio_state_ref"),
+                "portfolio_state_carry_ref": request.get("portfolio_state_carry_ref"),
+                "previous_position_count": request.get("previous_portfolio_position_count"),
+                "usage": copy.deepcopy(dict(response.get("portfolio_state_usage", {}))),
+            },
+        ),
+        _persona_risk_check(
             "reasoning_uses_multi_cycle_lineage_or_declares_cold_start",
             (
                 request.get("multi_cycle_lineage_status") == "cold_start"
@@ -5906,6 +6527,24 @@ def _build_agent_decision_trace(
         "cross_cycle_status": cross_cycle_context["status"],
         "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
         "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
+        "portfolio_state_status": cross_cycle_context.get("portfolio_state_status"),
+        "portfolio_state_ref": cross_cycle_context.get("portfolio_state_ref"),
+        "portfolio_state_carry_ref": cross_cycle_context.get("portfolio_state_carry_ref"),
+        "portfolio_state_hash": cross_cycle_context.get("portfolio_state_hash"),
+        "previous_portfolio_case_id": cross_cycle_context.get("previous_portfolio_case_id"),
+        "previous_portfolio_position_count": cross_cycle_context.get(
+            "previous_portfolio_position_count"
+        ),
+        "previous_portfolio_instruments": list(
+            cross_cycle_context.get("previous_portfolio_instruments", [])
+        ),
+        "portfolio_overlap_instruments": list(
+            cross_cycle_context.get("portfolio_overlap_instruments", [])
+        ),
+        "portfolio_rebalance_action": cross_cycle_context.get("portfolio_rebalance_action"),
+        "portfolio_target_capital_budget_scale": cross_cycle_context.get(
+            "portfolio_target_capital_budget_scale"
+        ),
         "multi_cycle_lineage_status": multi_cycle_context["status"],
         "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
         "multi_cycle_latest_runtime_feedback_ref": multi_cycle_context.get("latest_runtime_feedback_ref"),
@@ -6018,6 +6657,7 @@ def _score_agent_candidates(
     quality_repair_score_adjustments = dict(degraded_oss_response["candidate_score_adjustments"])
     source_quality_penalty_by_action = dict(degraded_oss_response["source_quality_penalty_by_action"])
     cross_cycle_score_adjustments = _cross_cycle_score_adjustments(cross_cycle_context)
+    portfolio_state_score_adjustments = _portfolio_state_score_adjustments(cross_cycle_context)
     multi_cycle_lineage_score_adjustments = _multi_cycle_lineage_score_adjustments(multi_cycle_context)
     risk_off = max(0.25, policy_hint_risk - 0.35)
     memory_score_adjustments = dict(memory_influence["candidate_score_adjustments"])
@@ -6073,6 +6713,7 @@ def _score_agent_candidates(
                 + float(quality_repair_score_adjustments["feedback-adapt"])
                 + float(source_quality_penalty_by_action["feedback-adapt"])
                 + float(cross_cycle_score_adjustments["feedback-adapt"])
+                + float(portfolio_state_score_adjustments["feedback-adapt"])
                 + float(multi_cycle_lineage_score_adjustments["feedback-adapt"])
                 + feedback_score
                 + policy_quality
@@ -6094,6 +6735,7 @@ def _score_agent_candidates(
                 + float(alpha_seed_score_adjustments["retain-observe"])
                 + float(quality_repair_score_adjustments["retain-observe"])
                 + float(source_quality_penalty_by_action["retain-observe"])
+                + float(portfolio_state_score_adjustments["retain-observe"])
                 + max(feedback_score, 0)
             ),
             "fallback_evidence_refs": (f"policy://{baseline_policy['policy_id']}",),
@@ -6112,6 +6754,7 @@ def _score_agent_candidates(
                 + float(quality_repair_score_adjustments["risk-off"])
                 + float(source_quality_penalty_by_action["risk-off"])
                 + float(cross_cycle_score_adjustments["risk-off"])
+                + float(portfolio_state_score_adjustments["risk-off"])
                 + float(multi_cycle_lineage_score_adjustments["risk-off"])
                 + max(0.0, risk_penalty)
             ),
@@ -6130,6 +6773,7 @@ def _score_agent_candidates(
                 + float(alpha_seed_score_adjustments["contrarian-check"])
                 + float(quality_repair_score_adjustments["contrarian-check"])
                 + float(source_quality_penalty_by_action["contrarian-check"])
+                + float(portfolio_state_score_adjustments["contrarian-check"])
             ),
             "fallback_evidence_refs": (
                 f"oss://{oss_inputs['reflection_artifact']['component']}/{oss_inputs['reflection_artifact']['request_id']}",
@@ -6256,6 +6900,32 @@ def _build_persona_decision_artifact(
         ),
         "cross_cycle_context": copy.deepcopy(dict(cross_cycle_context)),
         "cross_cycle_score_adjustments": _cross_cycle_score_adjustments(cross_cycle_context),
+        "portfolio_state_carryover": {
+            "model_id": PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID,
+            "status": cross_cycle_context.get("portfolio_state_status"),
+            "state_ref": cross_cycle_context.get("portfolio_state_ref"),
+            "carry_ref": cross_cycle_context.get("portfolio_state_carry_ref"),
+            "state_hash": cross_cycle_context.get("portfolio_state_hash"),
+            "previous_case_id": cross_cycle_context.get("previous_portfolio_case_id"),
+            "previous_position_count": cross_cycle_context.get("previous_portfolio_position_count"),
+            "previous_instruments": list(cross_cycle_context.get("previous_portfolio_instruments", [])),
+            "previous_positions_by_instrument": copy.deepcopy(
+                dict(cross_cycle_context.get("previous_portfolio_positions_by_instrument", {}))
+            ),
+            "previous_gross_exposure_pct": cross_cycle_context.get(
+                "previous_portfolio_gross_exposure_pct"
+            ),
+            "previous_net_exposure_pct": cross_cycle_context.get(
+                "previous_portfolio_net_exposure_pct"
+            ),
+            "rebalance_action": cross_cycle_context.get("portfolio_rebalance_action"),
+            "target_capital_budget_scale": cross_cycle_context.get(
+                "portfolio_target_capital_budget_scale"
+            ),
+        },
+        "portfolio_state_score_adjustments": _portfolio_state_score_adjustments(
+            cross_cycle_context
+        ),
         "multi_cycle_lineage_context": copy.deepcopy(dict(multi_cycle_context)),
         "multi_cycle_lineage_score_adjustments": _multi_cycle_lineage_score_adjustments(
             multi_cycle_context
@@ -6363,6 +7033,24 @@ def _build_persona_decision_artifact(
         "cross_cycle_state_ref": cross_cycle_context.get("state_ref"),
         "cross_cycle_runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
         "cross_cycle_previous_case_id": cross_cycle_context.get("previous_case_id"),
+        "portfolio_state_status": cross_cycle_context.get("portfolio_state_status"),
+        "portfolio_state_ref": cross_cycle_context.get("portfolio_state_ref"),
+        "portfolio_state_carry_ref": cross_cycle_context.get("portfolio_state_carry_ref"),
+        "portfolio_state_hash": cross_cycle_context.get("portfolio_state_hash"),
+        "previous_portfolio_case_id": cross_cycle_context.get("previous_portfolio_case_id"),
+        "previous_portfolio_position_count": cross_cycle_context.get(
+            "previous_portfolio_position_count"
+        ),
+        "previous_portfolio_instruments": list(
+            cross_cycle_context.get("previous_portfolio_instruments", [])
+        ),
+        "portfolio_overlap_instruments": list(
+            cross_cycle_context.get("portfolio_overlap_instruments", [])
+        ),
+        "portfolio_rebalance_action": cross_cycle_context.get("portfolio_rebalance_action"),
+        "portfolio_target_capital_budget_scale": cross_cycle_context.get(
+            "portfolio_target_capital_budget_scale"
+        ),
         "multi_cycle_lineage_status": multi_cycle_context["status"],
         "multi_cycle_lineage_ref": multi_cycle_context.get("lineage_ref"),
         "multi_cycle_lineage_depth": multi_cycle_context.get("lineage_depth"),
@@ -6649,6 +7337,36 @@ def _build_persona_decision_artifact(
                 > 0.0
             )
         ),
+        "uses_portfolio_state_carryover_or_declares_cold_start": (
+            (
+                cross_cycle_context.get("portfolio_state_status") == "cold_start"
+                and not cross_cycle_context.get("portfolio_state_ref")
+                and not cross_cycle_context.get("portfolio_state_carry_ref")
+                and all(
+                    float(value) == 0.0
+                    for value in scoring_inputs["portfolio_state_score_adjustments"].values()
+                )
+            )
+            or (
+                cross_cycle_context.get("portfolio_state_status") == "applied"
+                and str(cross_cycle_context["portfolio_state_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(cross_cycle_context["portfolio_state_carry_ref"])
+                in candidate_generation["request"]["input_refs"]
+                and str(cross_cycle_context["portfolio_state_ref"])
+                in selected_candidate.get("evidence_refs", [])
+                and str(cross_cycle_context["portfolio_state_carry_ref"])
+                in selected_candidate.get("evidence_refs", [])
+                and int(cross_cycle_context.get("previous_portfolio_position_count") or 0)
+                == PORTFOLIO_LEG_COUNT
+                and float(
+                    scoring_inputs["portfolio_state_score_adjustments"][
+                        _candidate_action_key(str(selected_candidate["candidate_id"]))
+                    ]
+                )
+                > 0.0
+            )
+        ),
         "uses_multi_cycle_lineage_or_declares_cold_start": (
             (
                 multi_cycle_context["status"] == "cold_start"
@@ -6737,6 +7455,7 @@ def _persona_candidate_scorecard(
     quality_repair_score_adjustments = dict(scoring_inputs["oss_quality_repair_score_adjustments"])
     source_quality_penalty_by_action = dict(scoring_inputs["source_quality_penalty_by_action"])
     cross_cycle_score_adjustments = dict(scoring_inputs["cross_cycle_score_adjustments"])
+    portfolio_state_score_adjustments = dict(scoring_inputs["portfolio_state_score_adjustments"])
     multi_cycle_lineage_score_adjustments = dict(scoring_inputs["multi_cycle_lineage_score_adjustments"])
     if candidate_id.endswith("-feedback-adapt"):
         formula_id = "feedback_adapt_score_v1"
@@ -6751,6 +7470,7 @@ def _persona_candidate_scorecard(
         quality_repair_adjustment = float(quality_repair_score_adjustments["feedback-adapt"])
         source_quality_penalty = float(source_quality_penalty_by_action["feedback-adapt"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["feedback-adapt"])
+        portfolio_state_adjustment = float(portfolio_state_score_adjustments["feedback-adapt"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["feedback-adapt"]
         )
@@ -6765,6 +7485,7 @@ def _persona_candidate_scorecard(
             + quality_repair_adjustment
             + source_quality_penalty
             + cross_cycle_adjustment
+            + portfolio_state_adjustment
             + multi_cycle_lineage_adjustment
             + feedback_score
             + policy_quality
@@ -6783,6 +7504,7 @@ def _persona_candidate_scorecard(
             "oss_quality_repair_adjustment": quality_repair_adjustment,
             "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
+            "portfolio_state_adjustment": portfolio_state_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "feedback_score": feedback_score,
             "policy_quality": policy_quality,
@@ -6802,6 +7524,7 @@ def _persona_candidate_scorecard(
         quality_repair_adjustment = float(quality_repair_score_adjustments["retain-observe"])
         source_quality_penalty = float(source_quality_penalty_by_action["retain-observe"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["retain-observe"])
+        portfolio_state_adjustment = float(portfolio_state_score_adjustments["retain-observe"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["retain-observe"]
         )
@@ -6816,6 +7539,7 @@ def _persona_candidate_scorecard(
             + quality_repair_adjustment
             + source_quality_penalty
             + cross_cycle_adjustment
+            + portfolio_state_adjustment
             + multi_cycle_lineage_adjustment
             + max(feedback_score, 0.0),
             10,
@@ -6831,6 +7555,7 @@ def _persona_candidate_scorecard(
             "oss_quality_repair_adjustment": quality_repair_adjustment,
             "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
+            "portfolio_state_adjustment": portfolio_state_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "positive_feedback_score": round(max(feedback_score, 0.0), 10),
         }
@@ -6847,6 +7572,7 @@ def _persona_candidate_scorecard(
         quality_repair_adjustment = float(quality_repair_score_adjustments["risk-off"])
         source_quality_penalty = float(source_quality_penalty_by_action["risk-off"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["risk-off"])
+        portfolio_state_adjustment = float(portfolio_state_score_adjustments["risk-off"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["risk-off"]
         )
@@ -6861,6 +7587,7 @@ def _persona_candidate_scorecard(
             + quality_repair_adjustment
             + source_quality_penalty
             + cross_cycle_adjustment
+            + portfolio_state_adjustment
             + multi_cycle_lineage_adjustment
             + max(0.0, risk_penalty),
             10,
@@ -6876,6 +7603,7 @@ def _persona_candidate_scorecard(
             "oss_quality_repair_adjustment": quality_repair_adjustment,
             "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
+            "portfolio_state_adjustment": portfolio_state_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
             "risk_penalty_signal": round(max(0.0, risk_penalty), 10),
         }
@@ -6892,6 +7620,7 @@ def _persona_candidate_scorecard(
         quality_repair_adjustment = float(quality_repair_score_adjustments["contrarian-check"])
         source_quality_penalty = float(source_quality_penalty_by_action["contrarian-check"])
         cross_cycle_adjustment = float(cross_cycle_score_adjustments["contrarian-check"])
+        portfolio_state_adjustment = float(portfolio_state_score_adjustments["contrarian-check"])
         multi_cycle_lineage_adjustment = float(
             multi_cycle_lineage_score_adjustments["contrarian-check"]
         )
@@ -6906,6 +7635,7 @@ def _persona_candidate_scorecard(
             + quality_repair_adjustment
             + source_quality_penalty
             + cross_cycle_adjustment
+            + portfolio_state_adjustment
             + multi_cycle_lineage_adjustment,
             10,
         )
@@ -6920,6 +7650,7 @@ def _persona_candidate_scorecard(
             "oss_quality_repair_adjustment": quality_repair_adjustment,
             "oss_quality_degradation_penalty": source_quality_penalty,
             "cross_cycle_adjustment": cross_cycle_adjustment,
+            "portfolio_state_adjustment": portfolio_state_adjustment,
             "multi_cycle_lineage_adjustment": multi_cycle_lineage_adjustment,
         }
     candidate_score = round(float(candidate["score"]), 10)
@@ -7922,6 +8653,7 @@ def _build_evolution_decision(
 def _build_operational_context(
     *,
     episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
     generation_policies: Sequence[Mapping[str, Any]],
     executions: Sequence[Mapping[str, Any]],
     evaluations: Sequence[Mapping[str, Any]],
@@ -7957,6 +8689,7 @@ def _build_operational_context(
     )
     persona_conflict = _build_persona_conflict_resolution(
         episode=episode,
+        cross_cycle_context=cross_cycle_context,
         final_policy=generation_policies[-1],
         market_friction=market_friction,
         decision_traces=decision_traces,
@@ -8289,6 +9022,7 @@ def _build_broker_lifecycle_report(
 def _build_persona_conflict_resolution(
     *,
     episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
     final_policy: Mapping[str, Any],
     market_friction: Mapping[str, Any],
     decision_traces: Sequence[Mapping[str, Any]],
@@ -8462,8 +9196,44 @@ def _build_persona_conflict_resolution(
         }
         for conflict_type in conflict_types
     ]
+    portfolio_state_scale = _portfolio_state_target_scale(cross_cycle_context)
+    portfolio_state_carry_ref = cross_cycle_context.get("portfolio_state_carry_ref")
+    portfolio_state_ref = cross_cycle_context.get("portfolio_state_ref")
+    portfolio_state_carryover = {
+        "model_id": PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID,
+        "status": cross_cycle_context.get("portfolio_state_status"),
+        "state_ref": portfolio_state_ref,
+        "carry_ref": portfolio_state_carry_ref,
+        "state_hash": cross_cycle_context.get("portfolio_state_hash"),
+        "previous_case_id": cross_cycle_context.get("previous_portfolio_case_id"),
+        "previous_position_count": cross_cycle_context.get(
+            "previous_portfolio_position_count"
+        ),
+        "previous_gross_exposure_pct": cross_cycle_context.get(
+            "previous_portfolio_gross_exposure_pct"
+        ),
+        "previous_net_exposure_pct": cross_cycle_context.get(
+            "previous_portfolio_net_exposure_pct"
+        ),
+        "overlap_instruments": list(
+            cross_cycle_context.get("portfolio_overlap_instruments", [])
+        ),
+        "rebalance_action": cross_cycle_context.get("portfolio_rebalance_action"),
+        "target_capital_budget_scale": portfolio_state_scale,
+        "candidate_score_adjustments": _portfolio_state_score_adjustments(
+            cross_cycle_context
+        ),
+        "evidence_refs": [
+            str(ref)
+            for ref in (portfolio_state_carry_ref, portfolio_state_ref)
+            if ref
+        ],
+    }
     resolved_weights = {
-        instrument: round(float(leg["weight"]) * min(1.0, risk_scale + 0.1), 6)
+        instrument: round(
+            float(leg["weight"]) * min(1.0, risk_scale + 0.1) * portfolio_state_scale,
+            6,
+        )
         for instrument, leg in final_policy["legs"].items()
     }
     total_weight = sum(resolved_weights.values())
@@ -8582,7 +9352,11 @@ def _build_persona_conflict_resolution(
             "weight_by_instrument": resolved_weights,
             "capital_budget_pct": round(sum(resolved_weights.values()), 6),
             "turnover_budget": 1.25,
+            "portfolio_state_target_capital_budget_scale": portfolio_state_scale,
+            "portfolio_state_carryover_ref": portfolio_state_carry_ref,
+            "portfolio_state_ref": portfolio_state_ref,
         },
+        "portfolio_state_carryover": portfolio_state_carryover,
         "decision_trace_ref": decision_traces[-1]["reflection_id"],
         "selected_action_ref": selected_action_ref,
         "oss_risk_ref": risk_oss_ref,
@@ -8592,6 +9366,7 @@ def _build_persona_conflict_resolution(
             risk_oss_ref,
             proposal_lineage_ref,
             *proposal_refs,
+            *portfolio_state_carryover["evidence_refs"],
             *[
                 conflict["conflict_id"]
                 for conflict in classified_conflicts
@@ -9957,6 +10732,17 @@ def _build_lean_handoff_packet(
     conflict_ref = str(persona_conflict_resolution["resolution_ref"])
     schedule_ref = str(autonomous_schedule["schedule_ref"])
     resolved_allocation = persona_conflict_resolution["resolved_allocation"]
+    portfolio_state_carryover = copy.deepcopy(
+        dict(persona_conflict_resolution.get("portfolio_state_carryover") or {})
+    )
+    portfolio_state_refs = [
+        str(ref)
+        for ref in (
+            portfolio_state_carryover.get("carry_ref"),
+            portfolio_state_carryover.get("state_ref"),
+        )
+        if ref
+    ]
     final_oos_step = strict_oos_evolution_proof["proof_steps"][-1]
     strategy_packet = copy.deepcopy(dict(lean_engine_replay["case_specific_strategy_packet"]))
     strategy_packet_ref = str(strategy_packet["packet_ref"])
@@ -10147,6 +10933,16 @@ def _build_lean_handoff_packet(
         "resolved_weight_by_instrument": copy.deepcopy(
             dict(resolved_allocation["weight_by_instrument"])
         ),
+        "portfolio_state_carryover": portfolio_state_carryover,
+        "portfolio_state_carryover_ref": portfolio_state_carryover.get("carry_ref"),
+        "portfolio_state_ref": portfolio_state_carryover.get("state_ref"),
+        "portfolio_state_hash": portfolio_state_carryover.get("state_hash"),
+        "portfolio_state_rebalance_action": portfolio_state_carryover.get(
+            "rebalance_action"
+        ),
+        "portfolio_state_target_capital_budget_scale": portfolio_state_carryover.get(
+            "target_capital_budget_scale"
+        ),
         "schedule_ref": schedule_ref,
         "next_cycle_due_at": autonomous_schedule["next_cycle_due_at"],
         "lean_engine_replay_id": lean_engine_replay["replay_id"],
@@ -10196,6 +10992,7 @@ def _build_lean_handoff_packet(
             tracking_reconciliation_ref,
             tracking_repair_ref,
             conflict_ref,
+            *portfolio_state_refs,
             schedule_ref,
             *selected_oss_refs,
             f"lean-engine://{lean_engine_replay['replay_id']}",
@@ -10534,6 +11331,17 @@ def _build_lean_runtime_feedback_response(
     multi_persona_proposal_persona_ids = list(
         lean_handoff.get("multi_persona_proposal_persona_ids", [])
     )
+    portfolio_state_carryover = dict(lean_handoff.get("portfolio_state_carryover") or {})
+    portfolio_state_status = str(portfolio_state_carryover.get("status") or "cold_start")
+    portfolio_state_carry_ref = str(lean_handoff.get("portfolio_state_carryover_ref") or "")
+    portfolio_state_ref = str(lean_handoff.get("portfolio_state_ref") or "")
+    portfolio_state_rebalance_action = str(
+        lean_handoff.get("portfolio_state_rebalance_action") or ""
+    )
+    portfolio_state_target_scale = _finite_float(
+        lean_handoff.get("portfolio_state_target_capital_budget_scale"),
+        1.0,
+    )
     openclaw_context_ref = str(lean_handoff.get("openclaw_session_context_ref", ""))
     openclaw_session_ref = str(lean_handoff.get("openclaw_session_ref", ""))
     openclaw_source_oss_ref = str(lean_handoff.get("openclaw_source_oss_ref", ""))
@@ -10569,6 +11377,11 @@ def _build_lean_runtime_feedback_response(
         oss_quality_repaired_artifact_ref,
         multi_persona_proposal_lineage_ref,
         *multi_persona_proposal_refs,
+        *[
+            ref
+            for ref in (portfolio_state_carry_ref, portfolio_state_ref)
+            if ref
+        ],
         openclaw_context_ref,
         openclaw_session_ref,
         openclaw_source_oss_ref,
@@ -10700,6 +11513,25 @@ def _build_lean_runtime_feedback_response(
                 set(multi_persona_proposal_persona_ids)
             )
         ),
+        "portfolio_state_carryover_bound": (
+            (
+                portfolio_state_status == "cold_start"
+                and not portfolio_state_carry_ref
+                and not portfolio_state_ref
+                and portfolio_state_target_scale == 1.0
+            )
+            or (
+                portfolio_state_status == "applied"
+                and bool(portfolio_state_carry_ref)
+                and portfolio_state_carry_ref in lean_handoff.get("runtime_bundle_refs", [])
+                and portfolio_state_carry_ref in evidence_refs
+                and bool(portfolio_state_ref)
+                and portfolio_state_ref in lean_handoff.get("runtime_bundle_refs", [])
+                and portfolio_state_ref in evidence_refs
+                and portfolio_state_rebalance_action
+                and portfolio_state_target_scale < 1.0
+            )
+        ),
         "openclaw_session_context_bound": (
             bool(openclaw_context_ref)
             and openclaw_context_ref in lean_handoff.get("runtime_bundle_refs", [])
@@ -10814,6 +11646,10 @@ def _build_lean_runtime_feedback_response(
             "bind_multi_persona_proposal_lineage_ref": multi_persona_proposal_lineage_ref,
             "bind_multi_persona_proposal_refs": multi_persona_proposal_refs,
             "bind_multi_persona_proposal_persona_ids": multi_persona_proposal_persona_ids,
+            "bind_portfolio_state_carryover_ref": portfolio_state_carry_ref or None,
+            "bind_portfolio_state_ref": portfolio_state_ref or None,
+            "bind_portfolio_state_rebalance_action": portfolio_state_rebalance_action or None,
+            "bind_portfolio_state_target_capital_budget_scale": portfolio_state_target_scale,
             "bind_openclaw_session_context_ref": openclaw_context_ref,
             "bind_openclaw_session_ref": openclaw_session_ref,
             "bind_openclaw_source_oss_ref": openclaw_source_oss_ref,
@@ -10866,6 +11702,11 @@ def _build_lean_runtime_feedback_response(
                 "multi_persona_proposal_lineage_hash": multi_persona_proposal_lineage_hash,
                 "multi_persona_proposal_refs": multi_persona_proposal_refs,
                 "multi_persona_proposal_persona_ids": multi_persona_proposal_persona_ids,
+                "portfolio_state_status": portfolio_state_status,
+                "portfolio_state_carry_ref": portfolio_state_carry_ref,
+                "portfolio_state_ref": portfolio_state_ref,
+                "portfolio_state_rebalance_action": portfolio_state_rebalance_action,
+                "portfolio_state_target_scale": portfolio_state_target_scale,
                 "openclaw_context_ref": openclaw_context_ref,
                 "openclaw_session_ref": openclaw_session_ref,
                 "openclaw_source_oss_ref": openclaw_source_oss_ref,
@@ -12848,6 +13689,7 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("risk_analytics_lineage_bound") is True
         and replay.get("oss_quality_repair_lineage_bound") is True
         and replay.get("multi_persona_proposal_lineage_bound") is True
+        and replay.get("portfolio_state_carryover_bound") is True
         and replay.get("openclaw_session_context_bound") is True
         and replay.get("alpha_seed_revision_handoff_bound") is True
         and replay.get("lean_packet_execution_projection_consumed") is True
@@ -13981,6 +14823,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("uses_alpha_seed_revision") is True
         and replay.get("uses_degraded_oss_response_repair") is True
         and replay.get("uses_cross_cycle_runtime_feedback_or_declares_cold_start") is True
+        and replay.get("uses_portfolio_state_carryover_or_declares_cold_start") is True
         and replay.get("uses_multi_cycle_lineage_or_declares_cold_start") is True
         and replay.get("input_hash")
         and replay.get("candidate_hash")
@@ -14061,6 +14904,10 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
         input_context.get("institutional_memory_contributing_persona_ids", [])
     )
     institutional_memory_usage = response.get("institutional_memory_usage", {})
+    portfolio_state_status = input_context.get("portfolio_state_status")
+    portfolio_state_ref = input_context.get("portfolio_state_ref")
+    portfolio_state_carry_ref = input_context.get("portfolio_state_carry_ref")
+    portfolio_state_usage = response.get("portfolio_state_usage", {})
     multi_cycle_lineage_status = input_context.get("multi_cycle_lineage_status")
     multi_cycle_lineage_ref = input_context.get("multi_cycle_lineage_ref")
     multi_cycle_latest_runtime_feedback_ref = input_context.get(
@@ -14121,6 +14968,29 @@ def _trace_persona_reasoning_is_usable(trace: Mapping[str, Any]) -> bool:
                 and institutional_memory_entry_ref in request.get("input_refs", [])
                 and institutional_memory_entry_ref in generation_request.get("input_refs", [])
                 and input_context.get("persona_id") not in institutional_memory_contributing_persona_ids
+            )
+        )
+        and portfolio_state_usage.get("model_id") == PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID
+        and (
+            (
+                portfolio_state_status == "cold_start"
+                and portfolio_state_usage.get("status") == "cold_start"
+                and portfolio_state_ref is None
+                and portfolio_state_carry_ref is None
+            )
+            or (
+                portfolio_state_status == "applied"
+                and portfolio_state_usage.get("status") == "applied"
+                and portfolio_state_usage.get("state_ref") == portfolio_state_ref
+                and portfolio_state_usage.get("carry_ref") == portfolio_state_carry_ref
+                and portfolio_state_ref in request.get("input_refs", [])
+                and portfolio_state_ref in generation_request.get("input_refs", [])
+                and portfolio_state_carry_ref in request.get("input_refs", [])
+                and portfolio_state_carry_ref in generation_request.get("input_refs", [])
+                and int(portfolio_state_usage.get("previous_position_count", 0))
+                == PORTFOLIO_LEG_COUNT
+                and float(portfolio_state_usage.get("target_capital_budget_scale", 1.0))
+                < 1.0
             )
         )
         and multi_cycle_lineage_usage.get("model_id") == PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID
@@ -15759,6 +16629,7 @@ def _build_usability_dimensions(
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
+    portfolio_state_carryover: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
     institutional_memory_lineage: Mapping[str, Any],
@@ -15903,6 +16774,9 @@ def _build_usability_dimensions(
     cross_cycle_runtime_carryover = 1.0 if _cross_cycle_carryover_is_usable(
         cross_cycle_carryover
     ) else 0.0
+    portfolio_state_carryover_score = 1.0 if _portfolio_state_carryover_is_usable(
+        portfolio_state_carryover
+    ) else 0.0
     persisted_cycle_resume_carryover = 1.0 if _persisted_cycle_resume_is_usable(
         persisted_cycle_resume
     ) else 0.0
@@ -15951,6 +16825,7 @@ def _build_usability_dimensions(
         "multi_oss_closed_loop": multi_oss_closed_loop,
         "persona_oss_ooda_causality": persona_oss_ooda_causality,
         "cross_cycle_runtime_carryover": cross_cycle_runtime_carryover,
+        "portfolio_state_carryover": portfolio_state_carryover_score,
         "persisted_cycle_resume_carryover": persisted_cycle_resume_carryover,
         "multi_cycle_lineage_carryover": multi_cycle_lineage_carryover,
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
@@ -16012,6 +16887,7 @@ def _diagnose_validation_execution(
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
+    portfolio_state_carryover: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
     institutional_memory_lineage: Mapping[str, Any],
@@ -16298,6 +17174,25 @@ def _diagnose_validation_execution(
                 "runtime_feedback_ref": cross_cycle_carryover.get("runtime_feedback_ref"),
                 "trace_binding_count": len(cross_cycle_carryover["trace_bindings"]),
                 "replay": copy.deepcopy(dict(cross_cycle_carryover["replay"])),
+            },
+        ),
+        _diagnostic_check(
+            "portfolio_state_carryover_drives_next_case_sizing",
+            _portfolio_state_carryover_is_usable(portfolio_state_carryover),
+            {
+                "proof_id": portfolio_state_carryover["proof_id"],
+                "carryover_status": portfolio_state_carryover["carryover_status"],
+                "previous_case_id": portfolio_state_carryover.get("previous_case_id"),
+                "state_ref": portfolio_state_carryover.get("state_ref"),
+                "carry_ref": portfolio_state_carryover.get("carry_ref"),
+                "previous_position_count": portfolio_state_carryover.get(
+                    "previous_position_count"
+                ),
+                "target_capital_budget_scale": portfolio_state_carryover.get(
+                    "target_capital_budget_scale"
+                ),
+                "trace_binding_count": len(portfolio_state_carryover["trace_bindings"]),
+                "replay": copy.deepcopy(dict(portfolio_state_carryover["replay"])),
             },
         ),
         _diagnostic_check(
@@ -16979,6 +17874,7 @@ def _build_case_result(
     multi_oss_closed_loop_proof: Mapping[str, Any],
     persona_oss_ooda_ledger: Mapping[str, Any],
     cross_cycle_carryover: Mapping[str, Any],
+    portfolio_state_carryover: Mapping[str, Any],
     persisted_cycle_resume: Mapping[str, Any],
     multi_cycle_lineage: Mapping[str, Any],
     institutional_memory_lineage: Mapping[str, Any],
@@ -17083,6 +17979,7 @@ def _build_case_result(
         "operational_context": dict(operational_context),
         "cross_cycle": {
             "runtime_feedback_carryover": copy.deepcopy(dict(cross_cycle_carryover)),
+            "portfolio_state_carryover": copy.deepcopy(dict(portfolio_state_carryover)),
             "persisted_cycle_resume": copy.deepcopy(dict(persisted_cycle_resume)),
             "multi_cycle_lineage": copy.deepcopy(dict(multi_cycle_lineage)),
         },
@@ -17135,6 +18032,9 @@ def _build_case_result(
             ] == 1.0,
             "cross_cycle_runtime_feedback_drives_next_case": usability_dimensions[
                 "cross_cycle_runtime_carryover"
+            ] == 1.0,
+            "portfolio_state_carryover_drives_next_case": usability_dimensions[
+                "portfolio_state_carryover"
             ] == 1.0,
             "persisted_cycle_resume_drives_next_case": usability_dimensions[
                 "persisted_cycle_resume_carryover"
@@ -17276,6 +18176,9 @@ def _build_summary(
     ]
     cross_cycle_carryovers = [
         case["cross_cycle"]["runtime_feedback_carryover"] for case in cases
+    ]
+    portfolio_state_carryovers = [
+        case["cross_cycle"]["portfolio_state_carryover"] for case in cases
     ]
     persisted_cycle_resumes = [
         case["cross_cycle"]["persisted_cycle_resume"] for case in cases
@@ -17860,6 +18763,29 @@ def _build_summary(
             for flag, value in proof["replay"].items()
             if value is True
         }),
+        "portfolio_state_carryover_models": sorted({
+            proof["model_id"] for proof in portfolio_state_carryovers
+        }),
+        "portfolio_state_carryover_statuses": sorted({
+            proof["carryover_status"] for proof in portfolio_state_carryovers
+        }),
+        "portfolio_state_carryover_rebalance_actions": sorted({
+            str(proof["rebalance_action"])
+            for proof in portfolio_state_carryovers
+            if proof.get("rebalance_action")
+        }),
+        "portfolio_state_carryover_score_adjusted_actions": sorted({
+            action
+            for proof in portfolio_state_carryovers
+            for action, value in proof["score_adjustments"].items()
+            if float(value) > 0.0
+        }),
+        "portfolio_state_carryover_replay_flags": sorted({
+            flag
+            for proof in portfolio_state_carryovers
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
         "persisted_cycle_resume_models": sorted({
             proof["model_id"] for proof in persisted_cycle_resumes
         }),
@@ -18371,6 +19297,32 @@ def _build_summary(
         "cross_cycle_runtime_feedback_drives_next_case_count": sum(
             1 for item in usable if item["cross_cycle_runtime_feedback_drives_next_case"]
         ),
+        "portfolio_state_carryover_count": len(portfolio_state_carryovers),
+        "portfolio_state_carryover_pass_count": sum(
+            1
+            for proof in portfolio_state_carryovers
+            if _portfolio_state_carryover_is_usable(proof)
+        ),
+        "portfolio_state_carryover_applied_count": sum(
+            1
+            for proof in portfolio_state_carryovers
+            if proof["carryover_status"] == "applied"
+        ),
+        "portfolio_state_carryover_cold_start_count": sum(
+            1
+            for proof in portfolio_state_carryovers
+            if proof["carryover_status"] == "cold_start"
+        ),
+        "portfolio_state_carryover_trace_binding_count": sum(
+            len(proof["trace_bindings"]) for proof in portfolio_state_carryovers
+        ),
+        "portfolio_state_carryover_drives_next_case_count": sum(
+            1 for item in usable if item["portfolio_state_carryover_drives_next_case"]
+        ),
+        "portfolio_state_carryover_position_count": sum(
+            int(proof.get("previous_position_count") or 0)
+            for proof in portfolio_state_carryovers
+        ),
         "persisted_cycle_resume_count": len(persisted_cycle_resumes),
         "persisted_cycle_resume_pass_count": sum(
             1 for proof in persisted_cycle_resumes if _persisted_cycle_resume_is_usable(proof)
@@ -18700,6 +19652,7 @@ def _build_summary(
             "The full 3000-case run covers every legal OSS role-component matrix cell with no unexpected pair, and each covered pair participates in the persona closed-loop proof.",
             "Every case emits an OODA causal ledger proving OSS responses, persona follow-up outputs, candidate generation, scorer output, selected action, and LEAN handoff occur in replayable temporal order without future artifact references.",
             "Every non-cold-start persona case consumes the prior autonomous cycle's LEAN runtime feedback in reasoning, candidate generation, selected evidence, and scorer adjustments.",
+            "Every non-cold-start persona case carries the prior portfolio position state into reasoning, candidate generation, scorer adjustments, selected evidence, resolved allocation sizing, LEAN handoff, projection, and runtime feedback.",
             "Every non-cold-start persona case resumes that prior autonomous cycle through persisted checkpoint, schedule, and object-store readback refs before using the runtime feedback.",
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
             "Every case carries the Qlib/vectorbt alpha seed revision into the LEAN strategy packet, Object Store readback, handoff bundle, runtime bundle refs, and runtime feedback state updates.",

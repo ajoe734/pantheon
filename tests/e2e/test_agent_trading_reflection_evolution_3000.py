@@ -61,6 +61,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
     PERSONA_OSS_QUALITY_REPAIR_HANDOFF_MODEL_ID,
     PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
+    PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID,
     PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID,
     PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID,
     PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID,
@@ -201,6 +202,17 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["cross_cycle_runtime_feedback_cold_start_count"] == summary["persona_count"]
     assert summary["cross_cycle_carryover_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["cross_cycle_runtime_feedback_drives_next_case_count"] == DEFAULT_CASE_COUNT
+    assert summary["portfolio_state_carryover_count"] == DEFAULT_CASE_COUNT
+    assert summary["portfolio_state_carryover_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["portfolio_state_carryover_applied_count"] == (
+        DEFAULT_CASE_COUNT - summary["persona_count"]
+    )
+    assert summary["portfolio_state_carryover_cold_start_count"] == summary["persona_count"]
+    assert summary["portfolio_state_carryover_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["portfolio_state_carryover_drives_next_case_count"] == DEFAULT_CASE_COUNT
+    assert summary["portfolio_state_carryover_position_count"] == (
+        DEFAULT_CASE_COUNT - summary["persona_count"]
+    ) * PORTFOLIO_LEG_COUNT
     assert summary["persisted_cycle_resume_count"] == DEFAULT_CASE_COUNT
     assert summary["persisted_cycle_resume_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["persisted_cycle_resume_applied_count"] == (
@@ -548,6 +560,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "oss_quality_repair_lineage_bound",
         "openclaw_session_context_bound",
         "paper_runtime_guard_retained",
+        "portfolio_state_carryover_bound",
         "policy_oss_lineage_bound",
         "reflection_oss_lineage_bound",
         "risk_analytics_lineage_bound",
@@ -795,6 +808,41 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "same_persona_cycle_carryover",
         "scorer_applies_cross_cycle_adjustment",
         "selected_candidate_cites_cross_cycle_state",
+    }
+    assert coverage["portfolio_state_carryover_models"] == [
+        PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID
+    ]
+    assert set(coverage["portfolio_state_carryover_statuses"]) == {"applied", "cold_start"}
+    portfolio_state_rebalance_actions = set(coverage["portfolio_state_carryover_rebalance_actions"])
+    assert {
+        "carry_prior_gross_exposure_budget_to_new_portfolio",
+        "cold_start_no_prior_positions",
+    }.issubset(portfolio_state_rebalance_actions)
+    assert portfolio_state_rebalance_actions.issubset({
+        "carry_prior_gross_exposure_budget_to_new_portfolio",
+        "cold_start_no_prior_positions",
+        "rebalance_overlapping_positions_with_carried_exposure",
+    })
+    assert set(coverage["portfolio_state_carryover_score_adjusted_actions"]) == {
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    }
+    assert set(coverage["portfolio_state_carryover_replay_flags"]) == {
+        "candidate_generation_consumes_prior_positions",
+        "cold_start_or_prior_portfolio_state_bound",
+        "decision_artifact_replays_portfolio_state",
+        "lean_handoff_carries_portfolio_state_ref",
+        "prior_positions_available",
+        "projection_uses_adjusted_allocation",
+        "reasoning_consumes_prior_positions",
+        "replayable",
+        "resolved_allocation_uses_carried_state",
+        "runtime_feedback_binds_portfolio_state",
+        "same_persona_portfolio_state",
+        "scorecard_replays_portfolio_state_adjustment",
+        "scorer_applies_portfolio_state_adjustment",
+        "selected_candidate_cites_prior_positions",
     }
     assert coverage["persisted_cycle_resume_models"] == [
         PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID
@@ -1321,6 +1369,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_multi_oss_closed_loop_proof(case)
         _assert_persona_oss_ooda_causal_ledger(case)
         _assert_cross_cycle_runtime_carryover(case, latest_case_by_persona)
+        _assert_portfolio_state_carryover(case, latest_case_by_persona)
         _assert_persisted_cycle_resume_carryover(case, latest_case_by_persona)
         _assert_multi_cycle_lineage_carryover(case, persona_case_history)
         _assert_case_specific_upstream_artifacts(case)
@@ -2710,6 +2759,10 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
         previous_runtime_readback = previous_feedback["runtime_feedback"]
         expected_runtime_feedback_ref = f"lean-runtime-feedback://{previous_feedback['feedback_id']}"
         expected_state_ref = f"cross-cycle-runtime://{previous_case['case_id']}->{case['case_id']}"
+        expected_portfolio_carry_ref = (
+            f"portfolio-state-carryover://{previous_case['case_id']}->{case['case_id']}"
+        )
+        expected_portfolio_state_ref = f"portfolio-state://{previous_case['case_id']}/generation2"
         expected_checkpoint_ref = f"checkpoint://{previous_recovery['checkpoint_id']}"
         expected_schedule_ref = f"schedule://{previous_schedule['schedule_id']}"
         expected_metadata_ref = f"object-store://{previous_runtime_readback['object_store_metadata_key']}"
@@ -2717,6 +2770,8 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
         expected_evidence_refs = [
             expected_state_ref,
             expected_runtime_feedback_ref,
+            expected_portfolio_carry_ref,
+            expected_portfolio_state_ref,
             previous_feedback["source_runtime_ref"],
             previous_feedback["source_handoff_ref"],
             previous_ledger["ledger_ref"],
@@ -2816,6 +2871,213 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
             assert proof["previous_ooda_ledger_ref"] in reasoning_request["input_refs"]
             assert proof["previous_ooda_ledger_ref"] in candidate_request["input_refs"]
             assert proof["source_handoff_ref"] in candidate_request["input_refs"]
+
+
+def _assert_portfolio_state_carryover(case: dict, latest_case_by_persona: dict[str, dict]) -> None:
+    proof = case["cross_cycle"]["portfolio_state_carryover"]
+    traces = case["reflection"]["agent_decision_traces"]
+    previous_case = latest_case_by_persona.get(case["persona_id"])
+    conflict = case["operational_context"]["persona_conflict_resolution"]
+    allocation = conflict["resolved_allocation"]
+    handoff = case["operational_context"]["lean_handoff"]
+    projection = case["operational_context"]["lean_packet_execution_projection"]
+    runtime_feedback = case["operational_context"]["lean_runtime_feedback"]
+
+    assert proof["model_id"] == PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == f"portfolio-state-carryover://{case['case_id']}"
+    assert proof["input_hash"]
+    assert len(proof["trace_bindings"]) == len(traces) == 2
+    assert all(proof["replay"].values())
+    assert case["usability_dimensions"]["portfolio_state_carryover"] == 1.0
+    assert case["usable"]["portfolio_state_carryover_drives_next_case"] is True
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["portfolio_state_carryover_drives_next_case_sizing"]["status"] == "passed"
+
+    if previous_case is None:
+        assert proof["carryover_status"] == "cold_start"
+        assert proof["previous_case_id"] is None
+        assert proof["state_ref"] is None
+        assert proof["carry_ref"] is None
+        assert proof["state_hash"] is None
+        assert proof["previous_position_count"] == 0
+        assert proof["previous_positions_by_instrument"] == {}
+        assert proof["target_capital_budget_scale"] == 1.0
+        assert proof["rebalance_action"] == "cold_start_no_prior_positions"
+        assert all(float(value) == 0.0 for value in proof["score_adjustments"].values())
+        assert allocation["portfolio_state_target_capital_budget_scale"] == 1.0
+        assert allocation["portfolio_state_carryover_ref"] is None
+        assert allocation["portfolio_state_ref"] is None
+        assert handoff["portfolio_state_carryover_ref"] is None
+        assert handoff["portfolio_state_ref"] is None
+        assert runtime_feedback["state_updates"]["bind_portfolio_state_ref"] is None
+        assert runtime_feedback["state_updates"]["bind_portfolio_state_carryover_ref"] is None
+    else:
+        previous_projection = previous_case["operational_context"]["lean_packet_execution_projection"]
+        expected_state_ref = f"portfolio-state://{previous_case['case_id']}/generation2"
+        expected_carry_ref = (
+            f"portfolio-state-carryover://{previous_case['case_id']}->{case['case_id']}"
+        )
+
+        assert proof["carryover_status"] == "applied"
+        assert proof["previous_case_id"] == previous_case["case_id"]
+        assert proof["state_ref"] == expected_state_ref
+        assert proof["carry_ref"] == expected_carry_ref
+        assert proof["state_hash"].startswith("portfolio-state-")
+        assert proof["previous_position_count"] == PORTFOLIO_LEG_COUNT
+        assert set(proof["previous_positions_by_instrument"]) == set(previous_case["portfolio"]["instruments"])
+        assert proof["previous_gross_exposure_pct"] > 0.0
+        assert proof["previous_abs_market_value"] > 0.0
+        assert 0.88 <= proof["target_capital_budget_scale"] < 1.0
+        assert proof["rebalance_action"] in {
+            "carry_prior_gross_exposure_budget_to_new_portfolio",
+            "rebalance_overlapping_positions_with_carried_exposure",
+        }
+        assert proof["score_adjustments"]["feedback-adapt"] > 0.0
+        assert proof["score_adjustments"]["risk-off"] > 0.0
+        assert proof["score_adjustments"]["retain-observe"] > 0.0
+        assert proof["score_adjustments"]["contrarian-check"] == 0.0
+
+        for leg in previous_projection["leg_projections"]:
+            position = proof["previous_positions_by_instrument"][leg["instrument"]]
+            assert position["position_ref"] == f"{expected_state_ref}/position/{leg['instrument']}"
+            assert position["instrument"] == leg["instrument"]
+            assert position["execution_symbol"] == leg["execution_symbol"]
+            assert position["lean_symbol"] == leg["lean_symbol"]
+            assert position["direction"] == leg["direction"]
+            assert position["quantity"] == round(abs(leg["fill_quantity"]), 6)
+            assert position["signed_quantity"] == round(
+                position["quantity"] * leg["direction"],
+                6,
+            )
+            assert position["fill_price"] == round(leg["fill_price"], 6)
+            assert position["abs_market_value"] > 0.0
+            assert position["resolved_weight"] == leg["resolved_weight"]
+            assert position["target_ref"] == leg["target_ref"]
+            assert position["order_ref"] == leg["order_ref"]
+            assert position["fill_ref"] == leg["fill_ref"]
+            assert position["readback_ref"] == leg["readback_ref"]
+
+        assert conflict["portfolio_state_carryover"] == proof["conflict_portfolio_state_carryover"]
+        assert allocation["portfolio_state_carryover_ref"] == expected_carry_ref
+        assert allocation["portfolio_state_ref"] == expected_state_ref
+        assert allocation["portfolio_state_target_capital_budget_scale"] == proof[
+            "target_capital_budget_scale"
+        ]
+        assert proof["resolved_allocation"]["capital_budget_pct"] == allocation["capital_budget_pct"]
+        assert proof["resolved_allocation"]["weight_by_instrument"] == allocation["weight_by_instrument"]
+        assert allocation["capital_budget_pct"] < 1.0
+        assert handoff["portfolio_state_carryover_ref"] == expected_carry_ref
+        assert handoff["portfolio_state_ref"] == expected_state_ref
+        assert handoff["portfolio_state_hash"] == proof["state_hash"]
+        assert handoff["portfolio_state_rebalance_action"] == proof["rebalance_action"]
+        assert handoff["portfolio_state_target_capital_budget_scale"] == proof[
+            "target_capital_budget_scale"
+        ]
+        assert expected_carry_ref in handoff["runtime_bundle_refs"]
+        assert expected_state_ref in handoff["runtime_bundle_refs"]
+        assert projection["capital_budget_pct"] == allocation["capital_budget_pct"]
+        assert runtime_feedback["state_updates"]["bind_portfolio_state_ref"] == expected_state_ref
+        assert runtime_feedback["state_updates"]["bind_portfolio_state_carryover_ref"] == expected_carry_ref
+        assert runtime_feedback["state_updates"]["bind_portfolio_state_rebalance_action"] == proof[
+            "rebalance_action"
+        ]
+        assert runtime_feedback["state_updates"]["bind_portfolio_state_target_capital_budget_scale"] == proof[
+            "target_capital_budget_scale"
+        ]
+        assert runtime_feedback["replay"]["portfolio_state_carryover_bound"] is True
+
+    binding_by_trace = {
+        binding["trace_id"]: binding
+        for binding in proof["trace_bindings"]
+    }
+    assert set(binding_by_trace) == {trace["reflection_id"] for trace in traces}
+    for trace in traces:
+        binding = binding_by_trace[trace["reflection_id"]]
+        artifact = trace["agent_decision_artifact"]
+        reasoning = artifact["persona_reasoning"]
+        reasoning_request = reasoning["request"]
+        reasoning_response = reasoning["response"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        scorer_inputs = artifact["scorer"]["scoring_inputs"]
+        selected_id = trace["selected_candidate_id"]
+        selected_action = _candidate_action_from_id(selected_id)
+        selected_candidate = trace["selected_candidate"]
+        selected_card = artifact["scorer"]["scorecards"][selected_id]
+        scoring_carryover = scorer_inputs["portfolio_state_carryover"]
+
+        assert binding["generation"] == artifact["generation"]
+        assert binding["trace_id"] == trace["reflection_id"]
+        assert binding["selected_action"] == selected_action
+        assert trace["decision_inputs"]["portfolio_state_status"] == proof["carryover_status"]
+        assert trace["decision_inputs"]["portfolio_state_ref"] == proof["state_ref"]
+        assert trace["decision_inputs"]["portfolio_state_carry_ref"] == proof["carry_ref"]
+        assert artifact["input_context"]["portfolio_state_status"] == proof["carryover_status"]
+        assert artifact["input_context"]["portfolio_state_ref"] == proof["state_ref"]
+        assert artifact["input_context"]["portfolio_state_carry_ref"] == proof["carry_ref"]
+        assert artifact["input_context"]["previous_portfolio_position_count"] == proof[
+            "previous_position_count"
+        ]
+        assert reasoning_request["portfolio_state_status"] == proof["carryover_status"]
+        assert reasoning_request["portfolio_state_ref"] == proof["state_ref"]
+        assert reasoning_request["portfolio_state_carry_ref"] == proof["carry_ref"]
+        assert reasoning_request["portfolio_rebalance_action"] == proof["rebalance_action"]
+        assert reasoning_response["portfolio_state_usage"]["model_id"] == proof["model_id"]
+        assert reasoning_response["portfolio_state_usage"]["status"] == proof["carryover_status"]
+        assert reasoning_response["portfolio_state_usage"]["state_ref"] == proof["state_ref"]
+        assert reasoning_response["portfolio_state_usage"]["carry_ref"] == proof["carry_ref"]
+        assert reasoning_response["portfolio_state_usage"]["previous_position_count"] == proof[
+            "previous_position_count"
+        ]
+        assert reasoning_response["portfolio_state_usage"]["candidate_score_adjustments"] == proof[
+            "score_adjustments"
+        ]
+        assert scoring_carryover["model_id"] == proof["model_id"]
+        assert scoring_carryover["status"] == proof["carryover_status"]
+        assert scoring_carryover["state_ref"] == proof["state_ref"]
+        assert scoring_carryover["carry_ref"] == proof["carry_ref"]
+        assert scorer_inputs["portfolio_state_score_adjustments"] == proof["score_adjustments"]
+        assert selected_card["components"]["portfolio_state_adjustment"] == proof[
+            "score_adjustments"
+        ][selected_action]
+        assert artifact["replay"]["uses_portfolio_state_carryover_or_declares_cold_start"] is True
+
+        if proof["carryover_status"] == "cold_start":
+            assert binding["decision_input_portfolio_state_ref"] is None
+            assert binding["decision_input_portfolio_carry_ref"] is None
+            assert binding["reasoning_consumes_portfolio_state_ref"] is False
+            assert binding["reasoning_consumes_portfolio_carry_ref"] is False
+            assert binding["candidate_request_consumes_portfolio_state_ref"] is False
+            assert binding["candidate_request_consumes_portfolio_carry_ref"] is False
+            assert binding["selected_candidate_cites_portfolio_state_ref"] is False
+            assert binding["selected_candidate_cites_portfolio_carry_ref"] is False
+            assert binding["scorer_portfolio_state_adjustment"] == 0.0
+            assert selected_card["components"]["portfolio_state_adjustment"] == 0.0
+        else:
+            assert binding["decision_input_portfolio_state_ref"] == proof["state_ref"]
+            assert binding["decision_input_portfolio_carry_ref"] == proof["carry_ref"]
+            assert binding["reasoning_consumes_portfolio_state_ref"] is True
+            assert binding["reasoning_consumes_portfolio_carry_ref"] is True
+            assert binding["reasoning_usage_ref_matches"] is True
+            assert binding["candidate_request_consumes_portfolio_state_ref"] is True
+            assert binding["candidate_request_consumes_portfolio_carry_ref"] is True
+            assert binding["selected_candidate_cites_portfolio_state_ref"] is True
+            assert binding["selected_candidate_cites_portfolio_carry_ref"] is True
+            assert binding["scorer_portfolio_state_adjustment"] == proof["score_adjustments"][selected_action]
+            assert binding["scorer_portfolio_state_adjustment"] > 0.0
+            assert binding["scorecard_portfolio_state_adjustment"] == proof["score_adjustments"][selected_action]
+            assert proof["state_ref"] in reasoning_request["input_refs"]
+            assert proof["carry_ref"] in reasoning_request["input_refs"]
+            assert proof["state_ref"] in candidate_request["input_refs"]
+            assert proof["carry_ref"] in candidate_request["input_refs"]
+            assert proof["state_ref"] in selected_candidate["evidence_refs"]
+            assert proof["carry_ref"] in selected_candidate["evidence_refs"]
 
 
 def _assert_persisted_cycle_resume_carryover(case: dict, latest_case_by_persona: dict[str, dict]) -> None:
@@ -4497,6 +4759,14 @@ def _assert_operational_context(case: dict) -> None:
         handoff["oss_quality_repaired_artifact_ref"],
         handoff["multi_persona_proposal_lineage_ref"],
         *proposal_lineage["proposal_refs"],
+        *[
+            ref
+            for ref in (
+                handoff["portfolio_state_carryover_ref"],
+                handoff["portfolio_state_ref"],
+            )
+            if ref
+        ],
         handoff["openclaw_session_context_ref"],
         handoff["openclaw_session_ref"],
         handoff["openclaw_source_oss_ref"],
