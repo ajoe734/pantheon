@@ -180,7 +180,21 @@ class SignalConsumer:
         if sid in self._processed_signal_ids:
             log.warning("[%s] Duplicate signal_id — discarding (idempotent)", sid)
             return True
+        # Persistent idempotency: a signal processed before a worker restart is
+        # still a duplicate (the in-memory set was lost on restart).
+        is_processed = getattr(self._store, "is_processed", None)
+        if callable(is_processed) and is_processed(sid) is True:
+            self._remember_processed(sid)
+            log.warning("[%s] Duplicate signal_id (persistent) — discarding (idempotent)", sid)
+            return True
         return False
+
+    def _remember_processed(self, sid: str) -> None:
+        """Record a signal_id as processed in-memory and (best-effort) persistently."""
+        self._processed_signal_ids.add(sid)
+        mark = getattr(self._store, "mark_processed", None)
+        if callable(mark):
+            mark(sid)
 
     def _is_stale(self, signal: dict, algo: Any | None = None) -> bool:
         return self._staleness_reason(signal, algo) is not None
@@ -240,11 +254,11 @@ class SignalConsumer:
     ) -> None:
         sid = signal["signal_id"]
         if algo is None:
-            self._processed_signal_ids.add(sid)
+            self._remember_processed(sid)
             return
         recorder = getattr(algo, "RecordSignalNoop", None)
         if not callable(recorder):
-            self._processed_signal_ids.add(sid)
+            self._remember_processed(sid)
             return
         metadata = _signal_context_metadata(signal)
         metadata["filter_reason"] = noop_reason
@@ -267,7 +281,7 @@ class SignalConsumer:
         if price is not None:
             kwargs["price"] = price
         recorder(signal["symbol"], **kwargs)
-        self._processed_signal_ids.add(sid)
+        self._remember_processed(sid)
 
     def _is_wrong_binding(self, signal: dict) -> bool:
         """Defense-in-depth: discard signals routed to a different binding.
@@ -378,12 +392,12 @@ class SignalConsumer:
             log.warning(
                 "[%s] No algo instance — dry-run only", signal["signal_id"]
             )
-            self._processed_signal_ids.add(signal["signal_id"])
+            self._remember_processed(signal["signal_id"])
             return
         try:
             execute(signal, algo)
             # Mark as processed only after successful execution
-            self._processed_signal_ids.add(signal["signal_id"])
+            self._remember_processed(signal["signal_id"])
         except (ExecutionError, SymbolParseError) as exc:
             log.error("[%s] Execution failed: %s", signal["signal_id"], exc)
             self._record_execution_error_noop(signal, algo, exc)
