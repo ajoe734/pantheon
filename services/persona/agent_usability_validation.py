@@ -174,6 +174,9 @@ PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID = (
     "persona_experiment_tracking_lineage_handoff_v1"
 )
 PERSONA_ALPHA_SEED_REVISION_MODEL_ID = "persona_alpha_seed_revision_from_oss_v1"
+PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID = (
+    "persona_alpha_seed_revision_handoff_v1"
+)
 ALPHA_SEED_REVISION_ACTION_BY_COMPONENT: dict[str, str] = {
     "qlib": "apply_qlib_alpha_seed_update",
     "vectorbt": "apply_vectorbt_alpha_backtest_seed_update",
@@ -7297,6 +7300,14 @@ def _build_operational_context(
         lean_handoff=lean_handoff,
         lean_runtime_feedback=lean_runtime_feedback,
     )
+    alpha_seed_revision_handoff = _build_alpha_seed_revision_handoff_proof(
+        episode=episode,
+        case_upstream_artifacts=case_upstream_artifacts,
+        decision_traces=decision_traces,
+        lean_engine_replay=lean_engine_replay,
+        lean_handoff=lean_handoff,
+        lean_runtime_feedback=lean_runtime_feedback,
+    )
     evolved_strategy_packet_proof = _build_evolved_strategy_packet_proof(
         episode=episode,
         final_policy=generation_policies[-1],
@@ -7335,6 +7346,7 @@ def _build_operational_context(
             policy_oss_lineage_handoff["proof_id"],
             reflection_oss_lineage_handoff["proof_id"],
             openclaw_session_handoff["proof_id"],
+            alpha_seed_revision_handoff["proof_id"],
         ),
         "scenario": scenario,
         "market_friction": market_friction,
@@ -7354,6 +7366,7 @@ def _build_operational_context(
         "policy_oss_lineage_handoff": policy_oss_lineage_handoff,
         "reflection_oss_lineage_handoff": reflection_oss_lineage_handoff,
         "openclaw_session_handoff": openclaw_session_handoff,
+        "alpha_seed_revision_handoff": alpha_seed_revision_handoff,
         "evolved_strategy_packet_proof": evolved_strategy_packet_proof,
         "scheduler_conflict_ooda_proof": scheduler_conflict_ooda_proof,
     }
@@ -7891,16 +7904,86 @@ def _build_autonomous_schedule(
     }
 
 
+def _build_alpha_seed_revision_handoff_context(
+    *,
+    episode: PortfolioEpisode,
+    alpha_seed_revision: Mapping[str, Any],
+) -> dict[str, Any]:
+    revision = copy.deepcopy(dict(alpha_seed_revision.get("revision") or {}))
+    alpha_component = str(alpha_seed_revision.get("alpha_component") or "")
+    alpha_request_id = str(revision.get("source_alpha_request_id") or "")
+    source_oss_ref = f"oss://{alpha_component}/{alpha_request_id}"
+    base_seed_ref = str(revision.get("base_seed_ref") or "")
+    revision_ref = str(alpha_seed_revision.get("revision_ref") or "")
+    source_refs = [str(ref) for ref in alpha_seed_revision.get("source_refs", [])]
+    handoff_ref = f"alpha-seed-revision-handoff://{episode.case_id}"
+    context_seed = {
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "revision_ref": revision_ref,
+        "base_seed_ref": base_seed_ref,
+        "source_oss_ref": source_oss_ref,
+        "alpha_component": alpha_component,
+        "revision_action": revision.get("action"),
+        "revision_key": revision.get("revision_key"),
+        "source_strategy_spec_id": revision.get("source_strategy_spec_id"),
+        "source_alpha_request_id": alpha_request_id,
+        "source_alpha_artifact_family": revision.get("source_alpha_artifact_family"),
+        "downstream_vectorbt_request_id": revision.get("downstream_vectorbt_request_id"),
+        "downstream_tracker_run_id": revision.get("downstream_tracker_run_id"),
+        "downstream_policy_candidate_request_id": revision.get(
+            "downstream_policy_candidate_request_id"
+        ),
+        "source_refs": source_refs,
+        "alpha_seed_revision_input_hash": alpha_seed_revision.get("input_hash"),
+    }
+    lineage_hash = _stable_payload_hash("alpha-seed-revision-handoff", context_seed)
+    return {
+        "model_id": PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID,
+        "handoff_ref": handoff_ref,
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "revision_id": alpha_seed_revision.get("revision_id"),
+        "revision_ref": revision_ref,
+        "revision_key": revision.get("revision_key"),
+        "source_revision_model_id": alpha_seed_revision.get("model_id"),
+        "source_revision_input_hash": alpha_seed_revision.get("input_hash"),
+        "base_seed_key": revision.get("base_seed_key"),
+        "base_seed_ref": base_seed_ref,
+        "source_strategy_spec_id": revision.get("source_strategy_spec_id"),
+        "alpha_component": alpha_component,
+        "source_oss_ref": source_oss_ref,
+        "source_alpha_request_id": alpha_request_id,
+        "source_alpha_artifact_family": revision.get("source_alpha_artifact_family"),
+        "source_alpha_registry_id": revision.get("source_alpha_registry_id"),
+        "source_alpha_producer_run_id": revision.get("source_alpha_producer_run_id"),
+        "revision_action": revision.get("action"),
+        "downstream_vectorbt_request_id": revision.get("downstream_vectorbt_request_id"),
+        "downstream_tracker_run_id": revision.get("downstream_tracker_run_id"),
+        "downstream_policy_candidate_request_id": revision.get(
+            "downstream_policy_candidate_request_id"
+        ),
+        "source_refs": source_refs,
+        "candidate_score_adjustments": copy.deepcopy(
+            dict(alpha_seed_revision.get("candidate_score_adjustments") or {})
+        ),
+        "lineage_hash": lineage_hash,
+        "input_hash": lineage_hash,
+    }
+
+
 def _build_lean_object_store_packet_targets(
     *,
     episode: PortfolioEpisode,
     final_policy: Mapping[str, Any],
     persona_conflict_resolution: Mapping[str, Any],
     strategy_packet_ref: str,
+    alpha_seed_revision_handoff: Mapping[str, Any],
     generated_at: str,
 ) -> list[dict[str, Any]]:
     policy_oss_lineage = dict(final_policy.get("policy_oss_lineage") or {})
     reflection_oss_lineage = dict(final_policy.get("reflection_oss_lineage") or {})
+    alpha_seed_context = dict(alpha_seed_revision_handoff or {})
     signals = _build_signals(
         episode=episode,
         policy=final_policy,
@@ -7929,6 +8012,13 @@ def _build_lean_object_store_packet_targets(
             "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
             "reflection_oss_component": reflection_oss_lineage.get("component"),
             "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
+            "alpha_seed_revision_handoff_ref": alpha_seed_context.get("handoff_ref"),
+            "alpha_seed_revision_ref": alpha_seed_context.get("revision_ref"),
+            "alpha_seed_revision_handoff_hash": alpha_seed_context.get("lineage_hash"),
+            "alpha_seed_source_ref": alpha_seed_context.get("base_seed_ref"),
+            "alpha_seed_source_oss_ref": alpha_seed_context.get("source_oss_ref"),
+            "alpha_seed_revision_action": alpha_seed_context.get("revision_action"),
+            "alpha_seed_component": alpha_seed_context.get("alpha_component"),
         }
         entry_row = _entry_row_for_generation(window, int(final_policy["generation"]))
         targets.append(
@@ -7950,6 +8040,13 @@ def _build_lean_object_store_packet_targets(
                 "reflection_oss_lineage_hash": reflection_oss_lineage.get("lineage_hash"),
                 "reflection_oss_component": reflection_oss_lineage.get("component"),
                 "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
+                "alpha_seed_revision_handoff_ref": alpha_seed_context.get("handoff_ref"),
+                "alpha_seed_revision_ref": alpha_seed_context.get("revision_ref"),
+                "alpha_seed_revision_handoff_hash": alpha_seed_context.get("lineage_hash"),
+                "alpha_seed_source_ref": alpha_seed_context.get("base_seed_ref"),
+                "alpha_seed_source_oss_ref": alpha_seed_context.get("source_oss_ref"),
+                "alpha_seed_revision_action": alpha_seed_context.get("revision_action"),
+                "alpha_seed_component": alpha_seed_context.get("alpha_component"),
                 "generation": final_policy["generation"],
                 "direction": int(leg["direction"]),
                 "action": signal_payload["action"],
@@ -7993,6 +8090,15 @@ def _build_lean_object_store_packet_readback(
     loaded_reflection_oss_lineage = dict(loaded_packet.get("reflection_oss_lineage") or {})
     reflection_oss_lineage_hash = str(reflection_oss_lineage.get("lineage_hash") or "")
     reflection_oss_ref = str(reflection_oss_lineage.get("source_oss_ref") or "")
+    alpha_seed_handoff = dict(strategy_packet.get("alpha_seed_revision_handoff") or {})
+    loaded_alpha_seed_handoff = dict(
+        loaded_packet.get("alpha_seed_revision_handoff") or {}
+    )
+    alpha_seed_handoff_hash = str(alpha_seed_handoff.get("lineage_hash") or "")
+    alpha_seed_handoff_ref = str(alpha_seed_handoff.get("handoff_ref") or "")
+    alpha_seed_revision_ref = str(alpha_seed_handoff.get("revision_ref") or "")
+    alpha_seed_source_ref = str(alpha_seed_handoff.get("base_seed_ref") or "")
+    alpha_seed_source_oss_ref = str(alpha_seed_handoff.get("source_oss_ref") or "")
     replay = {
         "replayable": True,
         "packet_present_in_object_store_artifact": bool(loaded_packet),
@@ -8105,6 +8211,48 @@ def _build_lean_object_store_packet_readback(
             == reflection_oss_lineage_hash
             for target in loaded_targets
         ),
+        "alpha_seed_revision_handoff_present_in_packet": bool(
+            alpha_seed_handoff.get("model_id")
+            == PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID
+            and alpha_seed_handoff_ref.startswith("alpha-seed-revision-handoff://")
+            and alpha_seed_revision_ref.startswith("alpha-seed-revision://")
+            and alpha_seed_source_ref.startswith("alpha-seed://")
+            and alpha_seed_handoff_hash
+        ),
+        "loaded_packet_preserves_alpha_seed_revision_handoff": (
+            loaded_alpha_seed_handoff == alpha_seed_handoff
+        ),
+        "loaded_alpha_seed_revision_ref_matches_packet": (
+            loaded_packet.get("alpha_seed_revision_handoff_ref") == alpha_seed_handoff_ref
+            and loaded_packet.get("alpha_seed_revision_ref") == alpha_seed_revision_ref
+            and loaded_packet.get("alpha_seed_source_ref") == alpha_seed_source_ref
+            and loaded_packet.get("alpha_seed_source_oss_ref") == alpha_seed_source_oss_ref
+            and loaded_packet.get("alpha_seed_revision_handoff_hash")
+            == alpha_seed_handoff_hash
+            and loaded_packet.get("alpha_seed_revision_action")
+            == alpha_seed_handoff.get("revision_action")
+            and loaded_packet.get("alpha_seed_component")
+            == alpha_seed_handoff.get("alpha_component")
+        ),
+        "all_targets_bind_alpha_seed_revision_handoff": all(
+            target.get("alpha_seed_revision_handoff_ref") == alpha_seed_handoff_ref
+            and target.get("alpha_seed_revision_ref") == alpha_seed_revision_ref
+            and target.get("alpha_seed_revision_handoff_hash")
+            == alpha_seed_handoff_hash
+            and target.get("alpha_seed_source_ref") == alpha_seed_source_ref
+            and target.get("alpha_seed_source_oss_ref") == alpha_seed_source_oss_ref
+            and target.get("signal", {})
+            .get("metadata", {})
+            .get("alpha_seed_revision_handoff_ref")
+            == alpha_seed_handoff_ref
+            and target.get("signal", {}).get("metadata", {}).get("alpha_seed_revision_ref")
+            == alpha_seed_revision_ref
+            and target.get("signal", {})
+            .get("metadata", {})
+            .get("alpha_seed_revision_handoff_hash")
+            == alpha_seed_handoff_hash
+            for target in loaded_targets
+        ),
         "paper_only_guard_retained": result.get("broker_production_live_enabled") == "false",
     }
     return {
@@ -8142,6 +8290,23 @@ def _build_lean_object_store_packet_readback(
         "reflection_oss_lineage_ref": reflection_oss_lineage.get("lineage_ref"),
         "loaded_reflection_oss_lineage_ref": loaded_packet.get("reflection_oss_lineage_ref"),
         "loaded_reflection_oss_lineage": loaded_reflection_oss_lineage,
+        "alpha_seed_revision_handoff_hash": alpha_seed_handoff_hash,
+        "loaded_alpha_seed_revision_handoff_hash": loaded_alpha_seed_handoff.get(
+            "lineage_hash"
+        ),
+        "alpha_seed_revision_handoff_ref": alpha_seed_handoff_ref,
+        "loaded_alpha_seed_revision_handoff_ref": loaded_packet.get(
+            "alpha_seed_revision_handoff_ref"
+        ),
+        "alpha_seed_revision_ref": alpha_seed_revision_ref,
+        "loaded_alpha_seed_revision_ref": loaded_packet.get("alpha_seed_revision_ref"),
+        "alpha_seed_source_ref": alpha_seed_source_ref,
+        "loaded_alpha_seed_source_ref": loaded_packet.get("alpha_seed_source_ref"),
+        "alpha_seed_source_oss_ref": alpha_seed_source_oss_ref,
+        "loaded_alpha_seed_source_oss_ref": loaded_packet.get(
+            "alpha_seed_source_oss_ref"
+        ),
+        "loaded_alpha_seed_revision_handoff": loaded_alpha_seed_handoff,
         "object_store_keys": sorted(object_store_keys),
         "replay": replay,
         "input_hash": _stable_payload_hash(
@@ -8179,6 +8344,10 @@ def _run_lean_engine_replay(
     tracking_repair = tracking_reconciliation["repair"]
     policy_oss_lineage = copy.deepcopy(dict(final_policy.get("policy_oss_lineage") or {}))
     reflection_oss_lineage = copy.deepcopy(dict(final_policy.get("reflection_oss_lineage") or {}))
+    alpha_seed_revision_handoff = _build_alpha_seed_revision_handoff_context(
+        episode=episode,
+        alpha_seed_revision=case_upstream_artifacts["alpha_seed_revision"],
+    )
     tracking_provenance_seed = {
         "backend": tracker["backend"],
         "request_id": tracker["request_id"],
@@ -8234,6 +8403,24 @@ def _run_lean_engine_replay(
         "reflection_oss_registry_ref": reflection_oss_lineage.get("registry_ref"),
         "reflection_oss_component": reflection_oss_lineage.get("component"),
         "reflection_oss_request_id": reflection_oss_lineage.get("request_id"),
+        "alpha_seed_revision_handoff": alpha_seed_revision_handoff,
+        "alpha_seed_revision_handoff_hash": alpha_seed_revision_handoff["lineage_hash"],
+        "alpha_seed_revision_handoff_ref": alpha_seed_revision_handoff["handoff_ref"],
+        "alpha_seed_revision_ref": alpha_seed_revision_handoff["revision_ref"],
+        "alpha_seed_source_ref": alpha_seed_revision_handoff["base_seed_ref"],
+        "alpha_seed_source_oss_ref": alpha_seed_revision_handoff["source_oss_ref"],
+        "alpha_seed_revision_action": alpha_seed_revision_handoff["revision_action"],
+        "alpha_seed_component": alpha_seed_revision_handoff["alpha_component"],
+        "alpha_seed_revision_key": alpha_seed_revision_handoff["revision_key"],
+        "alpha_seed_downstream_vectorbt_request_id": alpha_seed_revision_handoff[
+            "downstream_vectorbt_request_id"
+        ],
+        "alpha_seed_downstream_policy_candidate_request_id": alpha_seed_revision_handoff[
+            "downstream_policy_candidate_request_id"
+        ],
+        "alpha_seed_downstream_tracker_run_id": alpha_seed_revision_handoff[
+            "downstream_tracker_run_id"
+        ],
         "future_holdout_score": final_evaluation["score"],
         "future_holdout_improvement": final_oos_step["score_improvement"],
         "validation_window_unseen_by_decision": final_oos_step[
@@ -8252,6 +8439,7 @@ def _run_lean_engine_replay(
         final_policy=final_policy,
         persona_conflict_resolution=persona_conflict_resolution,
         strategy_packet_ref=packet_ref,
+        alpha_seed_revision_handoff=alpha_seed_revision_handoff,
         generated_at=generated_at,
     )
     plan = {
@@ -8490,6 +8678,14 @@ def _build_lean_handoff_packet(
     reflection_oss_ref = str(reflection_oss_lineage.get("source_oss_ref") or "")
     reflection_oss_lineage_ref = str(reflection_oss_lineage.get("lineage_ref") or "")
     reflection_oss_registry_ref = str(reflection_oss_lineage.get("registry_ref") or "")
+    alpha_seed_handoff = copy.deepcopy(
+        dict(strategy_packet.get("alpha_seed_revision_handoff") or {})
+    )
+    alpha_seed_handoff_ref = str(alpha_seed_handoff.get("handoff_ref") or "")
+    alpha_seed_revision_ref = str(alpha_seed_handoff.get("revision_ref") or "")
+    alpha_seed_source_ref = str(alpha_seed_handoff.get("base_seed_ref") or "")
+    alpha_seed_source_oss_ref = str(alpha_seed_handoff.get("source_oss_ref") or "")
+    alpha_seed_handoff_hash = str(alpha_seed_handoff.get("lineage_hash") or "")
     return {
         "packet_id": f"lean-packet-{episode.case_id}",
         "component": handoff["component"],
@@ -8534,6 +8730,24 @@ def _build_lean_handoff_packet(
         "openclaw_upstream_session_id": openclaw_session_context["upstream_session_id"],
         "openclaw_session_state": openclaw_session_context["session_state"],
         "openclaw_session_artifact_family": openclaw_session_context["artifact_family"],
+        "alpha_seed_revision_handoff": alpha_seed_handoff,
+        "alpha_seed_revision_handoff_hash": alpha_seed_handoff_hash,
+        "alpha_seed_revision_handoff_ref": alpha_seed_handoff_ref,
+        "alpha_seed_revision_ref": alpha_seed_revision_ref,
+        "alpha_seed_source_ref": alpha_seed_source_ref,
+        "alpha_seed_source_oss_ref": alpha_seed_source_oss_ref,
+        "alpha_seed_revision_action": alpha_seed_handoff.get("revision_action"),
+        "alpha_seed_component": alpha_seed_handoff.get("alpha_component"),
+        "alpha_seed_revision_key": alpha_seed_handoff.get("revision_key"),
+        "alpha_seed_downstream_vectorbt_request_id": alpha_seed_handoff.get(
+            "downstream_vectorbt_request_id"
+        ),
+        "alpha_seed_downstream_policy_candidate_request_id": alpha_seed_handoff.get(
+            "downstream_policy_candidate_request_id"
+        ),
+        "alpha_seed_downstream_tracker_run_id": alpha_seed_handoff.get(
+            "downstream_tracker_run_id"
+        ),
         "strategy_packet": strategy_packet,
         "strategy_packet_hash": _stable_payload_hash(
             "lean-strategy-packet",
@@ -8592,6 +8806,10 @@ def _build_lean_handoff_packet(
             openclaw_session_ref,
             openclaw_source_oss_ref,
             openclaw_upstream_session_ref,
+            alpha_seed_handoff_ref,
+            alpha_seed_revision_ref,
+            alpha_seed_source_ref,
+            alpha_seed_source_oss_ref,
             experiment_ref,
             tracking_reconciliation_ref,
             tracking_repair_ref,
@@ -8903,6 +9121,10 @@ def _build_lean_runtime_feedback_response(
     openclaw_session_ref = str(lean_handoff.get("openclaw_session_ref", ""))
     openclaw_source_oss_ref = str(lean_handoff.get("openclaw_source_oss_ref", ""))
     openclaw_upstream_session_ref = str(lean_handoff.get("openclaw_upstream_session_ref", ""))
+    alpha_seed_handoff_ref = str(lean_handoff.get("alpha_seed_revision_handoff_ref", ""))
+    alpha_seed_revision_ref = str(lean_handoff.get("alpha_seed_revision_ref", ""))
+    alpha_seed_source_ref = str(lean_handoff.get("alpha_seed_source_ref", ""))
+    alpha_seed_source_oss_ref = str(lean_handoff.get("alpha_seed_source_oss_ref", ""))
     projection_ref = str(lean_packet_execution_projection.get("projection_ref", ""))
     evidence_refs = [
         runtime_ref,
@@ -8924,6 +9146,10 @@ def _build_lean_runtime_feedback_response(
         openclaw_session_ref,
         openclaw_source_oss_ref,
         openclaw_upstream_session_ref,
+        alpha_seed_handoff_ref,
+        alpha_seed_revision_ref,
+        alpha_seed_source_ref,
+        alpha_seed_source_oss_ref,
         f"runtime-binding://{runtime_context.get('runtime_binding_id')}",
         f"object-store://{metadata_key}",
         f"reflection://{decision_traces[-1]['reflection_id']}",
@@ -9010,6 +9236,24 @@ def _build_lean_runtime_feedback_response(
             == lean_handoff.get("openclaw_session_context", {}).get("context_hash")
             and lean_handoff.get("openclaw_session_state") == "active"
         ),
+        "alpha_seed_revision_handoff_bound": (
+            bool(alpha_seed_handoff_ref)
+            and alpha_seed_handoff_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and alpha_seed_handoff_ref in evidence_refs
+            and bool(alpha_seed_revision_ref)
+            and alpha_seed_revision_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and alpha_seed_revision_ref in evidence_refs
+            and bool(alpha_seed_source_ref)
+            and alpha_seed_source_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and alpha_seed_source_ref in evidence_refs
+            and bool(alpha_seed_source_oss_ref)
+            and alpha_seed_source_oss_ref in lean_handoff.get("runtime_bundle_refs", [])
+            and alpha_seed_source_oss_ref in evidence_refs
+            and lean_handoff.get("alpha_seed_revision_handoff_hash")
+            == lean_handoff.get("alpha_seed_revision_handoff", {}).get("lineage_hash")
+            and lean_handoff.get("alpha_seed_revision_action")
+            == lean_handoff.get("alpha_seed_revision_handoff", {}).get("revision_action")
+        ),
         "lean_packet_execution_projection_consumed": (
             lean_packet_execution_projection.get("model_id") == LEAN_PACKET_EXECUTION_PROJECTION_MODEL_ID
             and lean_packet_execution_projection.get("status") == "passed"
@@ -9078,6 +9322,13 @@ def _build_lean_runtime_feedback_response(
             "bind_openclaw_session_ref": openclaw_session_ref,
             "bind_openclaw_source_oss_ref": openclaw_source_oss_ref,
             "bind_openclaw_upstream_session_ref": openclaw_upstream_session_ref,
+            "bind_alpha_seed_revision_handoff_ref": alpha_seed_handoff_ref,
+            "bind_alpha_seed_revision_ref": alpha_seed_revision_ref,
+            "bind_alpha_seed_source_ref": alpha_seed_source_ref,
+            "bind_alpha_seed_source_oss_ref": alpha_seed_source_oss_ref,
+            "bind_alpha_seed_revision_action": lean_handoff.get(
+                "alpha_seed_revision_action"
+            ),
             "bind_lean_packet_execution_projection": projection_ref,
             "attach_to_handoff_packet": lean_handoff["packet_id"],
             "attach_to_decision_trace": decision_traces[-1]["reflection_id"],
@@ -9106,6 +9357,10 @@ def _build_lean_runtime_feedback_response(
                 "openclaw_session_ref": openclaw_session_ref,
                 "openclaw_source_oss_ref": openclaw_source_oss_ref,
                 "openclaw_upstream_session_ref": openclaw_upstream_session_ref,
+                "alpha_seed_handoff_ref": alpha_seed_handoff_ref,
+                "alpha_seed_revision_ref": alpha_seed_revision_ref,
+                "alpha_seed_source_ref": alpha_seed_source_ref,
+                "alpha_seed_source_oss_ref": alpha_seed_source_oss_ref,
                 "projection_ref": projection_ref,
                 "runtime_binding_id": runtime_context.get("runtime_binding_id"),
                 "metadata_key": metadata_key,
@@ -9671,6 +9926,225 @@ def _build_openclaw_session_handoff_proof(
     }
 
 
+def _build_alpha_seed_revision_handoff_proof(
+    *,
+    episode: PortfolioEpisode,
+    case_upstream_artifacts: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    lean_engine_replay: Mapping[str, Any],
+    lean_handoff: Mapping[str, Any],
+    lean_runtime_feedback: Mapping[str, Any],
+) -> dict[str, Any]:
+    alpha_seed_revision = case_upstream_artifacts["alpha_seed_revision"]
+    alpha_entry = case_upstream_artifacts["selected_oss"]["alpha_model"]
+    strategy_packet = lean_engine_replay["case_specific_strategy_packet"]
+    packet_handoff = copy.deepcopy(
+        dict(strategy_packet.get("alpha_seed_revision_handoff") or {})
+    )
+    handoff_context = copy.deepcopy(
+        dict(lean_handoff.get("alpha_seed_revision_handoff") or {})
+    )
+    readback = lean_engine_replay["lean_object_store_packet_readback"]
+    loaded_handoff = copy.deepcopy(
+        dict(readback.get("loaded_alpha_seed_revision_handoff") or {})
+    )
+    loaded_targets = list(lean_engine_replay.get("case_specific_packet_targets", []))
+    handoff_refs = set(lean_handoff.get("runtime_bundle_refs", []))
+    runtime_feedback_refs = set(
+        lean_runtime_feedback.get("persona_ooda_followup", {}).get("evidence_refs", [])
+    )
+    runtime_state_updates = dict(lean_runtime_feedback.get("state_updates", {}))
+    revision = dict(alpha_seed_revision.get("revision") or {})
+    source_oss_ref = f"oss://{alpha_entry['component']}/{alpha_entry['request_id']}"
+    handoff_ref = str(handoff_context.get("handoff_ref") or "")
+    revision_ref = str(alpha_seed_revision.get("revision_ref") or "")
+    base_seed_ref = str(revision.get("base_seed_ref") or "")
+    lineage_hash = str(handoff_context.get("lineage_hash") or "")
+    trace_bindings = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_refs = set(
+            str(ref)
+            for ref in artifact["persona_reasoning"]["request"].get("input_refs", [])
+        )
+        generation_refs = set(
+            str(ref)
+            for ref in artifact["candidate_generation"]["request"].get("input_refs", [])
+        )
+        selected_refs = set(str(ref) for ref in trace["selected_candidate"].get("evidence_refs", []))
+        trace_bindings.append(
+            {
+                "generation": artifact["generation"],
+                "trace_id": trace["reflection_id"],
+                "reasoning_consumes_alpha_seed_revision": revision_ref in reasoning_refs,
+                "candidate_generation_consumes_alpha_seed_revision": revision_ref
+                in generation_refs,
+                "selected_candidate_cites_alpha_seed_revision": revision_ref in selected_refs,
+                "selected_candidate_cites_alpha_seed_source": base_seed_ref in selected_refs,
+            }
+        )
+    lineage_hashes = {
+        "strategy_packet": str(strategy_packet.get("alpha_seed_revision_handoff_hash") or ""),
+        "packet_handoff": str(packet_handoff.get("lineage_hash") or ""),
+        "object_store_readback": str(
+            readback.get("alpha_seed_revision_handoff_hash") or ""
+        ),
+        "loaded_object_store_readback": str(
+            readback.get("loaded_alpha_seed_revision_handoff_hash") or ""
+        ),
+        "lean_handoff": str(lean_handoff.get("alpha_seed_revision_handoff_hash") or ""),
+    }
+    replay = {
+        "replayable": True,
+        "alpha_seed_revision_applied": _alpha_seed_revision_is_usable(
+            alpha_seed_revision
+        ),
+        "persona_reasoning_consumes_alpha_seed_revision": all(
+            binding["reasoning_consumes_alpha_seed_revision"]
+            for binding in trace_bindings
+        ),
+        "candidate_generation_consumes_alpha_seed_revision": all(
+            binding["candidate_generation_consumes_alpha_seed_revision"]
+            for binding in trace_bindings
+        ),
+        "selected_candidates_cite_alpha_seed_revision": all(
+            binding["selected_candidate_cites_alpha_seed_revision"]
+            and binding["selected_candidate_cites_alpha_seed_source"]
+            for binding in trace_bindings
+        ),
+        "strategy_packet_carries_alpha_seed_revision_handoff": (
+            packet_handoff.get("model_id") == PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID
+            and packet_handoff.get("revision_ref") == revision_ref
+            and packet_handoff.get("base_seed_ref") == base_seed_ref
+            and packet_handoff.get("source_oss_ref") == source_oss_ref
+            and strategy_packet.get("alpha_seed_revision_handoff_ref") == handoff_ref
+            and strategy_packet.get("alpha_seed_revision_ref") == revision_ref
+            and strategy_packet.get("alpha_seed_source_ref") == base_seed_ref
+            and strategy_packet.get("alpha_seed_revision_handoff_hash")
+            == packet_handoff.get("lineage_hash")
+        ),
+        "object_store_readback_preserves_alpha_seed_revision_handoff": (
+            loaded_handoff == packet_handoff
+            and readback.get("alpha_seed_revision_handoff_ref") == handoff_ref
+            and readback.get("loaded_alpha_seed_revision_handoff_ref") == handoff_ref
+            and readback.get("alpha_seed_revision_ref") == revision_ref
+            and readback.get("loaded_alpha_seed_revision_ref") == revision_ref
+        ),
+        "all_packet_targets_bind_alpha_seed_revision_handoff": (
+            len(loaded_targets) == PORTFOLIO_LEG_COUNT
+            and all(
+                target.get("alpha_seed_revision_handoff_ref") == handoff_ref
+                and target.get("alpha_seed_revision_ref") == revision_ref
+                and target.get("alpha_seed_revision_handoff_hash") == lineage_hash
+                and target.get("signal", {})
+                .get("metadata", {})
+                .get("alpha_seed_revision_handoff_ref")
+                == handoff_ref
+                and target.get("signal", {}).get("metadata", {}).get(
+                    "alpha_seed_revision_ref"
+                )
+                == revision_ref
+                for target in loaded_targets
+            )
+        ),
+        "handoff_carries_alpha_seed_revision_context": (
+            handoff_context == packet_handoff
+            and handoff_context == loaded_handoff
+            and lean_handoff.get("alpha_seed_revision_handoff_ref") == handoff_ref
+            and lean_handoff.get("alpha_seed_revision_ref") == revision_ref
+            and lean_handoff.get("alpha_seed_source_ref") == base_seed_ref
+            and lean_handoff.get("alpha_seed_source_oss_ref") == source_oss_ref
+            and lean_handoff.get("alpha_seed_revision_action")
+            == revision.get("action")
+            and lean_handoff.get("alpha_seed_component") == alpha_entry["component"]
+        ),
+        "handoff_runtime_bundle_contains_alpha_seed_revision_refs": {
+            handoff_ref,
+            revision_ref,
+            base_seed_ref,
+            source_oss_ref,
+        }.issubset(handoff_refs),
+        "runtime_feedback_cites_alpha_seed_revision_handoff": {
+            handoff_ref,
+            revision_ref,
+            base_seed_ref,
+            source_oss_ref,
+        }.issubset(runtime_feedback_refs),
+        "runtime_feedback_state_binds_alpha_seed_revision_handoff": (
+            runtime_state_updates.get("bind_alpha_seed_revision_handoff_ref")
+            == handoff_ref
+            and runtime_state_updates.get("bind_alpha_seed_revision_ref")
+            == revision_ref
+            and runtime_state_updates.get("bind_alpha_seed_source_ref")
+            == base_seed_ref
+            and runtime_state_updates.get("bind_alpha_seed_source_oss_ref")
+            == source_oss_ref
+            and runtime_state_updates.get("bind_alpha_seed_revision_action")
+            == revision.get("action")
+            and lean_runtime_feedback.get("replay", {}).get(
+                "alpha_seed_revision_handoff_bound"
+            )
+            is True
+        ),
+        "lineage_hash_stable_across_packet_readback_handoff": (
+            bool(lineage_hash)
+            and len({value for value in lineage_hashes.values() if value}) == 1
+        ),
+    }
+    return {
+        "proof_id": f"alpha-seed-revision-handoff-{episode.case_id}",
+        "proof_ref": f"alpha-seed-revision-handoff://{episode.case_id}",
+        "model_id": PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "component": alpha_entry["component"],
+        "request_id": alpha_entry["request_id"],
+        "source_oss_ref": source_oss_ref,
+        "revision_ref": revision_ref,
+        "revision_id": alpha_seed_revision["revision_id"],
+        "revision_key": revision.get("revision_key"),
+        "base_seed_ref": base_seed_ref,
+        "revision_action": revision.get("action"),
+        "handoff_ref": handoff_ref,
+        "handoff_hash": lineage_hash,
+        "downstream_vectorbt_request_id": revision.get(
+            "downstream_vectorbt_request_id"
+        ),
+        "downstream_policy_candidate_request_id": revision.get(
+            "downstream_policy_candidate_request_id"
+        ),
+        "strategy_packet_ref": strategy_packet["packet_ref"],
+        "lean_handoff_ref": f"lean-handoff://{lean_handoff['packet_id']}",
+        "lean_runtime_feedback_ref": f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+        "object_store_readback_ref": readback["readback_id"],
+        "lineage_hashes": lineage_hashes,
+        "trace_bindings": trace_bindings,
+        "input_refs": [
+            source_oss_ref,
+            revision_ref,
+            base_seed_ref,
+            handoff_ref,
+            strategy_packet["packet_ref"],
+            f"lean-handoff://{lean_handoff['packet_id']}",
+            f"lean-runtime-feedback://{lean_runtime_feedback['feedback_id']}",
+            readback["readback_id"],
+        ],
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "alpha-seed-revision-handoff-proof",
+            {
+                "case_id": episode.case_id,
+                "revision_ref": revision_ref,
+                "handoff_ref": handoff_ref,
+                "lineage_hashes": lineage_hashes,
+                "trace_bindings": trace_bindings,
+                "replay": replay,
+            },
+        ),
+    }
+
+
 def _build_evolved_strategy_packet_proof(
     *,
     episode: PortfolioEpisode,
@@ -10214,6 +10688,20 @@ def _lean_handoff_packet_is_usable(packet: Mapping[str, Any]) -> bool:
         and packet.get("openclaw_session_context_hash")
         == packet.get("openclaw_session_context", {}).get("context_hash")
         and packet.get("openclaw_session_state") == "active"
+        and packet.get("alpha_seed_revision_handoff_ref", "").startswith(
+            "alpha-seed-revision-handoff://"
+        )
+        and packet.get("alpha_seed_revision_handoff_ref") in runtime_refs
+        and packet.get("alpha_seed_revision_ref", "").startswith("alpha-seed-revision://")
+        and packet.get("alpha_seed_revision_ref") in runtime_refs
+        and packet.get("alpha_seed_source_ref", "").startswith("alpha-seed://")
+        and packet.get("alpha_seed_source_ref") in runtime_refs
+        and packet.get("alpha_seed_source_oss_ref", "").startswith("oss://")
+        and packet.get("alpha_seed_source_oss_ref") in runtime_refs
+        and packet.get("alpha_seed_revision_handoff_hash")
+        == packet.get("alpha_seed_revision_handoff", {}).get("lineage_hash")
+        and packet.get("alpha_seed_revision_action")
+        == packet.get("alpha_seed_revision_handoff", {}).get("revision_action")
         and packet.get("strategy_packet_replay_passed") is True
         and packet.get("strategy_packet_hash")
         and packet.get("received_by_lean_handoff")
@@ -10273,6 +10761,7 @@ def _lean_runtime_feedback_is_usable(feedback: Mapping[str, Any]) -> bool:
         and replay.get("policy_oss_lineage_bound") is True
         and replay.get("reflection_oss_lineage_bound") is True
         and replay.get("openclaw_session_context_bound") is True
+        and replay.get("alpha_seed_revision_handoff_bound") is True
         and replay.get("lean_packet_execution_projection_consumed") is True
         and replay.get("next_cycle_scheduled") is True
         and replay.get("drives_persona_next_ooda_step") is True
@@ -10419,6 +10908,52 @@ def _openclaw_session_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
     )
 
 
+def _alpha_seed_revision_handoff_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    trace_bindings = list(proof.get("trace_bindings", []))
+    lineage_hashes = proof.get("lineage_hashes", {})
+    return bool(
+        proof.get("model_id") == PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("alpha-seed-revision-handoff://")
+        and proof.get("component") in ALPHA_SEED_REVISION_ACTION_BY_COMPONENT
+        and proof.get("source_oss_ref", "").startswith("oss://")
+        and proof.get("revision_ref", "").startswith("alpha-seed-revision://")
+        and proof.get("base_seed_ref", "").startswith("alpha-seed://")
+        and proof.get("handoff_ref", "").startswith("alpha-seed-revision-handoff://")
+        and proof.get("revision_action")
+        == ALPHA_SEED_REVISION_ACTION_BY_COMPONENT[str(proof.get("component"))]
+        and proof.get("strategy_packet_ref", "").startswith("lean-strategy-packet://")
+        and proof.get("lean_handoff_ref", "").startswith("lean-handoff://")
+        and proof.get("lean_runtime_feedback_ref", "").startswith(
+            "lean-runtime-feedback://"
+        )
+        and proof.get("object_store_readback_ref", "").startswith(
+            "lean-object-store-packet-readback-"
+        )
+        and proof.get("handoff_hash")
+        and proof.get("input_hash")
+        and lineage_hashes
+        and len({str(value) for value in lineage_hashes.values()}) == 1
+        and len(trace_bindings) == 2
+        and all(replay.get(flag) is True for flag in (
+            "replayable",
+            "alpha_seed_revision_applied",
+            "persona_reasoning_consumes_alpha_seed_revision",
+            "candidate_generation_consumes_alpha_seed_revision",
+            "selected_candidates_cite_alpha_seed_revision",
+            "strategy_packet_carries_alpha_seed_revision_handoff",
+            "object_store_readback_preserves_alpha_seed_revision_handoff",
+            "all_packet_targets_bind_alpha_seed_revision_handoff",
+            "handoff_carries_alpha_seed_revision_context",
+            "handoff_runtime_bundle_contains_alpha_seed_revision_refs",
+            "runtime_feedback_cites_alpha_seed_revision_handoff",
+            "runtime_feedback_state_binds_alpha_seed_revision_handoff",
+            "lineage_hash_stable_across_packet_readback_handoff",
+        ))
+    )
+
+
 def _lean_packet_execution_projection_is_usable(projection: Mapping[str, Any]) -> bool:
     replay = projection.get("replay", {})
     leg_projections = list(projection.get("leg_projections", []))
@@ -10561,6 +11096,7 @@ def _lean_engine_result_is_usable(
     tracking_provenance = loaded_packet.get("experiment_tracking_provenance", {})
     policy_oss_lineage = loaded_packet.get("policy_oss_lineage", {})
     reflection_oss_lineage = loaded_packet.get("reflection_oss_lineage", {})
+    alpha_seed_handoff = loaded_packet.get("alpha_seed_revision_handoff", {})
     packet_readback_valid = True
     if loaded_packet:
         packet_readback_valid = bool(
@@ -10588,6 +11124,15 @@ def _lean_engine_result_is_usable(
             )
             and loaded_packet.get("reflection_oss_lineage_hash")
             == reflection_oss_lineage.get("lineage_hash")
+            and loaded_packet.get("alpha_seed_revision_handoff_ref", "").startswith(
+                "alpha-seed-revision-handoff://"
+            )
+            and loaded_packet.get("alpha_seed_revision_ref", "").startswith(
+                "alpha-seed-revision://"
+            )
+            and loaded_packet.get("alpha_seed_source_ref", "").startswith("alpha-seed://")
+            and loaded_packet.get("alpha_seed_revision_handoff_hash")
+            == alpha_seed_handoff.get("lineage_hash")
             and all(
                 target.get("signal", {}).get("metadata", {}).get("strategy_packet_ref")
                 == loaded_packet.get("packet_ref")
@@ -10599,6 +11144,14 @@ def _lean_engine_result_is_usable(
                 == loaded_packet.get("reflection_oss_lineage_hash")
                 and target.get("signal", {}).get("metadata", {}).get("reflection_oss_ref")
                 == loaded_packet.get("reflection_oss_ref")
+                and target.get("alpha_seed_revision_handoff_hash")
+                == loaded_packet.get("alpha_seed_revision_handoff_hash")
+                and target.get("alpha_seed_revision_ref")
+                == loaded_packet.get("alpha_seed_revision_ref")
+                and target.get("signal", {})
+                .get("metadata", {})
+                .get("alpha_seed_revision_ref")
+                == loaded_packet.get("alpha_seed_revision_ref")
                 for target in loaded_targets
             )
         )
@@ -10649,6 +11202,13 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
         and readback.get("reflection_oss_lineage_ref", "").startswith("reflection-oss-lineage://")
         and readback.get("reflection_oss_lineage_hash")
         == readback.get("loaded_reflection_oss_lineage_hash")
+        and readback.get("alpha_seed_revision_handoff_ref", "").startswith(
+            "alpha-seed-revision-handoff://"
+        )
+        and readback.get("alpha_seed_revision_ref", "").startswith("alpha-seed-revision://")
+        and readback.get("alpha_seed_source_ref", "").startswith("alpha-seed://")
+        and readback.get("alpha_seed_revision_handoff_hash")
+        == readback.get("loaded_alpha_seed_revision_handoff_hash")
         and all(replay.get(flag) is True for flag in (
             "replayable",
             "packet_present_in_object_store_artifact",
@@ -10674,6 +11234,10 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
             "loaded_packet_preserves_reflection_oss_lineage",
             "loaded_reflection_oss_ref_matches_packet",
             "all_targets_bind_reflection_oss_lineage",
+            "alpha_seed_revision_handoff_present_in_packet",
+            "loaded_packet_preserves_alpha_seed_revision_handoff",
+            "loaded_alpha_seed_revision_ref_matches_packet",
+            "all_targets_bind_alpha_seed_revision_handoff",
             "paper_only_guard_retained",
         ))
     )
@@ -10686,6 +11250,7 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
     tracking_provenance = strategy_packet.get("experiment_tracking_provenance", {})
     policy_oss_lineage = strategy_packet.get("policy_oss_lineage", {})
     reflection_oss_lineage = strategy_packet.get("reflection_oss_lineage", {})
+    alpha_seed_handoff = strategy_packet.get("alpha_seed_revision_handoff", {})
     packet_targets = replay.get("case_specific_packet_targets", [])
     packet_readback = replay.get("lean_object_store_packet_readback", {})
     return bool(
@@ -10729,6 +11294,15 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
         and strategy_packet.get("reflection_oss_lineage_hash") == reflection_oss_lineage.get(
             "lineage_hash"
         )
+        and strategy_packet.get("alpha_seed_revision_handoff_ref", "").startswith(
+            "alpha-seed-revision-handoff://"
+        )
+        and strategy_packet.get("alpha_seed_revision_ref", "").startswith(
+            "alpha-seed-revision://"
+        )
+        and strategy_packet.get("alpha_seed_source_ref", "").startswith("alpha-seed://")
+        and strategy_packet.get("alpha_seed_revision_handoff_hash")
+        == alpha_seed_handoff.get("lineage_hash")
         and all(
             target.get("policy_oss_ref") == strategy_packet.get("policy_oss_ref")
             and target.get("policy_oss_lineage_hash")
@@ -10736,6 +11310,10 @@ def _lean_engine_replay_is_usable(replay: Mapping[str, Any]) -> bool:
             and target.get("reflection_oss_ref") == strategy_packet.get("reflection_oss_ref")
             and target.get("reflection_oss_lineage_hash")
             == strategy_packet.get("reflection_oss_lineage_hash")
+            and target.get("alpha_seed_revision_ref")
+            == strategy_packet.get("alpha_seed_revision_ref")
+            and target.get("alpha_seed_revision_handoff_hash")
+            == strategy_packet.get("alpha_seed_revision_handoff_hash")
             for target in packet_targets
         )
         and strategy_packet.get("strict_oos_replay_passed") is True
@@ -12593,6 +13171,9 @@ def _build_usability_dimensions(
     openclaw_session_handoff = 1.0 if _openclaw_session_handoff_is_usable(
         operational_context["openclaw_session_handoff"]
     ) else 0.0
+    alpha_seed_revision_handoff = 1.0 if _alpha_seed_revision_handoff_is_usable(
+        operational_context["alpha_seed_revision_handoff"]
+    ) else 0.0
     evolved_strategy_packet = 1.0 if _evolved_strategy_packet_proof_is_usable(
         operational_context["evolved_strategy_packet_proof"]
     ) else 0.0
@@ -12692,6 +13273,7 @@ def _build_usability_dimensions(
         "policy_oss_lineage_handoff": policy_oss_lineage_handoff,
         "reflection_oss_lineage_handoff": reflection_oss_lineage_handoff,
         "openclaw_session_handoff": openclaw_session_handoff,
+        "alpha_seed_revision_handoff": alpha_seed_revision_handoff,
         "evolved_strategy_packet_handoff": evolved_strategy_packet,
         "scheduler_conflict_ooda_dispatch": scheduler_conflict_ooda,
     }
@@ -13297,6 +13879,28 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "alpha_seed_revision_reaches_lean_handoff",
+            _alpha_seed_revision_handoff_is_usable(
+                operational_context["alpha_seed_revision_handoff"]
+            ),
+            {
+                "proof_id": operational_context["alpha_seed_revision_handoff"]["proof_id"],
+                "component": operational_context["alpha_seed_revision_handoff"]["component"],
+                "revision_ref": operational_context["alpha_seed_revision_handoff"][
+                    "revision_ref"
+                ],
+                "handoff_ref": operational_context["alpha_seed_revision_handoff"][
+                    "handoff_ref"
+                ],
+                "lineage_hashes": copy.deepcopy(
+                    dict(operational_context["alpha_seed_revision_handoff"]["lineage_hashes"])
+                ),
+                "replay": copy.deepcopy(
+                    dict(operational_context["alpha_seed_revision_handoff"]["replay"])
+                ),
+            },
+        ),
+        _diagnostic_check(
             "case_specific_upstream_artifacts_drive_persona_decision",
             _case_upstream_artifacts_are_usable(
                 episode=episode,
@@ -13744,6 +14348,9 @@ def _build_case_result(
             "openclaw_session_reaches_lean_handoff": usability_dimensions[
                 "openclaw_session_handoff"
             ] == 1.0,
+            "alpha_seed_revision_reaches_lean_handoff": usability_dimensions[
+                "alpha_seed_revision_handoff"
+            ] == 1.0,
             "lean_packet_execution_projection_replayed": usability_dimensions[
                 "lean_packet_execution_projection"
             ] == 1.0,
@@ -13862,6 +14469,9 @@ def _build_summary(
     ]
     openclaw_session_handoffs = [
         case["operational_context"]["openclaw_session_handoff"] for case in cases
+    ]
+    alpha_seed_revision_handoffs = [
+        case["operational_context"]["alpha_seed_revision_handoff"] for case in cases
     ]
     evolved_strategy_packet_proofs = [
         case["operational_context"]["evolved_strategy_packet_proof"] for case in cases
@@ -14068,6 +14678,21 @@ def _build_summary(
         "openclaw_session_handoff_replay_flags": sorted({
             flag
             for proof in openclaw_session_handoffs
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "alpha_seed_revision_handoff_models": sorted({
+            proof["model_id"] for proof in alpha_seed_revision_handoffs
+        }),
+        "alpha_seed_revision_handoff_components": sorted({
+            proof["component"] for proof in alpha_seed_revision_handoffs
+        }),
+        "alpha_seed_revision_handoff_actions": sorted({
+            proof["revision_action"] for proof in alpha_seed_revision_handoffs
+        }),
+        "alpha_seed_revision_handoff_replay_flags": sorted({
+            flag
+            for proof in alpha_seed_revision_handoffs
             for flag, value in proof["replay"].items()
             if value is True
         }),
@@ -14874,6 +15499,17 @@ def _build_summary(
             for item in usable
             if item["openclaw_session_reaches_lean_handoff"]
         ),
+        "alpha_seed_revision_handoff_count": len(alpha_seed_revision_handoffs),
+        "alpha_seed_revision_handoff_pass_count": sum(
+            1
+            for proof in alpha_seed_revision_handoffs
+            if _alpha_seed_revision_handoff_is_usable(proof)
+        ),
+        "alpha_seed_revision_handoff_drives_lean_count": sum(
+            1
+            for item in usable
+            if item["alpha_seed_revision_reaches_lean_handoff"]
+        ),
         "evolved_strategy_packet_proof_count": len(evolved_strategy_packet_proofs),
         "evolved_strategy_packet_proof_pass_count": sum(
             1
@@ -14944,6 +15580,7 @@ def _build_summary(
             "Every non-cold-start persona case consumes the prior autonomous cycle's LEAN runtime feedback in reasoning, candidate generation, selected evidence, and scorer adjustments.",
             "Every non-cold-start persona case resumes that prior autonomous cycle through persisted checkpoint, schedule, and object-store readback refs before using the runtime feedback.",
             "Every case turns selected alpha OSS output into a replayable alpha seed revision that feeds downstream backtest, tracking, reasoning, scorer adjustments, and selected evidence refs.",
+            "Every case carries the Qlib/vectorbt alpha seed revision into the LEAN strategy packet, Object Store readback, handoff bundle, runtime bundle refs, and runtime feedback state updates.",
             "Every case detects a realistic multi-OSS disagreement and routes the arbitration result into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case reconciles experiment-tracker readback divergence and routes the repaired tracking ref into persona reasoning, scorer adjustments, and selected candidate evidence.",
             "Every case carries the repaired MLflow/W&B experiment lineage from evolution decision evidence into the LEAN strategy packet, Object Store readback, handoff bundle, and runtime feedback.",

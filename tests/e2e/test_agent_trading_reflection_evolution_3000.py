@@ -41,6 +41,7 @@ from services.persona.agent_usability_validation import (
     OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE,
     OSS_DISAGREEMENT_TYPES_BY_SCENARIO,
     OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID,
+    PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID,
     PERSONA_ALPHA_SEED_REVISION_MODEL_ID,
     PERSONA_CANDIDATE_GENERATOR_MODEL_ID,
     PERSONA_CANDIDATE_SCORER_MODEL_ID,
@@ -238,6 +239,9 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["openclaw_session_handoff_count"] == DEFAULT_CASE_COUNT
     assert summary["openclaw_session_handoff_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["openclaw_session_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
+    assert summary["alpha_seed_revision_handoff_count"] == DEFAULT_CASE_COUNT
+    assert summary["alpha_seed_revision_handoff_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["alpha_seed_revision_handoff_drives_lean_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["evolved_strategy_packet_handoff_count"] == DEFAULT_CASE_COUNT
@@ -351,6 +355,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     ]
     assert set(coverage["lean_object_store_packet_readback_replay_flags"]) == {
         "algorithm_executed_loaded_packet_signal",
+        "all_targets_bind_alpha_seed_revision_handoff",
         "all_targets_bind_strategy_packet_ref",
         "all_targets_have_signals",
         "loaded_signal_from_first_packet_target",
@@ -370,10 +375,13 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "all_targets_bind_reflection_oss_lineage",
         "loaded_packet_preserves_policy_oss_lineage",
         "loaded_packet_preserves_reflection_oss_lineage",
+        "loaded_packet_preserves_alpha_seed_revision_handoff",
+        "loaded_alpha_seed_revision_ref_matches_packet",
         "loaded_policy_oss_ref_matches_packet",
         "loaded_reflection_oss_ref_matches_packet",
         "policy_oss_lineage_present_in_packet",
         "reflection_oss_lineage_present_in_packet",
+        "alpha_seed_revision_handoff_present_in_packet",
         "tracking_provenance_present_in_packet",
     }
     assert coverage["lean_packet_execution_projection_models"] == [
@@ -421,6 +429,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     }
     assert set(coverage["lean_runtime_feedback_ooda_steps"]) == {"act", "decide", "observe", "orient"}
     assert set(coverage["lean_runtime_feedback_replay_flags"]) == {
+        "alpha_seed_revision_handoff_bound",
         "case_runtime_refs_bound",
         "drives_persona_next_ooda_step",
         "evolved_strategy_packet_refs_bound",
@@ -517,6 +526,28 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "runtime_feedback_cites_openclaw_session",
         "runtime_feedback_state_binds_openclaw_session",
         "selected_candidates_cite_openclaw_session_followup",
+    }
+    assert coverage["alpha_seed_revision_handoff_models"] == [
+        PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID
+    ]
+    assert set(coverage["alpha_seed_revision_handoff_components"]) == {"qlib", "vectorbt"}
+    assert set(coverage["alpha_seed_revision_handoff_actions"]) == set(
+        ALPHA_SEED_REVISION_ACTION_BY_COMPONENT.values()
+    )
+    assert set(coverage["alpha_seed_revision_handoff_replay_flags"]) == {
+        "all_packet_targets_bind_alpha_seed_revision_handoff",
+        "alpha_seed_revision_applied",
+        "candidate_generation_consumes_alpha_seed_revision",
+        "handoff_carries_alpha_seed_revision_context",
+        "handoff_runtime_bundle_contains_alpha_seed_revision_refs",
+        "lineage_hash_stable_across_packet_readback_handoff",
+        "object_store_readback_preserves_alpha_seed_revision_handoff",
+        "persona_reasoning_consumes_alpha_seed_revision",
+        "replayable",
+        "runtime_feedback_cites_alpha_seed_revision_handoff",
+        "runtime_feedback_state_binds_alpha_seed_revision_handoff",
+        "selected_candidates_cite_alpha_seed_revision",
+        "strategy_packet_carries_alpha_seed_revision_handoff",
     }
     assert coverage["evolved_strategy_packet_models"] == [
         LEAN_EVOLVED_STRATEGY_PACKET_PROOF_MODEL_ID
@@ -1048,6 +1079,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_policy_oss_lineage_handoff(case)
         _assert_reflection_oss_lineage_handoff(case)
         _assert_openclaw_session_handoff(case)
+        _assert_alpha_seed_revision_handoff(case)
         _assert_lean_packet_execution_projection(case)
         _assert_evolved_strategy_packet_proof(case)
         _assert_scheduler_conflict_ooda_proof(case)
@@ -3220,6 +3252,10 @@ def _assert_operational_context(case: dict) -> None:
     reflection_oss_ref = f"oss://{reflection_entry['component']}/{reflection_entry['request_id']}"
     openclaw_session_request_id = case["oss_feedback"]["request_ids"]["session"]
     openclaw_source_ref = f"oss://openclaw/{openclaw_session_request_id}"
+    alpha_revision = case["case_upstream_artifacts"]["alpha_seed_revision"]
+    alpha_entry = case["case_upstream_artifacts"]["selected_oss"]["alpha_model"]
+    alpha_source_ref = f"oss://{alpha_entry['component']}/{alpha_entry['request_id']}"
+    expected_alpha_action = ALPHA_SEED_REVISION_ACTION_BY_COMPONENT[alpha_entry["component"]]
     packet_reflection_lineage = replay["case_specific_strategy_packet"]["reflection_oss_lineage"]
     assert packet_reflection_lineage["model_id"] == PERSONA_REFLECTION_OSS_LINEAGE_HANDOFF_MODEL_ID
     assert packet_reflection_lineage["component"] == reflection_entry["component"]
@@ -3244,6 +3280,41 @@ def _assert_operational_context(case: dict) -> None:
     )
     assert replay["case_specific_strategy_packet"]["reflection_oss_component"] == reflection_entry["component"]
     assert replay["case_specific_strategy_packet"]["reflection_oss_request_id"] == reflection_entry["request_id"]
+    packet_alpha_handoff = replay["case_specific_strategy_packet"]["alpha_seed_revision_handoff"]
+    assert packet_alpha_handoff["model_id"] == PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID
+    assert packet_alpha_handoff["revision_ref"] == alpha_revision["revision_ref"]
+    assert packet_alpha_handoff["base_seed_ref"] == f"alpha-seed://{case['seed_key']}"
+    assert packet_alpha_handoff["source_oss_ref"] == alpha_source_ref
+    assert packet_alpha_handoff["alpha_component"] == alpha_entry["component"]
+    assert packet_alpha_handoff["source_alpha_request_id"] == alpha_entry["request_id"]
+    assert packet_alpha_handoff["revision_action"] == expected_alpha_action
+    assert packet_alpha_handoff["downstream_vectorbt_request_id"] == vectorbt["request_id"]
+    assert packet_alpha_handoff["downstream_policy_candidate_request_id"] == (
+        case["case_upstream_artifacts"]["selected_oss"]["policy_candidate"]["request_id"]
+    )
+    assert packet_alpha_handoff["lineage_hash"]
+    assert replay["case_specific_strategy_packet"]["alpha_seed_revision_handoff_ref"] == (
+        packet_alpha_handoff["handoff_ref"]
+    )
+    assert replay["case_specific_strategy_packet"]["alpha_seed_revision_ref"] == (
+        alpha_revision["revision_ref"]
+    )
+    assert replay["case_specific_strategy_packet"]["alpha_seed_source_ref"] == (
+        f"alpha-seed://{case['seed_key']}"
+    )
+    assert replay["case_specific_strategy_packet"]["alpha_seed_source_oss_ref"] == (
+        alpha_source_ref
+    )
+    assert replay["case_specific_strategy_packet"]["alpha_seed_revision_handoff_hash"] == (
+        packet_alpha_handoff["lineage_hash"]
+    )
+    assert replay["case_specific_strategy_packet"]["alpha_seed_revision_action"] == (
+        expected_alpha_action
+    )
+    assert replay["case_specific_strategy_packet"]["alpha_seed_component"] == alpha_entry["component"]
+    assert replay["case_specific_strategy_packet"]["alpha_seed_downstream_vectorbt_request_id"] == (
+        vectorbt["request_id"]
+    )
     assert replay["plan"]["target_stage"] == "paper"
     assert replay["binding"]["deployment_mode"] == "paper"
     assert replay["runtime_context"]["runtime_binding_id"] == replay["binding"]["binding_id"]
@@ -3293,6 +3364,17 @@ def _assert_operational_context(case: dict) -> None:
     assert packet_readback["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
     assert packet_readback["loaded_reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
     assert packet_readback["loaded_reflection_oss_lineage"] == packet_reflection_lineage
+    assert packet_readback["alpha_seed_revision_handoff_ref"] == packet_alpha_handoff["handoff_ref"]
+    assert packet_readback["loaded_alpha_seed_revision_handoff_ref"] == packet_alpha_handoff["handoff_ref"]
+    assert packet_readback["alpha_seed_revision_ref"] == alpha_revision["revision_ref"]
+    assert packet_readback["loaded_alpha_seed_revision_ref"] == alpha_revision["revision_ref"]
+    assert packet_readback["alpha_seed_source_ref"] == f"alpha-seed://{case['seed_key']}"
+    assert packet_readback["loaded_alpha_seed_source_ref"] == f"alpha-seed://{case['seed_key']}"
+    assert packet_readback["alpha_seed_source_oss_ref"] == alpha_source_ref
+    assert packet_readback["loaded_alpha_seed_source_oss_ref"] == alpha_source_ref
+    assert packet_readback["alpha_seed_revision_handoff_hash"] == packet_alpha_handoff["lineage_hash"]
+    assert packet_readback["loaded_alpha_seed_revision_handoff_hash"] == packet_alpha_handoff["lineage_hash"]
+    assert packet_readback["loaded_alpha_seed_revision_handoff"] == packet_alpha_handoff
     assert packet_readback["object_store_keys"] == replay["object_store_keys"]
     assert all(packet_readback["replay"].values())
     assert packet_readback["input_hash"]
@@ -3321,6 +3403,13 @@ def _assert_operational_context(case: dict) -> None:
         assert target["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
         assert target["reflection_oss_component"] == reflection_entry["component"]
         assert target["reflection_oss_request_id"] == reflection_entry["request_id"]
+        assert target["alpha_seed_revision_handoff_ref"] == packet_alpha_handoff["handoff_ref"]
+        assert target["alpha_seed_revision_ref"] == alpha_revision["revision_ref"]
+        assert target["alpha_seed_revision_handoff_hash"] == packet_alpha_handoff["lineage_hash"]
+        assert target["alpha_seed_source_ref"] == f"alpha-seed://{case['seed_key']}"
+        assert target["alpha_seed_source_oss_ref"] == alpha_source_ref
+        assert target["alpha_seed_revision_action"] == expected_alpha_action
+        assert target["alpha_seed_component"] == alpha_entry["component"]
         assert target["signal"]["metadata"]["strategy_packet_ref"] == packet_readback["packet_ref"]
         assert target["signal"]["metadata"]["packet_target_ref"] == target["target_ref"]
         assert target["signal"]["metadata"]["lean_object_store_readback_model_id"] == (
@@ -3332,6 +3421,13 @@ def _assert_operational_context(case: dict) -> None:
         assert target["signal"]["metadata"]["reflection_oss_ref"] == reflection_oss_ref
         assert target["signal"]["metadata"]["reflection_oss_lineage_ref"] == packet_reflection_lineage["lineage_ref"]
         assert target["signal"]["metadata"]["reflection_oss_lineage_hash"] == packet_reflection_lineage["lineage_hash"]
+        assert target["signal"]["metadata"]["alpha_seed_revision_handoff_ref"] == (
+            packet_alpha_handoff["handoff_ref"]
+        )
+        assert target["signal"]["metadata"]["alpha_seed_revision_ref"] == alpha_revision["revision_ref"]
+        assert target["signal"]["metadata"]["alpha_seed_revision_handoff_hash"] == (
+            packet_alpha_handoff["lineage_hash"]
+        )
         assert target["signal"]["metadata"]["source_dataset_ref"] == HISTORICAL_OHLCV_DATASET_ID
 
     sandbox = operational["shioaji_sandbox_lifecycle"]
@@ -3518,6 +3614,15 @@ def _assert_operational_context(case: dict) -> None:
     ]
     assert handoff["openclaw_session_state"] == "active"
     assert handoff["openclaw_session_artifact_family"] == "openclaw_session"
+    assert handoff["alpha_seed_revision_handoff"] == packet_alpha_handoff
+    assert handoff["alpha_seed_revision_handoff_ref"] == packet_alpha_handoff["handoff_ref"]
+    assert handoff["alpha_seed_revision_ref"] == alpha_revision["revision_ref"]
+    assert handoff["alpha_seed_source_ref"] == f"alpha-seed://{case['seed_key']}"
+    assert handoff["alpha_seed_source_oss_ref"] == alpha_source_ref
+    assert handoff["alpha_seed_revision_handoff_hash"] == packet_alpha_handoff["lineage_hash"]
+    assert handoff["alpha_seed_revision_action"] == expected_alpha_action
+    assert handoff["alpha_seed_component"] == alpha_entry["component"]
+    assert handoff["alpha_seed_downstream_vectorbt_request_id"] == vectorbt["request_id"]
     assert handoff["target_stage"] == "paper"
     assert handoff["broker_live_submitted"] is False
     assert set(handoff["portfolio_instruments"]) == set(case["portfolio"]["instruments"])
@@ -3546,6 +3651,10 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["openclaw_session_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["openclaw_source_oss_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["openclaw_upstream_session_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["alpha_seed_revision_handoff_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["alpha_seed_revision_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["alpha_seed_source_ref"] in handoff["runtime_bundle_refs"]
+    assert handoff["alpha_seed_source_oss_ref"] in handoff["runtime_bundle_refs"]
     assert conflict["resolution_ref"] in handoff["runtime_bundle_refs"]
     assert schedule["schedule_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["runtime_bundle_refs"]
@@ -3607,6 +3716,10 @@ def _assert_operational_context(case: dict) -> None:
         handoff["openclaw_session_ref"],
         handoff["openclaw_source_oss_ref"],
         handoff["openclaw_upstream_session_ref"],
+        handoff["alpha_seed_revision_handoff_ref"],
+        handoff["alpha_seed_revision_ref"],
+        handoff["alpha_seed_source_ref"],
+        handoff["alpha_seed_source_oss_ref"],
         f"runtime-binding://{runtime_readback['runtime_binding_id']}",
         f"object-store://{runtime_readback['object_store_metadata_key']}",
         f"reflection://{case['reflection']['agent_decision_traces'][-1]['reflection_id']}",
@@ -3638,6 +3751,19 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["state_updates"]["bind_openclaw_upstream_session_ref"] == handoff[
         "openclaw_upstream_session_ref"
     ]
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_revision_handoff_ref"] == handoff[
+        "alpha_seed_revision_handoff_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_revision_ref"] == handoff[
+        "alpha_seed_revision_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_source_ref"] == handoff[
+        "alpha_seed_source_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_source_oss_ref"] == handoff[
+        "alpha_seed_source_oss_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_revision_action"] == expected_alpha_action
     assert runtime_feedback["state_updates"]["bind_lean_packet_execution_projection"] == projection["projection_ref"]
     assert runtime_feedback["state_updates"]["attach_to_handoff_packet"] == handoff["packet_id"]
     assert runtime_feedback["state_updates"]["attach_to_decision_trace"] == case["reflection"]["agent_decision_traces"][-1]["reflection_id"]
@@ -3650,12 +3776,14 @@ def _assert_operational_context(case: dict) -> None:
     assert case["usability_dimensions"]["policy_oss_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["reflection_oss_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["openclaw_session_handoff"] == 1.0
+    assert case["usability_dimensions"]["alpha_seed_revision_handoff"] == 1.0
     assert case["usability_dimensions"]["evolved_strategy_packet_handoff"] == 1.0
     assert case["usable"]["lean_packet_execution_projection_replayed"] is True
     assert case["usable"]["experiment_tracking_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["policy_oss_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["reflection_oss_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["openclaw_session_reaches_lean_handoff"] is True
+    assert case["usable"]["alpha_seed_revision_reaches_lean_handoff"] is True
     assert case["usable"]["evolved_strategy_packet_reaches_lean_handoff"] is True
     assert check_by_name["lean_packet_execution_projection_replays_packet_legs"]["status"] == "passed"
     assert check_by_name["lean_runtime_feedback_drives_persona_ooda"]["status"] == "passed"
@@ -3663,6 +3791,7 @@ def _assert_operational_context(case: dict) -> None:
     assert check_by_name["policy_oss_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
     assert check_by_name["reflection_oss_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
     assert check_by_name["openclaw_session_context_reaches_lean_handoff"]["status"] == "passed"
+    assert check_by_name["alpha_seed_revision_reaches_lean_handoff"]["status"] == "passed"
     assert check_by_name["evolved_strategy_packet_reaches_lean_handoff"]["status"] == "passed"
     assert case["usability_dimensions"]["scheduler_conflict_ooda_dispatch"] == 1.0
     assert case["usable"]["scheduler_conflict_ooda_dispatch_replayed"] is True
@@ -3890,6 +4019,95 @@ def _assert_openclaw_session_handoff(case: dict) -> None:
     assert runtime_feedback["state_updates"]["bind_openclaw_upstream_session_ref"] == proof[
         "upstream_session_ref"
     ]
+    assert all(proof["replay"].values())
+    assert proof["input_hash"]
+
+
+def _assert_alpha_seed_revision_handoff(case: dict) -> None:
+    operational = case["operational_context"]
+    proof = operational["alpha_seed_revision_handoff"]
+    replay = operational["lean_engine_replay"]
+    handoff = operational["lean_handoff"]
+    runtime_feedback = operational["lean_runtime_feedback"]
+    packet_readback = replay["lean_object_store_packet_readback"]
+    alpha_revision = case["case_upstream_artifacts"]["alpha_seed_revision"]
+    alpha_entry = case["case_upstream_artifacts"]["selected_oss"]["alpha_model"]
+    source_ref = f"oss://{alpha_entry['component']}/{alpha_entry['request_id']}"
+    base_seed_ref = f"alpha-seed://{case['seed_key']}"
+    packet_alpha_handoff = replay["case_specific_strategy_packet"][
+        "alpha_seed_revision_handoff"
+    ]
+    expected_action = ALPHA_SEED_REVISION_ACTION_BY_COMPONENT[alpha_entry["component"]]
+
+    assert proof["proof_id"] == f"alpha-seed-revision-handoff-{case['case_id']}"
+    assert proof["proof_ref"] == f"alpha-seed-revision-handoff://{case['case_id']}"
+    assert proof["model_id"] == PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["component"] == alpha_entry["component"]
+    assert proof["request_id"] == alpha_entry["request_id"]
+    assert proof["source_oss_ref"] == source_ref
+    assert proof["revision_ref"] == alpha_revision["revision_ref"]
+    assert proof["revision_id"] == alpha_revision["revision_id"]
+    assert proof["revision_key"] == alpha_revision["revision"]["revision_key"]
+    assert proof["base_seed_ref"] == base_seed_ref
+    assert proof["revision_action"] == expected_action
+    assert proof["handoff_ref"] == packet_alpha_handoff["handoff_ref"]
+    assert proof["handoff_hash"] == packet_alpha_handoff["lineage_hash"]
+    assert proof["downstream_vectorbt_request_id"] == case["case_upstream_artifacts"]["vectorbt"][
+        "request_id"
+    ]
+    assert proof["downstream_policy_candidate_request_id"] == (
+        case["case_upstream_artifacts"]["selected_oss"]["policy_candidate"]["request_id"]
+    )
+    assert proof["strategy_packet_ref"] == replay["case_specific_strategy_packet"]["packet_ref"]
+    assert proof["lean_handoff_ref"] == f"lean-handoff://{handoff['packet_id']}"
+    assert proof["lean_runtime_feedback_ref"] == (
+        f"lean-runtime-feedback://{runtime_feedback['feedback_id']}"
+    )
+    assert proof["object_store_readback_ref"] == packet_readback["readback_id"]
+    assert set(proof["lineage_hashes"].values()) == {packet_alpha_handoff["lineage_hash"]}
+    assert set(proof["input_refs"]) == {
+        source_ref,
+        alpha_revision["revision_ref"],
+        base_seed_ref,
+        packet_alpha_handoff["handoff_ref"],
+        proof["strategy_packet_ref"],
+        proof["lean_handoff_ref"],
+        proof["lean_runtime_feedback_ref"],
+        proof["object_store_readback_ref"],
+    }
+    assert len(proof["trace_bindings"]) == 2
+    assert all(
+        binding["reasoning_consumes_alpha_seed_revision"]
+        and binding["candidate_generation_consumes_alpha_seed_revision"]
+        and binding["selected_candidate_cites_alpha_seed_revision"]
+        and binding["selected_candidate_cites_alpha_seed_source"]
+        for binding in proof["trace_bindings"]
+    )
+    assert handoff["alpha_seed_revision_handoff"] == packet_alpha_handoff
+    assert packet_readback["loaded_alpha_seed_revision_handoff"] == packet_alpha_handoff
+    assert source_ref in handoff["runtime_bundle_refs"]
+    assert proof["revision_ref"] in handoff["runtime_bundle_refs"]
+    assert proof["base_seed_ref"] in handoff["runtime_bundle_refs"]
+    assert proof["handoff_ref"] in handoff["runtime_bundle_refs"]
+    evidence_refs = runtime_feedback["persona_ooda_followup"]["evidence_refs"]
+    assert source_ref in evidence_refs
+    assert proof["revision_ref"] in evidence_refs
+    assert proof["base_seed_ref"] in evidence_refs
+    assert proof["handoff_ref"] in evidence_refs
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_revision_handoff_ref"] == proof[
+        "handoff_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_revision_ref"] == proof[
+        "revision_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_source_ref"] == proof[
+        "base_seed_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_source_oss_ref"] == source_ref
+    assert runtime_feedback["state_updates"]["bind_alpha_seed_revision_action"] == expected_action
     assert all(proof["replay"].values())
     assert proof["input_hash"]
 
