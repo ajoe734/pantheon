@@ -253,6 +253,31 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
         self.assertIsNone(snapshot["paper_state"]["last_skipped_status"])
 
+    def test_drain_once_dedups_duplicate_signal_id_across_polls(self):
+        """E2E-R6: the same signal_id must not double-fill across two poll cycles."""
+        sig = self._signal()
+        store = InMemoryPendingSignalStore([dict(sig)])
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=store,
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        first = service.drain_once()
+        self.assertEqual(first["paper_state"]["processed_signal_count"], 1)
+
+        # second poll: same signal_id re-enqueued must be discarded as duplicate
+        store.enqueue(dict(sig))
+        second = service.drain_once()
+        self.assertEqual(
+            second["paper_state"]["processed_signal_count"], 1,
+            "duplicate signal_id must not execute a second time",
+        )
+
     def test_cash_value_llm_alpha_for_new_symbol_executes_with_fill_provenance(self):
         signal = self._signal()
         signal.update(
