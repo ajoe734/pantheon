@@ -458,6 +458,7 @@ return a bare `[]`. The unavailable condition is explicit in
 |---|---|---|---|
 | `/bff/alerts` | `/api/v1/operator/alerts` | `{ alerts, summary, meta }` with backend-owned severity, category, target refs, and surface degradation metadata | `operator` |
 | `/bff/alerts/{id}` | `/api/v1/operator/alerts` | `{ data: AlertProjection, meta }` for a single projected alert id | `operator` |
+| `/bff/knowledge` | Composed Knowledge inbox over `/api/v1/knowledge/notes`, `/api/v1/knowledge/evidence`, `/api/v1/knowledge/insights`, `/api/v1/knowledge/strategy-specs`, and `/api/v1/knowledge/memory` | `{ data, items, page_info, meta }`; when no backing knowledge store is readable, returns an empty `data/items` list with `meta.surfaces.knowledge_inbox.status: unavailable` and `source: missing` rather than a bare array | `operator` |
 
 ### 10.2 Consistency Model
 

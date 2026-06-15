@@ -50917,6 +50917,23 @@ app.include_router(
 _include_assistant_routes()
 
 
+def _include_knowledge_routes() -> None:
+    from console_gap.knowledge import create_knowledge_router
+
+    app.include_router(
+        create_knowledge_router(
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            read_store_getter=lambda: read_store,
+            utc_now=utc_now,
+            dataset_surface_status=_dataset_surface_status,
+        )
+    )
+
+
+_include_knowledge_routes()
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)

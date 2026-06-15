@@ -1,2 +1,1 @@
-"""Small BFF console-gap routers kept outside the large main module."""
-
+"""Small BFF console-gap routers kept outside the monolithic main module."""

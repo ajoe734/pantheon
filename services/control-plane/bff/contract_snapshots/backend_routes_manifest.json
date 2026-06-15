@@ -3,7 +3,7 @@
     "snapshot_date": "2026-06-15",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 499,
+    "total_routes": 500,
     "status_values": [
       "implemented",
       "alias",
@@ -2517,6 +2517,12 @@
     {
       "method": "GET",
       "path": "/bff/assistant/tools",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/knowledge",
       "family": "unknown",
       "status": "implemented"
     },
