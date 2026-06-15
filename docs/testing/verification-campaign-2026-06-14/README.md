@@ -47,9 +47,21 @@ The campaign deliberately goes **deeper and broader** each round.
 | 9 | Systematic route-resolution audit (shadowing + dup registration) | [round-09-plan.md](round-09-plan.md) | [round-09-results.md](round-09-results.md) | PASS; F9 dup-registration hazard locked by guard test |
 | 10 | Undocumented/hidden-route audit (live→documented) | [round-10-plan.md](round-10-plan.md) | [round-10-results.md](round-10-results.md) | PASS; no hidden mutating endpoints |
 
-**Campaign close-out:** [SUMMARY.md](SUMMARY.md) — 5 defects fixed (PRs #1540,
-#1541, #1542, #1553, #1555), 5 findings attributed to owners, 5 regression
-test files added.
+**Phase 1 close-out (rounds 1–10):** [SUMMARY.md](SUMMARY.md) — 5 defects fixed
+(PRs #1540, #1541, #1542, #1553, #1555), 5 findings attributed to owners, 5
+regression test files added.
+
+### Phase 2 — semantics, auth, integration, resilience (rounds 11–20)
+
+Targets the gaps Phase 1 did not reach: computed-value correctness (not shape),
+real JWT/MFA auth (not stub), cross-service integration, concurrency/idempotency,
+persistence, security depth, canonical-state consistency, pagination at scale,
+and resilience.
+
+| # | Theme | Plan | Results | Fix |
+|---|---|---|---|---|
+| 11 | Data/computation correctness (not shape) | [round-11-plan.md](round-11-plan.md) | [round-11-results.md](round-11-results.md) | PASS (aggregation math exact; O4 governance-default note) |
+| 12 | Real JWT/MFA auth path (not stub) — attack matrix | [round-12-plan.md](round-12-plan.md) | [round-12-results.md](round-12-results.md) | PASS (fail-closed, alg-pinned); F10 no-exp hardening; attack-matrix test added |
 
 ## Environment under test
 
