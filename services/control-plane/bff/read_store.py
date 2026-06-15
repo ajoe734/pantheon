@@ -2188,6 +2188,16 @@ class CanonicalSnapshotAdapter:
                 "PANTHEON_GOVERNANCE_SERVICE_URL",
             ),
             "list_path": "/api/governance/approvals",
+            # PANTHEON_PROMOTION_API_URL wires directly to the promotion service
+            # (the real approval producer) using its native path /api/v1/approvals.
+            # Tried before the governance service URL when both are set.
+            # Each override may be a plain path string or a dict with path+list_key.
+            "path_env_overrides": {
+                "PANTHEON_PROMOTION_API_URL": {
+                    "path": "/api/v1/approvals",
+                    "list_key": "items",
+                },
+            },
         },
         "capital_pools": {
             "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
@@ -2230,6 +2240,34 @@ class CanonicalSnapshotAdapter:
         spec = self._HTTP_DATASETS.get(dataset)
         if not spec:
             return False, {}
+
+        # Try path_env_overrides first: env-var-specific URL + path pairs that differ
+        # from the default list_path. E.g. promotion service at /api/v1/approvals.
+        # Override spec may be a plain path string or a dict with "path" and "list_key".
+        for env_var, override_spec in (spec.get("path_env_overrides") or {}).items():
+            if isinstance(override_spec, str):
+                specific_path = override_spec
+                override_list_key = spec.get("list_key")
+            else:
+                specific_path = override_spec["path"]
+                override_list_key = override_spec.get("list_key", spec.get("list_key"))
+            override_url = os.getenv(env_var, "").strip().rstrip("/")
+            if not override_url:
+                continue
+            available, payload = _http_json_get(
+                override_url,
+                specific_path,
+                headers=_auth_headers_from_spec(spec),
+            )
+            if not available:
+                continue
+            records_payload = _records_from_http_payload(payload, list_key=override_list_key)
+            normalized = _normalize_records(records_payload, self._DATASETS[dataset]["keys"])
+            self._cache[dataset] = normalized
+            self._cache_meta[dataset] = (f"{override_url}{specific_path}", 0)
+            self._cache_source[dataset] = "service_client"
+            return True, normalized
+
         base_url = _base_url_from_env(tuple(spec.get("base_env") or ()))
         if not base_url:
             return False, {}
@@ -2270,6 +2308,29 @@ class CanonicalSnapshotAdapter:
         *,
         include_snapshot_fallback: bool = True,
     ) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+        # When an explicit store-path env var is set and the file exists, prefer it
+        # over the HTTP service client. This prevents a configured service URL
+        # (e.g. PANTHEON_GOVERNANCE_APPROVAL_API_URL in docker-compose) from
+        # shadowing a projection-script-populated file such as the one written by
+        # project_approvals_to_bff_surfaces.py into PANTHEON_BFF_APPROVAL_DECISION_STORE.
+        spec = self._DATASETS.get(dataset)
+        if spec:
+            explicit = os.getenv(spec["env"], "").strip()
+            if explicit:
+                explicit_path = Path(explicit)
+                if explicit_path.exists():
+                    stat = explicit_path.stat().st_mtime_ns
+                    cache_key = str(explicit_path)
+                    if self._cache_meta.get(dataset) == (cache_key, stat):
+                        return True, self._cache.get(dataset, {})
+                    text = explicit_path.read_text(encoding="utf-8").strip()
+                    payload = json.loads(text) if text else {}
+                    normalized = _normalize_records(payload, spec["keys"])
+                    self._cache[dataset] = normalized
+                    self._cache_meta[dataset] = (cache_key, stat)
+                    self._cache_source[dataset] = "canonical"
+                    return True, normalized
+
         http_available, http_records = self._load_http_dataset(dataset)
         if http_available:
             return True, http_records
