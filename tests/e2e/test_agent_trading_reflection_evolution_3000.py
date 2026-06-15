@@ -37,6 +37,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID,
     STRICT_OOS_EVOLUTION_PROOF_MODEL_ID,
     BLIND_FUTURE_OOS_AUDIT_MODEL_ID,
+    FUTURE_BLIND_WINDOW_ADMISSION_MODEL_ID,
     ALPHA_SEED_REVISION_ACTION_BY_COMPONENT,
     OSS_DISAGREEMENT_RESOLUTION_ACTION_BY_TYPE,
     OSS_DISAGREEMENT_SOURCE_ROLES_BY_TYPE,
@@ -116,6 +117,14 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
 
     assert summary["oss_result_count"] == len(OSS_REQUIRED_COMPONENTS)
     assert set(summary["oss_components_completed"]) == set(OSS_REQUIRED_COMPONENTS)
+    assert summary["future_blind_window_admission_status"] == "passed"
+    assert summary["future_blind_window_admission_candidate_count"] > DEFAULT_CASE_COUNT
+    assert summary["future_blind_window_admitted_without_future_count"] > (
+        summary["future_blind_selected_second_holdout_improvement_window_count"]
+    )
+    assert summary["future_blind_second_holdout_rejected_count"] > 0
+    assert summary["future_blind_selected_second_holdout_improvement_window_count"] >= DEFAULT_CASE_COUNT
+    assert summary["future_blind_window_admission_uses_future_holdout"] is False
     assert summary["no_leakage_holdout_count"] == DEFAULT_CASE_COUNT
     assert summary["no_leakage_temporal_protocol_count"] == DEFAULT_CASE_COUNT
     assert summary["no_leakage_temporal_protocol_pass_count"] == DEFAULT_CASE_COUNT
@@ -1192,6 +1201,30 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "observe_decide->feedback_reflect->holdout_evolve->future_holdout_verify"
     ]
     assert coverage["no_leakage_temporal_protocol_stage_windows"] == ["feedback->holdout->future_holdout"]
+    assert coverage["future_blind_window_admission_models"] == [
+        FUTURE_BLIND_WINDOW_ADMISSION_MODEL_ID
+    ]
+    assert coverage["future_blind_window_admission_source_windows"] == [
+        "observe->feedback->holdout"
+    ]
+    assert coverage["future_blind_window_admission_forbidden_windows"] == [
+        "future_holdout"
+    ]
+    assert coverage["future_blind_window_admission_validation_windows"] == [
+        "future_holdout"
+    ]
+    assert coverage["future_blind_window_admission_repair_actions"] == [
+        "discard_failed_unseen_future_verdict_and_request_next_future_blind_candidate"
+    ]
+    assert set(coverage["future_blind_window_admission_replay_flags"]) == {
+        "admission_uses_observe_feedback_holdout_only",
+        "future_holdout_absent_from_admission",
+        "future_holdout_evaluated_only_after_admission",
+        "post_admission_failures_are_counted",
+        "replayable",
+        "second_holdout_selected_windows_strictly_improve",
+        "selected_pool_covers_default_case_count",
+    }
     assert coverage["strict_oos_evolution_proof_models"] == [STRICT_OOS_EVOLUTION_PROOF_MODEL_ID]
     assert coverage["strict_oos_evolution_source_to_validation_paths"] == [
         "feedback:holdout->holdout:future_holdout"
