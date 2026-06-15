@@ -1,0 +1,146 @@
+{
+  "tool-cp-qlib": {
+    "id": "tool-cp-qlib",
+    "tool_id": "tool-cp-qlib",
+    "name": "Qlib Research Tool",
+    "status": "active",
+    "tool_class": "research_worker",
+    "description": "Research execution tool backed by qlib worker.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "parameters": {
+          "type": "object"
+        },
+        "strategy_id": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    },
+    "mcp_sourced": false,
+    "worker": "qlib",
+    "source": "control_plane_skills_registry",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  },
+  "tool-cp-vectorbt": {
+    "id": "tool-cp-vectorbt",
+    "tool_id": "tool-cp-vectorbt",
+    "name": "Vectorbt Research Tool",
+    "status": "active",
+    "tool_class": "research_worker",
+    "description": "Research execution tool backed by vectorbt worker.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "parameters": {
+          "type": "object"
+        },
+        "strategy_id": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    },
+    "mcp_sourced": false,
+    "worker": "vectorbt",
+    "source": "control_plane_skills_registry",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  },
+  "tool-cp-finrl": {
+    "id": "tool-cp-finrl",
+    "tool_id": "tool-cp-finrl",
+    "name": "Finrl Research Tool",
+    "status": "active",
+    "tool_class": "research_worker",
+    "description": "Research execution tool backed by finrl worker.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "parameters": {
+          "type": "object"
+        },
+        "strategy_id": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    },
+    "mcp_sourced": false,
+    "worker": "finrl",
+    "source": "control_plane_skills_registry",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  },
+  "tool-cp-quantlib": {
+    "id": "tool-cp-quantlib",
+    "tool_id": "tool-cp-quantlib",
+    "name": "Quantlib Research Tool",
+    "status": "active",
+    "tool_class": "research_worker",
+    "description": "Research execution tool backed by quantlib worker.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "parameters": {
+          "type": "object"
+        },
+        "strategy_id": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    },
+    "mcp_sourced": false,
+    "worker": "quantlib",
+    "source": "control_plane_skills_registry",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  }
+}
