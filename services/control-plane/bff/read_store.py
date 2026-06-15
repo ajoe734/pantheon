@@ -18682,3 +18682,12 @@ class ReadSurfaceStore:
         if record is None:
             return None
         return json.loads(json.dumps(record))
+
+    def list_alpha_factory_cards(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        lane: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        return []

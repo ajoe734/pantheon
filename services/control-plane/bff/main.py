@@ -50906,6 +50906,15 @@ def _include_assistant_routes() -> None:
 _include_assistant_routes()
 
 
+from console_gap.alpha_factory import create_alpha_factory_router as _create_alpha_factory_router  # noqa: E402
+app.include_router(_create_alpha_factory_router(
+    get_read_store=lambda: read_store,
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    utc_now=utc_now,
+))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
