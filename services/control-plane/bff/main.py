@@ -274,6 +274,47 @@ def _cors_origin_allowed(origin: str) -> bool:
     return False
 
 
+# Baseline security response headers for the operator BFF. Chosen to be safe for
+# a JSON API consumed cross-origin by the operator FE and for SSE streams:
+# - nosniff: block MIME-type sniffing
+# - frame DENY: the API must never be framed (clickjacking defense)
+# - no-referrer: never leak operator URLs (which can carry ids) to third parties
+# Deliberately omitted: CSP (no HTML served here), Cross-Origin-Resource-Policy
+# (would block the cross-origin FE), and HSTS (owned by the TLS edge / Caddy).
+_SECURITY_RESPONSE_HEADERS = (
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+)
+
+
+class _SecurityHeadersMiddleware:
+    """Pure-ASGI middleware that appends baseline security headers.
+
+    Implemented at the ASGI layer (not BaseHTTPMiddleware) so it does not buffer
+    or break StreamingResponse / SSE endpoints.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def _send(message: Any) -> None:
+            if message.get("type") == "http.response.start":
+                headers = message.setdefault("headers", [])
+                present = {name.lower() for name, _ in headers}
+                for name, value in _SECURITY_RESPONSE_HEADERS:
+                    if name not in present:
+                        headers.append((name, value))
+            await send(message)
+
+        await self.app(scope, receive, _send)
+
+
 def _build_bff_app() -> FastAPI:
     cors_origins = _cors_origins_from_env()
     strict = _is_production_strict_mode()
@@ -290,6 +331,9 @@ def _build_bff_app() -> FastAPI:
         if preview_regex:
             middleware_kwargs["allow_origin_regex"] = preview_regex
         built_app.add_middleware(_PantheonCORSMiddleware, **middleware_kwargs)
+    # Added after CORS so it is the outermost layer: it appends security headers
+    # to the final response without disturbing the CORS headers.
+    built_app.add_middleware(_SecurityHeadersMiddleware)
     return built_app
 
 
