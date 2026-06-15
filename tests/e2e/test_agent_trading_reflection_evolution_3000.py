@@ -57,6 +57,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID,
     PERSONA_MULTI_PERSONA_PROPOSAL_LINEAGE_MODEL_ID,
     PERSONA_OPENCLAW_SESSION_HANDOFF_MODEL_ID,
+    PERSONA_OPENCLAW_SESSION_CONTINUITY_MODEL_ID,
     PERSONA_OSS_OODA_LEDGER_MODEL_ID,
     PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
     PERSONA_OSS_QUALITY_REPAIR_HANDOFF_MODEL_ID,
@@ -213,6 +214,17 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["portfolio_state_carryover_position_count"] == (
         DEFAULT_CASE_COUNT - summary["persona_count"]
     ) * PORTFOLIO_LEG_COUNT
+    assert summary["openclaw_session_continuity_count"] == DEFAULT_CASE_COUNT
+    assert summary["openclaw_session_continuity_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["openclaw_session_continuity_applied_count"] == (
+        DEFAULT_CASE_COUNT - summary["persona_count"]
+    )
+    assert summary["openclaw_session_continuity_cold_start_count"] == summary["persona_count"]
+    assert summary["openclaw_session_continuity_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["openclaw_session_continuity_drives_next_case_count"] == DEFAULT_CASE_COUNT
+    assert summary["openclaw_session_continuity_prior_session_ref_count"] == (
+        DEFAULT_CASE_COUNT - summary["persona_count"]
+    )
     assert summary["persisted_cycle_resume_count"] == DEFAULT_CASE_COUNT
     assert summary["persisted_cycle_resume_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["persisted_cycle_resume_applied_count"] == (
@@ -559,6 +571,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "object_store_readback_verified",
         "oss_quality_repair_lineage_bound",
         "openclaw_session_context_bound",
+        "openclaw_session_continuity_bound",
         "paper_runtime_guard_retained",
         "portfolio_state_carryover_bound",
         "policy_oss_lineage_bound",
@@ -672,6 +685,28 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "runtime_feedback_cites_openclaw_session",
         "runtime_feedback_state_binds_openclaw_session",
         "selected_candidates_cite_openclaw_session_followup",
+    }
+    assert coverage["openclaw_session_continuity_models"] == [
+        PERSONA_OPENCLAW_SESSION_CONTINUITY_MODEL_ID
+    ]
+    assert set(coverage["openclaw_session_continuity_statuses"]) == {
+        "applied",
+        "cold_start",
+    }
+    assert set(coverage["openclaw_session_continuity_request_actions"]) == {
+        "continue_prior_openclaw_session",
+        "start_openclaw_session",
+    }
+    assert set(coverage["openclaw_session_continuity_replay_flags"]) == {
+        "candidate_generation_consumes_session_continuity",
+        "cold_start_or_previous_session_bound",
+        "current_openclaw_session_response_completed",
+        "handoff_carries_session_continuity",
+        "reasoning_consumes_session_continuity",
+        "replayable",
+        "runtime_feedback_binds_session_continuity",
+        "same_persona_session_continuity",
+        "selected_candidate_cites_session_continuity",
     }
     assert coverage["alpha_seed_revision_handoff_models"] == [
         PERSONA_ALPHA_SEED_REVISION_HANDOFF_MODEL_ID
@@ -1370,6 +1405,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_persona_oss_ooda_causal_ledger(case)
         _assert_cross_cycle_runtime_carryover(case, latest_case_by_persona)
         _assert_portfolio_state_carryover(case, latest_case_by_persona)
+        _assert_openclaw_session_continuity(case, latest_case_by_persona)
         _assert_persisted_cycle_resume_carryover(case, latest_case_by_persona)
         _assert_multi_cycle_lineage_carryover(case, persona_case_history)
         _assert_case_specific_upstream_artifacts(case)
@@ -2763,6 +2799,10 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
             f"portfolio-state-carryover://{previous_case['case_id']}->{case['case_id']}"
         )
         expected_portfolio_state_ref = f"portfolio-state://{previous_case['case_id']}/generation2"
+        previous_openclaw = previous_case["operational_context"]["openclaw_session_handoff"]
+        expected_openclaw_continuity_ref = (
+            f"openclaw-session-continuity://{previous_case['case_id']}->{case['case_id']}"
+        )
         expected_checkpoint_ref = f"checkpoint://{previous_recovery['checkpoint_id']}"
         expected_schedule_ref = f"schedule://{previous_schedule['schedule_id']}"
         expected_metadata_ref = f"object-store://{previous_runtime_readback['object_store_metadata_key']}"
@@ -2772,6 +2812,11 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
             expected_runtime_feedback_ref,
             expected_portfolio_carry_ref,
             expected_portfolio_state_ref,
+            expected_openclaw_continuity_ref,
+            previous_openclaw["source_oss_ref"],
+            previous_openclaw["context_ref"],
+            previous_openclaw["session_ref"],
+            previous_openclaw["upstream_session_ref"],
             previous_feedback["source_runtime_ref"],
             previous_feedback["source_handoff_ref"],
             previous_ledger["ledger_ref"],
@@ -3078,6 +3123,148 @@ def _assert_portfolio_state_carryover(case: dict, latest_case_by_persona: dict[s
             assert proof["carry_ref"] in candidate_request["input_refs"]
             assert proof["state_ref"] in selected_candidate["evidence_refs"]
             assert proof["carry_ref"] in selected_candidate["evidence_refs"]
+
+
+def _assert_openclaw_session_continuity(case: dict, latest_case_by_persona: dict[str, dict]) -> None:
+    proof = case["cross_cycle"]["openclaw_session_continuity"]
+    traces = case["reflection"]["agent_decision_traces"]
+    previous_case = latest_case_by_persona.get(case["persona_id"])
+    handoff = case["operational_context"]["lean_handoff"]
+    openclaw_handoff = case["operational_context"]["openclaw_session_handoff"]
+    runtime_feedback = case["operational_context"]["lean_runtime_feedback"]
+    request = proof["openclaw_request"]
+
+    assert proof["model_id"] == PERSONA_OPENCLAW_SESSION_CONTINUITY_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == f"openclaw-session-continuity://{case['case_id']}"
+    assert proof["input_hash"]
+    assert len(proof["trace_bindings"]) == len(traces) == 2
+    assert all(proof["replay"].values())
+    assert case["usability_dimensions"]["openclaw_session_continuity"] == 1.0
+    assert case["usable"]["openclaw_session_continuity_drives_next_case"] is True
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["openclaw_session_continuity_drives_next_case_request"]["status"] == "passed"
+
+    assert proof["current_source_oss_ref"] == openclaw_handoff["source_oss_ref"]
+    assert proof["current_context_ref"] == openclaw_handoff["context_ref"]
+    assert proof["current_context_hash"] == openclaw_handoff["context_hash"]
+    assert proof["current_session_ref"] == openclaw_handoff["session_ref"]
+    assert proof["current_session_id"] == openclaw_handoff["session_id"]
+    assert proof["current_upstream_session_ref"] == openclaw_handoff["upstream_session_ref"]
+    assert proof["current_upstream_session_id"] == openclaw_handoff["upstream_session_id"]
+    assert proof["current_session_state"] == "active"
+    assert request["model_id"] == PERSONA_OPENCLAW_SESSION_CONTINUITY_MODEL_ID
+    assert request["case_id"] == case["case_id"]
+    assert request["persona_id"] == case["persona_id"]
+    assert request["requested_before_persona_reasoning"] is True
+
+    if previous_case is None:
+        assert proof["continuity_status"] == "cold_start"
+        assert proof["continuity_ref"] is None
+        assert proof["previous_case_id"] is None
+        assert proof["previous_source_oss_ref"] is None
+        assert proof["previous_context_ref"] is None
+        assert proof["previous_session_ref"] is None
+        assert proof["previous_upstream_session_ref"] is None
+        assert request["status"] == "cold_start"
+        assert request["request_action"] == "start_openclaw_session"
+        assert request["continuity_ref"] is None
+        assert request["input_refs"] == []
+        assert handoff["openclaw_session_continuity_status"] == "cold_start"
+        assert handoff["openclaw_session_continuity_ref"] is None
+        assert runtime_feedback["state_updates"]["bind_openclaw_session_continuity_ref"] is None
+        assert runtime_feedback["state_updates"]["bind_openclaw_previous_session_ref"] is None
+    else:
+        previous_openclaw = previous_case["operational_context"]["openclaw_session_handoff"]
+        previous_feedback = previous_case["operational_context"]["lean_runtime_feedback"]
+        previous_schedule = previous_case["operational_context"]["autonomous_schedule"]
+        expected_continuity_ref = (
+            f"openclaw-session-continuity://{previous_case['case_id']}->{case['case_id']}"
+        )
+        expected_refs = [
+            expected_continuity_ref,
+            previous_openclaw["source_oss_ref"],
+            previous_openclaw["context_ref"],
+            previous_openclaw["session_ref"],
+            previous_openclaw["upstream_session_ref"],
+        ]
+
+        assert proof["continuity_status"] == "applied"
+        assert proof["continuity_ref"] == expected_continuity_ref
+        assert proof["previous_case_id"] == previous_case["case_id"]
+        assert proof["previous_source_oss_ref"] == previous_openclaw["source_oss_ref"]
+        assert proof["previous_context_ref"] == previous_openclaw["context_ref"]
+        assert proof["previous_context_hash"] == previous_openclaw["context_hash"]
+        assert proof["previous_session_ref"] == previous_openclaw["session_ref"]
+        assert proof["previous_session_id"] == previous_openclaw["session_id"]
+        assert proof["previous_upstream_session_ref"] == previous_openclaw["upstream_session_ref"]
+        assert proof["previous_upstream_session_id"] == previous_openclaw["upstream_session_id"]
+        assert request["status"] == "applied"
+        assert request["request_action"] == "continue_prior_openclaw_session"
+        assert request["continuity_ref"] == expected_continuity_ref
+        assert request["previous_session_ref"] == previous_openclaw["session_ref"]
+        assert request["previous_context_ref"] == previous_openclaw["context_ref"]
+        assert request["previous_upstream_session_ref"] == previous_openclaw["upstream_session_ref"]
+        assert set(expected_refs).issubset(set(request["input_refs"]))
+        assert f"lean-runtime-feedback://{previous_feedback['feedback_id']}" in request["input_refs"]
+        assert f"schedule://{previous_schedule['schedule_id']}" in request["input_refs"]
+        assert handoff["openclaw_session_continuity_ref"] == expected_continuity_ref
+        assert handoff["openclaw_previous_session_ref"] == previous_openclaw["session_ref"]
+        assert all(ref in handoff["runtime_bundle_refs"] for ref in expected_refs)
+        assert runtime_feedback["replay"]["openclaw_session_continuity_bound"] is True
+        assert runtime_feedback["state_updates"]["bind_openclaw_session_continuity_ref"] == expected_continuity_ref
+        assert runtime_feedback["state_updates"]["bind_openclaw_previous_session_ref"] == previous_openclaw["session_ref"]
+        assert runtime_feedback["state_updates"]["bind_openclaw_previous_context_ref"] == previous_openclaw["context_ref"]
+        assert runtime_feedback["state_updates"]["bind_openclaw_previous_upstream_session_ref"] == previous_openclaw[
+            "upstream_session_ref"
+        ]
+        assert all(ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"] for ref in expected_refs)
+
+    binding_by_trace = {
+        binding["trace_id"]: binding
+        for binding in proof["trace_bindings"]
+    }
+    assert set(binding_by_trace) == {trace["reflection_id"] for trace in traces}
+    for trace in traces:
+        binding = binding_by_trace[trace["reflection_id"]]
+        artifact = trace["agent_decision_artifact"]
+        reasoning_refs = artifact["persona_reasoning"]["request"]["input_refs"]
+        generation_refs = artifact["candidate_generation"]["request"]["input_refs"]
+        selected_refs = trace["selected_candidate"]["evidence_refs"]
+
+        assert binding["generation"] == artifact["generation"]
+        assert binding["reasoning_consumes_prior_openclaw_session"] is True
+        assert binding["candidate_generation_consumes_prior_openclaw_session"] is True
+        assert binding["selected_candidate_cites_prior_openclaw_session"] is True
+        assert binding["reasoning_consumes_current_openclaw_source"] is True
+        assert binding["candidate_generation_consumes_current_openclaw_session"] is True
+        assert binding["selected_candidate_cites_current_openclaw_followup"] is True
+        assert proof["current_source_oss_ref"] in reasoning_refs
+        assert proof["current_source_oss_ref"] in generation_refs
+        assert any(
+            str(ref).startswith("followup://")
+            and "/session/" in str(ref)
+            and "/openclaw/" in str(ref)
+            for ref in selected_refs
+        )
+        if proof["continuity_status"] == "applied":
+            prior_refs = [
+                proof["continuity_ref"],
+                proof["previous_source_oss_ref"],
+                proof["previous_context_ref"],
+                proof["previous_session_ref"],
+                proof["previous_upstream_session_ref"],
+            ]
+            for ref in prior_refs:
+                assert ref in reasoning_refs
+                assert ref in generation_refs
+                assert ref in selected_refs
 
 
 def _assert_persisted_cycle_resume_carryover(case: dict, latest_case_by_persona: dict[str, dict]) -> None:
@@ -4640,6 +4827,48 @@ def _assert_operational_context(case: dict) -> None:
     ]
     assert handoff["openclaw_session_state"] == "active"
     assert handoff["openclaw_session_artifact_family"] == "openclaw_session"
+    openclaw_continuity = handoff["openclaw_session_continuity"]
+    assert openclaw_context["session_continuity"] == openclaw_continuity
+    assert handoff["openclaw_session_continuity_status"] == openclaw_continuity["status"]
+    assert handoff["openclaw_session_continuity_ref"] == openclaw_continuity["continuity_ref"]
+    assert handoff["openclaw_previous_source_oss_ref"] == openclaw_continuity[
+        "previous_source_oss_ref"
+    ]
+    assert handoff["openclaw_previous_context_ref"] == openclaw_continuity[
+        "previous_context_ref"
+    ]
+    assert handoff["openclaw_previous_session_ref"] == openclaw_continuity[
+        "previous_session_ref"
+    ]
+    assert handoff["openclaw_previous_upstream_session_ref"] == openclaw_continuity[
+        "previous_upstream_session_ref"
+    ]
+    openclaw_continuity_refs = [
+        ref
+        for ref in (
+            handoff["openclaw_session_continuity_ref"],
+            handoff["openclaw_previous_source_oss_ref"],
+            handoff["openclaw_previous_context_ref"],
+            handoff["openclaw_previous_session_ref"],
+            handoff["openclaw_previous_upstream_session_ref"],
+        )
+        if ref
+    ]
+    if openclaw_continuity["status"] == "cold_start":
+        assert openclaw_continuity["request_action"] == "start_openclaw_session"
+        assert openclaw_continuity_refs == []
+    else:
+        assert openclaw_continuity["status"] == "applied"
+        assert openclaw_continuity["request_action"] == "continue_prior_openclaw_session"
+        assert handoff["openclaw_session_continuity_ref"].startswith(
+            "openclaw-session-continuity://"
+        )
+        assert handoff["openclaw_previous_session_ref"].startswith(
+            "openclaw-session://"
+        )
+        assert handoff["openclaw_previous_context_ref"].startswith(
+            "openclaw-context://"
+        )
     assert handoff["alpha_seed_revision_handoff"] == packet_alpha_handoff
     assert handoff["alpha_seed_revision_handoff_ref"] == packet_alpha_handoff["handoff_ref"]
     assert handoff["alpha_seed_revision_ref"] == alpha_revision["revision_ref"]
@@ -4688,6 +4917,8 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["openclaw_session_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["openclaw_source_oss_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["openclaw_upstream_session_ref"] in handoff["runtime_bundle_refs"]
+    for ref in openclaw_continuity_refs:
+        assert ref in handoff["runtime_bundle_refs"]
     assert handoff["alpha_seed_revision_handoff_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["alpha_seed_revision_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["alpha_seed_source_ref"] in handoff["runtime_bundle_refs"]
@@ -4771,6 +5002,7 @@ def _assert_operational_context(case: dict) -> None:
         handoff["openclaw_session_ref"],
         handoff["openclaw_source_oss_ref"],
         handoff["openclaw_upstream_session_ref"],
+        *openclaw_continuity_refs,
         handoff["alpha_seed_revision_handoff_ref"],
         handoff["alpha_seed_revision_ref"],
         handoff["alpha_seed_source_ref"],
@@ -4845,6 +5077,24 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["state_updates"]["bind_openclaw_upstream_session_ref"] == handoff[
         "openclaw_upstream_session_ref"
     ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_session_continuity_ref"] == handoff[
+        "openclaw_session_continuity_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_session_continuity_status"] == handoff[
+        "openclaw_session_continuity_status"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_previous_source_oss_ref"] == handoff[
+        "openclaw_previous_source_oss_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_previous_context_ref"] == handoff[
+        "openclaw_previous_context_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_previous_session_ref"] == handoff[
+        "openclaw_previous_session_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_openclaw_previous_upstream_session_ref"] == handoff[
+        "openclaw_previous_upstream_session_ref"
+    ]
     assert runtime_feedback["state_updates"]["bind_alpha_seed_revision_handoff_ref"] == handoff[
         "alpha_seed_revision_handoff_ref"
     ]
@@ -4872,6 +5122,7 @@ def _assert_operational_context(case: dict) -> None:
     assert case["usability_dimensions"]["risk_analytics_lineage_handoff"] == 1.0
     assert case["usability_dimensions"]["multi_persona_proposal_lineage"] == 1.0
     assert case["usability_dimensions"]["openclaw_session_handoff"] == 1.0
+    assert case["usability_dimensions"]["openclaw_session_continuity"] == 1.0
     assert case["usability_dimensions"]["alpha_seed_revision_handoff"] == 1.0
     assert case["usability_dimensions"]["oss_quality_repair_handoff"] == 1.0
     assert case["usability_dimensions"]["evolved_strategy_packet_handoff"] == 1.0
@@ -4882,6 +5133,7 @@ def _assert_operational_context(case: dict) -> None:
     assert case["usable"]["risk_analytics_lineage_reaches_lean_handoff"] is True
     assert case["usable"]["multi_persona_proposal_lineage_reaches_runtime"] is True
     assert case["usable"]["openclaw_session_reaches_lean_handoff"] is True
+    assert case["usable"]["openclaw_session_continuity_drives_next_case"] is True
     assert case["usable"]["alpha_seed_revision_reaches_lean_handoff"] is True
     assert case["usable"]["oss_quality_repair_reaches_lean_handoff"] is True
     assert case["usable"]["evolved_strategy_packet_reaches_lean_handoff"] is True
@@ -4893,6 +5145,7 @@ def _assert_operational_context(case: dict) -> None:
     assert check_by_name["risk_analytics_lineage_reaches_evolved_policy_and_lean_packet"]["status"] == "passed"
     assert check_by_name["multi_persona_proposal_lineage_reaches_runtime_feedback"]["status"] == "passed"
     assert check_by_name["openclaw_session_context_reaches_lean_handoff"]["status"] == "passed"
+    assert check_by_name["openclaw_session_continuity_drives_next_case_request"]["status"] == "passed"
     assert check_by_name["alpha_seed_revision_reaches_lean_handoff"]["status"] == "passed"
     assert (
         check_by_name["oss_quality_repair_reaches_lean_handoff_and_runtime_feedback"][
