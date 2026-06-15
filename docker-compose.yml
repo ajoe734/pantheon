@@ -659,6 +659,19 @@ services:
       BFF_DATA_DIR: /data/bff
       PANTHEON_BFF_STRATEGY_SPEC_STORE: ${PANTHEON_BFF_STRATEGY_SPEC_STORE:-/data/bff/strategy_specs.json}
       PANTHEON_BFF_RESEARCH_ARTIFACT_STORE: ${PANTHEON_BFF_RESEARCH_ARTIFACT_STORE:-/data/bff/research_artifacts.json}
+      PANTHEON_BFF_INCIDENT_STORE: ${PANTHEON_BFF_INCIDENT_STORE:-/data/incidents/incidents.json}
+      PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
+      PANTHEON_BFF_APPROVAL_DECISION_STORE: ${PANTHEON_BFF_APPROVAL_DECISION_STORE:-/data/governance/approval_decisions.json}
+      PANTHEON_BFF_ROUTE_POLICY_STORE: ${PANTHEON_BFF_ROUTE_POLICY_STORE:-/data/bff/route_policies.json}
+      PANTHEON_BFF_WORKFLOW_TEMPLATE_STORE: ${PANTHEON_BFF_WORKFLOW_TEMPLATE_STORE:-/data/bff/workflow_templates.json}
+      PANTHEON_BFF_HOOK_REGISTRY_STORE: ${PANTHEON_BFF_HOOK_REGISTRY_STORE:-/data/bff/hook_registry.json}
+      PANTHEON_BFF_JOB_STORE: ${PANTHEON_BFF_JOB_STORE:-/data/bff/jobs.json}
+      PANTHEON_BFF_RESEARCH_TICKET_STORE: ${PANTHEON_BFF_RESEARCH_TICKET_STORE:-/data/bff/research_tickets.json}
+      PANTHEON_BFF_RESEARCH_ANALYSIS_STORE: ${PANTHEON_BFF_RESEARCH_ANALYSIS_STORE:-/data/bff/research_analyses.json}
+      PANTHEON_BFF_RESEARCH_NOTES_STORE: ${PANTHEON_BFF_RESEARCH_NOTES_STORE:-/data/bff/research_notes.json}
+      PANTHEON_BFF_EVIDENCE_REF_STORE: ${PANTHEON_BFF_EVIDENCE_REF_STORE:-/data/bff/evidence_refs.json}
+      PANTHEON_BFF_INSIGHT_CARD_STORE: ${PANTHEON_BFF_INSIGHT_CARD_STORE:-/data/bff/insight_cards.json}
+      PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE: ${PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE:-/data/bff/institutional_memory_entries.json}
       PANTHEON_BFF_EVOLUTION_PROGRAM_STORE: ${PANTHEON_BFF_EVOLUTION_PROGRAM_STORE:-/data/bff/evolution/evolution_programs.json}
       PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
       BFF_READ_SURFACE_STATE: fresh
@@ -736,6 +749,7 @@ services:
       PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
       PANTHEON_RESEARCH_ORCHESTRATOR_API_URL: http://research-orchestrator-svc:8101
       PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
+      PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
@@ -759,6 +773,8 @@ services:
       research-orchestrator-svc:
         condition: service_healthy
       research-worker-gateway-svc:
+        condition: service_healthy
+      memory:
         condition: service_healthy
       openclaw-gateway-adapter:
         condition: service_healthy
@@ -940,11 +956,14 @@ services:
       # Dev rollback defaults to JSON; staging/prod select postgres via env.
       PANTHEON_MEMORY_STORE_BACKEND: ${PANTHEON_MEMORY_STORE_BACKEND:-json}
       PANTHEON_MEMORY_STORE_DSN: ${PANTHEON_MEMORY_STORE_DSN:-}
+      PANTHEON_MEMORY_DATA_DIR: /data/memory
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+    volumes:
+      - memory-data:/data/memory
     depends_on:
       postgres:
         condition: service_healthy
@@ -1594,6 +1613,7 @@ volumes:
   governance-data:
   incident-data:
   minio-data:
+  memory-data:
   nats-data:
   openclaw-data:
   policy-learning-data:
