@@ -663,6 +663,7 @@ services:
       PANTHEON_BFF_TOOLS_STORE: ${PANTHEON_BFF_TOOLS_STORE:-/data/bff/tools.json}
       PANTHEON_BFF_MCP_SERVERS_STORE: ${PANTHEON_BFF_MCP_SERVERS_STORE:-/data/bff/mcp_servers.json}
       PANTHEON_BFF_MCP_TOOLS_STORE: ${PANTHEON_BFF_MCP_TOOLS_STORE:-/data/bff/mcp_tools.json}
+      PANTHEON_BFF_OODA_PACKET_STORE: ${PANTHEON_BFF_OODA_PACKET_STORE:-/data/bff/ooda_packets.json}
       PANTHEON_BFF_INCIDENT_STORE: ${PANTHEON_BFF_INCIDENT_STORE:-/data/incidents/incidents.json}
       PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
       PANTHEON_BFF_APPROVAL_DECISION_STORE: ${PANTHEON_BFF_APPROVAL_DECISION_STORE:-/data/governance/approval_decisions.json}
@@ -751,6 +752,10 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      # Wire approval read path directly to the real approval producer.
+      # BFF will try http://promotion:8089/api/v1/approvals before the governance
+      # service URL when PANTHEON_BFF_APPROVAL_DECISION_STORE is not set/empty.
+      PANTHEON_PROMOTION_API_URL: http://promotion:8089
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_CAPITAL_API_URL: http://capital:8092
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
