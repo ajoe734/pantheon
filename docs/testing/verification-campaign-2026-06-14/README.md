@@ -61,6 +61,7 @@ and resilience.
 | # | Theme | Plan | Results | Fix |
 |---|---|---|---|---|
 | 11 | Data/computation correctness (not shape) | [round-11-plan.md](round-11-plan.md) | [round-11-results.md](round-11-results.md) | PASS (aggregation math exact; O4 governance-default note) |
+| 12 | Real JWT/MFA auth path (not stub) — attack matrix | [round-12-plan.md](round-12-plan.md) | [round-12-results.md](round-12-results.md) | PASS (fail-closed, alg-pinned); F10 no-exp hardening; attack-matrix test added |
 
 ## Environment under test
 
