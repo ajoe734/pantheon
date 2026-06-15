@@ -657,6 +657,8 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     environment:
       BFF_DATA_DIR: /data/bff
+      PANTHEON_BFF_STRATEGY_SPEC_STORE: ${PANTHEON_BFF_STRATEGY_SPEC_STORE:-/data/bff/strategy_specs.json}
+      PANTHEON_BFF_RESEARCH_ARTIFACT_STORE: ${PANTHEON_BFF_RESEARCH_ARTIFACT_STORE:-/data/bff/research_artifacts.json}
       PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
       BFF_READ_SURFACE_STATE: fresh
       PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
