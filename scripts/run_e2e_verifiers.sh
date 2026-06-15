@@ -39,6 +39,14 @@ for entry in "${VERIFIERS[@]}"; do
     sed 's/^/        /' /tmp/e2e_v.out | tail -6
   fi
 done
+# FE static-serving check (needs FE_BASE; catches the blank-console class of bug)
+if [[ -n "${FE_BASE:-}" && -f "$HERE/verify_e2e_fe_serving.py" ]]; then
+  if FE_BASE="$FE_BASE" python3 "$HERE/verify_e2e_fe_serving.py" >/tmp/fe_v.out 2>&1; then
+    echo "PASS  R21 FE static serving"
+  else
+    echo "FAIL  R21 FE static serving"; sed "s/^/        /" /tmp/fe_v.out | tail -8
+  fi
+fi
 echo "----"
 echo "e2e verifiers: $pass passed, $fail failed, $missing missing"
 # telemetry DLQ health is internal-only (reads the telemetry service DLQ); run on the VM:
