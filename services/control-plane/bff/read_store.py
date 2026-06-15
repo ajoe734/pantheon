@@ -8823,7 +8823,7 @@ class ReadSurfaceStore:
             if approval_source != "missing":
                 return approval_source
         if dataset == "governance_review_queue_items":
-            for upstream_dataset in ("deployment_plans", "evolution_decisions"):
+            for upstream_dataset in ("deployment_plans", "approval_decisions", "evolution_decisions"):
                 upstream_source = self.dataset_source(
                     upstream_dataset,
                     include_snapshot_fallback=include_snapshot_fallback,
@@ -11692,6 +11692,7 @@ class ReadSurfaceStore:
         items = list((self._local_fallback("governance_review_queue_items") or {}).values())
         if not items:
             reviewable_statuses = {"draft", "pending_review", "proposed", "under_review", "reviewed"}
+            linked_approval_decision_ids: set[str] = set()
             for plan in self.list_deployment_plans():
                 status = str(plan.get("status") or "").strip().lower()
                 if status and status not in reviewable_statuses:
@@ -11700,6 +11701,9 @@ class ReadSurfaceStore:
                 if not plan_id:
                     continue
                 decision = self.get_approval_decision(plan.get("approval_decision_id"))
+                decision_id = str((decision or {}).get("decision_id") or (decision or {}).get("id") or "").strip()
+                if decision_id:
+                    linked_approval_decision_ids.add(decision_id)
                 items.append(
                     {
                         "item_id": f"review-{plan_id}",
@@ -11734,6 +11738,46 @@ class ReadSurfaceStore:
                         },
                         "review_summary": {
                             "riskSummary": decision.get("rationale") or "Evolution decision awaiting governance review.",
+                        },
+                    }
+                )
+            for decision in self.list_approval_decisions():
+                decision_id = str(decision.get("decision_id") or decision.get("id") or "").strip()
+                if not decision_id or decision_id in linked_approval_decision_ids:
+                    continue
+                status = str(decision.get("state") or decision.get("decision_state") or "").strip().lower()
+                outcome = str(decision.get("outcome") or decision.get("decision") or "").strip().lower()
+                if outcome in {"approved", "approved_with_conditions", "rejected"}:
+                    continue
+                if status and status not in reviewable_statuses:
+                    continue
+                target_type = str(decision.get("target_type") or decision.get("decision_type") or "ApprovalDecision")
+                submitted_by = decision.get("created_by") or decision.get("reviewer") or "governance-service"
+                can_decide = status in {"under_review", "reviewed", "in_review"}
+                items.append(
+                    {
+                        "item_id": f"review-{decision_id}",
+                        "item_type": "ApprovalDecision",
+                        "risk_level": decision.get("risk_level"),
+                        "status": status or "proposed",
+                        "submitted_at": decision.get("submitted_at") or decision.get("created_at"),
+                        "submitted_by": submitted_by,
+                        "governance_outcome": outcome or status or "proposed",
+                        "allowedActions": {
+                            "canApprove": can_decide,
+                            "canReject": can_decide,
+                            "canRequestRevision": status in {"proposed", "under_review", "reviewed"},
+                        },
+                        "review_summary": {
+                            "riskSummary": (
+                                decision.get("rationale")
+                                or f"{target_type} approval decision awaiting governance review."
+                            ),
+                            "evidence_refs": json.loads(json.dumps(decision.get("evidence_refs") or [])),
+                            "linked_approval_decision_id": decision_id,
+                            "target_type": target_type,
+                            "target_id": decision.get("target_id"),
+                            "target_version": decision.get("target_version"),
                         },
                     }
                 )
