@@ -403,7 +403,76 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 | `/api/v1/freeze-orders` | GET | EV-03 | `{ items: [FreezeOrder], meta: { snapshot_at } }` | `status`, `scope` |
 | `/api/v1/rollbacks` | GET | EV-04 | `{ items: [RollbackRecord], meta: { snapshot_at } }` | `runtime_id`, `action_type`, `time_range` |
 
-### 9.9 Automation Registry BFF Surfaces (AR-01–AR-02)
+### 9.9 AlphaFactory Board (AF-01)
+
+**Canonical source**: Research-to-strategy pipeline read-model.
+**Consumer**: `FE AlphaFactoryBoard` (idea→strategy kanban view).
+**Implementation**: `console_gap/alpha_factory.py` — registered via `app.include_router` in `main.py`.
+
+| Route | Method | Surface ID | Min Role | Response |
+|---|---|---|---|---|
+| `/bff/alpha-factory` | GET | AF-01 | `operator` | Canonical list envelope — see below |
+
+**Request parameters**:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `lane` | string | — | Filter cards to one lane: `ideas`, `strategies`, or `experiments` |
+| `page` | int | 1 | Page number (min 1) |
+| `page_size` | int | 20 | Items per page (min 1, max 100) |
+
+**Happy-path response** (HTTP 200):
+
+```json
+{
+  "data": {
+    "id": "alpha-factory",
+    "snapshotAt": "<RFC3339>",
+    "snapshot_at": "<RFC3339>",
+    "lanes": [
+      { "id": "ideas",       "label": "Ideas" },
+      { "id": "strategies",  "label": "Strategies" },
+      { "id": "experiments", "label": "Experiments" }
+    ],
+    "items": [ { "id": "card-001", "lane": "ideas", "title": "...", "status": "..." } ]
+  },
+  "items": [ { "...": "..." } ],
+  "page_info": { "page": 1, "page_size": 20, "total": 1, "next_page_token": null },
+  "meta": {
+    "snapshot_at": "<RFC3339>",
+    "surfaces": { "alpha_factory": { "status": "ok", "source": "service_store" } },
+    "filters": { "lane": null }
+  }
+}
+```
+
+**Degraded response** — store unavailable (HTTP 200, never bare `[]`):
+
+```json
+{
+  "data": { "id": "alpha-factory", "lanes": [...], "items": [] },
+  "items": [],
+  "page_info": { "page": 1, "page_size": 20, "total": 0, "next_page_token": null },
+  "meta": {
+    "snapshot_at": "<RFC3339>",
+    "surfaces": {
+      "alpha_factory": {
+        "status": "unavailable",
+        "source": "missing",
+        "staleness": { "served_from": "unverifiable", "last_known_at": "<RFC3339>" }
+      }
+    },
+    "filters": { "lane": null }
+  }
+}
+```
+
+**Design notes**:
+- The "never show none" rule applies: the BFF never returns bare `[]` due to a downstream failure.  When the backing dataset is missing the surface status is `unavailable` and `items` is an explicit empty list with degradation metadata.
+- Auth/CORS re-uses the existing BFF token-stub and CORS middleware; no new middleware needed.
+- The backing store method is `ReadSurfaceStore.list_alpha_factory_cards(page, page_size, lane)`.
+
+### 9.10 Automation Registry BFF Surfaces (AR-01–AR-02)
 
 **Canonical sources**: LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md, services/control-plane/cron workflow registry, OpenClaw adapter workflow policy
 
@@ -427,7 +496,6 @@ return a bare `[]`. The unavailable condition is explicit in
   "source": "missing"
 }
 ```
-
 ---
 
 ## 10. Composed Views
@@ -672,11 +740,12 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 | Lineage (LN) | LN-01 to LN-03 | 3 |
 | Incident (IN) | IN-01 to IN-05 | 5 |
 | Evolution (EV) | EV-01 to EV-04 | 4 |
-| **Canonical v1 Subtotal** | | **33** |
+| AlphaFactory Board (AF) | AF-01 | 1 |
+| **Canonical v1 Subtotal** | | **34** |
 | Composed views | 9 | 9 |
 | SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
 | BFF Management (BFFGAP-CONSOLE) | DS-01 (`/bff/management/data-sources`) | 1 |
-| **Total v1 endpoints** | | **49** |
+| **Total v1 endpoints** | | **50** |
 
 ---
 
