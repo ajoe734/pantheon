@@ -289,6 +289,8 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
                     "family": "approval-race",
                     "ok": True,
                     "bounded": True,
+                    "accepted_count": 1,
+                    "safe_error_count": 1,
                     "duplicate_winners": False,
                     "token_source": {"kind": "provided_bearer_pair"},
                 },
@@ -349,4 +351,101 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     assert dry_run_check["status"] == "pass"
     assert dry_run_check["note"] == "strict:true dryRun:7/7 invalidEnvelope:true sideEffects:none"
     assert race_check["status"] == "pass"
-    assert race_check["note"] == "strict:true bounded:true duplicateWinners:false tokenPair:true"
+    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 duplicateWinners:false tokenPair:true"
+
+
+def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer"} for label in rbac_labels})
+    dry_run = [
+        {"family": "dry-run-strategy-create", "ok": True},
+        {"family": "dry-run-strategy-create-readback-not-persisted", "ok": True, "error_envelope": True},
+        {"family": "dry-run-ranking-formula-create", "ok": True},
+        {"family": "dry-run-ranking-formula-create-readback-not-persisted", "ok": True, "error_envelope": True},
+        {"family": "dry-run-v5-intervention-claim", "ok": True},
+        {"family": "dry-run-invalid-strategy", "ok": True, "error_envelope": True},
+        {"family": "dry-run-invalid-ranking-formula", "ok": True, "error_envelope": True},
+    ]
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {"kind": "rbac_matrix", "cases": rbac_cases},
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "summary": {
+                    "total": 64,
+                    "passed": 64,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "dry_run": dry_run,
+                "approval_race": {
+                    "family": "approval-race",
+                    "ok": True,
+                    "bounded": True,
+                    "accepted_count": 0,
+                    "safe_error_count": 2,
+                    "duplicate_winners": False,
+                    "token_source": {"kind": "provided_bearer_pair"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    race_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict multi-operator approval race evidence is bounded."
+    )
+    assert race_check["status"] == "fail"
+    assert race_check["note"] == "strict:true bounded:true accepted:0 safeErrors:2 duplicateWinners:false tokenPair:true"

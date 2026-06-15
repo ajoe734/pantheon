@@ -699,8 +699,12 @@ def build_approval_race_results(
     ]
     transport_failures = [result for result in race_results if int(result.get("status") or 0) == 0]
     duplicate_winners = len(accepted) > 1
-    bounded = len(race_results) == 2 and not transport_failures and not duplicate_winners and (
-        (len(accepted) == 1 and len(safe_errors) == 1) or len(safe_errors) == 2
+    bounded = (
+        len(race_results) == 2
+        and not transport_failures
+        and not duplicate_winners
+        and len(accepted) == 1
+        and len(safe_errors) == 1
     )
     return {
         "family": "approval-race",
@@ -715,7 +719,7 @@ def build_approval_race_results(
         "safe_error_count": len(safe_errors),
         "duplicate_winners": duplicate_winners,
         "token_source": token_source,
-        "expectation": "one accepted decision plus one safe BffErrorEnvelope loser, or two safe BffErrorEnvelope conflicts/not-found responses",
+        "expectation": "one accepted decision plus one safe BffErrorEnvelope loser; two safe errors are not a live race proof",
         "results": race_results,
     }
 
