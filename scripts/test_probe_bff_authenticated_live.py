@@ -263,6 +263,61 @@ def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) ->
     assert sorted(calls) == ["Bearer token-a", "Bearer token-b"]
 
 
+def test_build_approval_race_rejects_two_safe_errors_without_winner(monkeypatch) -> None:
+    probe = _load_probe_module()
+
+    monkeypatch.setattr(
+        probe,
+        "approval_race_tokens",
+        lambda _args, _primary_token: ("token-a", "token-b", {"kind": "unit-test"}),
+    )
+
+    def fake_urlopen(request, timeout: float):
+        assert timeout == 5.0
+        raise urllib.error.HTTPError(
+            request.full_url,
+            404,
+            "Not Found",
+            {},
+            io.BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "code": "NOT_FOUND",
+                            "details": {"precondition_failed": "approval_missing"},
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+    monkeypatch.setattr(probe.urllib.request, "urlopen", fake_urlopen)
+    args = argparse.Namespace(
+        approval_race_id="approval-race-unit",
+        approval_race_decision="approve",
+        subject="op-live-smoke",
+        issuer="pantheon-dev",
+        audience="bff-operators",
+        ttl_seconds=3600,
+        require_provided_approval_race_tokens=False,
+        allow_single_token_approval_race=False,
+    )
+
+    result = probe.build_approval_race_results(
+        args=args,
+        base_url="https://bff.example.test",
+        token="primary",
+        timeout=5.0,
+        idempotency_prefix="idem-unit",
+    )
+
+    assert result["ok"] is False
+    assert result["bounded"] is False
+    assert result["accepted_count"] == 0
+    assert result["safe_error_count"] == 2
+    assert result["duplicate_winners"] is False
+
+
 def test_build_approval_race_fails_duplicate_winners(monkeypatch) -> None:
     probe = _load_probe_module()
 

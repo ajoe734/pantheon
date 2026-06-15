@@ -448,6 +448,9 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const fullRbacMatrix = rbacProbeCount >= 56 && expectedProvidedCases >= 7;
   const providedRbac = fullRbacMatrix && providedRbacCases.length === expectedProvidedCases;
   const approvalTokenPair = approvalRace?.token_source?.kind === "provided_bearer_pair";
+  const approvalAcceptedCount = Number(approvalRace?.accepted_count ?? -1);
+  const approvalSafeErrorCount = Number(approvalRace?.safe_error_count ?? -1);
+  const approvalOneWinnerOneLoser = approvalAcceptedCount === 1 && approvalSafeErrorCount === 1;
 
   return {
     exists: Boolean(json),
@@ -469,11 +472,12 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && approvalRace?.ok === true
       && approvalRace?.bounded === true
       && approvalRace?.duplicate_winners === false
+      && approvalOneWinnerOneLoser
       && approvalTokenPair,
     note: {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} providedCases:${providedRbacCases.length}/${expectedProvidedCases}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
-      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair}`,
+      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair}`,
     },
     missingStatus: missingEvidenceStatus(step.status),
     missingNote: step.outcome
