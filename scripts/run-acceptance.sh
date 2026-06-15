@@ -74,6 +74,11 @@ case "$MODE" in
     if [[ -d tests ]]; then
       run_step "pytest" "$PYTHON" -m pytest -q tests || echo "pytest reported failures"
     fi
+    # e2e-verifier-suite (glob): run every e2e business-flow verifier unit test in
+    # one step so new scripts/test_verify_e2e_*.py are gated without per-round wiring.
+    if ls scripts/test_verify_e2e_*.py >/dev/null 2>&1; then
+      run_step "e2e-verifier-suite" "$PYTHON" -m pytest -q scripts/test_verify_e2e_*.py || echo "e2e verifier suite reported failures"
+    fi
     # E2E binding-provenance verifier logic gate (the live run against a deployed
     # BFF is a post-deploy smoke check; this gates the checker's decision logic).
     if [[ -f scripts/test_verify_e2e_binding_provenance.py ]]; then

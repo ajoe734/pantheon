@@ -17,6 +17,12 @@ VERIFIERS=(
   "verify_e2e_capital_integrity.py:R5 capital invariants"
   "verify_e2e_surface_consistency.py:R8 surface consistency"
   "verify_e2e_evolution_loop.py:R9 evolution loop"
+  "verify_e2e_sentinel_integrity.py:R12 sentinel integrity"
+  "verify_e2e_surface_status_consistency.py:R13 surface-status consistency"
+  "verify_e2e_deployment_lifecycle.py:R15 deployment lifecycle"
+  "verify_e2e_auth_boundary.py:R17 auth boundary"
+  "verify_e2e_runtime_state_coherence.py:R18 runtime-state coherence"
+  "verify_e2e_telemetry_coverage.py:R19 telemetry coverage"
 )
 
 pass=0; fail=0; missing=0
