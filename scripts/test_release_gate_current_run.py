@@ -241,6 +241,37 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert ".lovable/audits/*.md" not in text
 
 
+def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow = repo_root / ".github" / "workflows" / "stage-0-ci.yml"
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in text
+    assert "mode:" in text
+    assert "- live-evidence" in text
+    assert "approval_race_id:" in text
+    assert "soak_seconds:" in text
+    assert "live-evidence:" in text
+    assert "github.event_name == 'workflow_dispatch' && inputs.mode == 'live-evidence'" in text
+    assert "github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence'" in text
+    assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
+    assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in text
+    assert "PANTHEON_BFF_RBAC_TOKENS_JSON" in text
+    assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A" in text
+    assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B" in text
+    assert "scripts/probe_bff_authenticated_live.py" in text
+    assert "--strict-live-evidence" in text
+    assert "--include-writes" in text
+    assert "--approval-race-id" in text
+    assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
+    assert "scripts/probe_bff_sse_stream.py" in text
+    assert "--soak-min-heartbeats 1" in text
+    assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
+    assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
+    assert "path: .lovable/audits/current-run" in text
+    assert ".lovable/audits/*.md" not in text
+
+
 def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: Path) -> None:
     if shutil.which("node") is None:
         pytest.skip("node is required to execute aggregate-release-gate.mjs")
