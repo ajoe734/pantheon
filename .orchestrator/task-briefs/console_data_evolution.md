@@ -4,7 +4,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Populate /bff/evolution-programs with real proposals
-- Status: review_approved
+- Status: review_approved (finalization in progress)
 - Owner: Claude
 - Reviewer: Claude2
 - Next: Closeout complete: docker-compose conflict resolved, dev merged, tests pass
