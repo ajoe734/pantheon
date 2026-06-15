@@ -7,12 +7,29 @@
 #
 # Upstream is the operator-bff container published on the dev compose stack.
 __BFF_HOST__ {
+	# Edge HSTS + drop the upstream Server banner. The app itself sets
+	# X-Content-Type-Options / X-Frame-Options / Referrer-Policy (BFF
+	# _SecurityHeadersMiddleware), so they are not duplicated here.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
 	reverse_proxy 127.0.0.1:18001
 }
 
 # Static execute-plans build installed by the dev FE deploy flow.
 __FE_HOST__ {
 	root * __FE_ROOT__
+	# Baseline security headers for the browser-facing operator SPA. CSP is
+	# intentionally omitted here (it needs the FE build's script/style origins
+	# to avoid breaking the app) and tracked as a follow-up.
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
 	encode zstd gzip
 	try_files {path} /index.html
 	file_server
