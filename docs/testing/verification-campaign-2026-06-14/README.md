@@ -68,6 +68,8 @@ and resilience.
 
 | 15 | Pagination correctness & cursor robustness | [round-15-plan.md](round-15-plan.md) | [round-15-results.md](round-15-results.md) | PASS (complete, no dup/gap; cursor fuzz no 500); O5 scale note |
 
+| 16 | Broad query-param fuzz (500-hunt + injection) | [round-16-plan.md](round-16-plan.md) | [round-16-results.md](round-16-results.md) | F12: audit from_ts/to_ts 500 on every value (NameError) — fixed; H2 injection PASS |
+
 ## Environment under test
 
 - Dev FE: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
