@@ -61,6 +61,13 @@ class InMemoryPendingSignalStore:
         self._pending: list[dict[str, Any]] = []
         for payload in pending_signals or []:
             self.enqueue(payload)
+        self._processed: set[str] = set()
+
+    def mark_processed(self, signal_id: str) -> None:
+        self._processed.add(str(signal_id))
+
+    def is_processed(self, signal_id: str) -> bool:
+        return str(signal_id) in self._processed
 
     def enqueue(self, payload: dict[str, Any]) -> None:
         validate_signal_payload_minimal(payload)
@@ -106,6 +113,24 @@ class RedisPendingSignalStore:
         self._client = redis.Redis.from_url(redis_url, decode_responses=True)
         self._queue_key = queue_key
         self._default_batch_size = max(int(default_batch_size), 1)
+        # Persistent idempotency window: processed signal_ids survive a worker
+        # restart so a replayed signal is not double-filled. Bounded by a TTL that
+        # matches the consumer's 24h staleness window (older duplicates are
+        # discarded as stale anyway), keeping redis growth bounded.
+        self._processed_ttl_seconds = 24 * 60 * 60
+        self._processed_prefix = f"{queue_key}:processed:"
+
+    def mark_processed(self, signal_id: str) -> None:
+        try:
+            self._client.setex(self._processed_prefix + str(signal_id), self._processed_ttl_seconds, "1")
+        except Exception:  # noqa: BLE001 - dedup is best-effort; never break execution
+            pass
+
+    def is_processed(self, signal_id: str) -> bool:
+        try:
+            return bool(self._client.exists(self._processed_prefix + str(signal_id)))
+        except Exception:  # noqa: BLE001
+            return False
 
     def enqueue(self, payload: dict[str, Any]) -> None:
         validate_signal_payload_minimal(payload)
