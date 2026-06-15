@@ -1,6 +1,6 @@
 # BFF API Contract (v1)
 
-Last updated: 2026-05-01
+Last updated: 2026-06-15
 Status: canonical — governed BFF read API contract for APP-001
 Tier: L2 Planning & Execution (formal API contract derived from L1 policy)
 Scope: read API routes, request/response shapes, error contract, staleness model, RBAC matrix, composed views, and real-time feed contract for the governed BFF
@@ -403,6 +403,31 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 | `/api/v1/freeze-orders` | GET | EV-03 | `{ items: [FreezeOrder], meta: { snapshot_at } }` | `status`, `scope` |
 | `/api/v1/rollbacks` | GET | EV-04 | `{ items: [RollbackRecord], meta: { snapshot_at } }` | `runtime_id`, `action_type`, `time_range` |
 
+### 9.9 Automation Registry BFF Surfaces (AR-01–AR-02)
+
+**Canonical sources**: LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md, services/control-plane/cron workflow registry, OpenClaw adapter workflow policy
+
+These `/bff/*` surfaces are read-only console aliases for frontend automation
+registry screens. They expose registered workflow templates and cron/hook
+entries only; they do not trigger, schedule, approve, or mutate workflow state.
+
+| Route | Method | Surface | Response | Filterable Fields |
+|---|---|---|---|---|
+| `/bff/workflows` | GET | AR-01 | `{ data: [WorkflowTemplate], items: [WorkflowTemplate], page_info: { next_page_token, total, returned }, meta: { snapshot_at, surfaces.workflow_templates } }` | `page_token`, `page_size` |
+| `/bff/hooks` | GET | AR-02 | `{ data: [HookRegistryEntry], items: [HookRegistryEntry], page_info: { next_page_token, total, returned }, meta: { snapshot_at, surfaces.hook_registry } }` | `page_token`, `page_size` |
+
+If the backing automation registry store is absent, these endpoints still return
+HTTP 200 with the canonical list envelope and empty `data`/`items`; they must not
+return a bare `[]`. The unavailable condition is explicit in
+`meta.surfaces.<surface_key>`:
+
+```json
+{
+  "status": "unavailable",
+  "source": "missing"
+}
+```
+
 ---
 
 ## 10. Composed Views
@@ -433,6 +458,7 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 |---|---|---|---|
 | `/bff/alerts` | `/api/v1/operator/alerts` | `{ alerts, summary, meta }` with backend-owned severity, category, target refs, and surface degradation metadata | `operator` |
 | `/bff/alerts/{id}` | `/api/v1/operator/alerts` | `{ data: AlertProjection, meta }` for a single projected alert id | `operator` |
+| `/bff/knowledge` | Composed Knowledge inbox over `/api/v1/knowledge/notes`, `/api/v1/knowledge/evidence`, `/api/v1/knowledge/insights`, `/api/v1/knowledge/strategy-specs`, and `/api/v1/knowledge/memory` | `{ data, items, page_info, meta }`; when no backing knowledge store is readable, returns an empty `data/items` list with `meta.surfaces.knowledge_inbox.status: unavailable` and `source: missing` rather than a bare array | `operator` |
 
 ### 10.2 Consistency Model
 
@@ -683,10 +709,11 @@ New `list_*` methods were added to `ReadSurfaceStore` in `read_store.py`.
 | Incident (IN) | IN-01 to IN-05 | 5 |
 | Evolution (EV) | EV-01 to EV-04 | 4 |
 | **Canonical v1 Subtotal** | | **33** |
+| Automation registry (AR) | AR-01 to AR-02 | 2 |
 | Governance sub-rules (GR) | GR-01 to GR-04 | 4 |
-| Composed views | 9 | 9 |
+| Composed views | 10 | 10 |
 | SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
-| **Total v1 endpoints** | | **52** |
+| **Total v1 endpoints** | | **55** |
 
 ---
 
