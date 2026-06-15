@@ -42,6 +42,16 @@ from services.execution.lean_runtime.signal_consumer import SignalConsumer
 log = logging.getLogger(__name__)
 
 
+_HALT_BINDING_STATUSES = frozenset({"paused", "pending_pause", "failed", "retired"})
+"""Binding statuses at which the paper runtime must NOT execute signals.
+
+A binding moved to paused / pending_pause / failed / retired (e.g. by an operator
+pause or the kill-switch / safe-mode path) must halt order execution as
+defense-in-depth — otherwise the execution loop keeps filling orders for a
+halted binding. Signals are left on the queue so they can replay on resume.
+"""
+
+
 def _iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -909,6 +919,7 @@ class PaperRuntimeService:
         )
         self._last_poll_at: str | None = None
         self._last_drain_at: str | None = None
+        self._last_skipped_status: str | None = None
         self._last_error: str | None = None
         self._last_heartbeat_at: str | None = None
         self._poll_count = 0
@@ -940,9 +951,19 @@ class PaperRuntimeService:
                     raise RuntimeError(
                         "RuntimeBinding is required before paper execution can drain signals"
                     )
-                self._consumer.drain(algo=self._algo)
-                self._last_drain_at = _iso_now()
-                self._last_error = None
+                binding_status = str(binding.get("status") or "").lower()
+                if binding_status in _HALT_BINDING_STATUSES:
+                    # Safety gate (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY):
+                    # do not execute while the binding is halted; hold signals on
+                    # the queue so they replay when the binding returns to active.
+                    self._last_skipped_status = binding_status
+                    self._last_drain_at = _iso_now()
+                    self._last_error = None
+                else:
+                    self._last_skipped_status = None
+                    self._consumer.drain(algo=self._algo)
+                    self._last_drain_at = _iso_now()
+                    self._last_error = None
             except Exception as exc:  # noqa: BLE001
                 self._last_error = f"{type(exc).__name__}: {exc}"
                 log.exception("paper runtime drain failed")
@@ -992,6 +1013,7 @@ class PaperRuntimeService:
                     "started_at": self._started_at,
                     "last_poll_at": self._last_poll_at,
                     "last_drain_at": self._last_drain_at,
+                    "last_skipped_status": self._last_skipped_status,
                     "last_heartbeat_at": self._last_heartbeat_at,
                     "poll_count": self._poll_count,
                     "processed_signal_count": self._processed_signal_count,
