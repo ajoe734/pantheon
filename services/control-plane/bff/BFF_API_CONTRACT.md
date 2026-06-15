@@ -612,7 +612,65 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 
 ---
 
-## 14. Surface Count Summary
+## 14. Governance Sub-Rules Read Endpoints (BFFGAP-GOVRULES, P1)
+
+These four read-only list endpoints serve the FE governance/{permissions,memory,consult,policies} pages.
+All use the canonical list envelope and degrade gracefully when the backing store is unavailable.
+
+### 14.1 Response Envelope
+
+All four endpoints share the same canonical list envelope:
+
+```json
+{
+  "data": [...],
+  "items": [...],
+  "page_info": {
+    "next_page_token": null | "<opaque token>",
+    "total": <int>,
+    "page_size": <int>
+  },
+  "meta": {
+    "snapshot_at": "<ISO-8601Z>",
+    "surfaces": {
+      "<surface_key>": { "status": "ok" | "degraded" | "unavailable", "source": "<string>" }
+    }
+  }
+}
+```
+
+When the backing store is absent (`source: missing`), the surface status is `unavailable` and `items`/`data` are empty arrays — never a bare `[]` at the top level.
+
+### 14.2 Endpoint Table
+
+| ID | Route | RBAC | Dataset key | Surface key | FE page |
+|---|---|---|---|---|---|
+| GR-01 | `GET /bff/management/permissions` | `viewer` | `governance_permissions` | `governance_permissions` | governance/permissions |
+| GR-02 | `GET /bff/management/memory-governance` | `viewer` | `memory_governance_rules` | `memory_governance_rules` | governance/memory |
+| GR-03 | `GET /bff/management/consult-rules` | `viewer` | `consult_rules` | `consult_rules` | governance/consult |
+| GR-04 | `GET /bff/route-policies` | `viewer` | `route_policies` | `route_policies` | governance/policies |
+
+### 14.3 Query Parameters (all four endpoints)
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page_size` | `int` | 50 | Items per page (1–200) |
+| `page_token` | `string` | — | Opaque offset token from previous `next_page_token` |
+
+### 14.4 Auth & CORS
+
+Reuses the same `Authorization: Bearer <token>` pattern and CORS configuration as all other BFF read endpoints.
+Minimum required role: `viewer` (same as `_require_read_role`).
+
+### 14.5 Implementation Note
+
+Routes are implemented in `services/control-plane/bff/console_gap/{permissions,memory_governance,consult_rules,route_policies}.py`
+and registered in `main.py` via `_include_governance_subrules_routes()` + `include_router()`.
+New `list_*` methods were added to `ReadSurfaceStore` in `read_store.py`.
+
+---
+
+## 15. Surface Count Summary
 
 | Domain | Surface IDs | Count |
 |---|---|---|
@@ -625,13 +683,14 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 | Incident (IN) | IN-01 to IN-05 | 5 |
 | Evolution (EV) | EV-01 to EV-04 | 4 |
 | **Canonical v1 Subtotal** | | **33** |
+| Governance sub-rules (GR) | GR-01 to GR-04 | 4 |
 | Composed views | 9 | 9 |
 | SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
-| **Total v1 endpoints** | | **48** |
+| **Total v1 endpoints** | | **52** |
 
 ---
 
-## 15. Verification Checklist
+## 16. Verification Checklist
 
 | APP-001 Acceptance Criterion | Status | Evidence |
 |---|---|---|
@@ -639,6 +698,7 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 | Runtime/deployment/approval/incident commands are split from read surfaces | ✅ | Companion `BFF_COMMAND_API_CONTRACT.md` defines the governed command facade with actor, trace, idempotency, RBAC/policy, and audit requirements |
 | Consultation surfaces cite canonical objects | ✅ | See CONSULTATION_SURFACE_CONTRACT.md — all consultation surfaces reference L1 canonical objects with explicit object lineage |
 | Degraded operator path is documented | ✅ | §7 Staleness and Degradation Model, §12 Secondary Control Path, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md §5-§6 |
+| Governance sub-rules endpoints degrade safely | ✅ | §14 — empty/missing store returns explicit `status:unavailable, source:missing` envelope; 14 contract tests in `tests/test_bff_governance_subrules_contract.py` |
 
 ---
 

@@ -50867,6 +50867,22 @@ def _assistant_provider_reauth_status(
         raise _openclaw_client_error(exc) from exc
 
 
+def _include_governance_subrules_routes() -> None:
+    from console_gap.permissions import create_permissions_router
+    from console_gap.memory_governance import create_memory_governance_router
+    from console_gap.consult_rules import create_consult_rules_router
+    from console_gap.route_policies import create_route_policies_router
+    _get_store = lambda: read_store
+    _kw = dict(get_read_store=_get_store, extract_identity=_extract_identity, require_read_role=_require_read_role)
+    app.include_router(create_permissions_router(**_kw))
+    app.include_router(create_memory_governance_router(**_kw))
+    app.include_router(create_consult_rules_router(**_kw))
+    app.include_router(create_route_policies_router(**_kw))
+
+
+_include_governance_subrules_routes()
+
+
 def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
     from assistant.control_mode import ControlModeStore
