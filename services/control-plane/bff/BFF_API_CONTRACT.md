@@ -403,7 +403,76 @@ Time range parameters must be valid RFC 3339 timestamps. Inverted ranges (start 
 | `/api/v1/freeze-orders` | GET | EV-03 | `{ items: [FreezeOrder], meta: { snapshot_at } }` | `status`, `scope` |
 | `/api/v1/rollbacks` | GET | EV-04 | `{ items: [RollbackRecord], meta: { snapshot_at } }` | `runtime_id`, `action_type`, `time_range` |
 
-### 9.9 Automation Registry BFF Surfaces (AR-01–AR-02)
+### 9.9 AlphaFactory Board (AF-01)
+
+**Canonical source**: Research-to-strategy pipeline read-model.
+**Consumer**: `FE AlphaFactoryBoard` (idea→strategy kanban view).
+**Implementation**: `console_gap/alpha_factory.py` — registered via `app.include_router` in `main.py`.
+
+| Route | Method | Surface ID | Min Role | Response |
+|---|---|---|---|---|
+| `/bff/alpha-factory` | GET | AF-01 | `operator` | Canonical list envelope — see below |
+
+**Request parameters**:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `lane` | string | — | Filter cards to one lane: `ideas`, `strategies`, or `experiments` |
+| `page` | int | 1 | Page number (min 1) |
+| `page_size` | int | 20 | Items per page (min 1, max 100) |
+
+**Happy-path response** (HTTP 200):
+
+```json
+{
+  "data": {
+    "id": "alpha-factory",
+    "snapshotAt": "<RFC3339>",
+    "snapshot_at": "<RFC3339>",
+    "lanes": [
+      { "id": "ideas",       "label": "Ideas" },
+      { "id": "strategies",  "label": "Strategies" },
+      { "id": "experiments", "label": "Experiments" }
+    ],
+    "items": [ { "id": "card-001", "lane": "ideas", "title": "...", "status": "..." } ]
+  },
+  "items": [ { "...": "..." } ],
+  "page_info": { "page": 1, "page_size": 20, "total": 1, "next_page_token": null },
+  "meta": {
+    "snapshot_at": "<RFC3339>",
+    "surfaces": { "alpha_factory": { "status": "ok", "source": "service_store" } },
+    "filters": { "lane": null }
+  }
+}
+```
+
+**Degraded response** — store unavailable (HTTP 200, never bare `[]`):
+
+```json
+{
+  "data": { "id": "alpha-factory", "lanes": [...], "items": [] },
+  "items": [],
+  "page_info": { "page": 1, "page_size": 20, "total": 0, "next_page_token": null },
+  "meta": {
+    "snapshot_at": "<RFC3339>",
+    "surfaces": {
+      "alpha_factory": {
+        "status": "unavailable",
+        "source": "missing",
+        "staleness": { "served_from": "unverifiable", "last_known_at": "<RFC3339>" }
+      }
+    },
+    "filters": { "lane": null }
+  }
+}
+```
+
+**Design notes**:
+- The "never show none" rule applies: the BFF never returns bare `[]` due to a downstream failure.  When the backing dataset is missing the surface status is `unavailable` and `items` is an explicit empty list with degradation metadata.
+- Auth/CORS re-uses the existing BFF token-stub and CORS middleware; no new middleware needed.
+- The backing store method is `ReadSurfaceStore.list_alpha_factory_cards(page, page_size, lane)`.
+
+### 9.10 Automation Registry BFF Surfaces (AR-01–AR-02)
 
 **Canonical sources**: LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md, services/control-plane/cron workflow registry, OpenClaw adapter workflow policy
 
@@ -427,7 +496,6 @@ return a bare `[]`. The unavailable condition is explicit in
   "source": "missing"
 }
 ```
-
 ---
 
 ## 10. Composed Views
@@ -661,7 +729,65 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 
 ---
 
-## 14. Surface Count Summary
+## 14. Governance Sub-Rules Read Endpoints (BFFGAP-GOVRULES, P1)
+
+These four read-only list endpoints serve the FE governance/{permissions,memory,consult,policies} pages.
+All use the canonical list envelope and degrade gracefully when the backing store is unavailable.
+
+### 14.1 Response Envelope
+
+All four endpoints share the same canonical list envelope:
+
+```json
+{
+  "data": [...],
+  "items": [...],
+  "page_info": {
+    "next_page_token": null | "<opaque token>",
+    "total": <int>,
+    "page_size": <int>
+  },
+  "meta": {
+    "snapshot_at": "<ISO-8601Z>",
+    "surfaces": {
+      "<surface_key>": { "status": "ok" | "degraded" | "unavailable", "source": "<string>" }
+    }
+  }
+}
+```
+
+When the backing store is absent (`source: missing`), the surface status is `unavailable` and `items`/`data` are empty arrays — never a bare `[]` at the top level.
+
+### 14.2 Endpoint Table
+
+| ID | Route | RBAC | Dataset key | Surface key | FE page |
+|---|---|---|---|---|---|
+| GR-01 | `GET /bff/management/permissions` | `viewer` | `governance_permissions` | `governance_permissions` | governance/permissions |
+| GR-02 | `GET /bff/management/memory-governance` | `viewer` | `memory_governance_rules` | `memory_governance_rules` | governance/memory |
+| GR-03 | `GET /bff/management/consult-rules` | `viewer` | `consult_rules` | `consult_rules` | governance/consult |
+| GR-04 | `GET /bff/route-policies` | `viewer` | `route_policies` | `route_policies` | governance/policies |
+
+### 14.3 Query Parameters (all four endpoints)
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page_size` | `int` | 50 | Items per page (1–200) |
+| `page_token` | `string` | — | Opaque offset token from previous `next_page_token` |
+
+### 14.4 Auth & CORS
+
+Reuses the same `Authorization: Bearer <token>` pattern and CORS configuration as all other BFF read endpoints.
+Minimum required role: `viewer` (same as `_require_read_role`).
+
+### 14.5 Implementation Note
+
+Routes are implemented in `services/control-plane/bff/console_gap/{permissions,memory_governance,consult_rules,route_policies}.py`
+and registered in `main.py` via `_include_governance_subrules_routes()` + `include_router()`.
+New `list_*` methods were added to `ReadSurfaceStore` in `read_store.py`.
+
+---
+
+## 15. Surface Count Summary
 
 | Domain | Surface IDs | Count |
 |---|---|---|
@@ -673,15 +799,18 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 | Lineage (LN) | LN-01 to LN-03 | 3 |
 | Incident (IN) | IN-01 to IN-05 | 5 |
 | Evolution (EV) | EV-01 to EV-04 | 4 |
-| **Canonical v1 Subtotal** | | **33** |
-| Composed views | 9 | 9 |
+| AlphaFactory Board (AF) | AF-01 | 1 |
+| **Canonical v1 Subtotal** | | **34** |
+| Automation registry (AR) | AR-01 to AR-02 | 2 |
+| Governance sub-rules (GR) | GR-01 to GR-04 | 4 |
+| Composed views | 10 | 10 |
 | SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
 | BFF Management (BFFGAP-CONSOLE) | DS-01 (`/bff/management/data-sources`), LIN-01 (`/bff/lineage`) | 2 |
-| **Total v1 endpoints** | | **50** |
+| **Total v1 endpoints** | | **58** |
 
 ---
 
-## 15. Verification Checklist
+## 16. Verification Checklist
 
 | APP-001 Acceptance Criterion | Status | Evidence |
 |---|---|---|
@@ -689,6 +818,7 @@ This ensures the BFF remains on the control/UI plane and never becomes a source 
 | Runtime/deployment/approval/incident commands are split from read surfaces | ✅ | Companion `BFF_COMMAND_API_CONTRACT.md` defines the governed command facade with actor, trace, idempotency, RBAC/policy, and audit requirements |
 | Consultation surfaces cite canonical objects | ✅ | See CONSULTATION_SURFACE_CONTRACT.md — all consultation surfaces reference L1 canonical objects with explicit object lineage |
 | Degraded operator path is documented | ✅ | §7 Staleness and Degradation Model, §12 Secondary Control Path, BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md §5-§6 |
+| Governance sub-rules endpoints degrade safely | ✅ | §14 — empty/missing store returns explicit `status:unavailable, source:missing` envelope; 14 contract tests in `tests/test_bff_governance_subrules_contract.py` |
 
 ---
 
