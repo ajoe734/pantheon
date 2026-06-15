@@ -50905,6 +50905,18 @@ def _include_assistant_routes() -> None:
 
 _include_assistant_routes()
 
+# BFFGAP-DATASOURCES: data-source registry endpoint via isolated module
+from console_gap.datasources import create_datasources_router  # noqa: E402
+app.include_router(
+    create_datasources_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_meta=_snapshot_meta,
+        utc_now=utc_now,
+    )
+)
+
 
 if __name__ == "__main__":
     import uvicorn
