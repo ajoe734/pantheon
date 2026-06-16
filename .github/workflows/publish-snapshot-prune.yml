@@ -1,0 +1,62 @@
+name: Publish Snapshot Prune
+
+# Bound the publish/* and release/* namespaces. Hourly publish cuts
+# (OPS-HOURLY-PUBLISH-AUTODEPLOY) create up to ~24 refs/day; without pruning
+# they accumulate indefinitely. This deletes daily-format snapshots older than
+# the retention window, always keeping the newest KEEP_MIN and the latest, so
+# promotion soak and the nightly "latest release" anchor are never disturbed.
+# Legacy wave-format vYYYY.WW.N refs are never touched.
+#
+# Runs from the default branch (master) so the schedule fires; mirror to dev to
+# avoid a promote reverting it.
+
+on:
+  schedule:
+    # Daily at 05:30 UTC — off the top-of-hour when cuts run.
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only print what would be deleted; delete nothing"
+        required: false
+        default: false
+        type: boolean
+      retention_days:
+        description: "Delete daily-format refs older than this many days"
+        required: false
+        default: "7"
+        type: string
+      keep_min:
+        description: "Always keep at least this many newest refs"
+        required: false
+        default: "24"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-snapshot-prune
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune old publish snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prune
+        env:
+          RETENTION_DAYS: ${{ github.event.inputs.retention_days || '7' }}
+          KEEP_MIN: ${{ github.event.inputs.keep_min || '24' }}
+        run: |
+          mode=apply
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.dry_run }}" == "true" ]]; then
+            mode=dry-run
+          fi
+          bash scripts/git/prune_publish_snapshots.sh "$mode" | tee "$GITHUB_STEP_SUMMARY"
