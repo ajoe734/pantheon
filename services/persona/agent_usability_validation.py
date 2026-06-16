@@ -3663,6 +3663,10 @@ def _build_validation_planning_step(
         order_profile_signature=order_profile_signature,
         operational_scenario=operational_scenario,
     )
+    assertion_refs = _assertion_refs_for_episode(
+        episode=episode,
+        assertion_labels=assertion_labels,
+    )
     plan_signature = _stable_id(
         "validation-plan",
         episode.validation_signature,
@@ -3701,6 +3705,7 @@ def _build_validation_planning_step(
             "regime_path": list(episode.regime_path),
             "operational_scenario": operational_scenario,
             "assertion_labels": assertion_labels,
+            "assertion_refs": assertion_refs,
             "execution_steps": [
                 "request_oss_feedback",
                 "request_case_specific_upstream_artifacts",
@@ -3880,6 +3885,21 @@ def _assertion_labels_for_episode(
         f"regime_path:{'|'.join(episode.regime_path)}",
         f"operational_scenario:{operational_scenario}",
         "case_upstream_artifacts:vectorbt_tracking",
+    ]
+
+
+def _assertion_refs_for_episode(
+    *,
+    episode: PortfolioEpisode,
+    assertion_labels: Sequence[str],
+) -> list[str]:
+    return [
+        "validation-assertion://{}/{:02d}/{}".format(
+            episode.validation_signature,
+            index,
+            _stable_id("assertion-label", label),
+        )
+        for index, label in enumerate(assertion_labels, start=1)
     ]
 
 
@@ -18492,6 +18512,22 @@ def _diagnose_validation_execution(
             {"assertion_label_count": len(selected_plan["assertion_labels"])},
         ),
         _diagnostic_check(
+            "plan_has_globally_scoped_assertion_refs",
+            len(selected_plan.get("assertion_refs", [])) == len(selected_plan["assertion_labels"])
+            and len(set(selected_plan.get("assertion_refs", [])))
+            == len(selected_plan.get("assertion_refs", []))
+            and all(
+                str(ref).startswith(
+                    "validation-assertion://{}/".format(selected_plan["target_validation_signature"])
+                )
+                for ref in selected_plan.get("assertion_refs", [])
+            ),
+            {
+                "assertion_ref_count": len(selected_plan.get("assertion_refs", [])),
+                "target_validation_signature": selected_plan["target_validation_signature"],
+            },
+        ),
+        _diagnostic_check(
             "all_portfolio_generations_filled",
             all(execution["filled"] for execution in executions),
             {"fill_counts": [execution["fill_count"] for execution in executions]},
@@ -19356,6 +19392,8 @@ def _validation_plan_is_complete(validation_plan: Mapping[str, Any]) -> bool:
         and bool(selected.get("target_combo_signature"))
         and bool(selected.get("target_validation_signature"))
         and len(selected.get("assertion_labels", [])) >= 8
+        and len(selected.get("assertion_refs", [])) == len(selected.get("assertion_labels", []))
+        and len(set(selected.get("assertion_refs", []))) == len(selected.get("assertion_refs", []))
         and "diagnose_and_repair_deficiencies" in selected.get("execution_steps", [])
     )
 
@@ -19762,6 +19800,20 @@ def _build_summary(
     combo_signatures = [
         str(case["validation_cycle"]["planning"]["selected_validation_plan"]["target_combo_signature"])
         for case in cases
+    ]
+    validation_assertion_refs = [
+        str(ref)
+        for case in cases
+        for ref in case["validation_cycle"]["planning"]["selected_validation_plan"].get(
+            "assertion_refs", []
+        )
+    ]
+    validation_assertion_labels = [
+        str(label)
+        for case in cases
+        for label in case["validation_cycle"]["planning"]["selected_validation_plan"].get(
+            "assertion_labels", []
+        )
     ]
     usable = [case["usable"] for case in cases]
     dimensions = [case["usability_dimensions"] for case in cases]
@@ -20769,6 +20821,13 @@ def _build_summary(
         "unique_validation_signature_count": len(set(signatures)),
         "unique_validation_plan_signature_count": len(set(plan_signatures)),
         "unique_target_combo_signature_count": len(set(combo_signatures)),
+        "validation_assertion_ref_count": len(validation_assertion_refs),
+        "unique_validation_assertion_ref_count": len(set(validation_assertion_refs)),
+        "duplicate_validation_assertion_ref_count": (
+            len(validation_assertion_refs) - len(set(validation_assertion_refs))
+        ),
+        "validation_assertion_label_count": len(validation_assertion_labels),
+        "unique_validation_assertion_label_count": len(set(validation_assertion_labels)),
         "overlaps_previous_agent_usability_case_ids": bool(
             set(str(case["case_id"]) for case in cases).intersection(old_case_ids)
         ),

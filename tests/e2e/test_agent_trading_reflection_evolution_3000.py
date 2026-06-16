@@ -107,6 +107,17 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["unique_validation_signature_count"] == DEFAULT_CASE_COUNT
     assert summary["unique_validation_plan_signature_count"] == DEFAULT_CASE_COUNT
     assert summary["unique_target_combo_signature_count"] == DEFAULT_CASE_COUNT
+    expected_assertion_ref_count = sum(
+        len(case["validation_cycle"]["planning"]["selected_validation_plan"]["assertion_refs"])
+        for case in cases
+    )
+    assert summary["validation_assertion_ref_count"] == expected_assertion_ref_count
+    assert summary["unique_validation_assertion_ref_count"] == expected_assertion_ref_count
+    assert summary["duplicate_validation_assertion_ref_count"] == 0
+    assert summary["validation_assertion_label_count"] == sum(
+        len(case["validation_cycle"]["planning"]["selected_validation_plan"]["assertion_labels"])
+        for case in cases
+    )
     assert summary["overlaps_previous_agent_usability_case_ids"] is False
     assert len({case["case_id"] for case in cases}) == DEFAULT_CASE_COUNT
     assert len({case["validation_signature"] for case in cases}) == DEFAULT_CASE_COUNT
@@ -1429,6 +1440,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
     portfolio_window_signatures: set[str] = set()
+    validation_assertion_refs: set[str] = set()
     latest_case_by_persona: dict[str, dict] = {}
     case_history_by_persona: dict[str, list[dict]] = {}
     institutional_writes_by_id: dict[str, dict] = {}
@@ -1440,6 +1452,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
             plan_signatures=plan_signatures,
             combo_signatures=combo_signatures,
             portfolio_window_signatures=portfolio_window_signatures,
+            validation_assertion_refs=validation_assertion_refs,
         )
         _assert_portfolio_generations(case)
         _assert_agent_decision_traces_are_no_leakage(case)
@@ -1488,6 +1501,7 @@ def _assert_unique_planned_validation_cycle(
     plan_signatures: set[str],
     combo_signatures: set[str],
     portfolio_window_signatures: set[str],
+    validation_assertion_refs: set[str],
 ) -> None:
     cycle = case["validation_cycle"]
     planning = cycle["planning"]
@@ -1507,6 +1521,14 @@ def _assert_unique_planned_validation_cycle(
     assert planning["plan_signature"] not in plan_signatures
     assert selected_plan["target_portfolio_window_signature"] not in portfolio_window_signatures
     assert len(set(selected_plan["assertion_labels"])) == len(selected_plan["assertion_labels"])
+    assert len(selected_plan["assertion_refs"]) == len(selected_plan["assertion_labels"])
+    assert len(set(selected_plan["assertion_refs"])) == len(selected_plan["assertion_refs"])
+    for assertion_ref in selected_plan["assertion_refs"]:
+        assert assertion_ref.startswith(
+            f"validation-assertion://{selected_plan['target_validation_signature']}/"
+        )
+        assert assertion_ref not in validation_assertion_refs
+        validation_assertion_refs.add(assertion_ref)
     assert selected_plan["operational_scenario"] in OPERATIONAL_SCENARIOS
     assert any(
         label == f"operational_scenario:{selected_plan['operational_scenario']}"
