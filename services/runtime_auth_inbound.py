@@ -488,18 +488,27 @@ def _verify_jwt_jwks(
 
 
 def _parse_structured_token(token: str, default_role: str) -> AuthContext:
-    """Parse the legacy ``actor_id[:role1,role2]`` shape, accepting plain tokens too."""
-    parts = token.split(":", 1)
+    """Parse the ``actor_id[:role1,role2[:mfa[:cap1,cap2]]]`` stub shape.
+
+    Splitting on only the first colon glued the ``:mfa`` (and capability)
+    suffixes onto the last role, so the canonical dev token
+    ``op-dev:admin:mfa`` resolved to role ``"admin:mfa"`` — not a real role —
+    and every read 403'd in permissive mode. Split all segments: actor id,
+    comma-roles, an optional ``mfa`` marker, and optional capabilities.
+    """
+    parts = token.split(":")
     actor_id = parts[0].strip() or "internal-api-operator"
     raw_roles: list[str] = []
-    if len(parts) == 2:
+    if len(parts) >= 2:
         raw_roles = [role.strip() for role in parts[1].split(",") if role.strip()]
     if not raw_roles:
         raw_roles = [default_role]
+    mfa_verified = len(parts) >= 3 and parts[2].strip().lower() == "mfa"
     return AuthContext(
         actor_id=actor_id,
         roles=frozenset(raw_roles),
         claims={"sub": actor_id, "roles": list(raw_roles)},
+        mfa_verified=mfa_verified,
         token_kind="structured",
     )
 
