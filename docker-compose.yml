@@ -1230,12 +1230,12 @@ services:
       start_period: 5s
 
   paper-fleet-reconciler:
-    profiles: ["paper-fleet"]
     build:
       context: .
       dockerfile: services/execution/runtime-manager/Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
     command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
     environment:
       PORT: "8011"
