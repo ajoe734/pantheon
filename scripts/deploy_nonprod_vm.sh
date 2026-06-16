@@ -382,6 +382,7 @@ snapshot_remote_state() {
 preserve_known_deploy_runtime_state() {
   local known_paths=(
     ".orchestrator/metrics"
+    ".orchestrator/task-briefs"
     ".orchestrator/watchdog-state.json"
   )
   local present_paths=()
