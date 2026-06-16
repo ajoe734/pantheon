@@ -361,10 +361,22 @@ services:
 
   openclaw-gateway:
     profiles: ["openclaw"]
-    image: ghcr.io/openclaw/openclaw:2026.6.6
+    # Pantheon-derived image: governed upstream openclaw 2026.6.6 + Claude Code
+    # CLI baked in, so OpenClaw's claude-cli runtime can serve anthropic/* models
+    # for multi-model persona routing. Upstream pin governed (see
+    # OSS_INTEGRATION_CHECKLIST.md / integrations/openclaw/governance.md).
+    build:
+      context: .
+      dockerfile: integrations/openclaw/gateway/Dockerfile
+      args:
+        ANTHROPIC_CLAUDE_CODE_NPM_VERSION: "2.1.178"
+    image: pantheon-openclaw-gateway:2026.6.6
     restart: unless-stopped
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+      # Persist Claude CLI login on the openclaw-data volume so the one-time
+      # `claude auth login` survives container recreate (subscription OAuth, no key).
+      CLAUDE_CONFIG_DIR: ${OPENCLAW_CLAUDE_CONFIG_DIR:-/home/node/.openclaw/claude-cli}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
