@@ -36,10 +36,10 @@ if _PERSONA_SERVICE_DIR not in sys.path:
     sys.path.insert(0, _PERSONA_SERVICE_DIR)
 _CRON_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cron"))
 if _CRON_SERVICE_DIR not in sys.path:
-    sys.path.insert(0, _CRON_SERVICE_DIR)
+    sys.path.append(_CRON_SERVICE_DIR)
 _OODA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ooda"))
 if _OODA_SERVICE_DIR not in sys.path:
-    sys.path.insert(0, _OODA_SERVICE_DIR)
+    sys.path.append(_OODA_SERVICE_DIR)
 
 from services.foundation import (  # noqa: E402
     ActorRef,
