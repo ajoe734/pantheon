@@ -3650,11 +3650,22 @@ def _build_validation_planning_step(
         order_profile_signature=order_profile_signature,
         regime_path_signature=regime_path_signature,
     )
+    selected_backlog_keys = _selected_validation_backlog_keys(episode)
+    backlog_followthrough = _validation_backlog_followthrough(
+        coverage=coverage,
+        selected_backlog_keys=selected_backlog_keys,
+    )
     plausible_combinations = _plausible_unvalidated_combinations(
         episode=episode,
         combo_signature=combo_signature,
         coverage=coverage,
     )
+    queued_new_items = [
+        _queued_validation_backlog_item(combo)
+        for combo in plausible_combinations
+        if combo.get("selected_for_execution") is False
+        and combo.get("status_before") == "queued_not_selected"
+    ]
     assertion_labels = _assertion_labels_for_episode(
         episode=episode,
         combo_signature=combo_signature,
@@ -3706,6 +3717,10 @@ def _build_validation_planning_step(
             "operational_scenario": operational_scenario,
             "assertion_labels": assertion_labels,
             "assertion_refs": assertion_refs,
+            "selected_backlog_keys": selected_backlog_keys,
+            "fulfilled_prior_backlog_refs": [
+                item["backlog_ref"] for item in backlog_followthrough["fulfilled_prior_items"]
+            ],
             "execution_steps": [
                 "request_oss_feedback",
                 "request_case_specific_upstream_artifacts",
@@ -3723,10 +3738,41 @@ def _build_validation_planning_step(
                 "diagnose_and_repair_deficiencies",
             ],
         },
+        "validation_backlog": {
+            "selected_backlog_keys": selected_backlog_keys,
+            "open_prior_item_count": len(backlog_followthrough["open_prior_items"]),
+            "fulfilled_prior_item_count": len(backlog_followthrough["fulfilled_prior_items"]),
+            "fulfilled_prior_items": backlog_followthrough["fulfilled_prior_items"],
+            "queued_new_item_count": len(queued_new_items),
+            "queued_new_items": queued_new_items,
+            "follow_through_status": (
+                "cold_start"
+                if not coverage["queued_backlog_items"]
+                else "no_open_prior_backlog"
+                if not backlog_followthrough["open_prior_items"]
+                else "fulfilled_prior_backlog"
+                if backlog_followthrough["fulfilled_prior_items"]
+                else "open_prior_backlog_unfulfilled"
+            ),
+            "replay": {
+                "queued_items_have_follow_through_keys": all(
+                    bool(item.get("follow_through_key")) for item in queued_new_items
+                ),
+                "selected_keys_match_plan": bool(selected_backlog_keys),
+                "open_prior_items_preserved": all(
+                    item.get("follow_through_key")
+                    for item in backlog_followthrough["open_prior_items"]
+                ),
+                "fulfilled_items_match_selected_keys": all(
+                    item["follow_through_key"] in selected_backlog_keys
+                    for item in backlog_followthrough["fulfilled_prior_items"]
+                ),
+            },
+        },
     }
 
 
-def _prior_validation_coverage(prior_cases: Sequence[Mapping[str, Any]]) -> dict[str, set[str]]:
+def _prior_validation_coverage(prior_cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     coverage = {
         "validation_signatures": set(),
         "plan_signatures": set(),
@@ -3737,6 +3783,8 @@ def _prior_validation_coverage(prior_cases: Sequence[Mapping[str, Any]]) -> dict
         "order_profile_signatures": set(),
         "reflection_archetypes": set(),
         "regime_paths": set(),
+        "selected_backlog_keys": set(),
+        "queued_backlog_items": [],
     }
     for case in prior_cases:
         coverage["validation_signatures"].add(str(case["validation_signature"]))
@@ -3749,6 +3797,13 @@ def _prior_validation_coverage(prior_cases: Sequence[Mapping[str, Any]]) -> dict
             coverage["combo_signatures"].add(str(selected["target_combo_signature"]))
         if selected.get("target_portfolio_window_signature"):
             coverage["portfolio_window_signatures"].add(str(selected["target_portfolio_window_signature"]))
+        coverage["selected_backlog_keys"].update(
+            str(key) for key in selected.get("selected_backlog_keys", [])
+        )
+        backlog = planning.get("validation_backlog", {})
+        coverage["queued_backlog_items"].extend(
+            dict(item) for item in backlog.get("queued_new_items", [])
+        )
         persona_seed_pair = f"{case.get('persona_id')}::{case.get('seed_key')}"
         coverage["persona_seed_pairs"].add(persona_seed_pair)
         if case.get("oss_feedback"):
@@ -3831,36 +3886,113 @@ def _plausible_unvalidated_combinations(
     return [
         selected,
         {
-            "combo_signature": _stable_id(
-                "combo",
-                episode.validation_signature,
-                _oss_route_signature(alternate_policy),
+            "combo_signature": _validation_combo_signature_for(
+                episode=episode,
+                oss_route=alternate_policy,
+                order_profile=episode.order_profile,
             ),
+            "backlog_axis": "policy_candidate_variant",
+            "follow_through_key": _policy_candidate_backlog_key(alternate_policy["policy_candidate"]),
             "persona_id": _persona_id(episode.persona),
             "seed_key": episode.seed_key,
             "portfolio": [window.instrument for window in episode.windows],
             "oss_route": alternate_policy,
             "order_profile": dict(episode.order_profile),
-            "why_realistic": "same persona and portfolio can receive a different policy-search OSS response",
-            "status_before": "queued_not_selected",
+            "why_realistic": "a later validation can route the persona through this policy-search OSS response on a fresh market window",
+            "status_before": "queued_not_selected"
+            if _policy_candidate_backlog_key(alternate_policy["policy_candidate"])
+            not in coverage["selected_backlog_keys"]
+            else "already_validated",
             "selected_for_execution": False,
         },
         {
-            "combo_signature": _stable_id(
-                "combo",
-                episode.validation_signature,
-                _order_profile_signature(alternate_order),
+            "combo_signature": _validation_combo_signature_for(
+                episode=episode,
+                oss_route=episode.oss_route,
+                order_profile=alternate_order,
             ),
+            "backlog_axis": "order_profile_variant",
+            "follow_through_key": _order_profile_backlog_key(alternate_order),
             "persona_id": _persona_id(episode.persona),
             "seed_key": episode.seed_key,
             "portfolio": [window.instrument for window in episode.windows],
             "oss_route": dict(episode.oss_route),
             "order_profile": alternate_order,
-            "why_realistic": "same strategy can reach execution with a different quantity mode",
-            "status_before": "queued_not_selected",
+            "why_realistic": "a later validation can reach execution with this order profile on a fresh market window",
+            "status_before": "queued_not_selected"
+            if _order_profile_backlog_key(alternate_order) not in coverage["selected_backlog_keys"]
+            else "already_validated",
             "selected_for_execution": False,
         },
     ]
+
+
+def _validation_combo_signature_for(
+    *,
+    episode: PortfolioEpisode,
+    oss_route: Mapping[str, str],
+    order_profile: Mapping[str, str],
+) -> str:
+    return _stable_id(
+        "combo",
+        _persona_id(episode.persona),
+        episode.seed_key,
+        _portfolio_window_signature(episode),
+        _oss_route_signature(oss_route),
+        _order_profile_signature(order_profile),
+        episode.reflection_archetype,
+        "|".join(episode.regime_path),
+        _operational_scenario_for_episode(episode),
+    )
+
+
+def _policy_candidate_backlog_key(component: str) -> str:
+    return f"policy_candidate:{component}"
+
+
+def _order_profile_backlog_key(order_profile: Mapping[str, Any]) -> str:
+    return f"order_quantity_type:{order_profile.get('quantity_type')}"
+
+
+def _selected_validation_backlog_keys(episode: PortfolioEpisode) -> list[str]:
+    return [
+        _policy_candidate_backlog_key(episode.oss_route["policy_candidate"]),
+        _order_profile_backlog_key(episode.order_profile),
+    ]
+
+
+def _queued_validation_backlog_item(combo: Mapping[str, Any]) -> dict[str, Any]:
+    follow_through_key = str(combo["follow_through_key"])
+    return {
+        "backlog_ref": _stable_id("validation-backlog", follow_through_key, str(combo["combo_signature"])),
+        "combo_signature": str(combo["combo_signature"]),
+        "backlog_axis": str(combo["backlog_axis"]),
+        "follow_through_key": follow_through_key,
+        "why_realistic": str(combo["why_realistic"]),
+    }
+
+
+def _validation_backlog_followthrough(
+    *,
+    coverage: Mapping[str, Any],
+    selected_backlog_keys: Sequence[str],
+) -> dict[str, list[dict[str, Any]]]:
+    previously_selected = set(str(key) for key in coverage.get("selected_backlog_keys", set()))
+    selected_keys = set(str(key) for key in selected_backlog_keys)
+    open_prior_items = [
+        dict(item)
+        for item in coverage.get("queued_backlog_items", [])
+        if str(item.get("follow_through_key")) not in previously_selected
+    ]
+    fulfilled_prior_items = [
+        dict(item)
+        for item in open_prior_items
+        if str(item.get("follow_through_key")) in selected_keys
+    ]
+    return {
+        "open_prior_items": open_prior_items,
+        "fulfilled_prior_items": fulfilled_prior_items,
+    }
 
 
 def _assertion_labels_for_episode(
@@ -18528,6 +18660,23 @@ def _diagnose_validation_execution(
             },
         ),
         _diagnostic_check(
+            "planning_backlog_followthrough_replays_queued_combinations",
+            validation_plan["validation_backlog"]["replay"]["queued_items_have_follow_through_keys"]
+            and validation_plan["validation_backlog"]["replay"]["selected_keys_match_plan"]
+            and validation_plan["validation_backlog"]["replay"]["open_prior_items_preserved"]
+            and validation_plan["validation_backlog"]["replay"]["fulfilled_items_match_selected_keys"]
+            and (
+                validation_plan["validation_backlog"]["open_prior_item_count"] == 0
+                or validation_plan["validation_backlog"]["fulfilled_prior_item_count"] > 0
+            ),
+            {
+                "open_prior_item_count": validation_plan["validation_backlog"]["open_prior_item_count"],
+                "fulfilled_prior_item_count": validation_plan["validation_backlog"]["fulfilled_prior_item_count"],
+                "queued_new_item_count": validation_plan["validation_backlog"]["queued_new_item_count"],
+                "follow_through_status": validation_plan["validation_backlog"]["follow_through_status"],
+            },
+        ),
+        _diagnostic_check(
             "all_portfolio_generations_filled",
             all(execution["filled"] for execution in executions),
             {"fill_counts": [execution["fill_count"] for execution in executions]},
@@ -19394,6 +19543,16 @@ def _validation_plan_is_complete(validation_plan: Mapping[str, Any]) -> bool:
         and len(selected.get("assertion_labels", [])) >= 8
         and len(selected.get("assertion_refs", [])) == len(selected.get("assertion_labels", []))
         and len(set(selected.get("assertion_refs", []))) == len(selected.get("assertion_refs", []))
+        and bool(validation_plan.get("validation_backlog", {}).get("selected_backlog_keys"))
+        and all(
+            validation_plan.get("validation_backlog", {}).get("replay", {}).get(flag) is True
+            for flag in (
+                "queued_items_have_follow_through_keys",
+                "selected_keys_match_plan",
+                "open_prior_items_preserved",
+                "fulfilled_items_match_selected_keys",
+            )
+        )
         and "diagnose_and_repair_deficiencies" in selected.get("execution_steps", [])
     )
 
@@ -19814,6 +19973,24 @@ def _build_summary(
         for label in case["validation_cycle"]["planning"]["selected_validation_plan"].get(
             "assertion_labels", []
         )
+    ]
+    validation_backlogs = [
+        case["validation_cycle"]["planning"]["validation_backlog"] for case in cases
+    ]
+    validation_backlog_queued_items = [
+        dict(item)
+        for backlog in validation_backlogs
+        for item in backlog.get("queued_new_items", [])
+    ]
+    validation_backlog_selected_keys = {
+        str(key)
+        for backlog in validation_backlogs
+        for key in backlog.get("selected_backlog_keys", [])
+    }
+    validation_backlog_terminal_open_items = [
+        item
+        for item in validation_backlog_queued_items
+        if str(item.get("follow_through_key")) not in validation_backlog_selected_keys
     ]
     usable = [case["usable"] for case in cases]
     dimensions = [case["usability_dimensions"] for case in cases]
@@ -20828,6 +21005,26 @@ def _build_summary(
         ),
         "validation_assertion_label_count": len(validation_assertion_labels),
         "unique_validation_assertion_label_count": len(set(validation_assertion_labels)),
+        "validation_backlog_queued_item_count": len(validation_backlog_queued_items),
+        "validation_backlog_fulfilled_item_count": sum(
+            int(backlog.get("fulfilled_prior_item_count", 0)) for backlog in validation_backlogs
+        ),
+        "validation_backlog_followthrough_case_count": sum(
+            1 for backlog in validation_backlogs if int(backlog.get("fulfilled_prior_item_count", 0)) > 0
+        ),
+        "validation_backlog_unfulfilled_open_case_count": sum(
+            1
+            for backlog in validation_backlogs
+            if int(backlog.get("open_prior_item_count", 0)) > 0
+            and int(backlog.get("fulfilled_prior_item_count", 0)) == 0
+        ),
+        "validation_backlog_terminal_open_item_count": len(validation_backlog_terminal_open_items),
+        "validation_backlog_statuses": sorted({
+            str(backlog.get("follow_through_status")) for backlog in validation_backlogs
+        }),
+        "validation_backlog_axes": sorted({
+            str(item.get("backlog_axis")) for item in validation_backlog_queued_items
+        }),
         "overlaps_previous_agent_usability_case_ids": bool(
             set(str(case["case_id"]) for case in cases).intersection(old_case_ids)
         ),
@@ -21773,16 +21970,10 @@ def _validation_signature(
 
 
 def _validation_combo_signature(episode: PortfolioEpisode) -> str:
-    return _stable_id(
-        "combo",
-        _persona_id(episode.persona),
-        episode.seed_key,
-        _portfolio_window_signature(episode),
-        _oss_route_signature(episode.oss_route),
-        _order_profile_signature(episode.order_profile),
-        episode.reflection_archetype,
-        "|".join(episode.regime_path),
-        _operational_scenario_for_episode(episode),
+    return _validation_combo_signature_for(
+        episode=episode,
+        oss_route=episode.oss_route,
+        order_profile=episode.order_profile,
     )
 
 

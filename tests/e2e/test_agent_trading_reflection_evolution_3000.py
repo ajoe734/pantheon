@@ -118,6 +118,23 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         len(case["validation_cycle"]["planning"]["selected_validation_plan"]["assertion_labels"])
         for case in cases
     )
+    assert summary["validation_backlog_queued_item_count"] > 0
+    assert (
+        summary["validation_backlog_fulfilled_item_count"]
+        == summary["validation_backlog_queued_item_count"]
+    )
+    assert summary["validation_backlog_followthrough_case_count"] > 0
+    assert summary["validation_backlog_unfulfilled_open_case_count"] == 0
+    assert summary["validation_backlog_terminal_open_item_count"] == 0
+    assert set(summary["validation_backlog_statuses"]) == {
+        "cold_start",
+        "fulfilled_prior_backlog",
+        "no_open_prior_backlog",
+    }
+    assert set(summary["validation_backlog_axes"]) == {
+        "order_profile_variant",
+        "policy_candidate_variant",
+    }
     assert summary["overlaps_previous_agent_usability_case_ids"] is False
     assert len({case["case_id"] for case in cases}) == DEFAULT_CASE_COUNT
     assert len({case["validation_signature"] for case in cases}) == DEFAULT_CASE_COUNT
@@ -1515,6 +1532,34 @@ def _assert_unique_planned_validation_cycle(
     assert len(planning["plausible_unvalidated_combinations"]) >= 3
     assert planning["plausible_unvalidated_combinations"][0]["selected_for_execution"] is True
     assert planning["plausible_unvalidated_combinations"][0]["status_before"] == "unvalidated"
+
+    backlog = planning["validation_backlog"]
+    assert backlog["selected_backlog_keys"] == selected_plan["selected_backlog_keys"]
+    assert backlog["queued_new_item_count"] == len(backlog["queued_new_items"])
+    assert backlog["fulfilled_prior_item_count"] == len(backlog["fulfilled_prior_items"])
+    assert set(selected_plan["fulfilled_prior_backlog_refs"]) == {
+        item["backlog_ref"] for item in backlog["fulfilled_prior_items"]
+    }
+    assert backlog["follow_through_status"] in {
+        "cold_start",
+        "fulfilled_prior_backlog",
+        "no_open_prior_backlog",
+    }
+    assert backlog["replay"]["queued_items_have_follow_through_keys"] is True
+    assert backlog["replay"]["selected_keys_match_plan"] is True
+    assert backlog["replay"]["open_prior_items_preserved"] is True
+    assert backlog["replay"]["fulfilled_items_match_selected_keys"] is True
+    if backlog["open_prior_item_count"]:
+        assert backlog["fulfilled_prior_item_count"] > 0
+    else:
+        assert backlog["fulfilled_prior_item_count"] == 0
+    for item in backlog["queued_new_items"]:
+        assert item["backlog_axis"] in {
+            "order_profile_variant",
+            "policy_candidate_variant",
+        }
+        assert item["follow_through_key"]
+        assert item["backlog_ref"].startswith("validation-backlog-")
 
     assert selected_plan["target_validation_signature"] == case["validation_signature"]
     assert selected_plan["target_combo_signature"] not in combo_signatures
