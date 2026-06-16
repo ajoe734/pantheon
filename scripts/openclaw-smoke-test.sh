@@ -3,10 +3,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TAG="v2026.4.7"
-TAG_COMMIT="5050017543011b61df67744ebc6368d889c25a95"
-IMAGE="ghcr.io/openclaw/openclaw:2026.4.7"
-IMAGE_DIGEST="sha256:be45b5187cbec1ff0f4e2503393d66acfc121c2d97eadf03bb1ac75826bad77c"
+TAG="v2026.6.6"
+TAG_COMMIT="8c802aa683510c7f7503597b54c3021733245e59"
+IMAGE="ghcr.io/openclaw/openclaw:2026.6.6"
+IMAGE_DIGEST="sha256:4826ca6157377e93463786d5c16852e34eede9f4bd4be55e3773cdc509762857"
 FIXTURE="$REPO_ROOT/integrations/openclaw/fixtures/raw_research_handoff.minimal.json"
 WORK_DIR="${OPENCLAW_SMOKE_WORK_DIR:-$(mktemp -d /tmp/openclaw-bp5-oss-001.XXXXXX)}"
 NORMALIZED_DIR="$WORK_DIR/normalized"

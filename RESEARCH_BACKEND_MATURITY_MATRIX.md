@@ -204,7 +204,7 @@ For activation-gated baselines (OpenClaw, Qlib, TRL, RL stack):
 | Gate | OpenClaw | Qlib | TRL | RLlib/FinRL/Tune |
 |---|---|---|---|---|
 | Activation criteria / contract documented | `OPENCLAW_RUNTIME_CONTRACT.md` + governed evidence pack ✓ | ✓ | ✓ | ✓ |
-| Upstream version/runtime pinned | `v2026.4.7` + `ghcr.io/openclaw/openclaw:2026.4.7` ✓ | `pyqlib==0.9.6` ✓ | `trl>=0.8.0,<0.10.0` ✓ | FinRL / RLlib / Ray Tune pins landed ✓ |
+| Upstream version/runtime pinned | `v2026.6.6` + `ghcr.io/openclaw/openclaw:2026.6.6` ✓ | `pyqlib==0.9.6` ✓ | `trl>=0.8.0,<0.10.0` ✓ | FinRL / RLlib / Ray Tune pins landed ✓ |
 | Local adapter defined | ✓ | ✓ | ✓ | FinRL/RLlib/Ray Tune prep-only scaffolds present |
 | Governed I/O boundaries defined | ✓ | ✓ | ✓ | FinRL/RLlib/Ray Tune draft/none prep boundaries present |
 | Smoke test passes | Live gateway smoke ✓ | LightGBM smoke ✓ | DPO smoke ✓ | FinRL/RLlib/Ray Tune prep smoke paths pass behind explicit CLI gate |
