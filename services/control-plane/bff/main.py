@@ -30961,7 +30961,13 @@ async def bff_management_persona_fleet(
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF: compose the Management Persona Fleet aggregate from read surfaces."""
-    return await bff_management_fleet(authorization=authorization)
+    return await bff_management_fleet(
+        state=state,
+        health=health,
+        page_token=page_token,
+        page_size=page_size,
+        authorization=authorization,
+    )
 
 
 # ---------------- /bff/management/nl (BFF-B6-001) ----------------
@@ -32841,6 +32847,22 @@ def _mgmt_nl_filter_tenant_records(
     ]
 
 
+def _mgmt_nl_filter_tenant_records_strict(
+    records: List[Dict[str, Any]],
+    tenant_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    clean_tenant = str(tenant_id or "").strip()
+    if not clean_tenant:
+        return [record for record in records if isinstance(record, dict)]
+    return [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and _mgmt_nl_record_tenant_ids(record)
+        and _mgmt_nl_record_matches_tenant(record, clean_tenant)
+    ]
+
+
 def _mgmt_nl_add_entity(
     entities: Set[Tuple[str, str]],
     entity_type: str,
@@ -33007,8 +33029,8 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
 
     if use_all or focus == "portfolio":
         try:
-            pools = _mgmt_nl_filter_tenant_records(list(read_store.list_capital_pools() or []), tenant_id)
-            runtime_bindings = _mgmt_nl_filter_tenant_records(list(read_store.list_runtime_bindings() or []), tenant_id)
+            pools = _mgmt_nl_filter_tenant_records_strict(list(read_store.list_capital_pools() or []), tenant_id)
+            runtime_bindings = _mgmt_nl_filter_tenant_records_strict(list(read_store.list_runtime_bindings() or []), tenant_id)
             _mgmt_nl_add_record_entities(evidence_entities, pools, "capital_pool", "pool_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             evidence_source_types.update({"capital_pool", "runtime", "runtime_binding", "telemetry"})
@@ -44670,9 +44692,14 @@ def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> O
         return "bff_overlay"
     if read_store.dataset_source("research_experiments") != "missing":
         return None
+    has_records = False
     for record in records:
         if str(record.get("experiment_id") or record.get("id") or "") == "exp-mgmt-qlib-006":
             return "composed_market_persona_defaults"
+        if str(record.get("experiment_id") or record.get("id") or "").strip():
+            has_records = True
+    if has_records:
+        return "bff_local"
     return None
 
 
@@ -44987,7 +45014,7 @@ async def bff_list_experiments_compat(
     items = _list_bff_experiments(status=status)
     source = _research_experiments_surface_source(items)
     surface = _dataset_surface_status("research_experiments", snapshot_at=snapshot_at, source=source)
-    if surface.get("status") == "unavailable" and not _GOV_BFF_EXPERIMENT_OVERLAY:
+    if surface.get("status") == "unavailable" and not items and not _GOV_BFF_EXPERIMENT_OVERLAY:
         items = []
         next_page_token = None
     else:
@@ -48528,8 +48555,11 @@ async def bff_persona_league_detail(
 
 
 @app.get("/bff/management/fleet")
-@app.get("/bff/management/persona-fleet")
 async def bff_management_fleet(
+    state: Optional[str] = None,
+    health: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
     identity = _extract_identity(authorization)
@@ -48538,10 +48568,24 @@ async def bff_management_fleet(
     pools = read_store.list_capital_pools(include_market_persona_defaults=True)
     runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
     league = read_store.list_persona_league(include_market_persona_defaults=True)
-    health = _build_persona_health_items(
+    health_items = _build_persona_health_items(
         snapshot_at,
         include_market_persona_defaults=True,
     )
+    if state:
+        requested_states = {token.strip().lower() for token in state.split(",") if token.strip()}
+        health_items = [
+            item for item in health_items
+            if str(item.get("state") or "").strip().lower() in requested_states
+        ]
+    if health:
+        requested_health = {token.strip().lower() for token in health.split(",") if token.strip()}
+        health_items = [
+            item for item in health_items
+            if str(item.get("health") or item.get("status") or "").strip().lower() in requested_health
+        ]
+    total_health = len(health_items)
+    page_items, next_page_token = _page_slice(health_items, page_token, page_size)
     pending_human_gate = [
         item
         for item in league
@@ -48551,8 +48595,8 @@ async def bff_management_fleet(
     ooda_card = _build_ooda_control_room_status_card(snapshot_at)
     return {
         "data": {
-            "items": health,
-            "persona_fleet": health,
+            "items": page_items,
+            "persona_fleet": page_items,
             "persona_league": league,
             "capital_pools": pools,
             "capital_totals": _capital_pool_totals(pools),
@@ -48568,7 +48612,19 @@ async def bff_management_fleet(
                 "human_gate_required_for_capital_changes": True,
             },
         },
-        "items": health,
+        "items": page_items,
+        "summary": {
+            "total_personas": total_health,
+            "returned_personas": len(page_items),
+            "critical_personas": len([item for item in health_items if item.get("health") == "critical"]),
+            "degraded_personas": len([item for item in health_items if item.get("health") == "degraded"]),
+            "healthy_personas": len([item for item in health_items if item.get("health") == "healthy"]),
+        },
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total_health,
+            "page_size": page_size,
+        },
         "meta": {
             "snapshot_at": snapshot_at,
             "surfaces": {
@@ -48982,6 +49038,41 @@ async def bff_get_ranking_formula_facade(
         dataset="ranking_formulas",
         surface_key="ranking_formula_detail",
     )
+
+
+@app.post("/bff/ranking-formulas", status_code=201)
+async def bff_create_ranking_formula_facade(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF B2.3: create a ranking formula through the canonical hyphenated route."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    request_hash = _stable_json_hash({"route": "POST /bff/ranking-formulas", "payload": payload})
+    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+    if cached is not None:
+        return cached
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "name is required",
+            "Ranking formula name must be a non-empty string",
+            precondition_failed="name",
+        )
+    result = read_store.create_ranking_formula(
+        name=name,
+        description=str(payload.get("description") or "").strip(),
+        actor_id=identity.operator_id,
+        params=payload.get("params"),
+    )
+    _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    return result
 
 
 # ============================================================================

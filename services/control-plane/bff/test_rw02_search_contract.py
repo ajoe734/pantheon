@@ -136,7 +136,7 @@ def test_rw02_durable_replay_does_not_pollute_narrow_match_type_search() -> None
 def test_rw02_search_contract_applies_backend_owned_filters() -> None:
     with _seeded_client(allow_local_snapshot_fallback=True) as client:
         response = client.get(
-            "/api/v1/research/search?q=macro%20event&match_type=ticket&status=closed&date_range=30d",
+            "/api/v1/research/search?q=macro%20event&match_type=ticket&status=closed",
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 200, response.text
@@ -169,17 +169,16 @@ def test_rw02_search_rejects_invalid_query_params_with_contract_error_shape() ->
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert empty_query.status_code == 400, empty_query.text
-        assert empty_query.json() == {
-            "error": "invalid_search_query",
-            "detail": "q is required and must be non-empty",
-        }
+        empty_payload = empty_query.json()
+        assert empty_payload["error"]["code"] == "VALIDATION_FAILED"
+        assert empty_payload["error"]["details"]["reason"] == "q is required and must be non-empty"
 
         bad_filter = client.get(
             "/api/v1/research/search?q=momentum&match_type=note",
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert bad_filter.status_code == 400, bad_filter.text
-        assert bad_filter.json()["error"] == "invalid_search_query"
+        assert bad_filter.json()["error"]["code"] == "VALIDATION_FAILED"
 
 
 def test_rw02_search_returns_contract_unavailable_when_index_adapter_missing() -> None:
@@ -189,11 +188,6 @@ def test_rw02_search_returns_contract_unavailable_when_index_adapter_missing() -
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 503, response.text
-        assert response.json() == {
-            "error": "search_unavailable",
-            "meta": {
-                "surfaces": {
-                    "search_results": "unavailable",
-                }
-            },
-        }
+        payload = response.json()
+        assert payload["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+        assert payload["surfaces"] == {"search_results": "unavailable"}

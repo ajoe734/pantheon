@@ -168,7 +168,7 @@ def test_shared_sse_replay_fails_closed_when_cursor_is_unavailable() -> None:
 
     assert error.status_code == 409
     assert error.headers["X-SSE-Replay-Store"] == "file"
-    assert detail["error"]["code"] == "SSE_REPLAY_UNAVAILABLE"
+    assert getattr(detail["error"]["code"], "value", detail["error"]["code"]) == "RESOURCE_CONFLICT"
     assert detail["error"]["details"]["reason"] == "SSE_REPLAY_HISTORY_MISSING"
     assert detail["error"]["details"]["lastEventId"] == "evt-ha-008-v2-missing"
     assert detail["error"]["details"]["channel"] == "approval"

@@ -213,7 +213,7 @@ def test_ask_001_create_idempotency_conflict_rejected() -> None:
         )
         assert first.status_code == 201, first.text
         assert second.status_code == 409, second.text
-        detail = second.json()["detail"]
+        detail = second.json()
         assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["error"]["details"]["precondition_failed"] == "idempotency_conflict"
 
@@ -365,7 +365,7 @@ def test_ask_001_close_idempotency_conflict_rejected() -> None:
         )
         assert first.status_code == 200, first.text
         assert second.status_code == 409, second.text
-        detail = second.json()["detail"]
+        detail = second.json()
         assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["error"]["details"]["precondition_failed"] == "idempotency_conflict"
 

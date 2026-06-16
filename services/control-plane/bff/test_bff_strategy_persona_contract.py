@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import uuid
 
 from fastapi.testclient import TestClient
 
@@ -28,6 +29,10 @@ from read_store import ReadSurfaceStore
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
+
+
+def _idempotency_key(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex}"
 
 
 def _fresh_client(td: str) -> TestClient:
@@ -75,7 +80,7 @@ def test_bff_strategies_create_requires_idempotency_and_name() -> None:
                 "/bff/strategies", json={"name": "Alpha"}, headers=HEADERS,
             )
             assert missing_key.status_code == 400, missing_key.text
-            assert missing_key.json()["detail"]["error"]["code"] == "INVALID_PARAMS"
+            assert missing_key.json()["error"]["code"] == "VALIDATION_FAILED"
 
             missing_name = client.post(
                 "/bff/strategies",
@@ -83,7 +88,7 @@ def test_bff_strategies_create_requires_idempotency_and_name() -> None:
                 headers={**HEADERS, "Idempotency-Key": "create-strategy-002"},
             )
             assert missing_name.status_code == 422, missing_name.text
-            assert missing_name.json()["detail"]["error"]["code"] == "INVALID_PARAMS"
+            assert missing_name.json()["error"]["code"] == "VALIDATION_FAILED"
         finally:
             bff_main.read_store = original
 
@@ -160,19 +165,19 @@ def test_bff_strategies_actions_use_final_envelope_and_precondition() -> None:
             strategy_id = create.json()["data"]["id"]
 
             missing_key = client.post(
-                f"/bff/strategies/{strategy_id}/actions/edit",
+                f"/bff/actions/strategy/{strategy_id}/edit",
                 json={},
                 headers=HEADERS,
             )
             assert missing_key.status_code == 400, missing_key.text
-            err = missing_key.json()["detail"]["error"]
-            assert err["code"] == "INVALID_PARAMS"
+            err = missing_key.json()["error"]
+            assert err["code"] == "VALIDATION_FAILED"
             assert err["details"]["precondition_failed"] == "idempotency_key"
 
             ok = client.post(
-                f"/bff/strategies/{strategy_id}/actions/edit",
+                f"/bff/actions/strategy/{strategy_id}/edit",
                 json={"reason": "operator review"},
-                headers={**HEADERS, "Idempotency-Key": "strategy-action-001"},
+                headers={**HEADERS, "Idempotency-Key": _idempotency_key("strategy-action")},
             )
             assert ok.status_code == 202, ok.text
             assert get_catalog_entry(CommandType.STRATEGY_ACTION.value) is not None
@@ -213,7 +218,7 @@ def test_bff_strategies_404_for_unknown_id() -> None:
             client = _fresh_client(td)
             resp = client.get("/bff/strategies/strategy-does-not-exist", headers=HEADERS)
             assert resp.status_code == 404, resp.text
-            assert resp.json()["detail"]["error"]["code"] == "OBJECT_NOT_FOUND"
+            assert resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
             bff_main.read_store = original
 
@@ -342,17 +347,17 @@ def test_bff_personas_actions_route_through_command_envelope() -> None:
             persona_id = create.json()["data"]["id"]
 
             precondition = client.post(
-                f"/bff/personas/{persona_id}/actions/retire",
+                f"/bff/actions/persona/{persona_id}/retire",
                 json={},
                 headers=HEADERS,
             )
             assert precondition.status_code == 400, precondition.text
-            assert precondition.json()["detail"]["error"]["code"] == "INVALID_PARAMS"
+            assert precondition.json()["error"]["code"] == "VALIDATION_FAILED"
 
             ok = client.post(
-                f"/bff/personas/{persona_id}/actions/retire",
+                f"/bff/actions/persona/{persona_id}/retire",
                 json={"reason": "decommission"},
-                headers={**HEADERS, "Idempotency-Key": "persona-action-001"},
+                headers={**HEADERS, "Idempotency-Key": _idempotency_key("persona-action")},
             )
             assert ok.status_code == 202, ok.text
             assert get_catalog_entry(CommandType.PERSONA_ACTION.value) is not None
@@ -380,7 +385,7 @@ def test_bff_personas_test_prompt_requires_prompt() -> None:
                 headers={**HEADERS, "Idempotency-Key": "test-prompt-001"},
             )
             assert empty.status_code == 422, empty.text
-            assert empty.json()["detail"]["error"]["details"]["precondition_failed"] == "prompt"
+            assert empty.json()["error"]["details"]["precondition_failed"] == "prompt"
 
             ok = client.post(
                 f"/bff/personas/{persona_id}/test-prompt",
@@ -401,7 +406,7 @@ def test_bff_personas_404_for_unknown_id() -> None:
             client = _fresh_client(td)
             resp = client.get("/bff/personas/persona-does-not-exist", headers=HEADERS)
             assert resp.status_code == 404, resp.text
-            assert resp.json()["detail"]["error"]["code"] == "OBJECT_NOT_FOUND"
+            assert resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
             bff_main.read_store = original
 

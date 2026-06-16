@@ -719,7 +719,7 @@ class TestExtractIdentityJwks:
                         bff_main.settings_store = original
 
         assert resp.status_code == 403
-        detail = resp.json()["detail"]
+        detail = resp.json()
         assert detail["error"]["details"]["precondition_failed"] == "role_check"
 
     # ---- kid matching ----

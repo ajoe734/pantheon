@@ -270,7 +270,7 @@ def test_bff_capital_pool_detail_503_when_pool_source_unavailable(monkeypatch) -
         resp = client.get("/bff/capital-pools/pool-missing", headers=HEADERS)
 
         assert resp.status_code == 503, resp.text
-        assert resp.json()["detail"]["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
+        assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +282,7 @@ def test_bff_ranking_formulas_list_returns_200() -> None:
         original = bff_main.read_store
         try:
             client = _fresh_client(td)
-            resp = client.get("/bff/ranking/formulas", headers=HEADERS)
+            resp = client.get("/bff/ranking-formulas", headers=HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert "data" in body
@@ -298,7 +298,7 @@ def test_bff_ranking_formula_create_returns_201() -> None:
         try:
             client = _fresh_client(td)
             resp = client.post(
-                "/bff/ranking/formulas",
+                "/bff/ranking-formulas",
                 json={"name": "Momentum Formula", "description": "Ranks by momentum"},
                 headers={**HEADERS, "Idempotency-Key": "rf-create-001"},
             )
@@ -316,7 +316,7 @@ def test_bff_ranking_formula_create_requires_name() -> None:
         try:
             client = _fresh_client(td)
             resp = client.post(
-                "/bff/ranking/formulas",
+                "/bff/ranking-formulas",
                 json={"description": "Missing name"},
                 headers={**HEADERS, "Idempotency-Key": "rf-no-name-001"},
             )
@@ -330,8 +330,11 @@ def test_bff_ranking_formula_detail_404_unknown() -> None:
         original = bff_main.read_store
         try:
             client = _fresh_client(td)
-            resp = client.get("/bff/ranking/formulas/nonexistent-formula", headers=HEADERS)
-            assert resp.status_code == 404, resp.text
+            resp = client.get("/bff/ranking-formulas/nonexistent-formula", headers=HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["data"]["status"] == "degraded"
+            assert body["meta"]["surfaces"]["ranking_formula_detail"]["status"] == "unavailable"
         finally:
             bff_main.read_store = original
 
@@ -342,14 +345,14 @@ def test_bff_ranking_formula_action_accepted() -> None:
         try:
             client = _fresh_client(td)
             create_resp = client.post(
-                "/bff/ranking/formulas",
+                "/bff/ranking-formulas",
                 json={"name": "Action Test Formula", "description": "for action test"},
                 headers={**HEADERS, "Idempotency-Key": "rf-action-create-001"},
             )
             assert create_resp.status_code == 201, create_resp.text
             formula_id = create_resp.json().get("formula_id") or create_resp.json().get("id")
             action_resp = client.post(
-                f"/bff/ranking/formulas/{formula_id}/actions/activate",
+                f"/bff/actions/ranking-formula/{formula_id}/activate",
                 json={},
                 headers={**HEADERS, "Idempotency-Key": "rf-action-001"},
             )

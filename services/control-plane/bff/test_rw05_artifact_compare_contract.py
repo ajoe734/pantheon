@@ -151,8 +151,8 @@ def test_rw05_compare_rejects_non_comparable_artifacts() -> None:
         assert response.status_code == 422, response.text
 
         payload = response.json()
-        assert payload["error"]["code"] == "INVALID_STATE"
-        assert payload["non_comparable_artifacts"] == [
+        assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
+        assert payload["error"]["details"]["non_comparable_artifacts"] == [
             {
                 "artifact_id": "art_2024_pending01",
                 "status": "pending",
@@ -168,4 +168,4 @@ def test_rw05_compare_rejects_invalid_cardinality() -> None:
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 400, response.text
-        assert response.json()["detail"]["error"]["code"] == "INVALID_PARAMS"
+        assert response.json()["error"]["code"] == "VALIDATION_FAILED"

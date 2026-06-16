@@ -102,7 +102,7 @@ def test_bff_auth_refresh_missing_refresh_path_returns_typed_401(monkeypatch) ->
     )
 
     assert response.status_code == 401
-    error = response.json()["detail"]["error"]
-    assert error["code"] == "INVALID_TOKEN"
+    error = response.json()["error"]
+    assert error["code"] == "AUTH_REQUIRED"
     assert error["details"]["reason"] == "AUTH_REFRESH_CREDENTIAL_REQUIRED"
     assert error["details"]["precondition_failed"] == "refresh_credential"

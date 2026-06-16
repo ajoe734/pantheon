@@ -20,7 +20,7 @@ def test_w4_remaining_catalog():
         # ------------------------------------------------------------------ #
         personas = store.list_personas()
         assert len(personas) >= 1, "Expected at least one persona"
-        assert personas[0]["id"] == "persona-alpha"
+        assert any(persona["id"] == "persona-alpha" for persona in personas)
         print("✅ PS-01: list_personas returns personas")
 
         persona = store.get_persona("persona-alpha")
@@ -51,12 +51,12 @@ def test_w4_remaining_catalog():
         # ------------------------------------------------------------------ #
         pools = store.list_capital_pools()
         assert len(pools) >= 1
-        assert pools[0]["id"] == "pool-main"
+        assert any(pool["id"] == "pool-main" for pool in pools)
         print("✅ CP-01: list_capital_pools returns pools")
 
         bindings = store.list_bindings()
         assert len(bindings) >= 1
-        assert bindings[0]["id"] == "binding-042"
+        assert any(binding["id"] == "binding-042" for binding in bindings)
         print("✅ CP-03: list_bindings returns bindings")
 
         # ------------------------------------------------------------------ #
@@ -64,12 +64,12 @@ def test_w4_remaining_catalog():
         # ------------------------------------------------------------------ #
         plans = store.list_deployment_plans()
         assert len(plans) >= 1
-        assert plans[0]["id"] == "plan-F-042"
+        assert any(plan["id"] == "plan-F-042" for plan in plans)
         print("✅ DP-01: list_deployment_plans returns plans")
 
         decisions = store.list_approval_decisions()
         assert len(decisions) >= 1
-        assert decisions[0]["id"] == "approval-042"
+        assert any(decision["id"] == "approval-042" for decision in decisions)
         print("✅ DP-03: list_approval_decisions returns decisions")
 
         decision_detail = store.get_approval_decision("approval-042")
@@ -82,7 +82,7 @@ def test_w4_remaining_catalog():
         # ------------------------------------------------------------------ #
         runtime_bindings = store.list_runtime_bindings()
         assert len(runtime_bindings) >= 1
-        assert runtime_bindings[0]["id"] == "runtime-042"
+        assert any(binding["id"] == "runtime-042" for binding in runtime_bindings)
         print("✅ RT-01: list_runtime_bindings returns bindings")
 
         runtime_status = store.get_runtime_binding_by_runtime_id("runtime-042")

@@ -69,12 +69,14 @@ def test_merged_staging_operator_bff_has_no_cross_service_read_volume_mounts() -
         text=True,
     )
     operator_bff = json.loads(rendered.stdout)["services"]["operator-bff"]
-    volumes = {
-        (volume.get("source"), volume.get("target"))
-        for volume in operator_bff.get("volumes", [])
-    }
+    volumes = operator_bff.get("volumes", [])
+    volume_pairs = {(volume.get("source"), volume.get("target")) for volume in volumes}
+    targets_by_name = {volume.get("target"): volume for volume in volumes}
 
-    assert volumes == {("bff-data", "/data/bff")}
+    assert ("bff-data", "/data/bff") in volume_pairs
+    assert {volume.get("target") for volume in volumes} == {"/data/bff", "/workspace/status-root"}
+    assert targets_by_name["/workspace/status-root"]["type"] == "bind"
+    assert targets_by_name["/workspace/status-root"]["read_only"] is True
 
 
 def test_prod_control_example_documents_cutoff_flag() -> None:

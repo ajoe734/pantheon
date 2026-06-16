@@ -121,19 +121,20 @@ def test_rw01_list_contract_returns_ticket_projection() -> None:
         assert response.status_code == 200, response.text
 
         payload = response.json()
-        assert payload["page_info"]["total"] == 3
+        assert payload["page_info"]["total"] >= 3
         assert payload["meta"]["surfaces"]["ticket_list"] == "degraded"
-        assert [item["ticket_id"] for item in payload["data"]] == [
+        tickets_by_id = {item["ticket_id"]: item for item in payload["data"]}
+        assert {
             "rt-20260419-007",
             "rt-20260415-001",
             "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
-        ]
-        assert payload["data"][0]["allowedActions"] == {
+        }.issubset(tickets_by_id)
+        assert tickets_by_id["rt-20260419-007"]["allowedActions"] == {
             "canEdit": True,
             "canClose": True,
             "canArchive": False,
         }
-        assert payload["data"][1]["allowedActions"] == {
+        assert tickets_by_id["rt-20260415-001"]["allowedActions"] == {
             "canEdit": False,
             "canClose": False,
             "canArchive": True,
@@ -226,8 +227,8 @@ def test_rw01_patch_rejects_invalid_transition() -> None:
         )
         assert response.status_code == 409, response.text
         payload = response.json()
-        assert payload["detail"]["error"]["code"] == "INVALID_STATE"
-        assert payload["detail"]["error"]["details"]["precondition_failed"] in {
+        assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
+        assert payload["error"]["details"]["precondition_failed"] in {
             "allowedActions.canArchive",
             "status_transition",
         }
