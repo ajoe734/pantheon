@@ -186,6 +186,16 @@ When the pinned OpenClaw version changes:
 
 **Deny rules:** All deny rules in §3.2 remain unchanged; the bump does not relax any capability boundary.
 
+### 2026-06-16: Pantheon-derived gateway image + Claude CLI (multi-model persona routing)
+
+**What:** The `openclaw-gateway` runtime artifact is no longer the bare upstream image; it is a **Pantheon-derived image** built from `integrations/openclaw/gateway/Dockerfile` = `FROM ghcr.io/openclaw/openclaw:2026.6.6` + the Claude Code CLI (`@anthropic-ai/claude-code`, version-aligned with the adapter Dockerfile) layered on top. The governed **upstream pin (tag `v2026.6.6` / commit `8c802aa683510c7f7503597b54c3021733245e59`) is unchanged** — this only layers a CLI on top.
+
+**Reason:** OpenClaw's `claude-cli` agent runtime spawns `claude -p` **inside the gateway container**, so the `claude` binary must live there (the adapter image carrying claude does not help the gateway). Baking it in makes Claude CLI reuse stable across container recreate; ephemeral `npm i -g` in the running container is wiped on every full redeploy. This enables **multi-model persona routing** — e.g. debate personas split across `openai/gpt-5.5` (Codex OAuth) and `anthropic/claude-*` (Claude CLI), each on subscription auth with zero API keys.
+
+**Auth:** Claude side uses Claude CLI subscription login (`claude auth login`, one-time interactive), persisted on the `openclaw-data` volume via `CLAUDE_CONFIG_DIR=/home/node/.openclaw/claude-cli`. No `ANTHROPIC_API_KEY`. **Billing caveat:** per Anthropic policy effective 2026-06-15, subscription `claude -p` usage draws from the account's monthly Agent SDK credit. Anthropic can change Claude Code billing/rate-limits without an OpenClaw release; for shared production automation an Anthropic API key is the predictable path.
+
+**Capability boundary:** unchanged. Layering a CLI does not relax any deny rule; the claude-cli runtime is subject to the same OC-001 deny-first filtering and OC-002 job governance as any model route.
+
 ## 10. Relationship to Other Governance Documents
 
 | Document | Relationship |
