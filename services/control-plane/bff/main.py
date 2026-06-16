@@ -34,6 +34,12 @@ if _REPO_ROOT not in sys.path:
 _PERSONA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "persona"))
 if _PERSONA_SERVICE_DIR not in sys.path:
     sys.path.insert(0, _PERSONA_SERVICE_DIR)
+_CRON_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cron"))
+if _CRON_SERVICE_DIR not in sys.path:
+    sys.path.insert(0, _CRON_SERVICE_DIR)
+_OODA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ooda"))
+if _OODA_SERVICE_DIR not in sys.path:
+    sys.path.insert(0, _OODA_SERVICE_DIR)
 
 from services.foundation import (  # noqa: E402
     ActorRef,
@@ -36134,6 +36140,37 @@ async def bff_strategy_dry_run(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Persona OODA loop wiring helpers
+# ---------------------------------------------------------------------------
+
+def _try_register_persona_cron(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Register WORKFLOW_CATALOG as recurring OpenClaw cron jobs for *persona_id*.
+
+    Best-effort: returns a summary dict on success, None on any error so that
+    persona creation is never blocked by gateway unavailability.
+    """
+    try:
+        from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
+        registrar = PersonaCronRegistrar()
+        result = registrar.register_for_persona(persona_id)
+        return result.to_dict()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _try_bootstrap_persona_ooda_packet(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Create and persist the initial open OODA loop packet for *persona_id*.
+
+    Best-effort: returns the packet dict on success, None on any error.
+    """
+    try:
+        from persona_ooda_bootstrap import bootstrap_persona_ooda_packet  # type: ignore[import]
+        return bootstrap_persona_ooda_packet(persona_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ---------------- /bff/personas routes ----------------
 
 @app.get("/bff/personas")
@@ -36256,9 +36293,22 @@ async def bff_create_persona(
             evidence_kind="persona.create",
         )
     _PERSONA_BFF_OVERLAY[persona_id] = overlay
+
+    # Wire persona OODA loop: register recurring cron jobs + open OODA packet.
+    cron_registration = _try_register_persona_cron(persona_id)
+    ooda_packet = _try_bootstrap_persona_ooda_packet(persona_id)
+
+    ooda_meta: Dict[str, Any] = {}
+    if ooda_packet:
+        ooda_meta["ooda_packet_id"] = ooda_packet.get("packet_id")
+        ooda_meta["ooda_loop_status"] = ooda_packet.get("status")
+    if cron_registration:
+        ooda_meta["cron_registration_mode"] = cron_registration.get("mode")
+        ooda_meta["cron_registered_count"] = len(cron_registration.get("registered") or [])
+
     result = {
         "data": overlay,
-        "meta": {"snapshot_at": snapshot_at},
+        "meta": {"snapshot_at": snapshot_at, **ooda_meta},
     }
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
