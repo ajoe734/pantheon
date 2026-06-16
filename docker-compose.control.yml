@@ -275,9 +275,7 @@ services:
       PANTHEON_ASSISTANT_KERNEL_ENABLED: ${PANTHEON_ASSISTANT_KERNEL_ENABLED:-false}
       PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH: ${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}
       PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS: ${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}
-      # TODO(off-lovable): staging-live FE is migrating off Lovable to a self-hosted
-      # sslip.io origin; replace this default once the staging FE URL is provisioned.
-      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-staging-live.lovable.app}
+      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-staging-fe.104.155.223.192.sslip.io,https://pantheon-ai-system-front-staging-live.lovable.app}
       PANTHEON_ENV: ${PANTHEON_ENV:-staging-live}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-true}
       PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}

@@ -10,7 +10,9 @@ __pycache__/
 .orchestrator/backups/
 .orchestrator/bin/cloudflared
 .orchestrator/chair-reviews/
+.orchestrator/dev-bridge-seen-packets.txt
 .orchestrator/logs/
+.orchestrator/metrics/
 .orchestrator/planning-state.json
 .orchestrator/planning-state.lock
 .orchestrator/approval-queue.json
@@ -21,6 +23,7 @@ __pycache__/
 .orchestrator/provider_capabilities.json
 .orchestrator/state.json
 .orchestrator/supervisor.pid
+.orchestrator/watchdog-state.json
 .orchestrator/worker-runtime/
 #.orchestrator/task-briefs/
 docs-site/planning-state.json
