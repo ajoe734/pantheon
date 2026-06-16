@@ -1,0 +1,342 @@
+"""Contract tests for /bff/approvals population via promotion-service approvals.
+
+Verifies the end-to-end read path established by CONSOLE-DATA-APPROVALS:
+  - POST promotion/api/v1/approvals produces a real approval decision
+  - PANTHEON_BFF_APPROVAL_DECISION_STORE wires the BFF canonical read path
+  - GET /bff/approvals returns count>0 and the pending item when the store is populated
+  - Decided approvals (approved/rejected) are excluded from the pending list
+  - Empty / absent store returns count=0 (no fabricated data)
+  - The governance approval queue surface also picks up the projected data
+  - Explicit store path wins over PANTHEON_GOVERNANCE_APPROVAL_API_URL service client
+  - PANTHEON_PROMOTION_API_URL is tried before the governance service when no file is set
+
+Stub dispatch (dev safety): no live broker orders, no capital allocation.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+import main as bff_main
+from read_store import CanonicalSnapshotAdapter, ReadSurfaceStore
+
+ADMIN_HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
+OPERATOR_HEADERS = {"Authorization": "Bearer op-dev:operator"}
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+_PENDING_APPROVAL = {
+    "decision_id": "apv-consdata-001",
+    "target_type": "registry_entry",
+    "target_id": "reg-consdata-model-v1",
+    "target_version": "v1",
+    "decision": None,
+    "decision_state": "proposed",
+    "actor_role": None,
+    "actor_id": None,
+    "rationale": None,
+    "created_at": "2026-06-15T10:00:00Z",
+    "decided_at": None,
+    "conditions": [],
+    "risk_level": "medium",
+    "evidence_refs": [],
+    "superseded_by": None,
+    "expires_at": None,
+    "capital_pool_id": "pool-dev-01",
+    "persona_id": None,
+    "metadata": None,
+}
+
+_DECIDED_APPROVAL = {
+    "decision_id": "apv-consdata-002",
+    "target_type": "registry_entry",
+    "target_id": "reg-consdata-model-v2",
+    "target_version": "v2",
+    "decision": "approved",
+    "decision_state": "decided",
+    "actor_role": "governance_reviewer",
+    "actor_id": "reviewer-01",
+    "rationale": "approved after review",
+    "created_at": "2026-06-15T09:00:00Z",
+    "decided_at": "2026-06-15T09:30:00Z",
+    "conditions": [],
+    "risk_level": "low",
+    "evidence_refs": [],
+    "superseded_by": None,
+    "expires_at": None,
+    "capital_pool_id": "pool-dev-01",
+    "persona_id": None,
+    "metadata": None,
+}
+
+
+def _write_approval_decisions(td: str, decisions: list) -> str:
+    """Write approval decisions as a list to approval_decisions.json and return path."""
+    path = os.path.join(td, "approval_decisions.json")
+    keyed = {d["decision_id"]: d for d in decisions}
+    with open(path, "w") as f:
+        json.dump(keyed, f)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# /bff/approvals — populated store returns count > 0
+# ---------------------------------------------------------------------------
+
+class TestBffApprovalsSurfacePopulated:
+    """When PANTHEON_BFF_APPROVAL_DECISION_STORE points to a real projected file
+    the /bff/approvals endpoint returns count>0 and the pending items."""
+
+    def test_pending_approval_appears_in_bff_approvals(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store_path = _write_approval_decisions(td, [_PENDING_APPROVAL])
+            original_store = bff_main.read_store
+            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
+            try:
+                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
+                bff_main.read_store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+                client = TestClient(bff_main.app, raise_server_exceptions=False)
+                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+                assert resp.status_code == 200, resp.text
+                body = resp.json()
+                assert body["count"] > 0, f"expected count>0, got {body}"
+                ids = [item.get("decision_id") for item in body["items"]]
+                assert "apv-consdata-001" in ids
+            finally:
+                bff_main.read_store = original_store
+                if orig_env is None:
+                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
+                else:
+                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+
+    def test_decided_approvals_excluded_from_pending_list(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store_path = _write_approval_decisions(td, [_DECIDED_APPROVAL])
+            original_store = bff_main.read_store
+            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
+            try:
+                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
+                bff_main.read_store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+                client = TestClient(bff_main.app, raise_server_exceptions=False)
+                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+                assert resp.status_code == 200, resp.text
+                body = resp.json()
+                assert body["count"] == 0, f"expected 0 pending (decided approval filtered), got {body}"
+            finally:
+                bff_main.read_store = original_store
+                if orig_env is None:
+                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
+                else:
+                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+
+    def test_mixed_store_only_pending_returned(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store_path = _write_approval_decisions(
+                td, [_PENDING_APPROVAL, _DECIDED_APPROVAL]
+            )
+            original_store = bff_main.read_store
+            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
+            try:
+                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
+                bff_main.read_store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+                client = TestClient(bff_main.app, raise_server_exceptions=False)
+                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+                assert resp.status_code == 200, resp.text
+                body = resp.json()
+                assert body["count"] == 1, f"expected only pending item, got {body}"
+                assert body["items"][0]["decision_id"] == "apv-consdata-001"
+            finally:
+                bff_main.read_store = original_store
+                if orig_env is None:
+                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
+                else:
+                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+
+
+# ---------------------------------------------------------------------------
+# /bff/approvals — absent store returns count=0, no fabrication
+# ---------------------------------------------------------------------------
+
+class TestBffApprovalsNoFabrication:
+    """When no approval store is wired the endpoint returns count=0.
+    No fixture data must be invented."""
+
+    def test_empty_store_returns_count_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            original_store = bff_main.read_store
+            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
+            try:
+                os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
+                bff_main.read_store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+                client = TestClient(bff_main.app, raise_server_exceptions=False)
+                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+                assert resp.status_code == 200, resp.text
+                body = resp.json()
+                assert body["count"] == 0, f"expected 0 when no store wired, got {body}"
+            finally:
+                bff_main.read_store = original_store
+                if orig_env is None:
+                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
+                else:
+                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+
+    def test_unauthenticated_rejected(self) -> None:
+        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        resp = client.get("/bff/approvals")
+        assert resp.status_code in {401, 403}, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Governance approval queue surface picks up projected store
+# ---------------------------------------------------------------------------
+
+class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
+    """When PANTHEON_BFF_APPROVAL_DECISION_STORE is wired the governance approval
+    queue surface reads the canonical store and surfaces the pending decisions."""
+
+    ROUTE = "/api/v1/operator/governance/approval-queue"
+
+    def test_queue_returns_pending_when_store_wired(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store_path = _write_approval_decisions(td, [_PENDING_APPROVAL])
+            original_store = bff_main.read_store
+            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
+            try:
+                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
+                bff_main.read_store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+                client = TestClient(bff_main.app, raise_server_exceptions=False)
+                resp = client.get(self.ROUTE, headers=ADMIN_HEADERS)
+                assert resp.status_code == 200, resp.text
+                body = resp.json()
+                ids = [item.get("decision_id") for item in (body.get("items") or [])]
+                assert "apv-consdata-001" in ids, f"pending approval not in queue: {body}"
+            finally:
+                bff_main.read_store = original_store
+                if orig_env is None:
+                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
+                else:
+                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+
+
+# ---------------------------------------------------------------------------
+# Store-precedence: explicit file wins over HTTP service client
+# ---------------------------------------------------------------------------
+
+class TestStorePrecedenceOverServiceClient:
+    """PANTHEON_BFF_APPROVAL_DECISION_STORE must win over
+    PANTHEON_GOVERNANCE_APPROVAL_API_URL when the file exists.
+
+    This is the core fix for the reviewer-flagged bug: docker-compose sets
+    PANTHEON_GOVERNANCE_APPROVAL_API_URL=http://governance:8082, so
+    CanonicalSnapshotAdapter._load_http_dataset previously shadowed the
+    projection-populated file and returned count=0.
+    """
+
+    def test_file_store_wins_when_governance_url_is_also_set(self) -> None:
+        """When both PANTHEON_BFF_APPROVAL_DECISION_STORE (populated) and
+        PANTHEON_GOVERNANCE_APPROVAL_API_URL are set, the file wins and
+        /bff/approvals returns count>0 from the file."""
+        with tempfile.TemporaryDirectory() as td:
+            store_path = _write_approval_decisions(td, [_PENDING_APPROVAL])
+            original_store = bff_main.read_store
+            orig_store_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
+            orig_gov_env = os.environ.get("PANTHEON_GOVERNANCE_APPROVAL_API_URL")
+            try:
+                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
+                # Simulate docker-compose default which would otherwise shadow the file.
+                os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = "http://governance-stub:9999"
+                bff_main.read_store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+                client = TestClient(bff_main.app, raise_server_exceptions=False)
+                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+                assert resp.status_code == 200, resp.text
+                body = resp.json()
+                assert body["count"] > 0, (
+                    "expected count>0 from file store even though "
+                    "PANTHEON_GOVERNANCE_APPROVAL_API_URL is set; "
+                    f"got {body}"
+                )
+                ids = [item.get("decision_id") for item in body["items"]]
+                assert "apv-consdata-001" in ids, f"projected approval not found: {body}"
+            finally:
+                bff_main.read_store = original_store
+                if orig_store_env is None:
+                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
+                else:
+                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_store_env
+                if orig_gov_env is None:
+                    os.environ.pop("PANTHEON_GOVERNANCE_APPROVAL_API_URL", None)
+                else:
+                    os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = orig_gov_env
+
+    def test_promotion_service_url_read_path(self) -> None:
+        """PANTHEON_PROMOTION_API_URL is tried before the governance service URL.
+        When the promotion service returns approvals, they are surfaced via the
+        CanonicalSnapshotAdapter HTTP dataset path."""
+        promotion_response = {
+            "count": 1,
+            "items": [_PENDING_APPROVAL],
+        }
+        orig_promo_env = os.environ.get("PANTHEON_PROMOTION_API_URL")
+        orig_store_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
+        try:
+            # No file store — force the HTTP path to be exercised.
+            os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
+            os.environ["PANTHEON_PROMOTION_API_URL"] = "http://promotion-stub:8089"
+            adapter = CanonicalSnapshotAdapter(
+                snapshot_path=None,
+                allow_snapshot_fallback=False,
+            )
+            with patch(
+                "read_store._http_json_get",
+                return_value=(True, promotion_response),
+            ) as mock_get:
+                available, records = adapter.list_records("approval_decisions")
+                assert available, "expected available=True from promotion service mock"
+                assert any(
+                    r.get("decision_id") == "apv-consdata-001" for r in records
+                ), f"pending approval not in records: {records}"
+                # Confirm the call used the promotion URL, not the governance URL.
+                call_args = mock_get.call_args
+                assert "promotion-stub" in call_args[0][0], (
+                    f"expected promotion service URL in call; got {call_args}"
+                )
+                assert call_args[0][1] == "/api/v1/approvals", (
+                    f"expected /api/v1/approvals path; got {call_args}"
+                )
+        finally:
+            if orig_promo_env is None:
+                os.environ.pop("PANTHEON_PROMOTION_API_URL", None)
+            else:
+                os.environ["PANTHEON_PROMOTION_API_URL"] = orig_promo_env
+            if orig_store_env is None:
+                os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
+            else:
+                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_store_env

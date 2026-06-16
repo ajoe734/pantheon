@@ -1,0 +1,147 @@
+{
+  "skill-cp-run-backtest": {
+    "id": "skill-cp-run-backtest",
+    "skill_id": "skill-cp-run-backtest",
+    "name": "run_backtest",
+    "status": "active",
+    "description": "Run a historical backtest for a given strategy",
+    "sandbox_enabled": true,
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object"
+    },
+    "worker": "qlib",
+    "triggers": [
+      "backtest",
+      "test strategy",
+      "simulate"
+    ],
+    "source": "control_plane_skills_registry",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  },
+  "skill-cp-run-portfolio-sim": {
+    "id": "skill-cp-run-portfolio-sim",
+    "skill_id": "skill-cp-run-portfolio-sim",
+    "name": "run_portfolio_sim",
+    "status": "active",
+    "description": "Run a portfolio simulation / vectorized backtest",
+    "sandbox_enabled": true,
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object"
+    },
+    "worker": "vectorbt",
+    "triggers": [
+      "portfolio simulation",
+      "vectorbt",
+      "optimize weights"
+    ],
+    "source": "control_plane_skills_registry",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  },
+  "skill-cp-run-rl-train": {
+    "id": "skill-cp-run-rl-train",
+    "skill_id": "skill-cp-run-rl-train",
+    "name": "run_rl_train",
+    "status": "active",
+    "description": "Train a reinforcement-learning trading agent",
+    "sandbox_enabled": true,
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object"
+    },
+    "worker": "finrl",
+    "triggers": [
+      "train agent",
+      "reinforcement learning",
+      "RL strategy"
+    ],
+    "source": "control_plane_skills_registry",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  },
+  "skill-cp-run-pricing": {
+    "id": "skill-cp-run-pricing",
+    "skill_id": "skill-cp-run-pricing",
+    "name": "run_pricing",
+    "status": "active",
+    "description": "Price a derivative or fixed-income instrument",
+    "sandbox_enabled": true,
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object"
+    },
+    "worker": "quantlib",
+    "triggers": [
+      "price option",
+      "quantlib",
+      "derivatives pricing"
+    ],
+    "source": "control_plane_skills_registry",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  },
+  "skill-cp-get-status": {
+    "id": "skill-cp-get-status",
+    "skill_id": "skill-cp-get-status",
+    "name": "get_status",
+    "status": "active",
+    "description": "Get current system or task status",
+    "sandbox_enabled": true,
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object"
+    },
+    "worker": null,
+    "triggers": [
+      "status",
+      "what is running",
+      "show tasks"
+    ],
+    "source": "control_plane_skills_registry",
+    "created_at": "2026-06-15T14:30:05Z",
+    "updated_at": "2026-06-15T14:30:05Z",
+    "created_by": "project_skills_to_bff_surfaces"
+  }
+}

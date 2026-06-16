@@ -63,6 +63,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_OSS_QUALITY_REPAIR_HANDOFF_MODEL_ID,
     PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
     PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID,
+    PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID,
     PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID,
     PERSONA_POLICY_OSS_LINEAGE_HANDOFF_MODEL_ID,
     PERSONA_REFLECTION_ARTIFACT_MATERIALITY_MODEL_ID,
@@ -106,6 +107,17 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["unique_validation_signature_count"] == DEFAULT_CASE_COUNT
     assert summary["unique_validation_plan_signature_count"] == DEFAULT_CASE_COUNT
     assert summary["unique_target_combo_signature_count"] == DEFAULT_CASE_COUNT
+    expected_assertion_ref_count = sum(
+        len(case["validation_cycle"]["planning"]["selected_validation_plan"]["assertion_refs"])
+        for case in cases
+    )
+    assert summary["validation_assertion_ref_count"] == expected_assertion_ref_count
+    assert summary["unique_validation_assertion_ref_count"] == expected_assertion_ref_count
+    assert summary["duplicate_validation_assertion_ref_count"] == 0
+    assert summary["validation_assertion_label_count"] == sum(
+        len(case["validation_cycle"]["planning"]["selected_validation_plan"]["assertion_labels"])
+        for case in cases
+    )
     assert summary["overlaps_previous_agent_usability_case_ids"] is False
     assert len({case["case_id"] for case in cases}) == DEFAULT_CASE_COUNT
     assert len({case["validation_signature"] for case in cases}) == DEFAULT_CASE_COUNT
@@ -214,6 +226,17 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["portfolio_state_carryover_position_count"] == (
         DEFAULT_CASE_COUNT - summary["persona_count"]
     ) * PORTFOLIO_LEG_COUNT
+    assert summary["broker_adapter_carryover_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_adapter_carryover_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_adapter_carryover_applied_count"] == (
+        DEFAULT_CASE_COUNT - summary["persona_count"]
+    )
+    assert summary["broker_adapter_carryover_cold_start_count"] == summary["persona_count"]
+    assert summary["broker_adapter_carryover_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["broker_adapter_carryover_drives_next_case_count"] == DEFAULT_CASE_COUNT
+    assert summary["broker_adapter_carryover_prior_followup_ref_count"] == (
+        DEFAULT_CASE_COUNT - summary["persona_count"]
+    )
     assert summary["openclaw_session_continuity_count"] == DEFAULT_CASE_COUNT
     assert summary["openclaw_session_continuity_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["openclaw_session_continuity_applied_count"] == (
@@ -574,6 +597,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "openclaw_session_continuity_bound",
         "paper_runtime_guard_retained",
         "portfolio_state_carryover_bound",
+        "broker_adapter_carryover_bound",
         "policy_oss_lineage_bound",
         "reflection_oss_lineage_bound",
         "risk_analytics_lineage_bound",
@@ -878,6 +902,42 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "scorecard_replays_portfolio_state_adjustment",
         "scorer_applies_portfolio_state_adjustment",
         "selected_candidate_cites_prior_positions",
+    }
+    assert coverage["broker_adapter_carryover_models"] == [
+        PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID
+    ]
+    assert set(coverage["broker_adapter_carryover_statuses"]) == {"applied", "cold_start"}
+    assert set(coverage["broker_adapter_carryover_actions"]) == set(
+        BROKER_ADAPTER_FOLLOWUP_ACTIONS_BY_SCENARIO.values()
+    )
+    assert set(coverage["broker_adapter_carryover_action_families"]) == {
+        "cancel_replace_recovery",
+        "limit_repricing",
+        "liquidity_sizing",
+        "position_reconciliation",
+        "risk_control",
+    }
+    assert coverage["broker_adapter_carryover_next_steps"] == [
+        "execution_feedback_review"
+    ]
+    assert set(coverage["broker_adapter_carryover_score_adjusted_actions"]) == {
+        "feedback-adapt",
+        "retain-observe",
+        "risk-off",
+    }
+    assert set(coverage["broker_adapter_carryover_replay_flags"]) == {
+        "candidate_generation_consumes_previous_adapter_response",
+        "cold_start_or_previous_adapter_response_bound",
+        "conflict_resolution_carries_broker_adapter_response",
+        "decision_artifact_replays_broker_adapter_carryover",
+        "lean_handoff_carries_broker_adapter_response",
+        "reasoning_consumes_previous_adapter_response",
+        "replayable",
+        "runtime_feedback_binds_broker_adapter_response",
+        "same_persona_adapter_response_carryover",
+        "scorecard_replays_broker_adapter_adjustment",
+        "scorer_applies_broker_adapter_adjustment",
+        "selected_candidate_cites_previous_adapter_response",
     }
     assert coverage["persisted_cycle_resume_models"] == [
         PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID
@@ -1380,6 +1440,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     plan_signatures: set[str] = set()
     combo_signatures: set[str] = set()
     portfolio_window_signatures: set[str] = set()
+    validation_assertion_refs: set[str] = set()
     latest_case_by_persona: dict[str, dict] = {}
     case_history_by_persona: dict[str, list[dict]] = {}
     institutional_writes_by_id: dict[str, dict] = {}
@@ -1391,6 +1452,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
             plan_signatures=plan_signatures,
             combo_signatures=combo_signatures,
             portfolio_window_signatures=portfolio_window_signatures,
+            validation_assertion_refs=validation_assertion_refs,
         )
         _assert_portfolio_generations(case)
         _assert_agent_decision_traces_are_no_leakage(case)
@@ -1405,6 +1467,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         _assert_persona_oss_ooda_causal_ledger(case)
         _assert_cross_cycle_runtime_carryover(case, latest_case_by_persona)
         _assert_portfolio_state_carryover(case, latest_case_by_persona)
+        _assert_broker_adapter_carryover(case, latest_case_by_persona)
         _assert_openclaw_session_continuity(case, latest_case_by_persona)
         _assert_persisted_cycle_resume_carryover(case, latest_case_by_persona)
         _assert_multi_cycle_lineage_carryover(case, persona_case_history)
@@ -1438,6 +1501,7 @@ def _assert_unique_planned_validation_cycle(
     plan_signatures: set[str],
     combo_signatures: set[str],
     portfolio_window_signatures: set[str],
+    validation_assertion_refs: set[str],
 ) -> None:
     cycle = case["validation_cycle"]
     planning = cycle["planning"]
@@ -1457,6 +1521,14 @@ def _assert_unique_planned_validation_cycle(
     assert planning["plan_signature"] not in plan_signatures
     assert selected_plan["target_portfolio_window_signature"] not in portfolio_window_signatures
     assert len(set(selected_plan["assertion_labels"])) == len(selected_plan["assertion_labels"])
+    assert len(selected_plan["assertion_refs"]) == len(selected_plan["assertion_labels"])
+    assert len(set(selected_plan["assertion_refs"])) == len(selected_plan["assertion_refs"])
+    for assertion_ref in selected_plan["assertion_refs"]:
+        assert assertion_ref.startswith(
+            f"validation-assertion://{selected_plan['target_validation_signature']}/"
+        )
+        assert assertion_ref not in validation_assertion_refs
+        validation_assertion_refs.add(assertion_ref)
     assert selected_plan["operational_scenario"] in OPERATIONAL_SCENARIOS
     assert any(
         label == f"operational_scenario:{selected_plan['operational_scenario']}"
@@ -2803,6 +2875,21 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
         expected_openclaw_continuity_ref = (
             f"openclaw-session-continuity://{previous_case['case_id']}->{case['case_id']}"
         )
+        previous_broker_followup = previous_case["operational_context"]["broker_adapter_followup"]
+        expected_broker_carryover_ref = "broker-adapter-carryover://{}->{}".format(
+            previous_case["case_id"],
+            case["case_id"],
+        )
+        expected_broker_followup_ref = "broker-adapter-followup://{}".format(
+            previous_broker_followup["followup_id"]
+        )
+        expected_broker_source_packet_ref = previous_broker_followup["source_packet_ref"]
+        expected_broker_checkpoint_ref = "checkpoint://{}".format(
+            previous_broker_followup["restart_checkpoint_ref"]
+        )
+        expected_broker_schedule_ref = "schedule://{}".format(
+            previous_broker_followup["schedule_ref"]
+        )
         expected_checkpoint_ref = f"checkpoint://{previous_recovery['checkpoint_id']}"
         expected_schedule_ref = f"schedule://{previous_schedule['schedule_id']}"
         expected_metadata_ref = f"object-store://{previous_runtime_readback['object_store_metadata_key']}"
@@ -2817,6 +2904,11 @@ def _assert_cross_cycle_runtime_carryover(case: dict, latest_case_by_persona: di
             previous_openclaw["context_ref"],
             previous_openclaw["session_ref"],
             previous_openclaw["upstream_session_ref"],
+            expected_broker_carryover_ref,
+            expected_broker_followup_ref,
+            expected_broker_source_packet_ref,
+            expected_broker_checkpoint_ref,
+            expected_broker_schedule_ref,
             previous_feedback["source_runtime_ref"],
             previous_feedback["source_handoff_ref"],
             previous_ledger["ledger_ref"],
@@ -3124,6 +3216,142 @@ def _assert_portfolio_state_carryover(case: dict, latest_case_by_persona: dict[s
             assert proof["state_ref"] in selected_candidate["evidence_refs"]
             assert proof["carry_ref"] in selected_candidate["evidence_refs"]
 
+
+
+def _assert_broker_adapter_carryover(case: dict, latest_case_by_persona: dict[str, dict]) -> None:
+    proof = case["cross_cycle"]["broker_adapter_carryover"]
+    traces = case["reflection"]["agent_decision_traces"]
+    previous_case = latest_case_by_persona.get(case["persona_id"])
+    operational = case["operational_context"]
+    conflict = operational["persona_conflict_resolution"]
+    allocation = conflict["resolved_allocation"]
+    handoff = operational["lean_handoff"]
+    runtime_feedback = operational["lean_runtime_feedback"]
+    state_updates = runtime_feedback["state_updates"]
+
+    assert proof["model_id"] == PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == "broker-adapter-carryover-proof://{}".format(case["case_id"])
+    assert proof["input_hash"]
+    assert len(proof["trace_bindings"]) == len(traces) == 2
+    assert all(proof["replay"].values())
+    assert case["usability_dimensions"]["broker_adapter_carryover"] == 1.0
+    assert case["usable"]["broker_adapter_carryover_drives_next_case"] is True
+
+    check_by_name = {
+        check["check"]: check
+        for check in case["validation_cycle"]["execution_review"]["checks"]
+    }
+    assert check_by_name["broker_adapter_response_carryover_drives_next_case_ooda"]["status"] == "passed"
+
+    if previous_case is None:
+        assert proof["carryover_status"] == "cold_start"
+        assert proof["carryover_ref"] is None
+        assert proof["previous_case_id"] is None
+        assert proof["previous_followup_ref"] is None
+        assert proof["previous_source_packet_ref"] is None
+        assert proof["previous_action"] is None
+        assert not any(
+            str(ref).startswith((
+                "broker-adapter-carryover://",
+                "broker-adapter-followup://",
+                "broker-adapter://",
+            ))
+            for ref in proof["evidence_refs"]
+        )
+        assert all(float(value) == 0.0 for value in proof["score_adjustments"].values())
+        assert allocation["broker_adapter_carryover_ref"] is None
+        assert handoff["broker_adapter_carryover_ref"] is None
+        assert state_updates["bind_broker_adapter_carryover_ref"] is None
+        assert runtime_feedback["replay"]["broker_adapter_carryover_bound"] is True
+    else:
+        previous_followup = previous_case["operational_context"]["broker_adapter_followup"]
+        previous_persona_followup = previous_followup["persona_followup"]
+        expected_carryover_ref = "broker-adapter-carryover://{}->{}".format(
+            previous_case["case_id"],
+            case["case_id"],
+        )
+        expected_followup_ref = "broker-adapter-followup://{}".format(
+            previous_followup["followup_id"]
+        )
+        expected_source_packet_ref = previous_followup["source_packet_ref"]
+        expected_refs = [
+            expected_carryover_ref,
+            expected_followup_ref,
+            expected_source_packet_ref,
+        ]
+
+        assert proof["carryover_status"] == "applied"
+        assert proof["carryover_ref"] == expected_carryover_ref
+        assert proof["previous_case_id"] == previous_case["case_id"]
+        assert proof["previous_followup_ref"] == expected_followup_ref
+        assert proof["previous_source_packet_ref"] == expected_source_packet_ref
+        assert proof["previous_source_packet_hash"] == previous_followup["source_packet_hash"]
+        assert proof["previous_action"] == previous_persona_followup["action"]
+        assert proof["previous_action_family"] == previous_persona_followup["action_family"]
+        assert proof["previous_next_step"] == previous_persona_followup["next_persona_step"]
+        assert proof["previous_scenario"] == previous_followup["scenario"]
+        assert proof["score_adjustments"]["feedback-adapt"] > 0.0
+        assert proof["evidence_refs"][:3] == expected_refs
+
+        assert conflict["broker_adapter_carryover"] == proof["conflict_broker_adapter_carryover"]
+        assert allocation["broker_adapter_carryover_ref"] == expected_carryover_ref
+        assert allocation["previous_broker_adapter_followup_ref"] == expected_followup_ref
+        assert allocation["previous_broker_adapter_source_packet_ref"] == expected_source_packet_ref
+        assert handoff["broker_adapter_carryover_ref"] == expected_carryover_ref
+        assert handoff["previous_broker_adapter_followup_ref"] == expected_followup_ref
+        assert handoff["previous_broker_adapter_source_packet_ref"] == expected_source_packet_ref
+        assert handoff["previous_broker_adapter_action"] == previous_persona_followup["action"]
+        for ref in expected_refs:
+            assert ref in handoff["runtime_bundle_refs"]
+            assert ref in runtime_feedback["persona_ooda_followup"]["evidence_refs"]
+        assert runtime_feedback["replay"]["broker_adapter_carryover_bound"] is True
+        assert state_updates["bind_broker_adapter_carryover_ref"] == expected_carryover_ref
+        assert state_updates["bind_previous_broker_adapter_followup_ref"] == expected_followup_ref
+        assert state_updates["bind_previous_broker_adapter_source_packet_ref"] == expected_source_packet_ref
+        assert state_updates["bind_previous_broker_adapter_action"] == previous_persona_followup["action"]
+        assert state_updates["bind_previous_broker_adapter_action_family"] == previous_persona_followup["action_family"]
+
+    binding_by_trace = {binding["trace_id"]: binding for binding in proof["trace_bindings"]}
+    for trace in traces:
+        artifact = trace["agent_decision_artifact"]
+        binding = binding_by_trace[trace["reflection_id"]]
+        reasoning = artifact["persona_reasoning"]
+        reasoning_request = reasoning["request"]
+        reasoning_response = reasoning["response"]
+        candidate_request = artifact["candidate_generation"]["request"]
+        selected_action = binding["selected_action"]
+        selected_card = artifact["scorer"]["scorecards"][trace["selected_candidate_id"]]
+        scorer_inputs = artifact["scorer"]["scoring_inputs"]
+
+        assert trace["decision_inputs"]["broker_adapter_carryover_status"] == proof["carryover_status"]
+        assert artifact["input_context"]["broker_adapter_carryover_status"] == proof["carryover_status"]
+        assert reasoning_request["broker_adapter_carryover_status"] == proof["carryover_status"]
+        assert reasoning_response["broker_adapter_carryover_usage"]["model_id"] == proof["model_id"]
+        assert scorer_inputs["broker_adapter_carryover"]["model_id"] == proof["model_id"]
+        assert scorer_inputs["broker_adapter_score_adjustments"] == proof["score_adjustments"]
+        assert selected_card["components"]["broker_adapter_adjustment"] == proof["score_adjustments"][selected_action]
+        assert binding["scorecard_broker_adapter_adjustment"] == binding["scorer_broker_adapter_adjustment"]
+        assert artifact["replay"]["uses_broker_adapter_carryover_or_declares_cold_start"] is True
+
+        if previous_case is None:
+            assert binding["reasoning_consumes_carryover_ref"] is False
+            assert binding["candidate_request_consumes_carryover_ref"] is False
+            assert binding["selected_candidate_cites_carryover_ref"] is False
+            assert binding["scorer_broker_adapter_adjustment"] == 0.0
+        else:
+            assert proof["carryover_ref"] in reasoning_request["input_refs"]
+            assert proof["previous_followup_ref"] in reasoning_request["input_refs"]
+            assert proof["previous_source_packet_ref"] in reasoning_request["input_refs"]
+            assert proof["carryover_ref"] in candidate_request["input_refs"]
+            assert proof["previous_followup_ref"] in candidate_request["input_refs"]
+            assert proof["previous_source_packet_ref"] in candidate_request["input_refs"]
+            assert binding["reasoning_consumes_carryover_ref"] is True
+            assert binding["candidate_request_consumes_carryover_ref"] is True
+            assert binding["selected_candidate_cites_carryover_ref"] is True
+            assert binding["scorer_broker_adapter_adjustment"] > 0.0
 
 def _assert_openclaw_session_continuity(case: dict, latest_case_by_persona: dict[str, dict]) -> None:
     proof = case["cross_cycle"]["openclaw_session_continuity"]
@@ -4869,6 +5097,35 @@ def _assert_operational_context(case: dict) -> None:
         assert handoff["openclaw_previous_context_ref"].startswith(
             "openclaw-context://"
         )
+    broker_carryover = case["cross_cycle"]["broker_adapter_carryover"]
+    assert handoff["broker_adapter_carryover"] == broker_carryover["conflict_broker_adapter_carryover"]
+    assert handoff["broker_adapter_carryover_status"] == broker_carryover["carryover_status"]
+    assert handoff["broker_adapter_carryover_ref"] == broker_carryover["carryover_ref"]
+    assert handoff["previous_broker_adapter_followup_ref"] == broker_carryover["previous_followup_ref"]
+    assert handoff["previous_broker_adapter_source_packet_ref"] == broker_carryover[
+        "previous_source_packet_ref"
+    ]
+    broker_carryover_refs = [
+        ref
+        for ref in (
+            handoff["broker_adapter_carryover_ref"],
+            handoff["previous_broker_adapter_followup_ref"],
+            handoff["previous_broker_adapter_source_packet_ref"],
+        )
+        if ref
+    ]
+    if broker_carryover["carryover_status"] == "cold_start":
+        assert broker_carryover_refs == []
+    else:
+        assert handoff["broker_adapter_carryover_ref"].startswith(
+            "broker-adapter-carryover://"
+        )
+        assert handoff["previous_broker_adapter_followup_ref"].startswith(
+            "broker-adapter-followup://"
+        )
+        assert handoff["previous_broker_adapter_source_packet_ref"].startswith(
+            "broker-adapter://"
+        )
     assert handoff["alpha_seed_revision_handoff"] == packet_alpha_handoff
     assert handoff["alpha_seed_revision_handoff_ref"] == packet_alpha_handoff["handoff_ref"]
     assert handoff["alpha_seed_revision_ref"] == alpha_revision["revision_ref"]
@@ -4918,6 +5175,8 @@ def _assert_operational_context(case: dict) -> None:
     assert handoff["openclaw_source_oss_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["openclaw_upstream_session_ref"] in handoff["runtime_bundle_refs"]
     for ref in openclaw_continuity_refs:
+        assert ref in handoff["runtime_bundle_refs"]
+    for ref in broker_carryover_refs:
         assert ref in handoff["runtime_bundle_refs"]
     assert handoff["alpha_seed_revision_handoff_ref"] in handoff["runtime_bundle_refs"]
     assert handoff["alpha_seed_revision_ref"] in handoff["runtime_bundle_refs"]
@@ -4998,6 +5257,7 @@ def _assert_operational_context(case: dict) -> None:
             )
             if ref
         ],
+        *broker_carryover_refs,
         handoff["openclaw_session_context_ref"],
         handoff["openclaw_session_ref"],
         handoff["openclaw_source_oss_ref"],
@@ -5065,6 +5325,24 @@ def _assert_operational_context(case: dict) -> None:
     assert runtime_feedback["state_updates"]["bind_multi_persona_proposal_persona_ids"] == (
         proposal_lineage["proposal_persona_ids"]
     )
+    assert runtime_feedback["state_updates"]["bind_broker_adapter_carryover_ref"] == handoff[
+        "broker_adapter_carryover_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_broker_adapter_carryover_status"] == handoff[
+        "broker_adapter_carryover_status"
+    ]
+    assert runtime_feedback["state_updates"]["bind_previous_broker_adapter_followup_ref"] == handoff[
+        "previous_broker_adapter_followup_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_previous_broker_adapter_source_packet_ref"] == handoff[
+        "previous_broker_adapter_source_packet_ref"
+    ]
+    assert runtime_feedback["state_updates"]["bind_previous_broker_adapter_action"] == handoff[
+        "previous_broker_adapter_action"
+    ]
+    assert runtime_feedback["state_updates"]["bind_previous_broker_adapter_action_family"] == handoff[
+        "previous_broker_adapter_action_family"
+    ]
     assert runtime_feedback["state_updates"]["bind_openclaw_session_context_ref"] == handoff[
         "openclaw_session_context_ref"
     ]

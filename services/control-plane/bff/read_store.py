@@ -2188,6 +2188,16 @@ class CanonicalSnapshotAdapter:
                 "PANTHEON_GOVERNANCE_SERVICE_URL",
             ),
             "list_path": "/api/governance/approvals",
+            # PANTHEON_PROMOTION_API_URL wires directly to the promotion service
+            # (the real approval producer) using its native path /api/v1/approvals.
+            # Tried before the governance service URL when both are set.
+            # Each override may be a plain path string or a dict with path+list_key.
+            "path_env_overrides": {
+                "PANTHEON_PROMOTION_API_URL": {
+                    "path": "/api/v1/approvals",
+                    "list_key": "items",
+                },
+            },
         },
         "capital_pools": {
             "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
@@ -2230,6 +2240,34 @@ class CanonicalSnapshotAdapter:
         spec = self._HTTP_DATASETS.get(dataset)
         if not spec:
             return False, {}
+
+        # Try path_env_overrides first: env-var-specific URL + path pairs that differ
+        # from the default list_path. E.g. promotion service at /api/v1/approvals.
+        # Override spec may be a plain path string or a dict with "path" and "list_key".
+        for env_var, override_spec in (spec.get("path_env_overrides") or {}).items():
+            if isinstance(override_spec, str):
+                specific_path = override_spec
+                override_list_key = spec.get("list_key")
+            else:
+                specific_path = override_spec["path"]
+                override_list_key = override_spec.get("list_key", spec.get("list_key"))
+            override_url = os.getenv(env_var, "").strip().rstrip("/")
+            if not override_url:
+                continue
+            available, payload = _http_json_get(
+                override_url,
+                specific_path,
+                headers=_auth_headers_from_spec(spec),
+            )
+            if not available:
+                continue
+            records_payload = _records_from_http_payload(payload, list_key=override_list_key)
+            normalized = _normalize_records(records_payload, self._DATASETS[dataset]["keys"])
+            self._cache[dataset] = normalized
+            self._cache_meta[dataset] = (f"{override_url}{specific_path}", 0)
+            self._cache_source[dataset] = "service_client"
+            return True, normalized
+
         base_url = _base_url_from_env(tuple(spec.get("base_env") or ()))
         if not base_url:
             return False, {}
@@ -2270,6 +2308,29 @@ class CanonicalSnapshotAdapter:
         *,
         include_snapshot_fallback: bool = True,
     ) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+        # When an explicit store-path env var is set and the file exists, prefer it
+        # over the HTTP service client. This prevents a configured service URL
+        # (e.g. PANTHEON_GOVERNANCE_APPROVAL_API_URL in docker-compose) from
+        # shadowing a projection-script-populated file such as the one written by
+        # project_approvals_to_bff_surfaces.py into PANTHEON_BFF_APPROVAL_DECISION_STORE.
+        spec = self._DATASETS.get(dataset)
+        if spec:
+            explicit = os.getenv(spec["env"], "").strip()
+            if explicit:
+                explicit_path = Path(explicit)
+                if explicit_path.exists():
+                    stat = explicit_path.stat().st_mtime_ns
+                    cache_key = str(explicit_path)
+                    if self._cache_meta.get(dataset) == (cache_key, stat):
+                        return True, self._cache.get(dataset, {})
+                    text = explicit_path.read_text(encoding="utf-8").strip()
+                    payload = json.loads(text) if text else {}
+                    normalized = _normalize_records(payload, spec["keys"])
+                    self._cache[dataset] = normalized
+                    self._cache_meta[dataset] = (cache_key, stat)
+                    self._cache_source[dataset] = "canonical"
+                    return True, normalized
+
         http_available, http_records = self._load_http_dataset(dataset)
         if http_available:
             return True, http_records
@@ -2475,6 +2536,13 @@ class ServiceBackedReadAdapter:
             "keys": ["decision_id", "id"],
             "snapshot_key": "evolution_decisions",
         },
+        "evolution_programs": {
+            "env": "PANTHEON_BFF_EVOLUTION_PROGRAM_STORE",
+            "dirs": ("EVOLUTION_DATA_DIR",),
+            "filenames": ("evolution_programs.json",),
+            "keys": ["program_id", "id"],
+            "snapshot_key": "evolution_programs",
+        },
         "telemetry_summaries": {
             "env": "PANTHEON_BFF_TELEMETRY_SUMMARY_STORE",
             "dirs": (),
@@ -2614,6 +2682,41 @@ class ServiceBackedReadAdapter:
             "keys": ["runId", "run_id", "id"],
             "snapshot_key": "agora_evaluation_runs",
         },
+        "agora_watchlist": {
+            "env": "PANTHEON_BFF_AGORA_WATCHLIST_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["watchlist_id", "symbol", "id"],
+            "snapshot_key": "agora_watchlist",
+        },
+        "agora_committee_evidence_packs": {
+            "env": "PANTHEON_BFF_AGORA_COMMITTEE_EVIDENCE_PACK_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["packId", "pack_id", "id", "sessionId", "session_id"],
+            "snapshot_key": "agora_committee_evidence_packs",
+        },
+        "agora_handoffs": {
+            "env": "PANTHEON_BFF_AGORA_HANDOFF_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["handoffId", "handoff_id", "id"],
+            "snapshot_key": "agora_handoffs",
+        },
+        "agora_training_examples": {
+            "env": "PANTHEON_BFF_AGORA_TRAINING_EXAMPLE_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["trainingExampleId", "training_example_id", "example_id", "id"],
+            "snapshot_key": "agora_training_examples",
+        },
+        "agora_audit_events": {
+            "env": "PANTHEON_BFF_AGORA_AUDIT_EVENT_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["auditId", "audit_id", "eventId", "event_id", "id"],
+            "snapshot_key": "agora_audit_events",
+        },
         "institutional_memory_entries": {
             "env": "PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE",
             "dirs": ("PANTHEON_MEMORY_DATA_DIR",),
@@ -2707,6 +2810,13 @@ class ServiceBackedReadAdapter:
             "keys": ["job_id", "run_id", "id"],
             "snapshot_key": "jobs",
         },
+        "decision_journal_entries": {
+            "env": "PANTHEON_BFF_DECISION_JOURNAL_STORE",
+            "dirs": (),
+            "filenames": (),
+            "keys": ["entry_id", "id"],
+            "snapshot_key": "decision_journal_entries",
+        },
         "loop_runs": {
             "env": "PANTHEON_BFF_LOOP_RUN_STORE",
             "dirs": (),
@@ -2752,6 +2862,54 @@ class ServiceBackedReadAdapter:
             ),
             "keys": ["log_id", "id", "conflict_resolution_log_id"],
             "snapshot_key": "synthesis_conflict_logs",
+        },
+        "ranking_formulas": {
+            "env": "PANTHEON_BFF_RANKING_FORMULA_STORE",
+            "dirs": (
+                "PANTHEON_CAPITAL_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": ("ranking_formulas.json",),
+            "keys": ["formula_id", "id"],
+            "snapshot_key": "ranking_formulas",
+        },
+        "rankings": {
+            "env": "PANTHEON_BFF_RANKING_STORE",
+            "dirs": (
+                "PANTHEON_CAPITAL_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": ("rankings.json",),
+            "keys": ["ranking_id", "id"],
+            "snapshot_key": "rankings",
+        },
+        "skills": {
+            "env": "PANTHEON_BFF_SKILLS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("skills.json",),
+            "keys": ["skill_id", "id"],
+            "snapshot_key": "skills",
+        },
+        "tools": {
+            "env": "PANTHEON_BFF_TOOLS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("tools.json",),
+            "keys": ["tool_id", "id"],
+            "snapshot_key": "tools",
+        },
+        "mcp_servers": {
+            "env": "PANTHEON_BFF_MCP_SERVERS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("mcp_servers.json",),
+            "keys": ["server_id", "id"],
+            "snapshot_key": "mcp_servers",
+        },
+        "mcp_tools": {
+            "env": "PANTHEON_BFF_MCP_TOOLS_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("mcp_tools.json",),
+            "keys": ["tool_id", "id"],
+            "snapshot_key": "mcp_tools",
         },
     }
 
@@ -3001,17 +3159,30 @@ class ServiceBackedReadAdapter:
         }
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
-        avail_inc, incidents = self._load_dataset("incidents")
-        if avail_inc:
-            return True, [
-                self._derive_loop_run(inc)
-                for inc in incidents.values()
-                if isinstance(inc, dict) and "sentinel" not in str(inc.get("title") or "").lower()
-            ]
+        # Merge the dedicated v5 loop-run ledger (paper-binding execution loops,
+        # populated by the loop-run projector) with incident-derived recovery
+        # loops. Previously incidents short-circuited this method, so the
+        # projector's PANTHEON_BFF_LOOP_RUN_STORE records never surfaced whenever
+        # any incident existed — leaving the ledger blank despite active runtimes.
+        runs: List[Dict[str, Any]] = []
+        seen: set = set()
         avail_lr, lr_data = self._load_dataset("loop_runs")
         if avail_lr:
-            return True, list(lr_data.values())
-        return False, []
+            for run in lr_data.values():
+                if isinstance(run, dict):
+                    runs.append(run)
+                    seen.add(str(run.get("id") or ""))
+        avail_inc, incidents = self._load_dataset("incidents")
+        if avail_inc:
+            for inc in incidents.values():
+                if not isinstance(inc, dict):
+                    continue
+                if "sentinel" in str(inc.get("title") or "").lower():
+                    continue
+                derived = self._derive_loop_run(inc)
+                if str(derived.get("id") or "") not in seen:
+                    runs.append(derived)
+        return (avail_lr or avail_inc), runs
 
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         avail_inc, incidents = self._load_dataset("incidents")
@@ -3028,10 +3199,15 @@ class ServiceBackedReadAdapter:
                 ]
                 if 1 <= n <= len(non_sentinel):
                     return True, self._derive_loop_run(non_sentinel[n - 1], override_id=loop_run_id)
-            return True, None
+        # Fall through to the dedicated loop-run ledger for projector-written
+        # records (e.g. lr-rb-*) that are not incident-derived.
         avail_lr, lr_data = self._load_dataset("loop_runs")
-        if avail_lr:
+        if avail_lr and loop_run_id in lr_data:
             return True, lr_data.get(loop_run_id)
+        if avail_inc:
+            return True, None
+        if avail_lr:
+            return True, None
         return False, None
 
     def list_sentinel_findings(
@@ -8887,6 +9063,22 @@ class ReadSurfaceStore:
             self._data[local_key] = records
         return records
 
+    def _decision_journal_read_records(self) -> Dict[str, Dict[str, Any]]:
+        records: Dict[str, Dict[str, Any]] = {}
+        if "decision_journal_entries" in ServiceBackedReadAdapter._DATASETS:
+            available, service_records = self._service.list_records(
+                "decision_journal_entries",
+                include_snapshot_fallback=self._allow_local_snapshot_fallback,
+            )
+            if available:
+                for index, record in enumerate(service_records):
+                    if not isinstance(record, dict):
+                        continue
+                    key = _record_key(record, ["entry_id", "id"]) or str(index)
+                    records[key] = json.loads(json.dumps(record))
+        records.update(self._decision_journal_records())
+        return records
+
     def _decision_journal_idempotency_records(self) -> Dict[str, Dict[str, Any]]:
         local_key = self._LOCAL_DATA_KEYS.get(
             "decision_journal_idempotency",
@@ -9061,7 +9253,7 @@ class ReadSurfaceStore:
     def list_decision_journal_entries(self) -> List[Dict[str, Any]]:
         entries = [
             self._project_decision_journal_entry(record)
-            for record in self._decision_journal_records().values()
+            for record in self._decision_journal_read_records().values()
             if isinstance(record, dict)
         ]
         entries.sort(
@@ -10852,7 +11044,11 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list(self._local_overlay_records("ranking_formulas").values())
+        # Prefer service store (projected file); merge overlay writes on top.
+        all_records = self._read_dataset_records("ranking_formulas")
+        if not all_records:
+            all_records = list(self._local_overlay_records("ranking_formulas").values())
+        items = [json.loads(json.dumps(r)) for r in all_records if isinstance(r, dict)]
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: x.get("id", ""))
@@ -10860,7 +11056,18 @@ class ReadSurfaceStore:
     def get_ranking_formula(self, formula_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not formula_id:
             return None
-        return self._local_overlay_records("ranking_formulas").get(formula_id)
+        overlay = self._local_overlay_records("ranking_formulas").get(formula_id)
+        if overlay is not None:
+            return overlay
+        available, service_records = self._service.list_records("ranking_formulas")
+        if available and service_records:
+            for record in service_records:
+                if not isinstance(record, dict):
+                    continue
+                rid = str(record.get("formula_id") or record.get("id") or "")
+                if rid == formula_id:
+                    return json.loads(json.dumps(record))
+        return None
 
     def create_ranking_formula(
         self,
@@ -10986,7 +11193,11 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list(self._local_overlay_records("rankings").values())
+        # Prefer service store (projected file); merge overlay writes on top.
+        all_records = self._read_dataset_records("rankings")
+        if not all_records:
+            all_records = list(self._local_overlay_records("rankings").values())
+        items = [json.loads(json.dumps(r)) for r in all_records if isinstance(r, dict)]
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: x.get("id", ""))
@@ -10994,7 +11205,18 @@ class ReadSurfaceStore:
     def get_ranking(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ranking_id:
             return None
-        return self._local_overlay_records("rankings").get(ranking_id)
+        overlay = self._local_overlay_records("rankings").get(ranking_id)
+        if overlay is not None:
+            return overlay
+        available, service_records = self._service.list_records("rankings")
+        if available and service_records:
+            for record in service_records:
+                if not isinstance(record, dict):
+                    continue
+                rid = str(record.get("ranking_id") or record.get("id") or "")
+                if rid == ranking_id:
+                    return json.loads(json.dumps(record))
+        return None
 
     # ------------------------------------------------------------------ #
     # Persona League / Management fleet projection
@@ -11055,7 +11277,11 @@ class ReadSurfaceStore:
         self,
         status: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        items = list((self._local_fallback("evolution_programs") or {}).values())
+        available, raw_records = self._service.list_records("evolution_programs")
+        if available:
+            items = raw_records
+        else:
+            items = list((self._local_fallback("evolution_programs") or {}).values())
         if status:
             items = [i for i in items if i.get("status") == status]
         return sorted(items, key=lambda x: str(x.get("created_at") or ""), reverse=True)
@@ -11063,6 +11289,9 @@ class ReadSurfaceStore:
     def get_evolution_program(self, program_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not program_id:
             return None
+        available, record = self._service.record("evolution_programs", program_id)
+        if available:
+            return record
         return (self._local_fallback("evolution_programs") or {}).get(program_id)
 
     def create_evolution_program(
@@ -18896,3 +19125,15 @@ class ReadSurfaceStore:
         lane: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         return []
+
+    def list_skills(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("skills"))
+
+    def list_tools(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("tools"))
+
+    def list_mcp_servers(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("mcp_servers"))
+
+    def list_mcp_tools(self) -> List[Dict[str, Any]]:
+        return list(self._read_dataset_records("mcp_tools"))

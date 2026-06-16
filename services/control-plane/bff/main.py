@@ -22186,7 +22186,8 @@ async def list_bff_approvals(
         items = []
     pending = [
         item for item in items
-        if str(item.get("decision_state") or "").lower() in {"pending", "in_review"}
+        if str(item.get("decision_state") or "").lower()
+        in {"pending", "in_review", "proposed", "under_review", "reviewed"}
     ]
     return {
         "items": pending,
@@ -42582,18 +42583,30 @@ def _merge_registry_records(
 
 
 def _tool_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_tools()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("tools")
 
 
 def _skill_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_skills()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("skills")
 
 
 def _mcp_server_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_mcp_servers()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("mcp_servers")
 
 
 def _mcp_tool_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_mcp_tools()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("mcp_tools")
 
 
