@@ -21,7 +21,7 @@ master   ── PR-only ── canonical / production source
    │
 publish/v<YYYY>.<MM>.<DD>.<N> ── immutable snapshots from dev
    ▲
-   │ nightly-publish-cut.yml  (cron 03:00 UTC)
+   │ nightly-publish-cut.yml  (cron hourly :00 UTC)
    │
 dev      ── PR-only ── integration line, every task PR auto-merges here
    ▲                       ↑
@@ -188,9 +188,9 @@ strategy.
 
 ---
 
-## 3. Nightly Publish
+## 3. Hourly Publish
 
-`nightly-publish-cut.yml` runs every UTC day at 03:00 and:
+`nightly-publish-cut.yml` runs hourly at :00 UTC and:
 
 1. Compares `origin/dev` HEAD against the latest `release/v*` tag.
 2. If `dev` advanced (new task PRs merged since last cut):
@@ -201,7 +201,11 @@ strategy.
    - Creates `publish/v<YYYY>.<MM>.<DD>.<N>` from `origin/dev` HEAD.
    - Pushes the branch.
    - Tags `release/v<YYYY>.<MM>.<DD>.<N>` (annotated).
-   - Triggers `nonprod-deploy.yml` (publish/* push → dev VM redeploy).
+   - Explicitly dispatches `nonprod-deploy.yml` (environment=dev) for the new
+     snapshot so the dev VM redeploys. NOTE: the `on: push: publish/*` trigger
+     does **not** fire here — branches pushed with `GITHUB_TOKEN` do not start
+     downstream workflow runs, so the cut job calls the deploy via
+     `workflow_dispatch` (which is exempt from that suppression).
 3. If `dev` has not advanced, no-op.
 
 ### 3.1 Version format `vYYYY.MM.DD.N`
