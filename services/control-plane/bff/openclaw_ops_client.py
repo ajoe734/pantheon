@@ -244,8 +244,27 @@ class OpenClawOpsClient:
         headers: Dict[str, str] = {"X-Operator-Id": operator_id}
         if trace_id:
             headers["X-Trace-Id"] = trace_id
-        if normalized in {"codex", "codex_cli"}:
+        if normalized in {"openclaw", "openclaw_agent"}:
             body: Dict[str, Any] = {
+                "mode": mode,
+                "prompt": prompt,
+                "context_pack": context_pack,
+                "metadata": metadata or {},
+            }
+            if messages is not None:
+                body["messages"] = messages
+            if attachments is not None:
+                body["attachments"] = attachments
+            return self._request(
+                "POST",
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                body=body,
+                headers=headers,
+                expected_status={200},
+                timeout_seconds=self._assistant_timeout_seconds(),
+            )
+        if normalized in {"codex", "codex_cli"}:
+            body = {
                 "mode": mode,
                 "prompt": prompt,
                 "context_pack": context_pack,

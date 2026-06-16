@@ -33556,7 +33556,7 @@ def _mgmt_nl_provider_feature_enabled() -> bool:
 
 
 def _mgmt_nl_provider_name() -> str:
-    return (os.getenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli").strip().lower() or "codex_cli")
+    return (os.getenv("PANTHEON_ASSISTANT_PROVIDER", "openclaw").strip().lower() or "openclaw")
 
 
 _MGMT_NL_PROVIDER_REASON_MESSAGES = {
@@ -34288,7 +34288,7 @@ def _mgmt_nl_maybe_provider_answer(
             status="disabled",
             reason="feature_disabled",
         ), []
-    if provider not in {"codex", "codex_cli", "claude", "claude_cli"}:
+    if provider not in {"codex", "codex_cli", "claude", "claude_cli", "openclaw", "openclaw_agent"}:
         _management_ai_record_event(
             {
                 "event_type": "management_ai.provider.skipped",

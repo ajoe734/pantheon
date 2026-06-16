@@ -80,6 +80,10 @@ from live_gate_adapter import (
 from assistant_credential_mounts import AssistantCredentialMounts
 from assistant_codex_provider import AssistantCodexProvider, CodexProviderError
 from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderResult
+from assistant_openclaw_provider import (
+    AssistantOpenClawProvider,
+    OpenClawProviderError as GatewayOpenClawProviderError,
+)
 from assistant_provider_runtime import (
     AssistantProviderRuntime,
     AssistantProviderRuntimeError,
@@ -150,6 +154,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "multi_agent_consultation": "defined",
         "workflow_cron_hooks": "defined",
     },
+    "assistant_openclaw": "enabled",
     "activation_gates": {
         "broker_execution": "OPENCLAW_PRODUCTION_BROKER_ENABLED",
         "sandbox_adapter": "OPENCLAW_PAPER_ADAPTER_ENABLED + OPENCLAW_BROKER_SIDECAR_URL (fake/test-key sidecar)",
@@ -160,6 +165,7 @@ _CAPABILITY_SNAPSHOT: Dict[str, Any] = {
         "paper_runtime_binding_check": "OPENCLAW_RUNTIME_MANAGER_URL",
         "live_gate_harness": "OPENCLAW_LIVE_ADAPTER_ENABLED + OPENCLAW_LIVE_HUMAN_APPROVAL_TOKEN",
         "governed_search": "SearchGateway ACL/license/available_time filters",
+        "assistant_openclaw": "OPENCLAW_GATEWAY_URL (auto-enabled when URL is set)",
     },
     "session_lifecycle": {
         "owner": "pantheon_adapter",
@@ -641,6 +647,7 @@ def get_capabilities() -> Dict[str, Any]:
     payload["paper_broker"] = _PAPER_BROKER.capability_snapshot()
     payload["live_gate"] = _LIVE_GATE.capability_snapshot()
     payload["assistant_credential_mounts"] = _ASSISTANT_MOUNTS.get_readiness_metadata()
+    payload["assistant_openclaw"] = _OPENCLAW_AGENT_PROVIDER.readiness()["status"]
     try:
         upstream_capabilities = _client().get_capabilities()
         payload["activation_state"] = "upstream_client_ready"
@@ -789,6 +796,8 @@ def get_assistant_readiness(provider: str, auth_probe: bool = False) -> Dict[str
         return _CODEX_PROVIDER.readiness(auth_probe=auth_probe)
     if provider in {"claude", "claude_cli"}:
         return _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe)
+    if provider in {"openclaw", "openclaw_agent"}:
+        return _OPENCLAW_AGENT_PROVIDER.readiness(auth_probe=auth_probe)
     return _ASSISTANT_RUNTIME.check_readiness(provider)
 
 
@@ -797,6 +806,7 @@ def list_assistant_providers(auth_probe: bool = False) -> Dict[str, Any]:
     return {
         "status": "ok",
         "data": [
+            _OPENCLAW_AGENT_PROVIDER.readiness(auth_probe=auth_probe),
             _CODEX_PROVIDER.readiness(auth_probe=auth_probe),
             _CLAUDE_PROVIDER.readiness(auth_probe=auth_probe),
         ],
@@ -1004,6 +1014,69 @@ def invoke_codex_provider(
                 "output": result.output,
                 "redaction": result.redaction,
             },
+        },
+    )
+
+
+@app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke")
+def invoke_openclaw_provider(
+    req: AssistantProviderInvokeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    """Invoke the OpenClaw gateway agent as the assistant provider.
+
+    Routes the prompt through the upstream OpenClaw agent (agent=main) so
+    Management AI answers carry tool resolution, memory, and persona context.
+    Degrades cleanly: returns HTTP 200 with status=degraded when the gateway
+    is absent, so the BFF can apply its configured fallback.
+    """
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for OpenClaw provider invocation.",
+            },
+        )
+    metadata = dict(req.metadata or {})
+    metadata["operator_id"] = x_operator_id.strip()
+    if x_trace_id:
+        metadata.setdefault("trace_id", x_trace_id)
+    try:
+        result = _OPENCLAW_AGENT_PROVIDER.invoke(
+            req.prompt,
+            mode=req.mode,
+            context_pack=req.context_pack or {},
+            metadata=metadata,
+            messages=req.messages,
+            operator_id=x_operator_id.strip(),
+            trace_id=x_trace_id,
+        )
+    except GatewayOpenClawProviderError as exc:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ok",
+                "data": {
+                    "provider": "openclaw",
+                    "mode": req.mode,
+                    "status": "degraded",
+                    "output": {
+                        "json_events": [],
+                        "reason": exc.error_code,
+                        "message": exc.message,
+                    },
+                    "redaction": {"provider_invocation": {"redacted_fields": 0}},
+                },
+            },
+        )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "data": result.to_dict(),
         },
     )
 
@@ -1526,6 +1599,7 @@ def _dummy_runner(payload: Dict[str, Any]) -> Any:
 _ASSISTANT_MOUNTS = AssistantCredentialMounts()
 _CODEX_PROVIDER = AssistantCodexProvider(mounts=_ASSISTANT_MOUNTS)
 _CLAUDE_PROVIDER = AssistantClaudeProvider(mounts=_ASSISTANT_MOUNTS)
+_OPENCLAW_AGENT_PROVIDER = AssistantOpenClawProvider()
 _CODEX_RUNTIME = AssistantProviderRuntime(runner=_CODEX_PROVIDER.invoke)
 _ASSISTANT_RUNTIME = AssistantProviderRuntime(runner=_dummy_runner)
 _REPAIR_WORKFLOW = AssistantRepairWorkflow()

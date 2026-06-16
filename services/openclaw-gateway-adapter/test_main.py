@@ -334,7 +334,10 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["status"], "ok")
-        self.assertEqual(body["data"][0]["provider"], "codex_cli")
+        provider_ids = [p.get("provider") or p.get("provider_id") for p in body["data"]]
+        # openclaw is now the primary channel and listed first; codex_cli remains available.
+        self.assertIn("codex_cli", provider_ids)
+        self.assertEqual(provider_ids[0], "openclaw")
 
     def test_assistant_skill_authorize_allows_sa_sd_descriptor(self):
         bridge = adapter_main.ToolWorkflowBridge(
@@ -1216,6 +1219,172 @@ class TestPaperBrokerRoutes(unittest.TestCase):
         body = resp.json()
         self.assertEqual(body["count"], 1)
         self.assertEqual(body["entries"][0]["event"], "paper_order_intent")
+
+
+class TestOpenClawAssistantProvider(unittest.TestCase):
+    """Contract tests for the openclaw assistant provider route.
+
+    Verifies that:
+    - POST /api/openclaw-adapter/assistant/providers/openclaw/invoke requires X-Operator-Id
+    - The route delegates to AssistantOpenClawProvider and returns the standard envelope
+    - On gateway error the route degrades cleanly (HTTP 200, status=degraded)
+    - GET /api/openclaw-adapter/assistant/readiness/openclaw returns ready when URL configured
+    - GET /api/openclaw-adapter/assistant/providers lists openclaw as the first provider
+    - GET /api/openclaw-adapter/capabilities includes assistant_openclaw field
+    """
+
+    def test_openclaw_invoke_requires_operator_id(self):
+        resp = client.post(
+            "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+            json={"prompt": "hello"},
+        )
+        self.assertEqual(resp.status_code, 401)
+        body = resp.json()
+        self.assertEqual(body["error_code"], "OPERATOR_REQUIRED")
+
+    def test_openclaw_invoke_returns_completed_result_on_success(self):
+        fake_response_body = {
+            "status": "completed",
+            "agent_id": "main",
+            "output": {"text": "OpenClaw agent answer."},
+        }
+
+        def fake_invoke(self_inner, prompt, *, mode="user", context_pack=None, metadata=None,
+                        messages=None, operator_id=None, trace_id=None):
+            from assistant_openclaw_provider import OpenClawProviderResult
+            return OpenClawProviderResult(
+                provider="openclaw",
+                mode=mode,
+                status="completed",
+                output={
+                    "json_events": [
+                        {"type": "item.completed", "item": {"id": "item_1", "type": "agent_message", "text": "OpenClaw agent answer."}}
+                    ],
+                    "agent_id": "main",
+                    "request_id": "test-req-1",
+                    "duration_ms": 123,
+                    "upstream": fake_response_body,
+                },
+                redaction={"provider_invocation": {"redacted_fields": 0}},
+            )
+
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER.__class__, "invoke", fake_invoke):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={"prompt": "What is the portfolio status?", "mode": "user"},
+                headers={"X-Operator-Id": "test-operator", "X-Trace-Id": "trace-oc-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        data = body["data"]
+        self.assertEqual(data["provider"], "openclaw")
+        self.assertEqual(data["mode"], "user")
+        self.assertEqual(data["status"], "completed")
+        json_events = data["output"]["json_events"]
+        self.assertEqual(len(json_events), 1)
+        self.assertEqual(json_events[0]["item"]["text"], "OpenClaw agent answer.")
+
+    def test_openclaw_invoke_degrades_cleanly_on_gateway_error(self):
+        from assistant_openclaw_provider import OpenClawProviderError as ProvError
+
+        def fake_invoke_error(self_inner, prompt, **kwargs):
+            raise ProvError(
+                "OpenClaw gateway is unreachable: Connection refused",
+                status_code=503,
+                error_code="OPENCLAW_GATEWAY_UNREACHABLE",
+            )
+
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER.__class__, "invoke", fake_invoke_error):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={"prompt": "test prompt"},
+                headers={"X-Operator-Id": "test-operator"},
+            )
+
+        # Degraded returns HTTP 200 so BFF can apply fallback — not a transport error.
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        data = body["data"]
+        self.assertEqual(data["provider"], "openclaw")
+        self.assertEqual(data["status"], "degraded")
+        self.assertEqual(data["output"]["reason"], "OPENCLAW_GATEWAY_UNREACHABLE")
+
+    def test_openclaw_readiness_ready_when_url_configured(self):
+        with patch.dict(os.environ, {"OPENCLAW_GATEWAY_URL": "http://openclaw-gateway:18789"}):
+            # Re-read via the readiness endpoint directly
+            from assistant_openclaw_provider import AssistantOpenClawProvider
+            prov = AssistantOpenClawProvider(gateway_url="http://openclaw-gateway:18789")
+            result = prov.readiness(auth_probe=False)
+
+        self.assertEqual(result["status"], "ready")
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["provider"], "openclaw")
+
+    def test_openclaw_readiness_not_configured_when_url_absent(self):
+        from assistant_openclaw_provider import AssistantOpenClawProvider
+        prov = AssistantOpenClawProvider(gateway_url="")
+        result = prov.readiness()
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["status"], "not_configured")
+
+    def test_list_providers_includes_openclaw_first(self):
+        resp = client.get("/api/openclaw-adapter/assistant/providers")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        providers = body["data"]
+        self.assertGreater(len(providers), 0)
+        provider_ids = [p.get("provider") or p.get("provider_id") for p in providers]
+        self.assertIn("openclaw", provider_ids)
+        self.assertEqual(provider_ids[0], "openclaw")
+
+    def test_capabilities_includes_assistant_openclaw(self):
+        resp = client.get("/api/openclaw-adapter/capabilities")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertIn("assistant_openclaw", body)
+
+    def test_openclaw_ops_client_routes_openclaw_provider_to_correct_path(self):
+        """Contract test: BFF OpenClawOpsClient routes openclaw to the correct adapter path."""
+        import sys
+        from pathlib import Path as _Path
+        bff_dir = str((_Path(__file__).resolve().parent.parent / "control-plane" / "bff"))
+        if bff_dir not in sys.path:
+            sys.path.insert(0, bff_dir)
+        from openclaw_ops_client import OpenClawOpsClient
+        import json
+        import urllib.request
+
+        recorded: dict = {}
+
+        class FakeResponse:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def getcode(self): return 200
+            def read(self): return json.dumps({"status": "ok", "data": {"provider": "openclaw", "status": "completed", "output": {"json_events": [{"type": "item.completed", "item": {"text": "answer"}}]}}}).encode()
+
+        def fake_urlopen(req, timeout):
+            recorded["url"] = req.full_url
+            recorded["body"] = json.loads(req.data.decode())
+            return FakeResponse()
+
+        with patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+            OpenClawOpsClient(base_url="http://adapter:8104", timeout_seconds=5).invoke_assistant_provider(
+                provider="openclaw",
+                mode="user",
+                prompt="Hello OpenClaw agent",
+                context_pack={"source": "bff"},
+                operator_id="op-1",
+            )
+
+        self.assertEqual(
+            recorded["url"],
+            "http://adapter:8104/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+        )
+        self.assertEqual(recorded["body"]["prompt"], "Hello OpenClaw agent")
+        self.assertEqual(recorded["body"]["mode"], "user")
 
 
 if __name__ == "__main__":
