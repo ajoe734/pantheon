@@ -1,6 +1,6 @@
 # OpenClaw Integration — Pin and Adapter Boundary
 
-Last updated: 2026-04-16
+Last updated: 2026-06-16
 Owner: BP5-OSS-002 (Codex)
 Reviewer: Claude
 Status: governed runtime adapter realized
@@ -12,31 +12,31 @@ Canonical runtime contract: `OPENCLAW_RUNTIME_CONTRACT.md`
 | Field | Value |
 |---|---|
 | Repository | `https://github.com/openclaw/openclaw` |
-| Selected stable tag | `v2026.4.7` |
-| Selected commit | `5050017543011b61df67744ebc6368d889c25a95` |
-| Release date | `2026-04-08` |
-| npm package | `openclaw@2026.4.7` |
-| Container image | `ghcr.io/openclaw/openclaw:2026.4.7` |
-| Container digest | `sha256:be45b5187cbec1ff0f4e2503393d66acfc121c2d97eadf03bb1ac75826bad77c` |
+| Selected stable tag | `v2026.6.6` |
+| Selected commit | `8c802aa683510c7f7503597b54c3021733245e59` |
+| Release date | `2026-06-06` |
+| npm package | `openclaw@2026.6.6` |
+| Container image | `ghcr.io/openclaw/openclaw:2026.6.6` |
+| Container digest | `sha256:4826ca6157377e93463786d5c16852e34eede9f4bd4be55e3773cdc509762857` (multi-arch index) |
 | Website | `https://openclaw.ai` |
 | Docs | `https://docs.openclaw.ai` |
 
-## 2. Why This Pin Still Holds
+## 2. Why This Pin Was Bumped to `v2026.6.6`
 
-This repo is intentionally **not** following the newest tag blindly.
+**History:** The baseline was originally locked at `v2026.4.7` for `BP5-OSS-001` (2026-04-15) because:
 
-As of `2026-04-15`, the upstream release state is:
+- `v2026.4.14` had not satisfied the 48-hour soak policy at that time
+- `v2026.4.15-beta.1` was a prerelease and ineligible for the governed baseline
 
-- latest stable release: `v2026.4.14`, published `2026-04-14`
-- latest prerelease: `v2026.4.15-beta.1`, published `2026-04-15`
+**Bump reason (2026-06-16, OPENCLAW-GOVERNED-BUMP-2026-6-6):**
 
-We are keeping `v2026.4.7` for `BP5-OSS-001` because:
+- `v2026.4.7` only provides a localhost-callback paste-back OAuth flow for OpenAI/Codex accounts, which is unusable on headless VMs
+- `v2026.6.6` adds `openclaw models auth login --provider openai --device-code` (ChatGPT device-code flow) — the correct headless path for subscription-account binding with zero API keys
+- auth mode is subscription OAuth (`openai/oauth`); no `OPENAI_API_KEY` required
+- dev environment already validated: `openai:lupinchen@cctech-support.com`, agent turn confirmed
+- model refs: `openai/gpt-5.5` + `plugins.entries.codex.enabled=true`; `openclaw doctor --fix` migrates config
 
-- `v2026.4.14` is newer but has not satisfied the repo's 48-hour soak policy yet
-- `v2026.4.15-beta.1` is a prerelease and therefore not eligible for the governed baseline
-- the task goal here is to lock one reproducible source + adapter seam, not to chase the moving latest release
-
-Upgrade rule:
+Upgrade rule (for future bumps):
 
 1. wait at least 48 hours after a stable upstream release is published
 2. re-run `scripts/openclaw-smoke-test.sh`
@@ -65,8 +65,8 @@ Rejected modes:
 
 Verified upstream surface:
 
-- the Git tag `v2026.4.7` resolves to commit `5050017543011b61df67744ebc6368d889c25a95`
-- the GHCR image `ghcr.io/openclaw/openclaw:2026.4.7` is published and pullable
+- the Git tag `v2026.6.6` resolves to commit `8c802aa683510c7f7503597b54c3021733245e59`
+- the GHCR image `ghcr.io/openclaw/openclaw:2026.6.6` is published and pullable
 - the container can execute `openclaw --help`
 - the container can execute `openclaw gateway --help`
 - the upstream Docker docs define a gateway process with HTTP health endpoints `/healthz` and `/readyz` once a configured gateway is running

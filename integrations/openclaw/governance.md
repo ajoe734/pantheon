@@ -1,9 +1,9 @@
 # OpenClaw Integration — Governance Mapping
 
-Last updated: 2026-04-15
+Last updated: 2026-06-16
 Owner: BP5-OSS-001 (Codex)
 Reviewer: Claude
-Status: governed baseline locked
+Status: governed baseline locked — bumped to 2026.6.6
 Related: `OPENCLAW_RUNTIME_CONTRACT.md`, `OC-001`, `OC-002`, `OC-003`
 
 ## 1. Purpose
@@ -12,9 +12,9 @@ This document defines how the pinned OpenClaw runtime baseline is governed by Pa
 
 Pinned baseline:
 
-- Git tag: `v2026.4.7`
-- Commit: `5050017543011b61df67744ebc6368d889c25a95`
-- Runtime image: `ghcr.io/openclaw/openclaw:2026.4.7`
+- Git tag: `v2026.6.6`
+- Commit: `8c802aa683510c7f7503597b54c3021733245e59`
+- Runtime image: `ghcr.io/openclaw/openclaw:2026.6.6`
 
 OpenClaw remains an **external runtime substrate**. Pantheon never delegates governance authority to it.
 
@@ -170,7 +170,23 @@ When the pinned OpenClaw version changes:
 4. obtain reviewer approval before changing the governed pin
 5. record the change in `ai-activity-log.jsonl`
 
-## 9. Relationship to Other Governance Documents
+## 9. Pin Bump Record
+
+### 2026-06-16: `v2026.4.7` → `v2026.6.6` (OPENCLAW-GOVERNED-BUMP-2026-6-6)
+
+**Reason for bump:** `v2026.4.7` only supports a localhost-callback paste-back OAuth flow for OpenAI/Codex accounts, which is unusable on headless VMs. `v2026.6.6` adds `openclaw models auth login --provider openai --device-code` (ChatGPT device-code flow), enabling headless subscription-account binding with zero API keys.
+
+**Auth mode change:** Subscription OAuth via device-code flow (`openai/oauth`); no `OPENAI_API_KEY` required or used. The `openclaw-gateway` service in `docker-compose.yml` carries no `OPENAI_API_KEY` env entry (the field is absent — not merely blank).
+
+**Model ref change:** `v2026.6.6` uses `openai/gpt-5.5` with `plugins.entries.codex.enabled=true`; the legacy `openai-codex/*` namespace is deprecated upstream. `openclaw doctor --fix` migrates existing config automatically.
+
+**`~/.codex` removal:** The `v2026.4.7` onboarding attempted to import `~/.codex` on container startup. `v2026.6.6` removes this import; the env vars `PANTHEON_ASSISTANT_CODEX_HOST_HOME` / `PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME` in `docker-compose.yml` are preserved for backwards-compat volume mounts but are no longer read by OpenClaw itself.
+
+**Smoke gates:** `bash scripts/openclaw-smoke-test.sh` and `bash scripts/openclaw-gateway-adapter-smoke.sh` rerun against `ghcr.io/openclaw/openclaw:2026.6.6`; results recorded in `integrations/openclaw/evidence_pack.md §7`.
+
+**Deny rules:** All deny rules in §3.2 remain unchanged; the bump does not relax any capability boundary.
+
+## 10. Relationship to Other Governance Documents
 
 | Document | Relationship |
 |---|---|

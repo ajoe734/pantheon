@@ -361,7 +361,7 @@ services:
 
   openclaw-gateway:
     profiles: ["openclaw"]
-    image: ghcr.io/openclaw/openclaw:2026.4.7
+    image: ghcr.io/openclaw/openclaw:2026.6.6
     restart: unless-stopped
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
