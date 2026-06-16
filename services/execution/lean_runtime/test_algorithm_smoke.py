@@ -50,6 +50,7 @@ def test_lean_algorithm_smoke_loads_paper_artifact_and_records_one_fill() -> Non
     assert result.loaded_metadata["artifact_state"] == "approved"
     assert result.loaded_metadata["deployment_stage"] == "paper"
     assert result.loaded_signal["signal_id"] == SMOKE_SIGNAL_ID
+    assert result.loaded_signals == [result.loaded_signal]
 
     fill = result.fill_events[0]
     assert fill["signal_id"] == SMOKE_SIGNAL_ID
@@ -136,6 +137,7 @@ def test_lean_algorithm_smoke_from_binding_loads_strategy_packet_targets() -> No
                 "metadata": {
                     "confidence_score": 1.0,
                     "strategy_packet_ref": packet["packet_ref"],
+                    "packet_target_ref": "lean-packet-target://packet-target-smoke/generation2/leg0",
                     "market_data": {"close": 250.0},
                 },
             },
@@ -162,7 +164,10 @@ def test_lean_algorithm_smoke_from_binding_loads_strategy_packet_targets() -> No
                 "quantity": 2,
                 "quantity_type": "SHARES",
                 "order_type": "MARKET",
-                "metadata": {"strategy_packet_ref": packet["packet_ref"]},
+                "metadata": {
+                    "strategy_packet_ref": packet["packet_ref"],
+                    "packet_target_ref": "lean-packet-target://packet-target-smoke/generation2/leg1",
+                },
             },
         },
         {
@@ -187,7 +192,10 @@ def test_lean_algorithm_smoke_from_binding_loads_strategy_packet_targets() -> No
                 "quantity": 1,
                 "quantity_type": "SHARES",
                 "order_type": "MARKET",
-                "metadata": {"strategy_packet_ref": packet["packet_ref"]},
+                "metadata": {
+                    "strategy_packet_ref": packet["packet_ref"],
+                    "packet_target_ref": "lean-packet-target://packet-target-smoke/generation2/leg2",
+                },
             },
         },
     ]
@@ -203,6 +211,23 @@ def test_lean_algorithm_smoke_from_binding_loads_strategy_packet_targets() -> No
     assert [target["target_ref"] for target in result.loaded_packet_targets] == [
         target["target_ref"] for target in targets
     ]
+    assert [signal["signal_id"] for signal in result.loaded_signals] == [
+        target["signal_id"] for target in targets
+    ]
+    assert [signal["symbol"] for signal in result.loaded_signals] == [
+        target["execution_symbol"] for target in targets
+    ]
+    assert [execution["target_ref"] for execution in result.packet_target_executions] == [
+        target["target_ref"] for target in targets
+    ]
+    assert [execution["loaded_signal_id"] for execution in result.packet_target_executions] == [
+        target["signal_id"] for target in targets
+    ]
+    assert [execution["loaded_signal_symbol"] for execution in result.packet_target_executions] == [
+        target["execution_symbol"] for target in targets
+    ]
+    assert all(execution["fill_count"] >= 1 for execution in result.packet_target_executions)
+    assert all(all(execution["replay"].values()) for execution in result.packet_target_executions)
     assert result.loaded_signal["signal_id"] == targets[0]["signal_id"]
     assert result.loaded_signal["symbol"] == "MSFT.US"
     assert result.synthetic_ohlcv[0]["symbol"] == "MSFT"

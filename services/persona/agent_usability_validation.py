@@ -11023,9 +11023,43 @@ def _build_lean_object_store_packet_readback(
     loaded_packet = dict(result.get("loaded_strategy_packet") or {})
     loaded_targets = [dict(target) for target in result.get("loaded_packet_targets") or []]
     loaded_signal = dict(result.get("loaded_signal") or {})
+    loaded_signals = [
+        dict(signal)
+        for signal in result.get("loaded_signals") or []
+        if isinstance(signal, Mapping)
+    ]
+    if not loaded_signals:
+        loaded_signals = [
+            dict(target.get("signal"))
+            for target in loaded_targets
+            if isinstance(target.get("signal"), Mapping)
+        ]
     fill_events = [dict(event) for event in result.get("fill_events") or []]
+    packet_target_executions = [
+        dict(execution)
+        for execution in result.get("packet_target_executions") or []
+        if isinstance(execution, Mapping)
+    ]
+    executed_packet_target_refs = [execution.get("target_ref") for execution in packet_target_executions]
+    executed_packet_target_signal_ids = [
+        execution.get("loaded_signal_id") for execution in packet_target_executions
+    ]
+    executed_packet_target_symbols = [
+        execution.get("loaded_signal_symbol") for execution in packet_target_executions
+    ]
     first_target = loaded_targets[0] if loaded_targets else {}
     first_target_signal = first_target.get("signal") if isinstance(first_target.get("signal"), Mapping) else {}
+    target_signal_ids = [target.get("signal_id") for target in loaded_targets]
+    target_refs = [target.get("target_ref") for target in loaded_targets]
+    target_symbols = [target.get("execution_symbol") for target in loaded_targets]
+    loaded_signal_ids = [signal.get("signal_id") for signal in loaded_signals]
+    loaded_signal_symbols = [signal.get("symbol") for signal in loaded_signals]
+    loaded_signal_source_target_refs = [
+        signal.get("metadata", {}).get("packet_target_ref")
+        if isinstance(signal.get("metadata"), Mapping)
+        else None
+        for signal in loaded_signals
+    ]
     object_store_keys = set(result.get("object_store_keys", []))
     tracking_provenance = dict(strategy_packet.get("experiment_tracking_provenance") or {})
     loaded_tracking_provenance = dict(loaded_packet.get("experiment_tracking_provenance") or {})
@@ -11126,9 +11160,49 @@ def _build_lean_object_store_packet_readback(
             and loaded_signal.get("quantity_type") == first_target.get("quantity_type")
             and loaded_signal.get("order_type") == first_target.get("order_type")
         ),
+        "all_packet_target_signals_loaded_from_object_store": (
+            len(loaded_signals) == PORTFOLIO_LEG_COUNT
+            and loaded_signal_ids == target_signal_ids
+        ),
+        "loaded_signal_refs_match_packet_targets": (
+            loaded_signal_source_target_refs == target_refs
+        ),
+        "loaded_signal_symbols_match_packet_targets": (
+            loaded_signal_symbols == target_symbols
+        ),
+        "loaded_signal_quantities_match_packet_targets": all(
+            signal.get("quantity") == target.get("quantity")
+            and signal.get("quantity_type") == target.get("quantity_type")
+            and signal.get("order_type") == target.get("order_type")
+            for signal, target in zip(loaded_signals, loaded_targets)
+        ) and len(loaded_signals) == len(loaded_targets),
+        "loaded_signal_metadata_binds_packet_targets": all(
+            isinstance(signal.get("metadata"), Mapping)
+            and signal.get("metadata", {}).get("strategy_packet_ref")
+            == strategy_packet.get("packet_ref")
+            and signal.get("metadata", {}).get("packet_target_ref")
+            == target.get("target_ref")
+            for signal, target in zip(loaded_signals, loaded_targets)
+        ) and len(loaded_signals) == len(loaded_targets),
         "algorithm_executed_loaded_packet_signal": (
             int(result.get("fill_count", 0)) >= 1
             and any(event.get("signal_id") == loaded_signal.get("signal_id") for event in fill_events)
+        ),
+        "all_packet_targets_executed_by_smoke": (
+            len(packet_target_executions) == PORTFOLIO_LEG_COUNT
+            and all(
+                all(bool(value) for value in execution.get("replay", {}).values())
+                for execution in packet_target_executions
+            )
+        ),
+        "executed_packet_target_refs_match_packet": (
+            executed_packet_target_refs == target_refs
+        ),
+        "executed_packet_target_signal_ids_match_packet": (
+            executed_packet_target_signal_ids == target_signal_ids
+        ),
+        "executed_packet_target_symbols_match_packet": (
+            executed_packet_target_symbols == target_symbols
         ),
         "object_store_keys_include_packet_artifact_and_metadata": (
             any(key.endswith("/artifact.bin") for key in object_store_keys)
@@ -11352,9 +11426,19 @@ def _build_lean_object_store_packet_readback(
         "source_packet_hash": _stable_payload_hash("lean-strategy-packet", strategy_packet),
         "artifact_payload_checksum": result.get("artifact_payload_checksum"),
         "target_count": len(loaded_targets),
-        "target_refs": [target.get("target_ref") for target in loaded_targets],
-        "target_signal_ids": [target.get("signal_id") for target in loaded_targets],
-        "target_symbols": [target.get("execution_symbol") for target in loaded_targets],
+        "target_refs": target_refs,
+        "target_signal_ids": target_signal_ids,
+        "target_symbols": target_symbols,
+        "loaded_signal_count": len(loaded_signals),
+        "loaded_signal_ids": loaded_signal_ids,
+        "loaded_signal_symbols": loaded_signal_symbols,
+        "loaded_signal_source_target_refs": loaded_signal_source_target_refs,
+        "loaded_signals": loaded_signals,
+        "executed_packet_target_count": len(packet_target_executions),
+        "executed_packet_target_refs": executed_packet_target_refs,
+        "executed_packet_target_signal_ids": executed_packet_target_signal_ids,
+        "executed_packet_target_symbols": executed_packet_target_symbols,
+        "packet_target_executions": packet_target_executions,
         "loaded_signal_id": loaded_signal.get("signal_id"),
         "loaded_signal_symbol": loaded_signal.get("symbol"),
         "loaded_signal_source_target_ref": first_target.get("target_ref"),
@@ -11453,6 +11537,7 @@ def _build_lean_object_store_packet_readback(
                 "loaded_packet": loaded_packet,
                 "loaded_targets": loaded_targets,
                 "loaded_signal": loaded_signal,
+                "loaded_signals": loaded_signals,
                 "replay": replay,
             },
         ),
@@ -11657,6 +11742,11 @@ def _run_lean_engine_replay(
     runtime_context = dict(result["runtime_context"])
     readback_targets = list(result.get("loaded_packet_targets", []))
     loaded_signal = dict(result.get("loaded_signal", {}))
+    loaded_signals = [
+        dict(signal)
+        for signal in result.get("loaded_signals") or []
+        if isinstance(signal, Mapping)
+    ]
     object_store_packet_readback = _build_lean_object_store_packet_readback(
         episode=episode,
         strategy_packet=strategy_packet,
@@ -11682,6 +11772,21 @@ def _run_lean_engine_replay(
             "order_type": loaded_signal.get("order_type"),
             "source_target_ref": readback_targets[0].get("target_ref") if readback_targets else None,
         },
+        "loaded_signals": [
+            {
+                "signal_id": signal.get("signal_id"),
+                "symbol": signal.get("symbol"),
+                "quantity": signal.get("quantity"),
+                "quantity_type": signal.get("quantity_type"),
+                "order_type": signal.get("order_type"),
+                "source_target_ref": (
+                    signal.get("metadata", {}).get("packet_target_ref")
+                    if isinstance(signal.get("metadata"), Mapping)
+                    else None
+                ),
+            }
+            for signal in loaded_signals
+        ],
         "plan": {
             "plan_id": plan["plan_id"],
             "artifact_id": plan["artifact_id"],
@@ -15807,6 +15912,8 @@ def _lean_engine_result_is_usable(
     loaded_packet = result.get("loaded_strategy_packet", {})
     loaded_targets = result.get("loaded_packet_targets", [])
     loaded_signal = result.get("loaded_signal", {})
+    loaded_signals = list(result.get("loaded_signals", []))
+    packet_target_executions = list(result.get("packet_target_executions", []))
     object_store_keys = set(result.get("object_store_keys", []))
     tracking_provenance = loaded_packet.get("experiment_tracking_provenance", {})
     policy_oss_lineage = loaded_packet.get("policy_oss_lineage", {})
@@ -15819,6 +15926,15 @@ def _lean_engine_result_is_usable(
             len(loaded_targets) == PORTFOLIO_LEG_COUNT
             and loaded_signal.get("signal_id") == loaded_targets[0].get("signal_id")
             and loaded_signal.get("symbol") == loaded_targets[0].get("execution_symbol")
+            and [signal.get("signal_id") for signal in loaded_signals]
+            == [target.get("signal_id") for target in loaded_targets]
+            and len(packet_target_executions) == PORTFOLIO_LEG_COUNT
+            and [execution.get("loaded_signal_id") for execution in packet_target_executions]
+            == [target.get("signal_id") for target in loaded_targets]
+            and all(
+                all(bool(value) for value in execution.get("replay", {}).values())
+                for execution in packet_target_executions
+            )
             and loaded_packet.get("normalized_experiment_ref", "").startswith("experiment://")
             and loaded_packet.get("tracking_reconciliation_ref", "").startswith(
                 "tracking-reconciliation://"
@@ -15919,6 +16035,12 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
         and len(target_signal_ids) == PORTFOLIO_LEG_COUNT
         and readback.get("loaded_signal_id") == first_signal_id
         and readback.get("loaded_signal_source_target_ref") == first_target_ref
+        and readback.get("loaded_signal_count") == PORTFOLIO_LEG_COUNT
+        and readback.get("loaded_signal_ids") == target_signal_ids
+        and readback.get("loaded_signal_source_target_refs") == target_refs
+        and readback.get("executed_packet_target_count") == PORTFOLIO_LEG_COUNT
+        and readback.get("executed_packet_target_refs") == target_refs
+        and readback.get("executed_packet_target_signal_ids") == target_signal_ids
         and readback.get("normalized_experiment_ref", "").startswith("experiment://")
         and readback.get("tracking_reconciliation_ref", "").startswith("tracking-reconciliation://")
         and readback.get("tracking_repair_ref", "").startswith(readback.get("tracking_reconciliation_ref", ""))
@@ -15967,7 +16089,16 @@ def _lean_object_store_packet_readback_is_usable(readback: Mapping[str, Any]) ->
             "loaded_signal_from_first_packet_target",
             "loaded_signal_symbol_matches_first_target",
             "loaded_signal_quantity_matches_first_target",
+            "all_packet_target_signals_loaded_from_object_store",
+            "loaded_signal_refs_match_packet_targets",
+            "loaded_signal_symbols_match_packet_targets",
+            "loaded_signal_quantities_match_packet_targets",
+            "loaded_signal_metadata_binds_packet_targets",
             "algorithm_executed_loaded_packet_signal",
+            "all_packet_targets_executed_by_smoke",
+            "executed_packet_target_refs_match_packet",
+            "executed_packet_target_signal_ids_match_packet",
+            "executed_packet_target_symbols_match_packet",
             "object_store_keys_include_packet_artifact_and_metadata",
             "tracking_provenance_present_in_packet",
             "loaded_packet_preserves_tracking_provenance",
@@ -20225,11 +20356,18 @@ def _build_summary(
         "lean_object_store_packet_readback_target_counts": sorted({
             readback["target_count"] for readback in lean_object_store_packet_readbacks
         }),
-        "lean_object_store_packet_readback_loaded_signal_sources": sorted({
-            "first_packet_target"
-            for readback in lean_object_store_packet_readbacks
-            if readback["loaded_signal_id"] == readback["target_signal_ids"][0]
-        }),
+        "lean_object_store_packet_readback_loaded_signal_sources": sorted(
+            {
+                "first_packet_target"
+                for readback in lean_object_store_packet_readbacks
+                if readback["loaded_signal_id"] == readback["target_signal_ids"][0]
+            }
+            | {
+                "all_packet_targets"
+                for readback in lean_object_store_packet_readbacks
+                if readback.get("loaded_signal_ids") == readback.get("target_signal_ids")
+            }
+        ),
         "lean_object_store_packet_readback_replay_flags": sorted({
             flag
             for readback in lean_object_store_packet_readbacks
@@ -21455,6 +21593,28 @@ def _build_summary(
             1
             for readback in lean_object_store_packet_readbacks
             if readback["loaded_signal_id"] == readback["target_signal_ids"][0]
+        ),
+        "lean_object_store_all_target_signal_readback_count": sum(
+            1
+            for readback in lean_object_store_packet_readbacks
+            if readback.get("loaded_signal_ids") == readback.get("target_signal_ids")
+        ),
+        "lean_object_store_packet_target_execution_count": sum(
+            int(readback.get("executed_packet_target_count", 0))
+            for readback in lean_object_store_packet_readbacks
+        ),
+        "lean_object_store_packet_target_execution_pass_count": sum(
+            1
+            for readback in lean_object_store_packet_readbacks
+            for execution in readback.get("packet_target_executions", [])
+            if all(bool(value) for value in execution.get("replay", {}).values())
+        ),
+        "lean_object_store_all_packet_targets_executed_count": sum(
+            1
+            for readback in lean_object_store_packet_readbacks
+            if readback.get("executed_packet_target_count") == readback.get("target_count")
+            and readback.get("executed_packet_target_signal_ids")
+            == readback.get("target_signal_ids")
         ),
         "lean_packet_execution_projection_count": len(lean_packet_execution_projections),
         "lean_packet_execution_projection_pass_count": sum(
