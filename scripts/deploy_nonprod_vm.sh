@@ -47,6 +47,8 @@ STAGING_EXEC_VM="${STAGING_EXEC_VM:-pantheon-lupin-staging-exec}"
 STAGING_EXEC_ZONE="${STAGING_EXEC_ZONE:-asia-east1-b}"
 STAGING_EXEC_REMOTE_DIR="${STAGING_EXEC_REMOTE_DIR:-/home/lupin/code/pantheon}"
 STAGING_EXEC_HEALTH_URL="${STAGING_EXEC_HEALTH_URL:-http://10.50.0.21:28081}"
+STAGING_BFF_CANONICAL_CORS_ORIGIN="${STAGING_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-staging-fe.104.155.223.192.sslip.io}"
+STAGING_BFF_CORS_ORIGINS="${STAGING_BFF_CORS_ORIGINS:-${STAGING_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-staging-live.lovable.app}"
 
 DEPLOY_ENV=""
 COMPONENT="auto"
@@ -94,6 +96,7 @@ Environment overrides:
   STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR
   STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
   STAGING_EXEC_HEALTH_URL
+  STAGING_BFF_CANONICAL_CORS_ORIGIN STAGING_BFF_CORS_ORIGINS
 EOF
 }
 
@@ -170,6 +173,7 @@ configure_management_ai_dev_kernel_env() {
 
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_CANONICAL_CORS_ORIGIN")"
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_REQUIRED_CORS_ORIGINS")"
+STAGING_BFF_CORS_ORIGINS="$(append_csv_unique "$STAGING_BFF_CORS_ORIGINS" "$STAGING_BFF_CANONICAL_CORS_ORIGIN")"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -263,6 +267,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "management_ai_attach_bucket=${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
   info "management_ai_attach_location=${DEV_MANAGEMENT_AI_ATTACH_LOCATION}"
   info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL}"
+  info "staging_bff_cors_origins=${STAGING_BFF_CORS_ORIGINS}"
   exit 0
 fi
 
@@ -329,6 +334,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_NAME=$(shell_quote "${DEV_MANAGEMENT_AI_DB_NAME:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_APP_DB_USER=$(shell_quote "${DEV_APP_DB_USER:-pantheon_app}")"
   command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "$STAGING_EXEC_HEALTH_URL")"
+  command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "$STAGING_BFF_CORS_ORIGINS")"
   command_prefix+=" bash -s"
 
   info "ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA}"
@@ -854,6 +860,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_BAKE=false \
     PANTHEON_ENV=staging-live \
     PANTHEON_LIVE_BROKER_ENABLED=true \
+    PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_STAGING_BFF_CORS_ORIGINS}" \
       docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml up -d --build
     curl_with_retry http://127.0.0.1:38001/health
     curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"
