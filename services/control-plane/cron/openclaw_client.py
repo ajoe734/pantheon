@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import subprocess
+import time
 import uuid
 from typing import Any, Callable
 
@@ -9,10 +13,173 @@ from models import OpenClawRuntimePin, WorkflowDefinition, utc_now
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
 
+_DEFAULT_CRON_POLL_TIMEOUT = 30.0
+_DEFAULT_CRON_POLL_INTERVAL = 1.0
+_TERMINAL_RUN_STATUSES = frozenset({"ok", "failed", "cancelled", "canceled", "error", "timed_out"})
+
 
 def _clean(value: str | None) -> str | None:
     cleaned = str(value or "").strip()
     return cleaned or None
+
+
+class _CliGatewayTransport:
+    """Dispatch cron workflow envelopes via the installed `openclaw` CLI.
+
+    This transport is used as the default when `OPENCLAW_GATEWAY_URL` and
+    `OPENCLAW_GATEWAY_TOKEN` are set but no explicit transport was supplied.
+    It calls `openclaw gateway call <method> ...` directly — no docker exec
+    required — making it suitable for compose environments where the binary
+    is installed inside the adapter/cron image.
+    """
+
+    def __init__(
+        self,
+        gateway_url: str,
+        token: str,
+        *,
+        openclaw_bin: str = "openclaw",
+        poll_timeout_seconds: float = _DEFAULT_CRON_POLL_TIMEOUT,
+        poll_interval_seconds: float = _DEFAULT_CRON_POLL_INTERVAL,
+        _run_func=None,
+        _which_func=None,
+    ) -> None:
+        self._url = gateway_url
+        self._token = token
+        self._bin = openclaw_bin
+        self._poll_timeout = poll_timeout_seconds
+        self._poll_interval = poll_interval_seconds
+        self._run = _run_func or subprocess.run
+        self._which = _which_func or shutil.which
+
+    def _resolve_bin(self) -> str:
+        explicit = os.getenv("OPENCLAW_BIN", "").strip()
+        if explicit:
+            return explicit
+        found = self._which(self._bin)
+        if not found:
+            raise RuntimeError(
+                "openclaw binary not found. Ensure it is installed in the image "
+                "(OPENCLAW_BIN env override is also supported)."
+            )
+        return found
+
+    def _call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        bin_path = self._resolve_bin()
+        cmd = [
+            bin_path,
+            "gateway",
+            "call",
+            method,
+            "--url", self._url,
+            "--token", self._token,
+            "--json",
+        ]
+        if params is not None:
+            cmd.extend(["--params", json.dumps(params, separators=(",", ":"), sort_keys=True)])
+        env = {**os.environ, "NO_COLOR": "1", "OPENCLAW_HIDE_BANNER": "1", "OPENCLAW_SUPPRESS_NOTES": "1"}
+        result = self._run(cmd, capture_output=True, text=True, env=env, timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"openclaw gateway call {method} failed (exit {result.returncode}): "
+                f"{(result.stderr or '').strip()[:300]}"
+            )
+        return json.loads(result.stdout.strip() or "{}")
+
+    def _wait_for_terminal_run(self, job_id: str, run_id: str | None) -> dict[str, Any]:
+        deadline = time.monotonic() + self._poll_timeout
+        while time.monotonic() < deadline:
+            runs = self._call("cron.runs", {"id": job_id, "limit": 5})
+            entries = runs.get("entries") or []
+            target = None
+            if run_id:
+                target = next((e for e in entries if e.get("runId") == run_id), None)
+            if target is None and entries:
+                target = entries[0]
+            if target and target.get("status") in _TERMINAL_RUN_STATUSES:
+                return target
+            time.sleep(self._poll_interval)
+        raise RuntimeError(
+            f"Timed out waiting for openclaw cron job {job_id} to reach a terminal state."
+        )
+
+    def __call__(self, request: dict[str, Any]) -> dict[str, Any]:
+        import re
+        from datetime import datetime, timedelta, timezone
+
+        workflow_id = request["workflow"]["workflow_id"]
+        slug = re.sub(r"[^a-z0-9]+", "-", workflow_id.lower()).strip("-")
+        suffix = request["request_id"].split("-", 1)[-1][:12]
+        job_name = f"pantheon-{slug}-{suffix}"
+
+        prepared_at = request["prepared_at"]
+        prepared = datetime.fromisoformat(prepared_at.replace("Z", "+00:00"))
+        schedule_at = (
+            (prepared + timedelta(minutes=10))
+            .astimezone(timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
+        event_text = json.dumps(
+            {
+                "kind": "pantheon.workflow.dispatch",
+                "prepared_at": prepared_at,
+                "request_id": request["request_id"],
+                "workflow_id": workflow_id,
+                "upstream_entrypoint": request["workflow"]["upstream_entrypoint"],
+                "policy_id": request["governance"]["policy_id"],
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+        add_response = self._call(
+            "cron.add",
+            {
+                "name": job_name,
+                "enabled": True,
+                "deleteAfterRun": True,
+                "schedule": {"kind": "at", "at": schedule_at},
+                "sessionTarget": "main",
+                "wakeMode": "next-heartbeat",
+                "payload": {"kind": "systemEvent", "text": event_text},
+                "delivery": {"mode": "none"},
+            },
+        )
+        job_id = add_response.get("id")
+        if not job_id:
+            raise RuntimeError(f"openclaw cron.add did not return a job id: {add_response}")
+
+        run_response = self._call("cron.run", {"id": job_id, "mode": "force"})
+        run_id = run_response.get("runId")
+        latest_run = self._wait_for_terminal_run(job_id, run_id)
+
+        if latest_run.get("status") != "ok":
+            raise RuntimeError(
+                f"openclaw cron job {job_id} finished with status {latest_run.get('status')!r}: "
+                f"{latest_run}"
+            )
+
+        return {
+            "status": "accepted",
+            "mode": "cli_gateway_rpc",
+            "workflow_id": workflow_id,
+            "request_id": request["request_id"],
+            "runtime_pin": request["runtime"],
+            "job": {"id": job_id, "name": job_name, "run_id": run_id},
+            "run": latest_run,
+        }
+
+
+def _build_default_cli_transport() -> Transport | None:
+    """Return a CLI-based transport when gateway env vars are present; None otherwise."""
+    url = (os.environ.get("OPENCLAW_BASE_URL") or os.environ.get("OPENCLAW_GATEWAY_URL", "")).strip()
+    token = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "").strip()
+    if url and token:
+        bin_path = os.getenv("OPENCLAW_BIN", "").strip() or shutil.which("openclaw")
+        if bin_path:
+            return _CliGatewayTransport(gateway_url=url, token=token)
+    return None
 
 
 class OpenClawCronClient:
@@ -34,7 +201,10 @@ class OpenClawCronClient:
             or os.environ.get("OPENCLAW_BASE_URL")
             or os.environ.get("OPENCLAW_GATEWAY_URL", "ws://127.0.0.1:18789")
         )
-        self.transport = transport
+        # If no explicit transport is provided, auto-detect from env.
+        # This ensures `--dispatch` actually reaches the gateway when the
+        # CLI binary and token are available, instead of returning local_only.
+        self.transport = transport if transport is not None else _build_default_cli_transport()
         self._adapter_boundary = {
             "integration_boundary": "pantheon-openclaw-gateway-adapter",
             "workspace_ref": _clean(os.environ.get("PANTHEON_WORKSPACE_REF")),

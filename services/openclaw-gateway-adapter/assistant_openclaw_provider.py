@@ -1,22 +1,29 @@
 """OpenClaw gateway agent provider for the assistant pipeline.
 
 Routes management-AI prompts through the upstream OpenClaw gateway agent
-instead of the local Codex/Claude CLI mounts.  The gateway agent provides
-tool resolution, memory, and persona context that the CLI paths cannot.
+using the official CLI interface, matching the pattern used by the Codex
+and Claude providers.
 
-The provider calls the upstream agent's HTTP invocation endpoint:
-  POST /api/agents/{agent_id}/invoke
-using the same OPENCLAW_GATEWAY_URL that the upstream health probe already
-uses (the gateway exposes both HTTP and WebSocket on that address).
+The gateway agent protocol is WebSocket RPC (not HTTP REST).
+The official programmatic interface is:
 
-Degrades cleanly when the gateway is absent — returns status="degraded" so
-the BFF can apply its configured fallback rather than propagating a transport
-error.
+    openclaw agent --url ws://<host>:<port> --token <token> \\
+                   --agent <agent_id> --message "<prompt>"
+
+which writes the agent reply to stdout.  The adapter shell-outs to this
+CLI rather than implementing a custom WS-RPC client, consistent with how
+the Codex and Claude providers shell-out to their respective CLIs.
+
+Readiness uses the gateway HTTP health probe (:18789/readyz) which is a
+real HTTP endpoint distinct from the WS-RPC agent invocation port.
+
+Degrades cleanly when the binary is absent or the gateway is unreachable.
 """
 from __future__ import annotations
 
-import json
 import os
+import shutil
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -27,9 +34,12 @@ from typing import Any, Dict, List, Optional
 
 OPENCLAW_PROVIDER = "openclaw"
 OPENCLAW_PROVIDER_ID = "openclaw"
-PROVIDER_RUNTIME = "openclaw_gateway_agent"
+PROVIDER_RUNTIME = "openclaw_gateway_agent_cli"
 DEFAULT_AGENT_ID = "main"
 DEFAULT_TIMEOUT_SECONDS = 90
+DEFAULT_OPENCLAW_BIN = "openclaw"
+# Canonical docker-compose service name — used when no URL is configured.
+_DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
 
 
 @dataclass(frozen=True)
@@ -68,11 +78,16 @@ class OpenClawProviderError(RuntimeError):
 
 
 class AssistantOpenClawProvider:
-    """Sends prompts to the upstream OpenClaw gateway agent and returns structured results.
+    """Sends prompts to the upstream OpenClaw gateway agent via CLI and returns structured results.
 
-    Readiness is "ready" when OPENCLAW_GATEWAY_URL is configured and the
-    gateway responds to /readyz.  The provider itself does not depend on local
-    credential mounts.
+    Readiness semantics:
+    - not_configured: OPENCLAW_GATEWAY_URL is not set
+    - ready (auth_probe=False): URL is set; binary/token not checked (light probe)
+    - ready (auth_probe=True): URL set, binary found, token set, gateway health OK
+    - degraded: URL set but binary/token missing or gateway unreachable
+
+    The provider does not depend on local credential mounts — the auth token is
+    supplied via OPENCLAW_GATEWAY_TOKEN.
     """
 
     def __init__(
@@ -80,21 +95,35 @@ class AssistantOpenClawProvider:
         *,
         gateway_url: Optional[str] = None,
         agent_id: Optional[str] = None,
+        token: Optional[str] = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        _which_func=None,
+        _run_func=None,
     ) -> None:
         raw = (gateway_url or os.getenv("OPENCLAW_GATEWAY_URL", "")).strip()
-        # Normalize: strip ws:// / wss:// to http:// / https:// for REST calls.
-        if raw.startswith("ws://"):
-            raw = "http://" + raw[len("ws://"):]
-        elif raw.startswith("wss://"):
-            raw = "https://" + raw[len("wss://"):]
+        # If an http:// URL was configured by mistake, convert it back to ws://.
+        if raw.startswith("http://"):
+            raw = "ws://" + raw[len("http://"):]
+        elif raw.startswith("https://"):
+            raw = "wss://" + raw[len("https://"):]
+        # Store as-is (empty string = not configured).
         self._gateway_url = raw.rstrip("/")
         self._agent_id = (agent_id or os.getenv("OPENCLAW_AGENT_ID", DEFAULT_AGENT_ID)).strip()
+        self._token = token or os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
         self._timeout = int(os.getenv("OPENCLAW_ASSISTANT_TIMEOUT_SECONDS", str(timeout_seconds)))
+        self._which = _which_func or shutil.which
+        self._run = _run_func or subprocess.run
 
     @property
     def configured(self) -> bool:
+        """True when OPENCLAW_GATEWAY_URL was explicitly configured."""
         return bool(self._gateway_url)
+
+    def _openclaw_bin(self) -> Optional[str]:
+        explicit = os.getenv("OPENCLAW_BIN", "").strip()
+        if explicit:
+            return explicit
+        return self._which(DEFAULT_OPENCLAW_BIN)
 
     def readiness(self, *, auth_probe: bool = False) -> Dict[str, Any]:
         base: Dict[str, Any] = {
@@ -112,17 +141,37 @@ class AssistantOpenClawProvider:
                 "reason": "OPENCLAW_GATEWAY_URL is not set",
             }
         if not auth_probe:
+            # Light probe: URL is set, assume the binary and token will be
+            # available at invocation time (mirrors old provider behaviour).
             return {**base, "ready": True, "status": "ready"}
-        # Probe the gateway health endpoint.
+        # Full auth probe: verify binary, token, and gateway health.
+        binary = self._openclaw_bin()
+        if not binary:
+            return {
+                **base,
+                "ready": False,
+                "status": "degraded",
+                "reason": "openclaw_binary_not_found",
+                "binary_path": DEFAULT_OPENCLAW_BIN,
+            }
+        if not self._token:
+            return {
+                **base,
+                "ready": False,
+                "status": "degraded",
+                "reason": "OPENCLAW_GATEWAY_TOKEN_not_set",
+                "binary_path": binary,
+            }
         probe = self._probe_gateway()
         if probe.get("reachable"):
-            return {**base, "ready": True, "status": "ready", "probe": probe}
+            return {**base, "ready": True, "status": "ready", "probe": probe, "binary_path": binary}
         return {
             **base,
             "ready": False,
             "status": "degraded",
             "reason": probe.get("reason", "gateway_unreachable"),
             "probe": probe,
+            "binary_path": binary,
         }
 
     def invoke(
@@ -136,53 +185,85 @@ class AssistantOpenClawProvider:
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> OpenClawProviderResult:
-        if not self._gateway_url:
+        # When no URL was explicitly configured, fall back to the canonical
+        # docker-compose service name so the adapter works out of the box.
+        effective_url = self._gateway_url or _DEFAULT_GATEWAY_WS_URL
+
+        binary = self._openclaw_bin()
+        if not binary:
             raise OpenClawProviderError(
-                "OpenClaw gateway URL is not configured (OPENCLAW_GATEWAY_URL).",
+                "openclaw binary not found. Ensure the openclaw CLI is installed in the adapter image.",
                 status_code=503,
-                error_code="OPENCLAW_GATEWAY_NOT_CONFIGURED",
+                error_code="OPENCLAW_BINARY_NOT_FOUND",
+            )
+        if not self._token:
+            raise OpenClawProviderError(
+                "OPENCLAW_GATEWAY_TOKEN is not set. Configure the token in the compose env.",
+                status_code=503,
+                error_code="OPENCLAW_TOKEN_NOT_CONFIGURED",
             )
 
         request_id = str(uuid.uuid4())
-        payload: Dict[str, Any] = {
-            "request_id": request_id,
-            "agent_id": self._agent_id,
-            "prompt": prompt,
-            "mode": mode,
-            "context_pack": context_pack or {},
-            "metadata": metadata or {},
-        }
-        if messages:
-            payload["messages"] = messages
-        if operator_id:
-            payload["operator_id"] = operator_id
-        if trace_id:
-            payload["trace_id"] = trace_id
-
         started_at = time.monotonic()
+
+        cmd = [
+            binary,
+            "agent",
+            "--url", effective_url,
+            "--token", self._token,
+            "--agent", self._agent_id,
+            "--message", prompt,
+        ]
+
         try:
-            response_body = self._http_post(
-                f"/api/agents/{self._agent_id}/invoke",
-                payload=payload,
+            proc = self._run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
+                env={**os.environ, "NO_COLOR": "1"},
             )
-        except OpenClawProviderError:
-            raise
+        except subprocess.TimeoutExpired as exc:
+            raise OpenClawProviderError(
+                f"openclaw agent invocation timed out after {self._timeout}s.",
+                status_code=504,
+                error_code="OPENCLAW_GATEWAY_TIMEOUT",
+            ) from exc
+        except FileNotFoundError as exc:
+            raise OpenClawProviderError(
+                "openclaw binary disappeared after readiness check.",
+                status_code=503,
+                error_code="OPENCLAW_BINARY_NOT_FOUND",
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             raise OpenClawProviderError(
-                f"OpenClaw gateway agent invocation failed: {exc}",
+                f"openclaw agent invocation failed: {exc}",
                 status_code=502,
                 error_code="OPENCLAW_GATEWAY_INVOCATION_FAILED",
             ) from exc
 
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
 
-        # Normalise output into the standard provider output envelope.
-        output = self._normalise_output(response_body, elapsed_ms=elapsed_ms, request_id=request_id)
+        if proc.returncode != 0:
+            stderr = (proc.stderr or "").strip()
+            raise OpenClawProviderError(
+                f"openclaw agent exited with code {proc.returncode}: {stderr[:400]}",
+                status_code=502,
+                error_code="OPENCLAW_GATEWAY_INVOCATION_FAILED",
+            )
+
+        text = (proc.stdout or "").strip()
+        output = self._build_output(
+            text=text,
+            request_id=request_id,
+            elapsed_ms=elapsed_ms,
+            stderr=proc.stderr or "",
+        )
 
         return OpenClawProviderResult(
             provider=OPENCLAW_PROVIDER,
             mode=mode,
-            status=self._status_from_body(response_body),
+            status="completed",
             output=output,
             redaction={"provider_invocation": {"redacted_fields": 0}},
         )
@@ -191,52 +272,17 @@ class AssistantOpenClawProvider:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _http_post(self, path: str, *, payload: Dict[str, Any]) -> Dict[str, Any]:
-        url = f"{self._gateway_url}{path}"
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                raw = resp.read().decode("utf-8")
-                return json.loads(raw) if raw.strip() else {}
-        except urllib.error.HTTPError as exc:
-            raw = exc.read().decode("utf-8") if exc.fp is not None else ""
-            try:
-                body = json.loads(raw) if raw.strip() else {}
-            except Exception:
-                body = {"raw": raw}
-            error_code = str(body.get("error_code") or body.get("code") or "OPENCLAW_GATEWAY_HTTP_ERROR")
-            raise OpenClawProviderError(
-                str(body.get("message") or f"OpenClaw gateway returned HTTP {exc.code}."),
-                status_code=exc.code if exc.code >= 500 else 502,
-                error_code=error_code,
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise OpenClawProviderError(
-                f"OpenClaw gateway is unreachable: {exc.reason}",
-                status_code=503,
-                error_code="OPENCLAW_GATEWAY_UNREACHABLE",
-            ) from exc
-        except TimeoutError as exc:
-            raise OpenClawProviderError(
-                "OpenClaw gateway agent invocation timed out.",
-                status_code=504,
-                error_code="OPENCLAW_GATEWAY_TIMEOUT",
-            ) from exc
-
     def _probe_gateway(self) -> Dict[str, Any]:
+        # Derive the HTTP base URL from the WS URL for the health probe.
+        http_base = self._gateway_url
+        if http_base.startswith("ws://"):
+            http_base = "http://" + http_base[len("ws://"):]
+        elif http_base.startswith("wss://"):
+            http_base = "https://" + http_base[len("wss://"):]
         for path in ("/readyz", "/healthz"):
             try:
                 req = urllib.request.Request(
-                    f"{self._gateway_url}{path}",
+                    f"{http_base}{path}",
                     headers={"Accept": "application/json"},
                     method="GET",
                 )
@@ -251,56 +297,30 @@ class AssistantOpenClawProvider:
         return {"reachable": False, "reason": "no_probe_path_succeeded"}
 
     @staticmethod
-    def _status_from_body(body: Dict[str, Any]) -> str:
-        s = str(body.get("status") or "").lower()
-        if s in {"completed", "done", "ok", "success"}:
-            return "completed"
-        if s in {"error", "failed", "failure"}:
-            return "error"
-        if body.get("output") or body.get("message") or body.get("text"):
-            return "completed"
-        return "completed"
-
-    @staticmethod
-    def _normalise_output(body: Dict[str, Any], *, elapsed_ms: int, request_id: str) -> Dict[str, Any]:
-        # Extract the response text from whatever shape the gateway returns.
-        text: Optional[str] = None
-        if isinstance(body.get("output"), dict):
-            out = body["output"]
-            text = (
-                out.get("text")
-                or out.get("message")
-                or out.get("content")
-                or out.get("response")
-            )
-        elif isinstance(body.get("output"), str):
-            text = body["output"]
-
-        if text is None:
-            text = (
-                body.get("text")
-                or body.get("message")
-                or body.get("content")
-                or body.get("response")
-            )
-            if isinstance(text, dict):
-                text = json.dumps(text)
-
+    def _build_output(
+        *,
+        text: str,
+        request_id: str,
+        elapsed_ms: int,
+        stderr: str,
+    ) -> Dict[str, Any]:
         json_events: List[Dict[str, Any]] = [
             {
                 "type": "item.completed",
                 "item": {
                     "id": f"item_{request_id}",
                     "type": "agent_message",
-                    "text": str(text) if text is not None else "",
+                    "text": text,
                 },
             }
         ]
-        upstream_output = body.get("output") if isinstance(body.get("output"), dict) else {}
-        return {
+        out: Dict[str, Any] = {
             "json_events": json_events,
-            "agent_id": body.get("agent_id", DEFAULT_AGENT_ID),
+            "agent_id": DEFAULT_AGENT_ID,
             "request_id": request_id,
             "duration_ms": elapsed_ms,
-            "upstream": upstream_output or body,
+            "transport": "cli",
         }
+        if stderr.strip():
+            out["stderr_hint"] = stderr.strip()[:200]
+        return out
