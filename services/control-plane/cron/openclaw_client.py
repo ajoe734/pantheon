@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import sys
 import uuid
+from pathlib import Path
 from typing import Any, Callable
 
 from models import OpenClawRuntimePin, WorkflowDefinition, utc_now
@@ -13,6 +15,36 @@ Transport = Callable[[dict[str, Any]], dict[str, Any]]
 def _clean(value: str | None) -> str | None:
     cleaned = str(value or "").strip()
     return cleaned or None
+
+
+def _build_default_gateway_transport() -> Transport | None:
+    """Build an OpenClawCronGatewayTransport when OPENCLAW_PAPER_ADAPTER_ENABLED=true.
+
+    Returns None when the env flag is absent, false, or the adapter cannot be loaded,
+    so callers fall back to dry-run/local-only mode without raising.
+    """
+    if os.environ.get("OPENCLAW_PAPER_ADAPTER_ENABLED", "").lower() != "true":
+        return None
+    try:
+        _repo_root = str(Path(__file__).resolve().parents[3])
+        if _repo_root not in sys.path:
+            sys.path.insert(0, _repo_root)
+        from integrations.openclaw.adapter import (  # type: ignore[import]
+            OpenClawCronGatewayTransport,
+            OpenClawDockerGatewayRuntime,
+            OpenClawGatewayConfig,
+        )
+        runtime = OpenClawDockerGatewayRuntime(
+            OpenClawGatewayConfig(
+                host=os.environ.get("OPENCLAW_GATEWAY_HOST", "127.0.0.1"),
+                host_port=int(os.environ.get("OPENCLAW_GATEWAY_PORT", "18789")),
+                gateway_token=os.environ.get("OPENCLAW_GATEWAY_TOKEN", "pantheon-local-token"),
+                container_name=os.environ.get("OPENCLAW_CONTAINER_NAME", "pantheon-openclaw-gateway"),
+            )
+        )
+        return OpenClawCronGatewayTransport(runtime)
+    except Exception:  # noqa: BLE001 — adapter unavailable; fall through to dry-run
+        return None
 
 
 class OpenClawCronClient:
@@ -34,7 +66,7 @@ class OpenClawCronClient:
             or os.environ.get("OPENCLAW_BASE_URL")
             or os.environ.get("OPENCLAW_GATEWAY_URL", "ws://127.0.0.1:18789")
         )
-        self.transport = transport
+        self.transport = transport if transport is not None else _build_default_gateway_transport()
         self._adapter_boundary = {
             "integration_boundary": "pantheon-openclaw-gateway-adapter",
             "workspace_ref": _clean(os.environ.get("PANTHEON_WORKSPACE_REF")),
