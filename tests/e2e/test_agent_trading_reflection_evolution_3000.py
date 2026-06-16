@@ -330,6 +330,14 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["lean_object_store_packet_readback_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_object_store_packet_readback_target_count"] == DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
     assert summary["lean_object_store_loaded_signal_from_packet_target_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_object_store_all_target_signal_readback_count"] == DEFAULT_CASE_COUNT
+    assert summary["lean_object_store_packet_target_execution_count"] == (
+        DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
+    )
+    assert summary["lean_object_store_packet_target_execution_pass_count"] == (
+        DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
+    )
+    assert summary["lean_object_store_all_packet_targets_executed_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_packet_execution_projection_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_packet_execution_projection_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["lean_packet_execution_projection_leg_count"] == DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
@@ -508,7 +516,8 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     ]
     assert coverage["lean_object_store_packet_readback_target_counts"] == [PORTFOLIO_LEG_COUNT]
     assert coverage["lean_object_store_packet_readback_loaded_signal_sources"] == [
-        "first_packet_target"
+        "all_packet_targets",
+        "first_packet_target",
     ]
     assert set(coverage["lean_object_store_packet_readback_replay_flags"]) == {
         "algorithm_executed_loaded_packet_signal",
@@ -518,6 +527,15 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "loaded_signal_from_first_packet_target",
         "loaded_signal_quantity_matches_first_target",
         "loaded_signal_symbol_matches_first_target",
+        "all_packet_target_signals_loaded_from_object_store",
+        "loaded_signal_refs_match_packet_targets",
+        "loaded_signal_symbols_match_packet_targets",
+        "loaded_signal_quantities_match_packet_targets",
+        "loaded_signal_metadata_binds_packet_targets",
+        "all_packet_targets_executed_by_smoke",
+        "executed_packet_target_refs_match_packet",
+        "executed_packet_target_signal_ids_match_packet",
+        "executed_packet_target_symbols_match_packet",
         "object_store_keys_include_packet_artifact_and_metadata",
         "packet_hash_matches_persona_packet",
         "packet_present_in_object_store_artifact",
@@ -4664,6 +4682,18 @@ def _assert_operational_context(case: dict) -> None:
     assert packet_readback["loaded_signal_id"] == packet_readback["target_signal_ids"][0]
     assert packet_readback["loaded_signal_symbol"] == packet_readback["target_symbols"][0]
     assert packet_readback["loaded_signal_source_target_ref"] == packet_readback["target_refs"][0]
+    assert packet_readback["loaded_signal_count"] == PORTFOLIO_LEG_COUNT
+    assert packet_readback["loaded_signal_ids"] == packet_readback["target_signal_ids"]
+    assert packet_readback["loaded_signal_symbols"] == packet_readback["target_symbols"]
+    assert packet_readback["loaded_signal_source_target_refs"] == packet_readback["target_refs"]
+    assert packet_readback["executed_packet_target_count"] == PORTFOLIO_LEG_COUNT
+    assert packet_readback["executed_packet_target_refs"] == packet_readback["target_refs"]
+    assert packet_readback["executed_packet_target_signal_ids"] == packet_readback["target_signal_ids"]
+    assert packet_readback["executed_packet_target_symbols"] == packet_readback["target_symbols"]
+    assert len(packet_readback["packet_target_executions"]) == PORTFOLIO_LEG_COUNT
+    for execution in packet_readback["packet_target_executions"]:
+        assert execution["fill_count"] >= 1
+        assert all(execution["replay"].values())
     assert packet_readback["normalized_experiment_ref"] == experiment_ref
     assert packet_readback["tracking_reconciliation_ref"] == tracking_reconciliation_ref
     assert packet_readback["tracking_repair_ref"] == tracking_repair_ref
@@ -4759,6 +4789,8 @@ def _assert_operational_context(case: dict) -> None:
     assert replay["loaded_signal"]["signal_id"] == packet_readback["loaded_signal_id"]
     assert replay["loaded_signal"]["symbol"] == packet_readback["loaded_signal_symbol"]
     assert replay["loaded_signal"]["source_target_ref"] == packet_readback["loaded_signal_source_target_ref"]
+    assert [signal["signal_id"] for signal in replay["loaded_signals"]] == packet_readback["loaded_signal_ids"]
+    assert [signal["source_target_ref"] for signal in replay["loaded_signals"]] == packet_readback["target_refs"]
     assert replay["case_specific_packet_targets"][0]["signal_id"] == replay["loaded_signal"]["signal_id"]
     assert replay["case_specific_packet_targets"][0]["execution_symbol"] == replay["loaded_signal"]["symbol"]
     assert [target["target_ref"] for target in replay["case_specific_packet_targets"]] == (
