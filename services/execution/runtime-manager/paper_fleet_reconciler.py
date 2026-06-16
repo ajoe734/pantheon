@@ -265,14 +265,24 @@ class PaperFleetReconciler:
                         self._start_worker(binding)
                     elif self._workers[binding_id].status == "dead":
                         entry = self._workers[binding_id]
-                        if entry.restart_count < self._max_restarts:
-                            backoff = entry.restart_count * self._restart_backoff
+                        # SIGKILL (exit 137) signals an infrastructure disruption
+                        # such as OOM or a compose recreate that killed workers
+                        # while the reconciler kept running.  Do not count these
+                        # against the application-failure restart cap so the fleet
+                        # recovers automatically after a deploy event.
+                        is_sigkill = entry.last_exit_code == 137
+                        effective_restarts = 0 if is_sigkill else entry.restart_count
+                        if effective_restarts < self._max_restarts:
+                            backoff = effective_restarts * self._restart_backoff
                             ready = (
                                 entry.dead_at is None
                                 or time.monotonic() >= entry.dead_at + backoff
                             )
                             if ready:
-                                self._start_worker(binding, restart_count=entry.restart_count + 1)
+                                self._start_worker(
+                                    binding,
+                                    restart_count=effective_restarts + 1,
+                                )
                         else:
                             log.warning(
                                 "binding %s: restart cap reached (%d), not restarting",

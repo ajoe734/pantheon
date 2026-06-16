@@ -64,8 +64,10 @@ Usage:
 
 Options:
   --environment <name>   Required. dev or staging-live.
-  --component <name>     auto, root, control, exec, or all. Default: auto.
+  --component <name>     auto, root, bff, control, exec, or all. Default: auto.
                          auto maps to root for dev and all for staging-live.
+                         bff (dev only): rebuild only operator-bff; paper fleet
+                         and all other services are left running untouched.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
   --project-id <id>      GCP project. Default: pantheon-benjamin-20260528.
   --allow-dirty          Emergency only: stash dirty managed deploy worktree
@@ -222,7 +224,10 @@ done
 case "$DEPLOY_ENV" in
   dev)
     [[ "$COMPONENT" == "auto" ]] && COMPONENT="root"
-    [[ "$COMPONENT" == "root" ]] || error "dev supports only --component root"
+    case "$COMPONENT" in
+      root|bff) ;;
+      *) error "dev supports only --component root or --component bff" ;;
+    esac
     ;;
   staging-live)
     [[ "$COMPONENT" == "auto" ]] && COMPONENT="all"
@@ -838,6 +843,42 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 
+  bff)
+    # Rebuild and restart only operator-bff.  All other compose services —
+    # including the paper fleet and runtime-manager — are left running.
+    # Use this component when deploying a BFF-only fix to avoid the OOM
+    # pressure that a full root-stack rebuild causes on the dev VM.
+    snapshot_remote_state pantheon docker-compose.yml
+    prepare_deploy_worktree
+    COMPOSE_BAKE=false \
+    COMPOSE_PROFILES="" \
+    PANTHEON_ENV=dev \
+    PANTHEON_LIVE_BROKER_ENABLED=false \
+    PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
+    PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
+    PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
+    PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
+    PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \
+    PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \
+    PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
+    PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \
+    PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
+    PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
+    PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
+    MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
+    MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
+    MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
+    PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
+    PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
+      docker compose -p pantheon -f docker-compose.yml up -d --build --no-deps operator-bff \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    curl_with_retry http://127.0.0.1:18001/health \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    curl_with_retry http://127.0.0.1:18001/readyz \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    ;;
+
   exec)
     snapshot_remote_state pantheon-exec docker-compose.exec.yml
     prepare_deploy_worktree
@@ -879,6 +920,10 @@ deploy_dev_root() {
   ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" root
 }
 
+deploy_dev_bff() {
+  ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" bff
+}
+
 deploy_staging_exec() {
   ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec
 }
@@ -890,6 +935,9 @@ deploy_staging_control() {
 case "${DEPLOY_ENV}:${COMPONENT}" in
   dev:root)
     deploy_dev_root
+    ;;
+  dev:bff)
+    deploy_dev_bff
     ;;
   staging-live:exec)
     deploy_staging_exec

@@ -69,11 +69,10 @@ jobs:
         env:
           APPROVAL_RACE_ID: ${{ inputs.approval_race_id }}
         run: |
-          test -n "$PANTHEON_BFF_SMOKE_BEARER_TOKEN"
-          test -n "$PANTHEON_BFF_RBAC_TOKENS_JSON"
-          test -n "$PANTHEON_BFF_APPROVAL_RACE_TOKEN_A"
-          test -n "$PANTHEON_BFF_APPROVAL_RACE_TOKEN_B"
-          test -n "$APPROVAL_RACE_ID"
+          python3 scripts/write_bff_live_evidence_preflight.py \
+            --base-url "$PANTHEON_BFF_BASE_URL" \
+            --approval-race-id "$APPROVAL_RACE_ID" \
+            --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-LIVE-EVIDENCE-PREFLIGHT.json"
 
       - name: Strict authenticated live evidence
         run: |

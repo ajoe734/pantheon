@@ -109,6 +109,24 @@ function listFiles(dir) {
 
 const auditFiles = listFiles(AUDIT_DIR);
 
+function isInsideDir(filePath, dirPath) {
+  const relative = path.relative(dirPath, filePath);
+  return relative === "" || (relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function expectedAuditFilesAfterSummary() {
+  const files = new Set(auditFiles.map((file) => path.resolve(file)));
+  for (const filePath of [OUT_PATH, JSON_OUT_PATH]) {
+    const resolved = path.resolve(filePath);
+    if (isInsideDir(resolved, AUDIT_DIR)) files.add(resolved);
+  }
+  if (CHECKLIST_TEMPLATE_PATH && exists(CHECKLIST_TEMPLATE_PATH)) {
+    const resolvedChecklist = path.resolve(CHECKLIST_OUT_PATH);
+    if (isInsideDir(resolvedChecklist, AUDIT_DIR)) files.add(resolvedChecklist);
+  }
+  return [...files];
+}
+
 function latestAuditFile(patterns) {
   const tests = patterns.map((pattern) => pattern instanceof RegExp ? pattern : new RegExp(pattern));
   return auditFiles
@@ -917,7 +935,8 @@ function buildGate7(previousGates) {
   const failures = priorChecks.filter((check) => ["fail", "missing"].includes(check.status));
   const exceptionsFile = latestAuditFile([/^release-gate-exceptions\.md$/]);
   const exceptionsPresent = Boolean(process.env.PANTHEON_RELEASE_GATE_EXCEPTIONS || exceptionsFile);
-  const evidencePresent = auditFiles.length > 0;
+  const evidenceFiles = expectedAuditFilesAfterSummary();
+  const evidencePresent = evidenceFiles.length > 0;
   const shaRecorded = envPresent("PANTHEON_FRONTEND_SHA", "GITHUB_SHA") && envPresent("PANTHEON_BFF_SHA", "PANTHEON_BACKEND_SHA", "PANTHEON_PANTHEON_SHA") && envPresent("PANTHEON_BFF_BASE_URL", "VITE_BFF_BASE_URL");
 
   return [
@@ -934,7 +953,7 @@ function buildGate7(previousGates) {
     makeCheck(`Evidence written to \`${rel(AUDIT_DIR)}\`.`, evidencePresent ? "pass" : "missing", {
       owner: evidencePresent ? "" : GATE_OWNERS[7],
       evidence: AUDIT_DIR,
-      note: `${auditFiles.length} audit file(s) found`,
+      note: `${evidenceFiles.length} audit file(s) found`,
     }),
     makeCheck("Backend SHA + frontend SHA + BFF URL recorded.", shaRecorded ? "pass" : "missing", {
       owner: shaRecorded ? "" : GATE_OWNERS[7],
