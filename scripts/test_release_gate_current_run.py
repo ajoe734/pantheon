@@ -64,7 +64,53 @@ def test_release_gate_aggregate_defaults_to_current_run_audit_dir(tmp_path: Path
     )
     assert evidence_check["label"] == "Evidence written to `.lovable/audits/current-run`."
     assert evidence_check["status"] == "pass"
-    assert evidence_check["note"] == "1 audit file(s) found"
+    assert evidence_check["note"] == "3 audit file(s) found"
+
+
+def test_release_gate_counts_generated_summary_files_as_current_run_evidence(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode in {0, 1}, result.stderr
+
+    summary = json.loads((current_run / "release-gate-summary.json").read_text(encoding="utf-8"))
+    evidence_check = next(
+        check
+        for check in summary["gates"]["7"]
+        if check["label"].startswith("Evidence written to")
+    )
+    assert evidence_check["status"] == "pass"
+    assert evidence_check["note"] == "2 audit file(s) found"
 
 
 def test_integration_gate_uploads_only_current_run_audits() -> None:
@@ -228,6 +274,9 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "PANTHEON_BFF_RBAC_TOKENS_JSON" in text
     assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A" in text
     assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B" in text
+    assert "scripts/write_bff_live_evidence_preflight.py" in text
+    assert "BFF-LIVE-EVIDENCE-PREFLIGHT.json" in text
+    assert 'test -n "$PANTHEON_BFF_SMOKE_BEARER_TOKEN"' not in text
     assert "scripts/probe_bff_authenticated_live.py" in text
     assert "--strict-live-evidence" in text
     assert "--include-writes" in text
@@ -259,6 +308,9 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "PANTHEON_BFF_RBAC_TOKENS_JSON" in text
     assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A" in text
     assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B" in text
+    assert "scripts/write_bff_live_evidence_preflight.py" in text
+    assert "BFF-LIVE-EVIDENCE-PREFLIGHT.json" in text
+    assert 'test -n "$PANTHEON_BFF_SMOKE_BEARER_TOKEN"' not in text
     assert "scripts/probe_bff_authenticated_live.py" in text
     assert "--strict-live-evidence" in text
     assert "--include-writes" in text
