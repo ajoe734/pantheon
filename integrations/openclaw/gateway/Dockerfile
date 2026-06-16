@@ -23,5 +23,15 @@ ARG ANTHROPIC_CLAUDE_CODE_NPM_VERSION=2.1.178
 USER root
 RUN npm install -g "@anthropic-ai/claude-code@${ANTHROPIC_CLAUDE_CODE_NPM_VERSION}" \
     && claude --version
+# Point the Claude CLI's default config dir (~/.claude) at the persistent
+# openclaw-data volume location. OpenClaw spawns `claude -p` in a sanitized env
+# WITHOUT CLAUDE_CONFIG_DIR, so it resolves the default ~/.claude — this symlink
+# makes that default find the one-time `claude auth login` credentials that live
+# on the volume (CLAUDE_CONFIG_DIR=/home/node/.openclaw/claude-cli), so the login
+# survives container recreate. Dangling at build time; resolves once the volume
+# mounts at runtime.
+RUN rm -rf /home/node/.claude \
+    && ln -s /home/node/.openclaw/claude-cli /home/node/.claude \
+    && chown -h node:node /home/node/.claude
 # Restore the upstream runtime user; entrypoint/cmd/workdir are inherited.
 USER node
