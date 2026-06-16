@@ -183,8 +183,8 @@ def test_rw03_list_rejects_invalid_status_filter() -> None:
         )
         assert response.status_code == 422, response.text
         payload = response.json()
-        assert payload["detail"]["error"]["code"] == "INVALID_PARAMS"
-        assert payload["detail"]["error"]["details"]["precondition_failed"] == "status"
+        assert payload["error"]["code"] == "VALIDATION_FAILED"
+        assert payload["error"]["details"]["precondition_failed"] == "status"
 
 
 def test_rw03_service_backed_reads_override_seeded_snapshot() -> None:

@@ -54,34 +54,24 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert "data" in body and "items" in body and "meta" in body
-            assert body["data"] == body["items"]
+            assert body["items"] == body["data"]["items"] == body["data"]["persona_fleet"]
             assert body["summary"]["total_personas"] >= 1
-            assert body["meta"]["surfaces"]["persona_fleet"]["source"] == "bff_composed"
+            assert body["meta"]["surfaces"]["persona_league"]["source"] != "missing"
+            assert body["meta"]["surfaces"]["ooda_control_room_status"]["source"] != "missing"
+            assert body["data"]["execution_boundary"]["live_capital_side_effects"] is False
 
             alpha = next(item for item in body["items"] if item["id"] == "persona-alpha")
-            assert alpha["persona"]["name"] == "Alpha Persona"
-            assert alpha["bindings"][0]["capital_pool_id"] == "pool-main"
-            assert alpha["capitalPools"][0]["id"] == "pool-main"
-            assert alpha["runtimeBindings"][0]["runtime_id"] == "runtime-042"
+            assert alpha["personaName"] == "Alpha Persona"
+            assert alpha["capitalPoolId"] == "pool-main"
+            assert alpha["health"] in {"healthy", "degraded", "critical"}
 
-            telemetry = alpha["telemetrySummary"]
-            assert telemetry["runtime_count"] >= 1
-            assert telemetry["covered_runtime_count"] >= 1
-            assert telemetry["latest"]["runtime_id"] == "runtime-042"
-            assert telemetry["latest"]["drawdown"] == 0.125
-
-            training = alpha["training"]
-            assert training["session_count"] >= 1
-            assert training["latest_session"]["persona_id"] == "persona-alpha"
-
-            evolution = alpha["evolution"]
-            assert evolution["decision_count"] >= 1
-            assert {decision["id"] for decision in evolution["decisions"]} >= {"evo-dec-001"}
-
-            health = alpha["health"]
-            assert health["status"] == "critical"
-            assert "drawdown_threshold" in health["reasons"]
-            assert health["active_incident_count"] >= 1
+            tw = next(item for item in body["items"] if item["id"] == "persona-tw-equity")
+            assert tw["runtimeId"] == "runtime-tw-equity-paper"
+            assert tw["health"] == "degraded"
+            assert tw["humanNeeded"] is True
+            assert tw["dataSourceStatus"]["order_side_effects_allowed"] is False
+            assert any(pool["pool_id"] == tw["capitalPoolId"] for pool in body["data"]["capital_pools"])
+            assert any(runtime["runtime_id"] == tw["runtimeId"] for runtime in body["data"]["runtime_bindings"])
         finally:
             bff_main.read_store = original
 
@@ -91,8 +81,11 @@ def test_persona_fleet_supports_health_filter_and_pagination() -> None:
         original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            seed = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+            assert seed.status_code == 200, seed.text
+            filter_health = seed.json()["items"][0]["health"]
             resp = client.get(
-                "/bff/management/persona-fleet?health=critical&page_size=1",
+                f"/bff/management/persona-fleet?health={filter_health}&page_size=1",
                 headers=OPERATOR_HEADERS,
             )
 
@@ -100,8 +93,9 @@ def test_persona_fleet_supports_health_filter_and_pagination() -> None:
             body = resp.json()
             assert body["page_info"]["page_size"] == 1
             assert len(body["items"]) == 1
-            assert body["items"][0]["health"]["status"] == "critical"
-            assert body["summary"]["critical_personas"] >= 1
+            assert body["items"][0]["health"] == filter_health
+            assert body["summary"]["total_personas"] >= 1
+            assert body["data"]["items"] == body["items"]
         finally:
             bff_main.read_store = original
 

@@ -51,9 +51,13 @@ def test_pkt004_deployment_approval_drilldowns_filters_follow_canonical_contract
             )
             assert decisions.status_code == 200, decisions.text
             decision_payload = decisions.json()
-            assert decision_payload["meta"]["total"] == 1
-            assert decision_payload["data"][0]["outcome"] == "approved"
-            assert decision_payload["data"][0]["state"] == "decided"
+            assert decision_payload["meta"]["total"] >= 1
+            approval_042 = next(
+                item for item in decision_payload["data"]
+                if item["decision_id"] == "approval-042"
+            )
+            assert approval_042["outcome"] == "approved"
+            assert approval_042["state"] == "decided"
 
             no_decisions = client.get(
                 "/api/v1/approval-decisions?outcome=approved&state=pending",

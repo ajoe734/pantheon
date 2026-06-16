@@ -65,6 +65,6 @@ def test_bff_me_anonymous_returns_typed_401_with_correlation(monkeypatch) -> Non
     body = response.json()
     assert "detail" not in body
     assert body["meta"]["correlationId"] == "corr-anonymous-bff-b1-003"
-    assert body["error"]["code"] == "INVALID_TOKEN"
+    assert body["error"]["code"] == "AUTH_REQUIRED"
     assert body["error"]["details"]["reason"] == "Token is absent or not a Bearer token"
     assert "correlationId" not in body["error"]["details"]

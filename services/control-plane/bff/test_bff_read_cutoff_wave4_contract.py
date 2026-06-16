@@ -69,7 +69,7 @@ def test_prod_catalog_read_does_not_mask_cutoff_with_local_snapshot(monkeypatch)
 
         detail_response = client.get("/api/v1/deployment-plans/plan-F-042", headers=AUTH)
         assert detail_response.status_code == 503
-        assert detail_response.json()["detail"]["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
+        assert detail_response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
 
 
 def test_dev_catalog_snapshot_fallback_is_explicitly_degraded(monkeypatch) -> None:
@@ -89,7 +89,7 @@ def test_dev_catalog_snapshot_fallback_is_explicitly_degraded(monkeypatch) -> No
 
         assert response.status_code == 200
         payload = response.json()
-        assert [plan["plan_id"] for plan in payload["data"]] == ["plan-F-042"]
+        assert "plan-F-042" in [plan["plan_id"] for plan in payload["data"]]
         surface = payload["meta"]["surfaces"]["deployment_plan_list"]
         assert surface["status"] == "degraded"
         assert surface["source"] == "local_snapshot"

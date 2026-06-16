@@ -157,7 +157,7 @@ def test_bff_research_experiment_detail_not_found() -> None:
             )
             assert resp.status_code == 404, resp.text
             body = resp.json()
-            assert "detail" in body
+            assert body["error"]["code"] == "RESOURCE_NOT_FOUND"
         finally:
             bff_main.read_store = original
             bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()

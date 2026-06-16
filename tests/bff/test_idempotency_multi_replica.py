@@ -87,7 +87,7 @@ def receipt_id(payload: dict[str, object]) -> str:
 
 
 def bff_error_code(payload: dict[str, object]) -> str:
-    detail = payload.get("detail")
+    detail = payload.get("detail") if isinstance(payload.get("detail"), dict) else payload
     assert isinstance(detail, dict)
     error = detail.get("error")
     assert isinstance(error, dict)
@@ -122,7 +122,9 @@ def test_idempotency_key_replays_same_response_across_replicas() -> None:
 
             assert first.status_code == 202, first.text
             assert replay.status_code == 202, replay.text
-            assert replay.json() == first.json()
+            assert receipt_id(replay.json()) == receipt_id(first.json())
+            assert first.json()["meta"]["idempotency"]["replayed"] is False
+            assert replay.json()["meta"]["idempotency"]["replayed"] is True
             first_receipt = receipt_id(first.json())
             assert first_receipt
 

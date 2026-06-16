@@ -43,6 +43,10 @@ def _receipt_id(payload: dict) -> str:
     return payload["data"]["receipt_id"]
 
 
+def _error(response) -> dict:
+    return response.json()["error"]
+
+
 def test_deployment_create_writes_command_store_and_replays_from_durable_idempotency() -> None:
     with _isolated_command_bridge() as client:
         headers = {**HEADERS, "Idempotency-Key": "sem-002-deploy-create"}
@@ -89,9 +93,9 @@ def test_command_routes_require_header_idempotency_and_reject_body_key() -> None
         )
 
         assert missing.status_code == 400, missing.text
-        assert missing.json()["detail"]["error"]["code"] == "INVALID_PARAMS"
+        assert _error(missing)["code"] == "VALIDATION_FAILED"
         assert body_key.status_code == 400, body_key.text
-        assert body_key.json()["detail"]["error"]["code"] == "INVALID_REQUEST"
+        assert _error(body_key)["code"] == "VALIDATION_FAILED"
         assert alias.status_code == 201, alias.text
         assert alias.json()["meta"]["idempotency"]["idempotencyKey"] == "sem-002-deploy-alias"
         assert len(bff_main.command_store._get_all_commands()) == 1
@@ -233,7 +237,7 @@ def test_durable_idempotency_conflict_detected_after_memory_clear() -> None:
         # Same key, different payload — must conflict even after memory clear
         conflict = client.post("/bff/deployments", headers=headers, json={"stage": "live"})
         assert conflict.status_code == 409, conflict.text
-        assert conflict.json()["detail"]["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+        assert _error(conflict)["code"] == "IDEMPOTENCY_CONFLICT"
 
         # Same key, same payload — must replay even after memory clear
         replay = client.post("/bff/deployments", headers=headers, json={"stage": "paper"})
@@ -271,7 +275,7 @@ def test_confirm_token_server_generated_id_replays_on_same_key_retry() -> None:
         bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
         conflict = client.post("/bff/confirm-tokens", headers=headers, json={"reason": "different"})
         assert conflict.status_code == 409, conflict.text
-        assert conflict.json()["detail"]["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+        assert _error(conflict)["code"] == "IDEMPOTENCY_CONFLICT"
 
         # Only one command record created
         assert len(bff_main.command_store._get_all_commands()) == 1

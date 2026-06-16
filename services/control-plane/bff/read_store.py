@@ -13519,16 +13519,30 @@ class ReadSurfaceStore:
         Falls through to the in-memory dict so experiments created in the same
         process are always visible before the file-cache is flushed.
         """
+        local_experiments = self._data.get("research_experiments")
+        if not isinstance(local_experiments, dict):
+            local_experiments = {}
         defaults = _governed_research_experiment_defaults()
         available, records = self._service.list_records("research_experiments")
         if available:
             records_by_id = {
                 str(r.get("experiment_id") or r.get("id") or ""): r
                 for r in records
-                if isinstance(r, dict)
+                if isinstance(r, dict) and str(r.get("experiment_id") or r.get("id") or "").strip()
             }
+            for overlay_key, experiment in local_experiments.items():
+                if not isinstance(experiment, dict):
+                    continue
+                experiment_id = str(
+                    experiment.get("experiment_id")
+                    or experiment.get("id")
+                    or overlay_key
+                    or ""
+                ).strip()
+                if experiment_id:
+                    records_by_id[experiment_id] = experiment
         else:
-            records_by_id = dict(self._data.get("research_experiments") or {})
+            records_by_id = dict(local_experiments)
         for experiment_id, default in defaults.items():
             existing = records_by_id.get(experiment_id)
             if isinstance(existing, dict):
@@ -13564,9 +13578,6 @@ class ReadSurfaceStore:
     def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not experiment_id:
             return None
-        available, record = self._service.record("research_experiments", experiment_id)
-        if available and record:
-            return self._project_research_experiment_detail(record) if record else None
         experiment = self._research_experiments_store().get(experiment_id)
         if not experiment:
             return None
@@ -13583,7 +13594,7 @@ class ReadSurfaceStore:
         launch_context: Dict[str, Any],
         queued_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        experiments = self._data.get("research_experiments") or {}
+        experiments = self._research_experiments_store()
 
         timestamp = queued_at or _utc_now_rfc3339()
         date_part = timestamp[:10].replace("-", "")

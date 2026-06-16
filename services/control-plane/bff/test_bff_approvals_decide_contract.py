@@ -330,8 +330,8 @@ def test_bff_approvals_batch_decide_partial_failure_returns_per_item_status() ->
             assert body["status"] == "partial"
             assert body["summary"] == {"total": 3, "accepted": 1, "failed": 2}
             assert [item["status"] for item in body["results"]] == ["accepted", "failed", "failed"]
-            assert body["results"][1]["error"]["code"] == "OBJECT_NOT_FOUND"
-            assert body["results"][2]["error"]["code"] == "INVALID_PARAMS"
+            assert body["results"][1]["error"]["code"] == "RESOURCE_NOT_FOUND"
+            assert body["results"][2]["error"]["code"] == "VALIDATION_FAILED"
             assert bff_main.command_store._get_all_commands()[0]["target"]["id"] == PENDING_APPROVAL_ID
         finally:
             bff_main.read_store = original_read_store
@@ -358,7 +358,7 @@ def test_bff_approvals_batch_decide_rejects_body_idempotency_before_commands() -
             )
 
             assert resp.status_code == 400, resp.text
-            detail = resp.json()["detail"]
+            detail = resp.json()
             assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
             assert bff_main.command_store._get_all_commands() == []
         finally:
