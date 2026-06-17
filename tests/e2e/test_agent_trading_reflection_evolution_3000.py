@@ -160,8 +160,14 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["no_leakage_holdout_count"] == DEFAULT_CASE_COUNT
     assert summary["no_leakage_temporal_protocol_count"] == DEFAULT_CASE_COUNT
     assert summary["no_leakage_temporal_protocol_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["no_leakage_blind_admission_precommit_count"] == (
+        DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
+    )
     assert summary["strict_oos_evolution_proof_count"] == DEFAULT_CASE_COUNT
     assert summary["strict_oos_evolution_proof_pass_count"] == DEFAULT_CASE_COUNT
+    assert summary["strict_oos_blind_admission_precommit_binding_count"] == (
+        DEFAULT_CASE_COUNT * PORTFOLIO_LEG_COUNT
+    )
     assert summary["strict_oos_evolution_count"] == DEFAULT_CASE_COUNT
     assert summary["blind_future_oos_audit_count"] == DEFAULT_CASE_COUNT
     assert summary["blind_future_oos_audit_pass_count"] == DEFAULT_CASE_COUNT
@@ -1406,6 +1412,15 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "observe_decide->feedback_reflect->holdout_evolve->future_holdout_verify"
     ]
     assert coverage["no_leakage_temporal_protocol_stage_windows"] == ["feedback->holdout->future_holdout"]
+    assert coverage["no_leakage_blind_admission_precommit_source_windows"] == [
+        "observe->feedback->holdout"
+    ]
+    assert coverage["no_leakage_blind_admission_precommit_forbidden_windows"] == [
+        "future_holdout"
+    ]
+    assert coverage["no_leakage_blind_admission_precommit_validation_windows"] == [
+        "future_holdout"
+    ]
     assert coverage["future_blind_window_admission_models"] == [
         FUTURE_BLIND_WINDOW_ADMISSION_MODEL_ID
     ]
@@ -1445,6 +1460,7 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "replayable",
         "strict_improvement_on_each_unseen_window",
         "trajectory_agrees_with_oos_steps",
+        "strict_proof_binds_blind_admission_precommits",
         "uses_two_distinct_validation_windows",
     }
     assert coverage["blind_future_oos_audit_models"] == [
@@ -1957,6 +1973,22 @@ def _assert_no_leakage_temporal_protocol(case: dict) -> None:
     assert protocol["input_hash"]
 
     assert len(protocol["window_boundaries"]) == PORTFOLIO_LEG_COUNT
+    assert len(protocol["blind_admission_precommit_refs"]) == PORTFOLIO_LEG_COUNT
+    assert len(protocol["blind_admission_precommits"]) == PORTFOLIO_LEG_COUNT
+    for precommit, boundary in zip(
+        protocol["blind_admission_precommits"], protocol["window_boundaries"]
+    ):
+        assert precommit["precommit_ref"] in protocol["blind_admission_precommit_refs"]
+        assert precommit["precommit_ref"].startswith("future-blind-admission-precommit://")
+        assert precommit["instrument"] == boundary["instrument"]
+        assert precommit["start_index"] == boundary["start_index"]
+        assert precommit["source_windows"] == ["observe", "feedback", "holdout"]
+        assert precommit["forbidden_windows_not_used"] == ["future_holdout"]
+        assert precommit["validation_window"] == "future_holdout"
+        assert precommit["future_holdout_period_included"] is False
+        assert precommit["future_holdout_hash_excluded"] is True
+        assert precommit["precommitted_before_validation_window"] is True
+        assert precommit["input_hash"]
     for boundary in protocol["window_boundaries"]:
         assert boundary["instrument"] in case["portfolio"]["instruments"]
         assert boundary["start_index"] in case["portfolio"]["start_indices"]
@@ -2035,6 +2067,8 @@ def _assert_no_leakage_temporal_protocol(case: dict) -> None:
     assert replay["case_upstream_pre_holdout_only"] is True
     assert replay["strict_improvement_on_unseen_holdouts"] is True
     assert replay["trajectory_unseen_windows_match_protocol"] is True
+    assert replay["blind_admission_precommits_bound_to_windows"] is True
+    assert replay["blind_admission_precommits_exclude_future_holdout"] is True
 
     check_by_name = {
         check["check"]: check
@@ -2054,6 +2088,15 @@ def _assert_strict_oos_evolution_proof(case: dict) -> None:
     assert proof["persona_id"] == case["persona_id"]
     assert proof["proof_ref"] == f"strict-oos-evolution://{case['case_id']}"
     assert proof["input_hash"]
+    assert proof["blind_admission_precommit_refs"] == case["evolution"][
+        "no_leakage_protocol"
+    ]["blind_admission_precommit_refs"]
+    assert len(proof["blind_admission_precommit_refs"]) == PORTFOLIO_LEG_COUNT
+    assert all(
+        ref.startswith("future-blind-admission-precommit://")
+        for ref in proof["blind_admission_precommit_refs"]
+    )
+    assert set(proof["blind_admission_precommit_refs"]).issubset(set(proof["evidence_refs"]))
 
     assert [policy["generation"] for policy in proof["policy_lineage"]] == [0, 1, 2]
     assert [policy["policy_id"] for policy in proof["policy_lineage"]] == [
@@ -2115,6 +2158,7 @@ def _assert_strict_oos_evolution_proof(case: dict) -> None:
     assert replay["no_leakage_protocol_passed"] is True
     assert replay["evolution_trajectory_passed"] is True
     assert replay["evolution_decision_executed"] is True
+    assert replay["strict_proof_binds_blind_admission_precommits"] is True
 
     check_by_name = {
         check["check"]: check

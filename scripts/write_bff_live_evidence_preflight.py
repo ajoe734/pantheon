@@ -21,6 +21,15 @@ REQUIRED_SECRET_ENV_VARS = (
     "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A",
     "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B",
 )
+RBAC_REQUIRED_LABELS = (
+    "viewer",
+    "operator",
+    "reviewer",
+    "approver",
+    "admin",
+    "empty",
+    "unknown",
+)
 
 REQUIRED_INPUT_NAMES = (
     "PANTHEON_BFF_BASE_URL",
@@ -58,6 +67,63 @@ def invalid_soak_seconds(value: str) -> str:
     return ""
 
 
+def rbac_token_value(value: Any) -> str:
+    if isinstance(value, str):
+        token = value
+    elif isinstance(value, dict):
+        token = str(value.get("token") or value.get("bearer") or "")
+    else:
+        token = ""
+    return token.removeprefix("Bearer ").strip()
+
+
+def empty_rbac_matrix() -> dict[str, Any]:
+    return {
+        "required_labels": list(RBAC_REQUIRED_LABELS),
+        "present_labels": [],
+        "missing_labels": list(RBAC_REQUIRED_LABELS),
+        "provided_cases": 0,
+        "expected_cases": len(RBAC_REQUIRED_LABELS),
+    }
+
+
+def inspect_rbac_tokens_json(raw: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    if not present(raw):
+        return empty_rbac_matrix(), []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return empty_rbac_matrix(), [
+            {"name": "PANTHEON_BFF_RBAC_TOKENS_JSON", "reason": f"must be valid JSON: {exc.msg}"}
+        ]
+    if not isinstance(parsed, dict):
+        return empty_rbac_matrix(), [
+            {"name": "PANTHEON_BFF_RBAC_TOKENS_JSON", "reason": "must be an object keyed by role label"}
+        ]
+
+    present_labels = [
+        label
+        for label in RBAC_REQUIRED_LABELS
+        if rbac_token_value(parsed.get(label))
+    ]
+    missing_labels = [label for label in RBAC_REQUIRED_LABELS if label not in present_labels]
+    invalid = []
+    if missing_labels:
+        invalid.append(
+            {
+                "name": "PANTHEON_BFF_RBAC_TOKENS_JSON",
+                "reason": "missing bearer tokens for labels: " + ", ".join(missing_labels),
+            }
+        )
+    return {
+        "required_labels": list(RBAC_REQUIRED_LABELS),
+        "present_labels": present_labels,
+        "missing_labels": missing_labels,
+        "provided_cases": len(present_labels),
+        "expected_cases": len(RBAC_REQUIRED_LABELS),
+    }, invalid
+
+
 def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     required = [*REQUIRED_SECRET_ENV_VARS, *REQUIRED_INPUT_NAMES]
     present_map = {
@@ -68,11 +134,13 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     present_map["APPROVAL_RACE_ID"] = present(args.approval_race_id)
     present_map["SOAK_SECONDS"] = present(args.soak_seconds)
     missing = [name for name in required if not present_map[name]]
+    rbac_matrix, rbac_invalid = inspect_rbac_tokens_json(os.environ.get("PANTHEON_BFF_RBAC_TOKENS_JSON", ""))
     invalid = [
         {"name": "SOAK_SECONDS", "reason": reason}
         for reason in [invalid_soak_seconds(args.soak_seconds)]
         if reason
     ]
+    invalid.extend(rbac_invalid)
 
     return {
         "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
@@ -81,6 +149,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "target_url": args.base_url.strip(),
         "soak_seconds": args.soak_seconds.strip(),
         "min_soak_seconds": STRICT_LIVE_SOAK_MIN_SECONDS,
+        "rbac_matrix": rbac_matrix,
         "ref": os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", ""),
         "sha": os.environ.get("GITHUB_SHA", ""),
         "required": required,
