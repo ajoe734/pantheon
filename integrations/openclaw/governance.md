@@ -196,6 +196,18 @@ When the pinned OpenClaw version changes:
 
 **Capability boundary:** unchanged. Layering a CLI does not relax any deny rule; the claude-cli runtime is subject to the same OC-001 deny-first filtering and OC-002 job governance as any model route.
 
+### 2026-06-17: OpenClaw CLI baked into the gateway-adapter image (assistant `openclaw` provider)
+
+**What:** `services/openclaw-gateway-adapter/Dockerfile` now multi-stage-copies the OpenClaw CLI runtime (`/app` + its Node 24) from `FROM ghcr.io/openclaw/openclaw:2026.6.6 AS openclaw_cli` into the adapter image, exposing an `openclaw` wrapper on PATH. The governed **upstream pin (tag `v2026.6.6` / commit `8c802aa683510c7f7503597b54c3021733245e59`) is unchanged**; this reuses the same pin the gateway image already carries.
+
+**Reason:** the assistant `openclaw` provider (`assistant_openclaw_provider.py`, OPENCLAW-AGENT-TURN-LIVE-FIX) shells out to `openclaw agent --url ws://openclaw-gateway:18789 --token … --agent main` as a remote WS-RPC client, but the adapter image had no `openclaw` binary — so every Management-AI turn degraded with `OPENCLAW_BINARY_NOT_FOUND` while unit tests (which mock the CLI) and the skip-when-absent pytest live smoke stayed green. OpenClaw is not on npm, so it cannot be `npm i -g`'d like codex/claude; it must be copied from the governed image.
+
+**Lockstep requirement:** the adapter Dockerfile `FROM` tag MUST be bumped together with `integrations/openclaw/gateway/Dockerfile` and the pin in `OSS_INTEGRATION_CHECKLIST.md` / this file's §1. The Node 24 runtime is isolated under `/opt/openclaw` so it does not shadow the apt Node 20 used by the codex/claude CLIs.
+
+**Gate added:** `scripts/openclaw-assistant-openclaw-live-smoke.sh` drives a real agent turn against a deployed adapter and FAILS (non-skip) on degradation — the live evidence layer the prior change lacked. `compose` also now passes `OPENCLAW_GATEWAY_TOKEN` / `OPENCLAW_AGENT_ID` to the adapter (previously absent, a second latent degrade-cause).
+
+**Capability boundary:** unchanged. The adapter CLI is a remote client of the gateway; model auth stays on the gateway side, and all turns remain subject to OC-001 deny-first filtering.
+
 ## 10. Relationship to Other Governance Documents
 
 | Document | Relationship |

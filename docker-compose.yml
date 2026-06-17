@@ -430,6 +430,12 @@ services:
     environment:
       PORT: "8104"
       OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
+      # Token + agent for the `openclaw` assistant provider's WS-RPC agent turn
+      # (assistant_openclaw_provider shells out to `openclaw agent --url ... --token ...`).
+      # Must match the gateway service's OPENCLAW_GATEWAY_TOKEN. Without this the
+      # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+      OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
       OPENCLAW_UPSTREAM_TIMEOUT: ${OPENCLAW_UPSTREAM_TIMEOUT:-3}
       OPENCLAW_UPSTREAM_RETRIES: ${OPENCLAW_UPSTREAM_RETRIES:-1}
       OPENCLAW_PRODUCTION_BROKER_ENABLED: "false"
