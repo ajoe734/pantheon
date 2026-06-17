@@ -276,6 +276,7 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B" in text
     assert "scripts/write_bff_live_evidence_preflight.py" in text
     assert "BFF-LIVE-EVIDENCE-PREFLIGHT.json" in text
+    assert '--soak-seconds "${{ inputs.soak_seconds }}"' in text
     assert 'test -n "$PANTHEON_BFF_SMOKE_BEARER_TOKEN"' not in text
     assert "scripts/probe_bff_authenticated_live.py" in text
     assert "--strict-live-evidence" in text
@@ -310,6 +311,7 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B" in text
     assert "scripts/write_bff_live_evidence_preflight.py" in text
     assert "BFF-LIVE-EVIDENCE-PREFLIGHT.json" in text
+    assert '--soak-seconds "${{ inputs.soak_seconds }}"' in text
     assert 'test -n "$PANTHEON_BFF_SMOKE_BEARER_TOKEN"' not in text
     assert "scripts/probe_bff_authenticated_live.py" in text
     assert "--strict-live-evidence" in text

@@ -220,6 +220,7 @@ jobs:
           python3 scripts/write_bff_live_evidence_preflight.py \
             --base-url "$PANTHEON_BFF_BASE_URL" \
             --approval-race-id "$APPROVAL_RACE_ID" \
+            --soak-seconds "${{ inputs.soak_seconds }}" \
             --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-LIVE-EVIDENCE-PREFLIGHT.json"
 
       - name: Strict authenticated live evidence
