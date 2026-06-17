@@ -17260,6 +17260,10 @@ def _build_no_leakage_temporal_protocol(
         _instrument_window_boundary_summary(window)
         for window in episode.windows
     ]
+    blind_admission_precommits = [
+        _blind_admission_precommit(window)
+        for window in episode.windows
+    ]
     stage_contracts = [
         _temporal_stage_contract(
             stage_id="generation0_observe_decide",
@@ -17341,6 +17345,19 @@ def _build_no_leakage_temporal_protocol(
             comparison.get("unseen_by_decision_trace") is True
             for comparison in evolution_trajectory.get("comparisons", [])
         ),
+        "blind_admission_precommits_bound_to_windows": [
+            precommit["instrument"] for precommit in blind_admission_precommits
+        ] == [window.instrument for window in episode.windows]
+        and [
+            precommit["start_index"] for precommit in blind_admission_precommits
+        ] == [window.start_index for window in episode.windows],
+        "blind_admission_precommits_exclude_future_holdout": all(
+            precommit["source_windows"] == ["observe", "feedback", "holdout"]
+            and precommit["forbidden_windows_not_used"] == ["future_holdout"]
+            and precommit["future_holdout_period_included"] is False
+            and precommit["future_holdout_hash_excluded"] is True
+            for precommit in blind_admission_precommits
+        ),
     }
     return {
         "protocol_id": f"no-leakage-temporal-protocol-{episode.case_id}",
@@ -17349,6 +17366,10 @@ def _build_no_leakage_temporal_protocol(
         "persona_id": _persona_id(episode.persona),
         "protocol_path": "observe_decide->feedback_reflect->holdout_evolve->future_holdout_verify",
         "window_boundaries": window_boundaries,
+        "blind_admission_precommit_refs": [
+            precommit["precommit_ref"] for precommit in blind_admission_precommits
+        ],
+        "blind_admission_precommits": blind_admission_precommits,
         "stage_contracts": stage_contracts,
         "case_upstream_data_contract": upstream_contract,
         "replay": replay,
@@ -17359,6 +17380,9 @@ def _build_no_leakage_temporal_protocol(
                 "stage_contracts": stage_contracts,
                 "case_upstream_data_contract": upstream_contract,
                 "window_boundaries": window_boundaries,
+                "blind_admission_precommit_refs": [
+                    precommit["precommit_ref"] for precommit in blind_admission_precommits
+                ],
             },
         ),
     }
@@ -17397,6 +17421,43 @@ def _period_boundary(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "start_date": str(rows[0]["date"]),
         "end_date": str(rows[-1]["date"]),
         "bar_count": len(rows),
+    }
+
+
+def _blind_admission_precommit(window: InstrumentWindow) -> dict[str, Any]:
+    input_payload = {
+        "instrument": window.instrument,
+        "execution_symbol": window.execution_symbol,
+        "start_index": window.start_index,
+        "source_windows": ["observe", "feedback", "holdout"],
+        "forbidden_windows_not_used": ["future_holdout"],
+        "periods": {
+            "observe": _period_boundary(window.observe_rows),
+            "feedback": _period_boundary(window.feedback_rows),
+            "holdout": _period_boundary(window.holdout_rows),
+        },
+        "directions": {
+            "observe": window.observe_direction,
+            "feedback": window.feedback_direction,
+            "holdout": window.holdout_direction,
+        },
+    }
+    input_hash = _stable_payload_hash("future-blind-admission-precommit", input_payload)
+    return {
+        "precommit_ref": (
+            f"future-blind-admission-precommit://{window.instrument}/"
+            f"{window.start_index}/{input_hash}"
+        ),
+        "instrument": window.instrument,
+        "execution_symbol": window.execution_symbol,
+        "start_index": window.start_index,
+        "source_windows": ["observe", "feedback", "holdout"],
+        "forbidden_windows_not_used": ["future_holdout"],
+        "validation_window": "future_holdout",
+        "future_holdout_period_included": False,
+        "future_holdout_hash_excluded": True,
+        "precommitted_before_validation_window": True,
+        "input_hash": input_hash,
     }
 
 
@@ -17450,6 +17511,7 @@ def _no_leakage_temporal_protocol_is_usable(protocol: Mapping[str, Any]) -> bool
     replay = protocol.get("replay", {})
     stage_contracts = protocol.get("stage_contracts", [])
     upstream = protocol.get("case_upstream_data_contract", {})
+    blind_admission_precommits = list(protocol.get("blind_admission_precommits", []))
     return bool(
         protocol.get("model_id") == NO_LEAKAGE_TEMPORAL_PROTOCOL_MODEL_ID
         and protocol.get("protocol_path") == "observe_decide->feedback_reflect->holdout_evolve->future_holdout_verify"
@@ -17478,6 +17540,24 @@ def _no_leakage_temporal_protocol_is_usable(protocol: Mapping[str, Any]) -> bool
         and replay.get("case_upstream_pre_holdout_only") is True
         and replay.get("strict_improvement_on_unseen_holdouts") is True
         and replay.get("trajectory_unseen_windows_match_protocol") is True
+        and len(blind_admission_precommits) == PORTFOLIO_LEG_COUNT
+        and len(protocol.get("blind_admission_precommit_refs", [])) == PORTFOLIO_LEG_COUNT
+        and all(
+            precommit.get("source_windows") == ["observe", "feedback", "holdout"]
+            and precommit.get("forbidden_windows_not_used") == ["future_holdout"]
+            and precommit.get("future_holdout_period_included") is False
+            and precommit.get("future_holdout_hash_excluded") is True
+            and precommit.get("precommitted_before_validation_window") is True
+            and str(precommit.get("precommit_ref", "")).startswith(
+                "future-blind-admission-precommit://"
+            )
+            and precommit.get("input_hash")
+            for precommit in blind_admission_precommits
+        )
+        and protocol.get("blind_admission_precommit_refs")
+        == [precommit.get("precommit_ref") for precommit in blind_admission_precommits]
+        and replay.get("blind_admission_precommits_bound_to_windows") is True
+        and replay.get("blind_admission_precommits_exclude_future_holdout") is True
         and protocol.get("input_hash")
     )
 
@@ -17513,6 +17593,7 @@ def _build_strict_oos_evolution_proof(
         }
         for boundary in no_leakage_protocol["window_boundaries"]
     ]
+    blind_admission_precommit_refs = list(no_leakage_protocol.get("blind_admission_precommit_refs", []))
     proof_steps = [
         {
             "step_id": f"{episode.case_id}-feedback-to-holdout",
@@ -17581,6 +17662,14 @@ def _build_strict_oos_evolution_proof(
         "evolution_trajectory_passed": _evolution_trajectory_is_usable(evolution_trajectory),
         "evolution_decision_executed": _enum_value(evolution_decision.decision_state)
         == EvolutionDecisionState.EXECUTED.value,
+        "strict_proof_binds_blind_admission_precommits": (
+            len(blind_admission_precommit_refs) == PORTFOLIO_LEG_COUNT
+            and blind_admission_precommit_refs
+            == [
+                precommit.get("precommit_ref")
+                for precommit in no_leakage_protocol.get("blind_admission_precommits", [])
+            ]
+        ),
     }
     return {
         "proof_id": f"strict-oos-evolution-proof-{episode.case_id}",
@@ -17598,6 +17687,7 @@ def _build_strict_oos_evolution_proof(
             for policy in generation_policies
         ],
         "window_pairs": window_pairs,
+        "blind_admission_precommit_refs": blind_admission_precommit_refs,
         "proof_steps": proof_steps,
         "evidence_refs": [
             f"reflection://{trace['reflection_id']}" for trace in decision_traces
@@ -17607,6 +17697,7 @@ def _build_strict_oos_evolution_proof(
             f"evolution://{evolution_decision.decision_id}",
             f"trajectory://{evolution_trajectory['trajectory_id']}",
             f"no-leakage://{no_leakage_protocol['protocol_id']}",
+            *blind_admission_precommit_refs,
         ],
         "replay": replay,
         "input_hash": _stable_payload_hash(
@@ -17615,6 +17706,7 @@ def _build_strict_oos_evolution_proof(
                 "case_id": episode.case_id,
                 "policy_lineage": [policy["policy_id"] for policy in generation_policies],
                 "window_pairs": window_pairs,
+                "blind_admission_precommit_refs": blind_admission_precommit_refs,
                 "proof_steps": proof_steps,
             },
         ),
@@ -17624,6 +17716,7 @@ def _build_strict_oos_evolution_proof(
 def _strict_oos_evolution_proof_is_usable(proof: Mapping[str, Any]) -> bool:
     replay = proof.get("replay", {})
     steps = list(proof.get("proof_steps", []))
+    blind_admission_precommit_refs = list(proof.get("blind_admission_precommit_refs", []))
     return bool(
         proof.get("model_id") == STRICT_OOS_EVOLUTION_PROOF_MODEL_ID
         and proof.get("status") == "passed"
@@ -17645,6 +17738,12 @@ def _strict_oos_evolution_proof_is_usable(proof: Mapping[str, Any]) -> bool:
         and replay.get("no_leakage_protocol_passed") is True
         and replay.get("evolution_trajectory_passed") is True
         and replay.get("evolution_decision_executed") is True
+        and len(blind_admission_precommit_refs) == PORTFOLIO_LEG_COUNT
+        and all(
+            str(ref).startswith("future-blind-admission-precommit://")
+            for ref in blind_admission_precommit_refs
+        )
+        and replay.get("strict_proof_binds_blind_admission_precommits") is True
     )
 
 
@@ -21067,6 +21166,21 @@ def _build_summary(
             "->".join(stage["evaluation_window"] for stage in protocol["stage_contracts"])
             for protocol in no_leakage_protocols
         }),
+        "no_leakage_blind_admission_precommit_source_windows": sorted({
+            "->".join(precommit["source_windows"])
+            for protocol in no_leakage_protocols
+            for precommit in protocol["blind_admission_precommits"]
+        }),
+        "no_leakage_blind_admission_precommit_forbidden_windows": sorted({
+            "->".join(precommit["forbidden_windows_not_used"])
+            for protocol in no_leakage_protocols
+            for precommit in protocol["blind_admission_precommits"]
+        }),
+        "no_leakage_blind_admission_precommit_validation_windows": sorted({
+            precommit["validation_window"]
+            for protocol in no_leakage_protocols
+            for precommit in protocol["blind_admission_precommits"]
+        }),
         "future_blind_window_admission_models": [window_admission_audit["model_id"]],
         "future_blind_window_admission_source_windows": [
             "->".join(window_admission_audit["source_windows"])
@@ -21200,9 +21314,17 @@ def _build_summary(
         "no_leakage_temporal_protocol_pass_count": sum(
             1 for protocol in no_leakage_protocols if _no_leakage_temporal_protocol_is_usable(protocol)
         ),
+        "no_leakage_blind_admission_precommit_count": sum(
+            len(protocol.get("blind_admission_precommits", []))
+            for protocol in no_leakage_protocols
+        ),
         "strict_oos_evolution_proof_count": len(strict_oos_evolution_proofs),
         "strict_oos_evolution_proof_pass_count": sum(
             1 for proof in strict_oos_evolution_proofs if _strict_oos_evolution_proof_is_usable(proof)
+        ),
+        "strict_oos_blind_admission_precommit_binding_count": sum(
+            len(proof.get("blind_admission_precommit_refs", []))
+            for proof in strict_oos_evolution_proofs
         ),
         "strict_oos_evolution_count": sum(1 for item in usable if item["strict_oos_evolution"]),
         "blind_future_oos_audit_count": len(blind_future_oos_audits),
