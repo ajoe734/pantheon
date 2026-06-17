@@ -13,6 +13,7 @@ REQUIRED_SECRET_ENV_VARS = (
     "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A",
     "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B",
 )
+RBAC_REQUIRED_LABELS = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
 
 
 def run_preflight(
@@ -69,13 +70,21 @@ def test_preflight_writes_missing_inputs_without_secret_values(tmp_path: Path) -
     assert payload["present"]["SOAK_SECONDS"] is True
     assert payload["missing"] == [*REQUIRED_SECRET_ENV_VARS, "APPROVAL_RACE_ID"]
     assert payload["invalid"] == []
+    assert payload["rbac_matrix"] == {
+        "required_labels": list(RBAC_REQUIRED_LABELS),
+        "present_labels": [],
+        "missing_labels": list(RBAC_REQUIRED_LABELS),
+        "provided_cases": 0,
+        "expected_cases": len(RBAC_REQUIRED_LABELS),
+    }
 
 
 def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -> None:
     env = clean_env()
+    rbac_tokens = {label: f"{label}-secret" for label in RBAC_REQUIRED_LABELS}
     secret_values = {
         "PANTHEON_BFF_SMOKE_BEARER_TOKEN": "smoke-secret",
-        "PANTHEON_BFF_RBAC_TOKENS_JSON": '{"viewer":"viewer-secret"}',
+        "PANTHEON_BFF_RBAC_TOKENS_JSON": json.dumps(rbac_tokens),
         "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A": "race-secret-a",
         "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "race-secret-b",
     }
@@ -90,7 +99,20 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
     assert payload["missing"] == []
     assert payload["invalid"] == []
     assert all(payload["present"].values())
-    for secret_value in secret_values.values():
+    assert payload["rbac_matrix"] == {
+        "required_labels": list(RBAC_REQUIRED_LABELS),
+        "present_labels": list(RBAC_REQUIRED_LABELS),
+        "missing_labels": [],
+        "provided_cases": len(RBAC_REQUIRED_LABELS),
+        "expected_cases": len(RBAC_REQUIRED_LABELS),
+    }
+    leaked_values = [
+        "smoke-secret",
+        *rbac_tokens.values(),
+        "race-secret-a",
+        "race-secret-b",
+    ]
+    for secret_value in leaked_values:
         assert secret_value not in text
 
 
@@ -99,7 +121,9 @@ def test_preflight_rejects_short_sse_soak_before_live_write_steps(tmp_path: Path
     env.update(
         {
             "PANTHEON_BFF_SMOKE_BEARER_TOKEN": "smoke-secret",
-            "PANTHEON_BFF_RBAC_TOKENS_JSON": '{"viewer":"viewer-secret"}',
+            "PANTHEON_BFF_RBAC_TOKENS_JSON": json.dumps(
+                {label: f"{label}-secret" for label in RBAC_REQUIRED_LABELS}
+            ),
             "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A": "race-secret-a",
             "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "race-secret-b",
         }
@@ -117,3 +141,65 @@ def test_preflight_rejects_short_sse_soak_before_live_write_steps(tmp_path: Path
     assert payload["invalid"] == [
         {"name": "SOAK_SECONDS", "reason": "SOAK_SECONDS must be >= 75"}
     ]
+
+
+def test_preflight_rejects_incomplete_rbac_matrix_before_live_probes(tmp_path: Path) -> None:
+    env = clean_env()
+    env.update(
+        {
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN": "smoke-secret",
+            "PANTHEON_BFF_RBAC_TOKENS_JSON": json.dumps({"viewer": "viewer-secret"}),
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A": "race-secret-a",
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "race-secret-b",
+        }
+    )
+
+    result = run_preflight(tmp_path, env, approval_race_id="appr-live-123")
+    assert result.returncode == 1
+    assert "Invalid strict live evidence inputs" in result.stderr
+
+    output = tmp_path / ".lovable" / "audits" / "current-run" / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    text = output.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    assert payload["missing"] == []
+    assert payload["rbac_matrix"] == {
+        "required_labels": list(RBAC_REQUIRED_LABELS),
+        "present_labels": ["viewer"],
+        "missing_labels": ["operator", "reviewer", "approver", "admin", "empty", "unknown"],
+        "provided_cases": 1,
+        "expected_cases": len(RBAC_REQUIRED_LABELS),
+    }
+    assert payload["invalid"] == [
+        {
+            "name": "PANTHEON_BFF_RBAC_TOKENS_JSON",
+            "reason": "missing bearer tokens for labels: operator, reviewer, approver, admin, empty, unknown",
+        }
+    ]
+    assert "viewer-secret" not in text
+
+
+def test_preflight_rejects_malformed_rbac_json_with_safe_artifact(tmp_path: Path) -> None:
+    env = clean_env()
+    env.update(
+        {
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN": "smoke-secret",
+            "PANTHEON_BFF_RBAC_TOKENS_JSON": "{not-json",
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A": "race-secret-a",
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "race-secret-b",
+        }
+    )
+
+    result = run_preflight(tmp_path, env, approval_race_id="appr-live-123")
+    assert result.returncode == 1
+    assert "PANTHEON_BFF_RBAC_TOKENS_JSON" in result.stderr
+
+    output = tmp_path / ".lovable" / "audits" / "current-run" / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    text = output.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    assert payload["missing"] == []
+    assert payload["rbac_matrix"]["provided_cases"] == 0
+    assert payload["rbac_matrix"]["missing_labels"] == list(RBAC_REQUIRED_LABELS)
+    assert payload["invalid"][0]["name"] == "PANTHEON_BFF_RBAC_TOKENS_JSON"
+    assert payload["invalid"][0]["reason"].startswith("must be valid JSON")
+    assert "race-secret-a" not in text
+    assert "race-secret-b" not in text
