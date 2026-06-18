@@ -213,11 +213,16 @@ class AssistantOpenClawProvider:
         # call/probe/status subcommands — passing them errors with
         # "does not recognize option --url"). --json yields a structured
         # envelope on stdout (diagnostics go to stderr).
+        #
+        # The prompt is fed via STDIN (`--message -`), NOT as an argv string:
+        # Management-AI prompts carry a large context pack and a single argv that
+        # big overflows the kernel's MAX_ARG_STRLEN (128 KiB) with
+        # "[Errno 7] Argument list too long". stdin has no such limit.
         cmd = [
             binary,
             "agent",
             "--agent", self._agent_id,
-            "--message", prompt,
+            "--message", "-",
             "--json",
             "--timeout", str(self._timeout),
         ]
@@ -239,6 +244,7 @@ class AssistantOpenClawProvider:
                 text=True,
                 timeout=self._timeout,
                 env=run_env,
+                input=prompt,
             )
         except subprocess.TimeoutExpired as exc:
             raise OpenClawProviderError(
