@@ -176,18 +176,21 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         URL + token are supplied via the subprocess env the CLI reads."""
         captured: list[list[str]] = []
         captured_env: list[dict] = []
+        captured_input: list = []
 
         def fake_run(cmd, **kw):
             captured.append(list(cmd))
             captured_env.append(dict(kw.get("env") or {}))
+            captured_input.append(kw.get("input"))
             class R:
                 returncode = 0
                 stdout = TestAssistantOpenClawProviderUnit._agent_json("response")
                 stderr = ""
             return R()
 
+        big_prompt = "test " + ("x" * 200_000)  # would overflow a single argv
         provider = self._make_provider(run_func=fake_run)
-        provider.invoke("test", operator_id="op-1")
+        provider.invoke(big_prompt, operator_id="op-1")
         self.assertTrue(captured, "subprocess.run was never called")
         cmd = captured[0]
         self.assertIn("agent", cmd)
@@ -195,6 +198,11 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertIn("main", cmd)
         self.assertIn("--message", cmd)
         self.assertIn("--json", cmd)
+        # The prompt is fed via stdin (`--message -`), never as an argv string
+        # (a large prompt as argv overflows MAX_ARG_STRLEN -> "Argument list too long").
+        self.assertIn("-", cmd)
+        self.assertNotIn(big_prompt, cmd)
+        self.assertEqual(captured_input[0], big_prompt)
         # The agent subcommand does NOT accept --url/--token.
         self.assertNotIn("--url", cmd)
         self.assertNotIn("--token", cmd)
