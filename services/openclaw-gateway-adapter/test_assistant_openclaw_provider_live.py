@@ -18,6 +18,7 @@ through the actual gateway agent, not a mock.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -137,11 +138,27 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertTrue(info["ready"])
         self.assertEqual(info["status"], "ready")
 
+    @staticmethod
+    def _agent_json(text: str) -> str:
+        """Mimic `openclaw agent --json` (2026.6.6) stdout for a reply."""
+        return json.dumps(
+            {
+                "runId": "run_test",
+                "status": "ok",
+                "result": {
+                    "payloads": [{"type": "text", "text": text}],
+                    "meta": {"finalAssistantVisibleText": text, "finalAssistantRawText": text},
+                },
+            }
+        )
+
     def test_invoke_success(self) -> None:
+        reply = "Hello from mock OpenClaw agent"
+
         def fake_run(cmd, **_kw):
             class R:
                 returncode = 0
-                stdout = "Hello from mock OpenClaw agent"
+                stdout = TestAssistantOpenClawProviderUnit._agent_json(reply)
                 stderr = ""
             return R()
 
@@ -151,18 +168,21 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(result.provider, "openclaw")
         events = result.output.get("json_events", [])
         self.assertTrue(events)
-        self.assertEqual(events[0]["item"]["text"], "Hello from mock OpenClaw agent")
+        self.assertEqual(events[0]["item"]["text"], reply)
         self.assertEqual(result.output["transport"], "cli")
 
-    def test_invoke_cli_args_use_ws_url(self) -> None:
-        """Verify the CLI is invoked with the ws:// URL (not converted to http://)."""
+    def test_invoke_cli_args_and_env(self) -> None:
+        """CLI gets `agent --agent --message --json` (no --url/--token); the ws
+        URL + token are supplied via the subprocess env the CLI reads."""
         captured: list[list[str]] = []
+        captured_env: list[dict] = []
 
-        def fake_run(cmd, **_kw):
+        def fake_run(cmd, **kw):
             captured.append(list(cmd))
+            captured_env.append(dict(kw.get("env") or {}))
             class R:
                 returncode = 0
-                stdout = "response"
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("response")
                 stderr = ""
             return R()
 
@@ -170,10 +190,18 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         provider.invoke("test", operator_id="op-1")
         self.assertTrue(captured, "subprocess.run was never called")
         cmd = captured[0]
-        self.assertIn("ws://openclaw-gateway:18789", cmd, "WS URL must be passed to CLI, not http://")
         self.assertIn("agent", cmd)
-        self.assertIn("--token", cmd)
-        self.assertIn("test-token", cmd)
+        self.assertIn("--agent", cmd)
+        self.assertIn("main", cmd)
+        self.assertIn("--message", cmd)
+        self.assertIn("--json", cmd)
+        # The agent subcommand does NOT accept --url/--token.
+        self.assertNotIn("--url", cmd)
+        self.assertNotIn("--token", cmd)
+        # URL + token travel via the environment instead.
+        env = captured_env[0]
+        self.assertEqual(env.get("OPENCLAW_GATEWAY_URL"), "ws://openclaw-gateway:18789")
+        self.assertEqual(env.get("OPENCLAW_GATEWAY_TOKEN"), "test-token")
 
     def test_invoke_non_zero_exit_raises(self) -> None:
         def fake_run(cmd, **_kw):
@@ -200,12 +228,14 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_no_gateway_url_invoke_uses_default(self) -> None:
         """When no URL is set explicitly, invoke falls back to the canonical WS address."""
         captured: list[list[str]] = []
+        captured_env: list[dict] = []
 
-        def fake_run(cmd, **_kw):
+        def fake_run(cmd, **kw):
             captured.append(list(cmd))
+            captured_env.append(dict(kw.get("env") or {}))
             class R:
                 returncode = 0
-                stdout = "ok"
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("ok")
                 stderr = ""
             return R()
 
@@ -217,8 +247,12 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
         self.assertFalse(provider.configured)
         provider.invoke("test", operator_id="op-1")
-        cmd = captured[0]
-        self.assertIn("ws://openclaw-gateway:18789", cmd, "Default WS URL must be used in CLI call")
+        # URL is not a CLI arg; the default WS address is exported via env.
+        self.assertEqual(
+            captured_env[0].get("OPENCLAW_GATEWAY_URL"),
+            "ws://openclaw-gateway:18789",
+            "Default WS URL must be exported to the CLI env",
+        )
 
 
 if __name__ == "__main__":

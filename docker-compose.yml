@@ -436,6 +436,12 @@ services:
       # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
+      # The `openclaw agent` client refuses plaintext ws:// to a non-loopback
+      # address (the gateway resolves to a docker-bridge IP). The adapter↔gateway
+      # hop stays inside the single-host docker network (never routed off-box), so
+      # the upstream-sanctioned break-glass for trusted private networks applies.
+      # Revisit if the gateway is ever exposed off-host (then use wss://).
+      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-1}
       OPENCLAW_UPSTREAM_TIMEOUT: ${OPENCLAW_UPSTREAM_TIMEOUT:-3}
       OPENCLAW_UPSTREAM_RETRIES: ${OPENCLAW_UPSTREAM_RETRIES:-1}
       OPENCLAW_PRODUCTION_BROKER_ENABLED: "false"
@@ -464,6 +470,11 @@ services:
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro
       - ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:rw
+      # Persist the adapter's OpenClaw device identity + pairing approval so the
+      # one-time `openclaw devices approve` survives container recreate (the CLI
+      # connects to the gateway as a paired device; a fresh state dir re-pairs).
+      # See docs/runbooks/openclaw-adapter-device-pairing.md.
+      - openclaw-adapter-data:/root/.openclaw
     ports:
       - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
     healthcheck:
@@ -1689,6 +1700,7 @@ volumes:
   memory-data:
   nats-data:
   openclaw-data:
+  openclaw-adapter-data:
   policy-learning-data:
   postgres-data:
   promotion-data:
