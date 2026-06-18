@@ -184,8 +184,18 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["memory_retrieval_drives_next_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["memory_counterfactual_proof_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["memory_counterfactual_proof_pass_count"] == DEFAULT_CASE_COUNT * 2
+    expected_retrieved_memory_proofs = DEFAULT_CASE_COUNT * 2 - summary["persona_count"]
     assert summary["memory_counterfactual_retrieved_material_count"] == (
-        DEFAULT_CASE_COUNT * 2 - summary["persona_count"]
+        expected_retrieved_memory_proofs
+    )
+    assert summary["memory_counterfactual_missing_memory_rejects_selected_count"] == (
+        expected_retrieved_memory_proofs
+    )
+    assert summary["memory_counterfactual_admissible_decision_flip_count"] == (
+        expected_retrieved_memory_proofs
+    )
+    assert summary["memory_counterfactual_wrong_memory_rejected_count"] == (
+        expected_retrieved_memory_proofs
     )
     assert summary["memory_counterfactual_cold_start_count"] == summary["persona_count"]
     assert summary["memory_counterfactual_drives_decision_count"] == DEFAULT_CASE_COUNT
@@ -1362,11 +1372,16 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "counterfactual_scores_recomputed",
         "memory_changes_selected_score_when_retrieved",
         "memory_improves_selected_margin_when_retrieved",
+        "missing_memory_changes_admissible_decision_when_retrieved",
+        "missing_memory_invalidates_selected_candidate_when_retrieved",
         "retrieved_memory_ref_bound",
         "replayable",
         "score_delta_equals_selected_memory_adjustment",
         "selected_action_matches_memory_hint_when_retrieved",
         "selected_candidate_cites_memory_when_retrieved",
+        "selected_candidate_requires_retrieved_memory",
+        "wrong_memory_action_hint_rejected_when_retrieved",
+        "wrong_memory_identity_rejected_when_retrieved",
     }
     assert coverage["institutional_memory_lineage_models"] == [
         PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID
@@ -1915,6 +1930,7 @@ def _assert_memory_counterfactual_proof(case: dict, trace: dict) -> None:
     scorecards = artifact["scorer"]["scorecards"]
     selected_id = trace["selected_candidate_id"]
     selected_card = scorecards[selected_id]
+    memory_ref = memory_influence["influence_ref"]
 
     assert proof["model_id"] == PERSONA_MEMORY_COUNTERFACTUAL_MODEL_ID
     assert proof["status"] == "passed"
@@ -1938,10 +1954,25 @@ def _assert_memory_counterfactual_proof(case: dict, trace: dict) -> None:
         )
         assert proof["actual_scores"][candidate_id] == card["candidate_score"]
         assert proof["counterfactual_without_memory_scores"][candidate_id] == expected_counterfactual
+        if memory_ref and memory_ref in card["evidence_refs"]:
+            assert candidate_id not in proof["counterfactual_without_memory_admissible_scores"]
+        else:
+            assert proof["counterfactual_without_memory_admissible_scores"][candidate_id] == (
+                expected_counterfactual
+            )
+        if memory_ref:
+            wrong_adjustments = _expected_memory_score_adjustments(
+                proof["wrong_memory_action_hint"]
+            )
+            expected_wrong_score = round(
+                expected_counterfactual
+                + wrong_adjustments[_candidate_action_from_id(candidate_id)],
+                10,
+            )
+            assert proof["wrong_memory_scores"][candidate_id] == expected_wrong_score
 
     replay = proof["replay"]
     assert all(replay.values())
-    memory_ref = memory_influence["influence_ref"]
     if memory_ref:
         assert proof["memory_status"] == "retrieved"
         assert proof["outcome"] == "memory_material_to_selected_score"
@@ -1955,6 +1986,15 @@ def _assert_memory_counterfactual_proof(case: dict, trace: dict) -> None:
         assert proof["selected_score_delta_from_memory"] > 0
         assert proof["actual_margin_to_runner_up"] > proof["counterfactual_margin_to_runner_up"]
         assert proof["memory_margin_lift"] > 0
+        assert proof["selected_candidate_admissible_without_memory"] is False
+        assert selected_id not in proof["counterfactual_without_memory_admissible_scores"]
+        assert proof["counterfactual_without_memory_admissible_winner_id"] != selected_id
+        assert proof["missing_memory_changes_admissible_decision"] is True
+        assert proof["wrong_memory_ref"].startswith("memory://wrong-")
+        assert proof["wrong_memory_ref"] != memory_ref
+        assert proof["wrong_memory_action_hint"] != proof["selected_action"]
+        assert proof["wrong_memory_winner_id"] in proof["wrong_memory_scores"]
+        assert proof["wrong_memory_replay_accepts_actual_selection"] is False
     else:
         assert proof["memory_status"] == "cold_start_declared"
         assert proof["outcome"] == "cold_start_declared"
@@ -1962,6 +2002,14 @@ def _assert_memory_counterfactual_proof(case: dict, trace: dict) -> None:
         assert proof["selected_score_delta_from_memory"] == 0.0
         assert proof["actual_margin_to_runner_up"] == proof["counterfactual_margin_to_runner_up"]
         assert proof["memory_margin_lift"] == 0.0
+        assert proof["selected_candidate_admissible_without_memory"] is True
+        assert proof["counterfactual_without_memory_admissible_winner_id"] == selected_id
+        assert proof["missing_memory_changes_admissible_decision"] is False
+        assert proof["wrong_memory_ref"] is None
+        assert proof["wrong_memory_action_hint"] is None
+        assert proof["wrong_memory_scores"] == {}
+        assert proof["wrong_memory_winner_id"] is None
+        assert proof["wrong_memory_replay_accepts_actual_selection"] is False
 
 
 def _assert_no_leakage_temporal_protocol(case: dict) -> None:
@@ -2264,6 +2312,26 @@ def _candidate_action_from_id(candidate_id: str) -> str:
         if candidate_id.endswith(f"-{action}"):
             return action
     raise AssertionError(f"unknown candidate action in {candidate_id}")
+
+
+def _expected_memory_score_adjustments(selected_action_hint: str | None) -> dict[str, float]:
+    adjustments = {
+        "feedback-adapt": 0.0,
+        "risk-off": 0.0,
+        "retain-observe": 0.0,
+        "contrarian-check": 0.0,
+    }
+    if selected_action_hint == "feedback-adapt":
+        adjustments["feedback-adapt"] = 0.2
+        adjustments["risk-off"] = 0.05
+    elif selected_action_hint == "risk-off":
+        adjustments["risk-off"] = 0.2
+        adjustments["feedback-adapt"] = 0.05
+    elif selected_action_hint == "retain-observe":
+        adjustments["retain-observe"] = 0.12
+    elif selected_action_hint == "contrarian-check":
+        adjustments["contrarian-check"] = 0.05
+    return adjustments
 
 
 def _assert_memory_and_oss_closed_loop(case: dict) -> None:

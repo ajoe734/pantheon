@@ -6087,6 +6087,78 @@ def _build_memory_counterfactual_proof(
         10,
     )
     memory_adjustments = dict(memory_influence.get("candidate_score_adjustments", {}))
+    selected_refs = set(str(ref) for ref in selected_candidate.get("evidence_refs", []))
+    request_refs = set(str(ref) for ref in candidate_request.get("input_refs", []))
+    candidate_refs_by_id = {
+        candidate_id: {
+            str(ref) for ref in scorecards[candidate_id].get("evidence_refs", [])
+        }
+        for candidate_id in scorecards
+    }
+    if memory_ref:
+        counterfactual_without_memory_admissible_scores = {
+            candidate_id: score
+            for candidate_id, score in counterfactual_scores.items()
+            if str(memory_ref) not in candidate_refs_by_id[candidate_id]
+        }
+    else:
+        counterfactual_without_memory_admissible_scores = dict(counterfactual_scores)
+    selected_candidate_admissible_without_memory = (
+        selected_id in counterfactual_without_memory_admissible_scores
+    )
+    counterfactual_without_memory_admissible_winner_id = (
+        max(
+            counterfactual_without_memory_admissible_scores,
+            key=counterfactual_without_memory_admissible_scores.__getitem__,
+        )
+        if counterfactual_without_memory_admissible_scores
+        else None
+    )
+    missing_memory_changes_admissible_decision = (
+        counterfactual_without_memory_admissible_winner_id != selected_id
+    )
+    wrong_memory_ref: str | None = None
+    wrong_memory_action_hint: str | None = None
+    wrong_memory_scores: dict[str, float] = {}
+    wrong_memory_winner_id: str | None = None
+    wrong_memory_replay_accepts_actual_selection = False
+    if memory_ref:
+        action_order = (
+            "feedback-adapt",
+            "risk-off",
+            "retain-observe",
+            "contrarian-check",
+        )
+        wrong_memory_action_hint = next(
+            action for action in action_order if action != selected_action
+        )
+        wrong_memory_hash = _stable_payload_hash(
+            "wrong-memory-counterfactual",
+            {
+                "case_id": episode.case_id,
+                "generation": generation,
+                "actual_memory_ref": memory_ref,
+                "selected_action": selected_action,
+                "wrong_action_hint": wrong_memory_action_hint,
+            },
+        )
+        wrong_memory_ref = f"memory://wrong-{wrong_memory_hash[:16]}"
+        wrong_memory_adjustments = _memory_score_adjustments(wrong_memory_action_hint)
+        wrong_memory_scores = {
+            candidate_id: round(
+                counterfactual_scores[candidate_id]
+                + float(wrong_memory_adjustments.get(_candidate_action_key(candidate_id), 0.0)),
+                10,
+            )
+            for candidate_id in scorecards
+        }
+        wrong_memory_winner_id = max(wrong_memory_scores, key=wrong_memory_scores.__getitem__)
+        wrong_memory_replay_accepts_actual_selection = bool(
+            input_context.get("memory_influence_ref") == wrong_memory_ref
+            and wrong_memory_ref in request_refs
+            and wrong_memory_ref in selected_refs
+            and selected_action == wrong_memory_action_hint
+        )
     recomputed_scores_match = all(
         abs(
             counterfactual_scores[candidate_id]
@@ -6098,8 +6170,6 @@ def _build_memory_counterfactual_proof(
         ) <= 1e-9
         for candidate_id, card in scorecards.items()
     )
-    selected_refs = set(str(ref) for ref in selected_candidate.get("evidence_refs", []))
-    request_refs = set(str(ref) for ref in candidate_request.get("input_refs", []))
     replay = {
         "replayable": True,
         "actual_selection_replayed": actual_winner_id == selected_id,
@@ -6134,6 +6204,25 @@ def _build_memory_counterfactual_proof(
             memory_ref is not None
             or all(float(value) == 0.0 for value in memory_adjustments.values())
         ),
+        "selected_candidate_requires_retrieved_memory": (
+            memory_ref is None or str(memory_ref) in selected_refs
+        ),
+        "missing_memory_invalidates_selected_candidate_when_retrieved": (
+            memory_ref is None or selected_candidate_admissible_without_memory is False
+        ),
+        "missing_memory_changes_admissible_decision_when_retrieved": (
+            memory_ref is None
+            or (
+                counterfactual_without_memory_admissible_winner_id is not None
+                and missing_memory_changes_admissible_decision is True
+            )
+        ),
+        "wrong_memory_identity_rejected_when_retrieved": (
+            memory_ref is None or wrong_memory_replay_accepts_actual_selection is False
+        ),
+        "wrong_memory_action_hint_rejected_when_retrieved": (
+            memory_ref is None or wrong_memory_action_hint != selected_action
+        ),
     }
     return {
         "proof_id": f"memory-counterfactual-{episode.case_id}-gen{generation}",
@@ -6163,6 +6252,25 @@ def _build_memory_counterfactual_proof(
         "memory_margin_lift": margin_lift,
         "actual_scores": actual_scores,
         "counterfactual_without_memory_scores": counterfactual_scores,
+        "selected_candidate_admissible_without_memory": (
+            selected_candidate_admissible_without_memory
+        ),
+        "counterfactual_without_memory_admissible_winner_id": (
+            counterfactual_without_memory_admissible_winner_id
+        ),
+        "counterfactual_without_memory_admissible_scores": (
+            counterfactual_without_memory_admissible_scores
+        ),
+        "missing_memory_changes_admissible_decision": (
+            missing_memory_changes_admissible_decision
+        ),
+        "wrong_memory_ref": wrong_memory_ref,
+        "wrong_memory_action_hint": wrong_memory_action_hint,
+        "wrong_memory_scores": wrong_memory_scores,
+        "wrong_memory_winner_id": wrong_memory_winner_id,
+        "wrong_memory_replay_accepts_actual_selection": (
+            wrong_memory_replay_accepts_actual_selection
+        ),
         "outcome": (
             "memory_material_to_selected_score"
             if memory_ref
@@ -6183,6 +6291,12 @@ def _build_memory_counterfactual_proof(
                 "selected_candidate_id": selected_id,
                 "actual_scores": actual_scores,
                 "counterfactual_without_memory_scores": counterfactual_scores,
+                "counterfactual_without_memory_admissible_scores": (
+                    counterfactual_without_memory_admissible_scores
+                ),
+                "wrong_memory_ref": wrong_memory_ref,
+                "wrong_memory_action_hint": wrong_memory_action_hint,
+                "wrong_memory_scores": wrong_memory_scores,
             },
         ),
     }
@@ -6210,6 +6324,11 @@ def _memory_counterfactual_proof_is_usable(proof: Mapping[str, Any]) -> bool:
         and replay.get("memory_changes_selected_score_when_retrieved") is True
         and replay.get("memory_improves_selected_margin_when_retrieved") is True
         and replay.get("cold_start_zero_memory_adjustments") is True
+        and replay.get("selected_candidate_requires_retrieved_memory") is True
+        and replay.get("missing_memory_invalidates_selected_candidate_when_retrieved") is True
+        and replay.get("missing_memory_changes_admissible_decision_when_retrieved") is True
+        and replay.get("wrong_memory_identity_rejected_when_retrieved") is True
+        and replay.get("wrong_memory_action_hint_rejected_when_retrieved") is True
         and (
             (
                 memory_ref
@@ -6217,6 +6336,13 @@ def _memory_counterfactual_proof_is_usable(proof: Mapping[str, Any]) -> bool:
                 and proof.get("outcome") == "memory_material_to_selected_score"
                 and float(proof.get("selected_score_delta_from_memory", 0.0)) > 0.0
                 and float(proof.get("memory_margin_lift", 0.0)) > 0.0
+                and proof.get("selected_candidate_admissible_without_memory") is False
+                and proof.get("counterfactual_without_memory_admissible_winner_id")
+                != proof.get("selected_candidate_id")
+                and proof.get("missing_memory_changes_admissible_decision") is True
+                and proof.get("wrong_memory_ref") != memory_ref
+                and proof.get("wrong_memory_action_hint") != proof.get("selected_action")
+                and proof.get("wrong_memory_replay_accepts_actual_selection") is False
             )
             or (
                 not memory_ref
@@ -21364,6 +21490,28 @@ def _build_summary(
             if proof["memory_status"] == "retrieved"
             and proof["outcome"] == "memory_material_to_selected_score"
             and proof["replay"]["memory_changes_selected_score_when_retrieved"] is True
+        ),
+        "memory_counterfactual_missing_memory_rejects_selected_count": sum(
+            1
+            for proof in memory_counterfactuals
+            if proof["memory_status"] == "retrieved"
+            and proof["replay"][
+                "missing_memory_invalidates_selected_candidate_when_retrieved"
+            ] is True
+        ),
+        "memory_counterfactual_admissible_decision_flip_count": sum(
+            1
+            for proof in memory_counterfactuals
+            if proof["memory_status"] == "retrieved"
+            and proof["counterfactual_without_memory_admissible_winner_id"]
+            != proof["selected_candidate_id"]
+        ),
+        "memory_counterfactual_wrong_memory_rejected_count": sum(
+            1
+            for proof in memory_counterfactuals
+            if proof["memory_status"] == "retrieved"
+            and proof["replay"]["wrong_memory_identity_rejected_when_retrieved"] is True
+            and proof["replay"]["wrong_memory_action_hint_rejected_when_retrieved"] is True
         ),
         "memory_counterfactual_cold_start_count": sum(
             1 for proof in memory_counterfactuals if proof["memory_status"] == "cold_start_declared"
