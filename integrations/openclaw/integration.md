@@ -35,6 +35,7 @@ Canonical runtime contract: `OPENCLAW_RUNTIME_CONTRACT.md`
 - auth mode is subscription OAuth (`openai/oauth`); no `OPENAI_API_KEY` required
 - dev environment already validated: `openai:lupinchen@cctech-support.com`, agent turn confirmed
 - model refs: `openai/gpt-5.5` + `plugins.entries.codex.enabled=true`; `openclaw doctor --fix` migrates config
+- multi-LLM personas also route to `anthropic/claude-opus-4-8` via Claude CLI subscription (the derived gateway image bakes the Claude CLI). For how personas reference the shared model pool, see [`model-pool-and-persona-routing.md`](./model-pool-and-persona-routing.md)
 
 Upgrade rule (for future bumps):
 
