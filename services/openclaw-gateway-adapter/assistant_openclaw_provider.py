@@ -21,6 +21,7 @@ Degrades cleanly when the binary is absent or the gateway is unreachable.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -206,22 +207,38 @@ class AssistantOpenClawProvider:
         request_id = str(uuid.uuid4())
         started_at = time.monotonic()
 
+        # OpenClaw 2026.6.6 `agent` reads the gateway URL + token from the
+        # environment (OPENCLAW_GATEWAY_URL / OPENCLAW_GATEWAY_TOKEN); it does
+        # NOT accept --url/--token (those exist only on the gateway
+        # call/probe/status subcommands — passing them errors with
+        # "does not recognize option --url"). --json yields a structured
+        # envelope on stdout (diagnostics go to stderr).
         cmd = [
             binary,
             "agent",
-            "--url", effective_url,
-            "--token", self._token,
             "--agent", self._agent_id,
             "--message", prompt,
+            "--json",
+            "--timeout", str(self._timeout),
         ]
 
+        # Pass the normalized ws:// URL + token explicitly via the env the CLI
+        # reads, so we don't depend on how compose spells OPENCLAW_GATEWAY_URL.
+        # OPENCLAW_ALLOW_INSECURE_PRIVATE_WS (set in compose) is inherited from
+        # os.environ and permits plaintext ws:// on the trusted docker network.
+        run_env = {
+            **os.environ,
+            "NO_COLOR": "1",
+            "OPENCLAW_GATEWAY_URL": effective_url,
+            "OPENCLAW_GATEWAY_TOKEN": self._token,
+        }
         try:
             proc = self._run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=self._timeout,
-                env={**os.environ, "NO_COLOR": "1"},
+                env=run_env,
             )
         except subprocess.TimeoutExpired as exc:
             raise OpenClawProviderError(
@@ -252,7 +269,7 @@ class AssistantOpenClawProvider:
                 error_code="OPENCLAW_GATEWAY_INVOCATION_FAILED",
             )
 
-        text = (proc.stdout or "").strip()
+        text = self._extract_reply(proc.stdout or "")
         output = self._build_output(
             text=text,
             request_id=request_id,
@@ -295,6 +312,42 @@ class AssistantOpenClawProvider:
             except Exception as exc:  # noqa: BLE001
                 return {"reachable": False, "probe": path, "reason": str(exc)}
         return {"reachable": False, "reason": "no_probe_path_succeeded"}
+
+    @staticmethod
+    def _extract_reply(stdout: str) -> str:
+        """Pull the assistant reply out of `openclaw agent --json` stdout.
+
+        2026.6.6 schema: {runId, status, summary, result:{payloads:[{text}],
+        meta:{finalAssistantVisibleText, finalAssistantRawText}}}. Falls back to
+        the raw stdout when the output is not the expected JSON (defensive — a
+        future CLI change should degrade to "reply = whatever was printed"
+        rather than silently drop the answer).
+        """
+        raw = (stdout or "").strip()
+        if not raw:
+            return ""
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return raw
+        result = data.get("result") if isinstance(data, dict) else None
+        if isinstance(result, dict):
+            meta = result.get("meta")
+            if isinstance(meta, dict):
+                for key in ("finalAssistantVisibleText", "finalAssistantRawText"):
+                    val = meta.get(key)
+                    if isinstance(val, str) and val.strip():
+                        return val.strip()
+            payloads = result.get("payloads")
+            if isinstance(payloads, list):
+                texts = [
+                    p["text"]
+                    for p in payloads
+                    if isinstance(p, dict) and isinstance(p.get("text"), str) and p["text"].strip()
+                ]
+                if texts:
+                    return "\n".join(texts).strip()
+        return raw
 
     @staticmethod
     def _build_output(
