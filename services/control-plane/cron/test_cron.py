@@ -243,7 +243,7 @@ class TestOpenClawGatewayTransport(unittest.TestCase):
             {
                 "prepared_at": "2026-04-16T19:00:00Z",
                 "request_id": "pantheon.ingest-1234",
-                "runtime": {"release_tag": "v2026.6.6"},
+                "runtime": {"release_tag": "v2026.6.8"},
                 "workflow": {
                     "workflow_id": "pantheon.ingest",
                     "upstream_entrypoint": "research.ingest",

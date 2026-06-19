@@ -4,7 +4,7 @@
 
 The assistant `openclaw` provider in `openclaw-gateway-adapter` reaches the
 OpenClaw gateway by running `openclaw agent --agent main --message …` as a
-**remote client** over the gateway WebSocket. OpenClaw 2026.6.6 treats every
+**remote client** over the gateway WebSocket. OpenClaw 2026.6.8 treats every
 remote client as a **device** that must be paired and approved once — presenting
 the gateway token alone is not enough (the connection is accepted but the turn
 fails with `pairing required: device is not approved yet`).

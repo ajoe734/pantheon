@@ -14,7 +14,7 @@
 # The upstream runtime pin is governed: tag/commit are tracked in
 # OSS_INTEGRATION_CHECKLIST.md and integrations/openclaw/governance.md. When
 # bumping, change the FROM tag here AND the upstream commit pin there together.
-FROM ghcr.io/openclaw/openclaw:2026.6.6
+FROM ghcr.io/openclaw/openclaw:2026.6.8
 
 # Keep the Claude Code CLI version aligned with
 # services/openclaw-gateway-adapter/Dockerfile (ANTHROPIC_CLAUDE_CODE_NPM_VERSION).

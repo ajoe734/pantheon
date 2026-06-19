@@ -3,7 +3,7 @@
 Last updated: 2026-06-16
 Owner: BP5-OSS-001 (Codex)
 Reviewer: Claude
-Status: governed baseline locked — bumped to 2026.6.6
+Status: governed baseline locked — bumped to 2026.6.8
 Related: `OPENCLAW_RUNTIME_CONTRACT.md`, `OC-001`, `OC-002`, `OC-003`
 
 ## 1. Purpose
@@ -12,9 +12,9 @@ This document defines how the pinned OpenClaw runtime baseline is governed by Pa
 
 Pinned baseline:
 
-- Git tag: `v2026.6.6`
-- Commit: `8c802aa683510c7f7503597b54c3021733245e59`
-- Runtime image: `ghcr.io/openclaw/openclaw:2026.6.6`
+- Git tag: `v2026.6.8`
+- Commit: `844f405ac1be805d5c598922a37254f12ab6d765`
+- Runtime image: `ghcr.io/openclaw/openclaw:2026.6.8`
 
 OpenClaw remains an **external runtime substrate**. Pantheon never delegates governance authority to it.
 
@@ -207,6 +207,18 @@ When the pinned OpenClaw version changes:
 **Gate added:** `scripts/openclaw-assistant-openclaw-live-smoke.sh` drives a real agent turn against a deployed adapter and FAILS (non-skip) on degradation — the live evidence layer the prior change lacked. `compose` also now passes `OPENCLAW_GATEWAY_TOKEN` / `OPENCLAW_AGENT_ID` to the adapter (previously absent, a second latent degrade-cause).
 
 **Capability boundary:** unchanged. The adapter CLI is a remote client of the gateway; model auth stays on the gateway side, and all turns remain subject to OC-001 deny-first filtering.
+
+### 2026-06-19: bump v2026.6.6 → v2026.6.8 + enable OpenAI-compatible /v1/responses (streaming Management AI)
+
+**What:** governed upstream pin bumped to `openclaw/openclaw` tag `v2026.6.8` / commit `844f405ac1be805d5c598922a37254f12ab6d765`. The Pantheon-derived gateway image (`integrations/openclaw/gateway/Dockerfile`) and the adapter's `openclaw_cli` stage (`services/openclaw-gateway-adapter/Dockerfile`) both move their `FROM` to `ghcr.io/openclaw/openclaw:2026.6.8`; `docker-compose.yml` image tag → `pantheon-openclaw-gateway:2026.6.8`.
+
+**Reason:** 2026.6.6 exposes the agent ONLY via the WS `openclaw agent` protocol; the adapter shells out a fresh CLI per turn (one-shot, no token streaming, ~17-73s with no first-token feedback). **2026.6.8 ships the OpenAI-compatible HTTP endpoints — `POST /v1/responses` (OpenResponses) and `/v1/chat/completions`** — which execute as a **normal Gateway agent run (same codepath as `openclaw agent`)**, so workspace/MEMORY.md/persona/tools are preserved, AND support **SSE streaming** (`stream:true` → `text/event-stream`, OpenAI Responses events). This unblocks moving Management AI to a persistent, token-streamed, warm-session HTTP path (ChatGPT-like first-token latency) without losing the agent. Verified on a throwaway 2026.6.8 container: `/v1/responses` streams `response.created`/`response.in_progress`/`response.output_item.added` events through `model:"openclaw/main"`.
+
+**Enablement:** these endpoints are **disabled by default**; enabled via gateway config `gateway.http.endpoints.responses.enabled=true` (persisted on the `openclaw-data` volume, alongside `gateway.mode=local` + `gateway.auth.token`). Auth = the shared gateway bearer (`pantheon-local-token`) = full operator access (per upstream SECURITY.md; not a scoped surface). See the OpenResponses runbook and `pantheon-openclaw-responses-streaming`.
+
+**Config migration:** `openclaw doctor --fix` migrates the volume config across the minor bump (same as the 6.4.7→6.6 bump). `~/.codex` import remains removed.
+
+**Capability boundary:** unchanged. `/v1/responses` is an operator-auth agent-run surface; it does NOT relax OC-001 deny-first tool filtering, OC-002 job governance, or open broker/paper/canary/live/capital-binding — those stay fail-closed.
 
 ## 10. Relationship to Other Governance Documents
 

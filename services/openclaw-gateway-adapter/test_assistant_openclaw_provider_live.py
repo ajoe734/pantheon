@@ -140,7 +140,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
 
     @staticmethod
     def _agent_json(text: str) -> str:
-        """Mimic `openclaw agent --json` (2026.6.6) stdout for a reply."""
+        """Mimic `openclaw agent --json` (2026.6.8) stdout for a reply."""
         return json.dumps(
             {
                 "runId": "run_test",

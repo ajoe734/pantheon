@@ -7,7 +7,7 @@
 # The upstream runtime pin is GOVERNED: this tag MUST stay in lockstep with
 # integrations/openclaw/gateway/Dockerfile (FROM) and the pin tracked in
 # OSS_INTEGRATION_CHECKLIST.md / integrations/openclaw/governance.md. Bump all together.
-FROM ghcr.io/openclaw/openclaw:2026.6.6 AS openclaw_cli
+FROM ghcr.io/openclaw/openclaw:2026.6.8 AS openclaw_cli
 
 FROM python:3.11-slim
 
