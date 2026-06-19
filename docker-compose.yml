@@ -436,6 +436,12 @@ services:
       # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
+      # Per-turn budget for `openclaw agent` (used as the CLI --timeout AND the
+      # subprocess timeout). A real agent turn (gpt-5.5 + medium thinking + the
+      # full management context pack) runs ~60-90s+, so the default 90 was too
+      # tight. Must stay BELOW the BFF's PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS
+      # (180) so the adapter returns its own result before the BFF gives up.
+      OPENCLAW_ASSISTANT_TIMEOUT_SECONDS: ${OPENCLAW_ASSISTANT_TIMEOUT_SECONDS:-170}
       # The `openclaw agent` client refuses plaintext ws:// to a non-loopback
       # address (the gateway resolves to a docker-bridge IP). The adapter↔gateway
       # hop stays inside the single-host docker network (never routed off-box), so
@@ -762,7 +768,11 @@ services:
       PANTHEON_MGMT_AI_ATTACH_BUCKET: ${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}
       PANTHEON_MANAGEMENT_AI_AUDIT_PATH: ${PANTHEON_MANAGEMENT_AI_AUDIT_PATH:-/data/bff/management-ai-audit.jsonl}
       PANTHEON_ASSISTANT_PROVIDER: ${PANTHEON_ASSISTANT_PROVIDER:-openclaw}
-      PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS: ${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-75.0}
+      # BFF→adapter HTTP budget. Raised 75→180: a real openclaw agent turn runs
+      # ~60-90s+ (gpt-5.5 + thinking + full context pack); at 75 the BFF gave up
+      # before the turn finished and served the deterministic fallback ("OpenClaw
+      # adapter request failed"). Kept ABOVE the adapter's per-turn budget (170).
+      PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS: ${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-180.0}
       PANTHEON_ASSISTANT_KERNEL_ENABLED: ${PANTHEON_ASSISTANT_KERNEL_ENABLED:-false}
       PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH: ${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}
       PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS: ${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}
