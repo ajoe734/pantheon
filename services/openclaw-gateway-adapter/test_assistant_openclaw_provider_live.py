@@ -265,3 +265,86 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAssistantOpenClawProviderStream(unittest.TestCase):
+    """Unit tests for the /v1/responses SSE streaming path (mock urllib)."""
+
+    def _provider(self):
+        return AssistantOpenClawProvider(
+            gateway_url="ws://openclaw-gateway:18789",
+            agent_id="main",
+            token="test-token",
+            _which_func=lambda _: "/usr/local/bin/openclaw",
+        )
+
+    def test_http_base_derives_http_from_ws(self) -> None:
+        self.assertEqual(self._provider()._http_base(), "http://openclaw-gateway:18789")
+
+    def test_stream_yields_delta_then_done(self) -> None:
+        from unittest import mock
+
+        sse = [
+            b'event: response.output_text.delta\n',
+            b'data: {"type":"response.output_text.delta","delta":"\xe4\xbd\xa0\xe5\xa5\xbd"}\n',
+            b"\n",
+            b'data: {"type":"response.output_text.delta","delta":"!"}\n',
+            b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
+            b"data: [DONE]\n",
+        ]
+
+        class FakeResp:
+            def __iter__(self):
+                return iter(sse)
+
+            def close(self):
+                pass
+
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["url"] = req.full_url
+            captured["body"] = req.data
+            captured["auth"] = req.headers.get("Authorization")
+            return FakeResp()
+
+        provider = self._provider()
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            events = list(provider.stream("hi", operator_id="op-1", session_user="sess-1"))
+
+        # URL + auth + payload shape
+        self.assertEqual(captured["url"], "http://openclaw-gateway:18789/v1/responses")
+        self.assertEqual(captured["auth"], "Bearer test-token")
+        body = json.loads(captured["body"].decode("utf-8"))
+        self.assertEqual(body["model"], "openclaw/main")
+        self.assertTrue(body["stream"])
+        self.assertEqual(body["user"], "sess-1")
+
+        deltas = [e["text"] for e in events if e["type"] == "delta"]
+        done = [e for e in events if e["type"] == "done"]
+        self.assertEqual("".join(deltas), "你好!")
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["text"], "你好!")
+        self.assertEqual(done[0]["transport"], "responses_http")
+
+    def test_stream_404_reports_disabled(self) -> None:
+        import urllib.error
+        from unittest import mock
+
+        def fake_urlopen(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+        provider = self._provider()
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_DISABLED")
+
+    def test_stream_requires_token(self) -> None:
+        provider = AssistantOpenClawProvider(
+            gateway_url="ws://openclaw-gateway:18789", token="",
+            _which_func=lambda _: "/usr/local/bin/openclaw",
+        )
+        events = list(provider.stream("hi", operator_id="op-1"))
+        self.assertEqual(events[0]["type"], "error")
+        self.assertEqual(events[0]["error_code"], "OPENCLAW_TOKEN_NOT_CONFIGURED")
