@@ -459,10 +459,40 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const approvalRaceProbeCount = Number(summary.approval_race_probes ?? 0);
   const invalidDryRuns = dryRun.filter((item) => String(item?.family || "").startsWith("dry-run-invalid-"));
   const readbackDryRuns = dryRun.filter((item) => String(item?.family || "").endsWith("-readback-not-persisted"));
+  const notFoundErrorCodes = new Set(["RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND"]);
+  const successDryRuns = dryRun.filter((item) => {
+    const family = String(item?.family || "");
+    return family.startsWith("dry-run-")
+      && !family.startsWith("dry-run-invalid-")
+      && !family.endsWith("-readback-not-persisted");
+  });
+  const dryRunSideEffectProofs = dryRun.filter((item) => item?.side_effect_check?.ok === true);
   const allRbacOk = rbacMatrix.length > 0 && rbacMatrix.every((item) => item?.ok === true);
   const allDryRunOk = dryRun.length > 0 && dryRun.every((item) => item?.ok === true);
   const invalidDryRunsEnvelope = invalidDryRuns.length >= 2 && invalidDryRuns.every((item) => item?.error_envelope === true);
-  const readbackNoPersistence = readbackDryRuns.length >= 2 && readbackDryRuns.every((item) => item?.error_envelope === true);
+  const invalidDryRunsNoPersistence = invalidDryRuns.length >= 2 && invalidDryRuns.every((item) =>
+    item?.side_effect_check?.ok === true
+    && item?.side_effect_check?.kind === "validation_rejected_before_persistence"
+    && item?.side_effect_check?.error_code === "VALIDATION_FAILED"
+  );
+  const successDryRunMetaProofs = successDryRuns.length >= 3 && successDryRuns.every((item) =>
+    item?.side_effect_check?.ok === true
+    && ["dry_run_preview_meta", "dry_run_command_meta"].includes(item?.side_effect_check?.kind)
+    && item?.side_effect_check?.dryRun === true
+    && item?.side_effect_check?.durable === false
+    && item?.side_effect_check?.liveCapitalSideEffects === false
+  );
+  const readbackNoPersistence = readbackDryRuns.length >= 2 && readbackDryRuns.every((item) =>
+    item?.error_envelope === true
+    && item?.side_effect_check?.ok === true
+    && item?.side_effect_check?.kind === "readback_not_persisted"
+    && notFoundErrorCodes.has(String(item?.side_effect_check?.error_code || ""))
+    && typeof item?.side_effect_check?.target_id_sha256_12 === "string"
+    && item.side_effect_check.target_id_sha256_12.length > 0
+  );
+  const dryRunProbeCountMatches = dryRunProbeCount === dryRun.length;
+  const dryRunSideEffectProofCount = dryRunSideEffectProofs.length;
+  const allDryRunSideEffectProofs = dryRun.length >= 7 && dryRunSideEffectProofCount === dryRun.length;
   const fullRbacMatrix = rbacProbeCount >= 56 && expectedProvidedCases >= 7;
   const providedRbac = fullRbacMatrix && providedRbacCases.length === expectedProvidedCases;
   const approvalTokenPair = approvalRace?.token_source?.kind === "provided_bearer_pair";
@@ -480,9 +510,13 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     rbacOk: baseOk && providedRbac && rbacProbeCount > 0 && allRbacOk,
     dryRunOk: baseOk
       && dryRunProbeCount >= 7
+      && dryRunProbeCountMatches
       && allDryRunOk
       && invalidDryRunsEnvelope
+      && invalidDryRunsNoPersistence
+      && successDryRunMetaProofs
       && readbackNoPersistence
+      && allDryRunSideEffectProofs
       && summary.live_capital_side_effects === false,
     approvalRaceOk: baseOk
       && approvalRaceProbeCount === 1
@@ -494,7 +528,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && approvalTokenPair,
     note: {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} providedCases:${providedRbacCases.length}/${expectedProvidedCases}`,
-      dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
+      dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair}`,
     },
     missingStatus: missingEvidenceStatus(step.status),

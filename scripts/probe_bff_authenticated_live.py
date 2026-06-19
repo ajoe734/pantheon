@@ -212,6 +212,7 @@ DRY_RUN_META_VALUES = (
     (("meta", "durable"), False),
     (("meta", "liveCapitalSideEffects"), False),
 )
+DRY_RUN_META_EXTRACT_PATHS = tuple(path for path, _expected in DRY_RUN_META_VALUES)
 NOT_FOUND_ERROR_CODES = ("RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND")
 APPROVAL_RACE_ACCEPTED_STATUSES = {200, 201, 202}
 APPROVAL_RACE_SAFE_ERROR_CODES = (
@@ -355,6 +356,67 @@ def body_summary(data: Any) -> dict[str, Any]:
     if isinstance(data, list):
         return {"type": "list", "count": len(data)}
     return {"type": type(data).__name__}
+
+
+def _extracted_value(result: dict[str, Any], path: tuple[str, ...]) -> Any:
+    extracted = result.get("extracted")
+    if not isinstance(extracted, dict):
+        return None
+    return extracted.get(".".join(path))
+
+
+def dry_run_meta_side_effect_check(result: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    dry_run = _extracted_value(result, ("meta", "dryRun"))
+    durable = _extracted_value(result, ("meta", "durable"))
+    side_effects = _extracted_value(result, ("meta", "liveCapitalSideEffects"))
+    ok = (
+        result.get("ok") is True
+        and dry_run is True
+        and durable is False
+        and side_effects is False
+    )
+    return {
+        "kind": kind,
+        "ok": ok,
+        "dryRun": dry_run,
+        "durable": durable,
+        "liveCapitalSideEffects": side_effects,
+    }
+
+
+def readback_side_effect_check(
+    result: dict[str, Any],
+    *,
+    target_family: str,
+    target_id: str,
+) -> dict[str, Any]:
+    error_code = str(result.get("error_code") or "")
+    ok = (
+        result.get("ok") is True
+        and result.get("error_envelope") is True
+        and error_code in NOT_FOUND_ERROR_CODES
+    )
+    return {
+        "kind": "readback_not_persisted",
+        "ok": ok,
+        "target_family": target_family,
+        "target_id_sha256_12": sha256_12(str(target_id)),
+        "error_code": error_code or None,
+    }
+
+
+def invalid_dry_run_side_effect_check(result: dict[str, Any]) -> dict[str, Any]:
+    error_code = str(result.get("error_code") or "")
+    ok = (
+        result.get("ok") is True
+        and result.get("error_envelope") is True
+        and error_code == "VALIDATION_FAILED"
+    )
+    return {
+        "kind": "validation_rejected_before_persistence",
+        "ok": ok,
+        "error_code": error_code or None,
+    }
 
 
 def probe_path_from_href(href: str) -> str:
@@ -828,52 +890,60 @@ def build_dry_run_results(
                 body=body,
                 expect_status={200},
                 required_values=DRY_RUN_META_VALUES,
-                extract_paths=(("data", "id"),),
+                extract_paths=DRY_RUN_META_EXTRACT_PATHS + (("data", "id"),),
                 extra_headers=(("X-Dry-Run", "1"),),
             ),
             token=token,
             timeout=timeout,
             idempotency_prefix=idempotency_prefix,
         )
+        result["side_effect_check"] = dry_run_meta_side_effect_check(
+            result,
+            kind="dry_run_preview_meta" if detail_template else "dry_run_command_meta",
+        )
         results.append(result)
         created_id = (result.get("extracted") or {}).get("data.id")
         if result.get("ok") and detail_template and created_id:
-            results.append(
-                request_json(
-                    base_url=base_url,
-                    probe=Probe(
-                        "GET",
-                        detail_template.format(id=urllib.parse.quote(str(created_id), safe="")),
-                        f"{family}-readback-not-persisted",
-                        expect_status={404},
-                        expect_error_envelope=True,
-                        allowed_error_codes=NOT_FOUND_ERROR_CODES,
-                    ),
-                    token=token,
-                    timeout=timeout,
-                    idempotency_prefix=idempotency_prefix,
-                )
-            )
-
-    for family, path, body in invalid_specs:
-        results.append(
-            request_json(
+            readback = request_json(
                 base_url=base_url,
                 probe=Probe(
-                    "POST",
-                    path,
-                    family,
-                    body=body,
-                    expect_status={422},
-                    extra_headers=(("X-Dry-Run", "1"),),
+                    "GET",
+                    detail_template.format(id=urllib.parse.quote(str(created_id), safe="")),
+                    f"{family}-readback-not-persisted",
+                    expect_status={404},
                     expect_error_envelope=True,
-                    allowed_error_codes=("VALIDATION_FAILED",),
+                    allowed_error_codes=NOT_FOUND_ERROR_CODES,
                 ),
                 token=token,
                 timeout=timeout,
                 idempotency_prefix=idempotency_prefix,
             )
+            readback["side_effect_check"] = readback_side_effect_check(
+                readback,
+                target_family=family,
+                target_id=str(created_id),
+            )
+            results.append(readback)
+
+    for family, path, body in invalid_specs:
+        result = request_json(
+            base_url=base_url,
+            probe=Probe(
+                "POST",
+                path,
+                family,
+                body=body,
+                expect_status={422},
+                extra_headers=(("X-Dry-Run", "1"),),
+                expect_error_envelope=True,
+                allowed_error_codes=("VALIDATION_FAILED",),
+            ),
+            token=token,
+            timeout=timeout,
+            idempotency_prefix=idempotency_prefix,
         )
+        result["side_effect_check"] = invalid_dry_run_side_effect_check(result)
+        results.append(result)
     return results
 
 
