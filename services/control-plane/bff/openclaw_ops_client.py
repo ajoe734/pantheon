@@ -305,6 +305,84 @@ class OpenClawOpsClient:
             payload={"provider": provider},
         )
 
+    def stream_assistant_provider(
+        self,
+        *,
+        mode: str,
+        prompt: str,
+        context_pack: Dict[str, Any],
+        operator_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
+        session_user: Optional[str] = None,
+    ):
+        """Stream the OpenClaw assistant provider via the adapter SSE endpoint.
+
+        Yields the adapter's normalized event dicts:
+            {"type":"delta","text":...}
+            {"type":"done","text":...,"elapsed_ms":N,"transport":"responses_http"}
+            {"type":"error","error_code":...,"message":...}
+        Raises OpenClawOpsClientError if the adapter URL is unset or the stream
+        cannot be opened (the caller turns that into a degraded SSE event).
+        """
+        if not self._base_url:
+            raise OpenClawOpsClientError(
+                "OpenClaw gateway adapter URL is not configured.",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_URL_NOT_CONFIGURED",
+            )
+        md = dict(metadata or {})
+        if session_user:
+            md.setdefault("session_user", session_user)
+        body = {"mode": mode, "prompt": prompt, "context_pack": context_pack, "metadata": md}
+        headers = {
+            "X-Operator-Id": operator_id,
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        request = urllib.request.Request(
+            f"{self._base_url}/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=self._assistant_timeout_seconds())
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace") if exc.fp is not None else ""
+            payload = _safe_json(raw)
+            raise OpenClawOpsClientError(
+                str(payload.get("message") or f"OpenClaw adapter stream returned HTTP {exc.code}."),
+                status_code=exc.code,
+                error_code=str(payload.get("error_code") or "OPENCLAW_ADAPTER_STREAM_HTTP_ERROR"),
+                payload=payload,
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise OpenClawOpsClientError(
+                f"OpenClaw adapter stream is unreachable: {exc}",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_STREAM_UNREACHABLE",
+            ) from exc
+        try:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                payload_str = line[len("data:"):].strip()
+                if payload_str == "[DONE]":
+                    break
+                try:
+                    yield json.loads(payload_str)
+                except (ValueError, TypeError):
+                    continue
+        finally:
+            try:
+                response.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     def prepare_assistant_repair_worktree(
         self,
         *,

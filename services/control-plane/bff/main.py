@@ -15,7 +15,7 @@ from collections import deque
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
@@ -34938,6 +34938,140 @@ async def bff_management_nl_ask(
     )
     _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
+
+
+@app.post("/bff/management/nl/ask/stream")
+def bff_management_nl_ask_stream(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """SSE-streaming variant of /bff/management/nl/ask.
+
+    Builds the same management context pack + provider prompt, then streams the
+    OpenClaw agent reply token-by-token (via the adapter `/v1/responses` SSE path)
+    so the console renders progressively. Emits:
+        data: {"type":"meta","sessionId":...,"traceId":...,"messageId":...}
+        data: {"type":"delta","text":...}            (repeated)
+        data: {"type":"done","text":...,"transport":...}
+        data: {"type":"error","error_code":...,"message":...}
+        data: [DONE]
+    Read-only: the high-risk refusal policy applies, exactly like the non-stream route.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    question = _agora_required_text(payload, "question")
+    _mgmt_nl_validate_question_size(question)
+
+    risk = _mgmt_nl_high_risk_classify(question)
+    if risk is not None:
+        raise _bff_error(
+            403,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "NL query matches high-risk action pattern and was refused by policy",
+            "This endpoint is read-only and cannot execute management mutations.",
+            precondition_failed="high_risk_nl_policy",
+            suggestion=risk["safe_alternatives"],
+            details_extra={"refused": True, "matched_category": risk["matched_category"]},
+        )
+
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity, requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant)
+    )
+    operator_context = _mgmt_nl_trim_text(payload.get("context"), max_len=4000)
+    focus = _mgmt_nl_normalize_focus(payload.get("focus"))
+    now = utc_now()
+    session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
+    trace_id = f"mnl-trace-{uuid.uuid4().hex[:12]}"
+    message_id = f"mnl-{uuid.uuid4().hex[:12]}"
+    control_mode = _assistant_control_mode_for_identity(identity, management_session_id=session_id, touch=True)
+    ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
+    conversation_context = _management_ai_server_conversation_context(
+        session_id=session_id,
+        client_hint=_mgmt_nl_normalize_conversation_context(payload.get("conversation")),
+    )
+    context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
+    snippets = context_bundle["snippets"]
+    surfaces = context_bundle["surfaces"]
+    confidence = _mgmt_nl_surface_confidence(surfaces)
+    context_pack = _mgmt_nl_build_context_pack(
+        session_id=session_id,
+        question=question,
+        focus=focus,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        snippets=snippets,
+        surfaces=surfaces,
+        source_keys=list(snippets.keys()),
+        confidence=confidence,
+        evidence_entities=context_bundle.get("evidence_entities") or set(),
+        evidence_source_types=context_bundle.get("evidence_source_types") or set(),
+        operator_context=operator_context,
+        conversation_context=conversation_context,
+        ui_snapshot=ui_snapshot,
+        control_mode=control_mode,
+    )
+    prompt = _mgmt_nl_provider_prompt(question=question, focus=focus, context_pack=context_pack)
+    provider_mode = _mgmt_nl_provider_mode_from_context(context_pack)
+
+    _management_ai_ensure_session(
+        session_id=session_id, identity=identity, tenant_id=caller_tenant_id, now=now, title=question
+    )
+    _management_ai_append_turn(
+        turn_id=message_id, session_id=session_id, role="user", text=question, created_at=now, trace_id=trace_id
+    )
+
+    def event_stream() -> Iterator[str]:
+        meta = {
+            "type": "meta", "sessionId": session_id, "session_id": session_id,
+            "traceId": trace_id, "trace_id": trace_id, "messageId": message_id,
+        }
+        yield "data: " + json.dumps(meta) + "\n\n"
+        chunks: List[str] = []
+        had_error = False
+        try:
+            for evt in OpenClawOpsClient().stream_assistant_provider(
+                mode=provider_mode,
+                prompt=prompt,
+                context_pack=context_pack,
+                operator_id=identity.operator_id,
+                trace_id=trace_id,
+                session_user=session_id,
+            ):
+                if evt.get("type") == "delta":
+                    chunks.append(str(evt.get("text") or ""))
+                elif evt.get("type") == "error":
+                    had_error = True
+                yield "data: " + json.dumps(evt, ensure_ascii=False) + "\n\n"
+        except OpenClawOpsClientError as exc:
+            had_error = True
+            yield "data: " + json.dumps(
+                {"type": "error", "error_code": exc.error_code, "message": exc.message}
+            ) + "\n\n"
+        except Exception as exc:  # noqa: BLE001
+            had_error = True
+            yield "data: " + json.dumps(
+                {"type": "error", "error_code": "BFF_STREAM_ERROR", "message": str(exc)[:200]}
+            ) + "\n\n"
+        answer = "".join(chunks).strip()
+        if answer and not had_error:
+            _management_ai_append_turn(
+                turn_id=f"{message_id}-assistant",
+                session_id=session_id,
+                role="assistant",
+                text=answer,
+                created_at=utc_now(),
+                trace_id=trace_id,
+                provider_status={"provider": "openclaw", "used": True, "status": "completed", "transport": "responses_http"},
+            )
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/bff/management/ai/audit")
