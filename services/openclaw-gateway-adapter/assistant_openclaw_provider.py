@@ -207,7 +207,7 @@ class AssistantOpenClawProvider:
         request_id = str(uuid.uuid4())
         started_at = time.monotonic()
 
-        # OpenClaw 2026.6.6 `agent` reads the gateway URL + token from the
+        # OpenClaw 2026.6.8 `agent` reads the gateway URL + token from the
         # environment (OPENCLAW_GATEWAY_URL / OPENCLAW_GATEWAY_TOKEN); it does
         # NOT accept --url/--token (those exist only on the gateway
         # call/probe/status subcommands — passing them errors with
@@ -323,7 +323,7 @@ class AssistantOpenClawProvider:
     def _extract_reply(stdout: str) -> str:
         """Pull the assistant reply out of `openclaw agent --json` stdout.
 
-        2026.6.6 schema: {runId, status, summary, result:{payloads:[{text}],
+        2026.6.8 schema: {runId, status, summary, result:{payloads:[{text}],
         meta:{finalAssistantVisibleText, finalAssistantRawText}}}. Falls back to
         the raw stdout when the output is not the expected JSON (defensive — a
         future CLI change should degrade to "reply = whatever was printed"

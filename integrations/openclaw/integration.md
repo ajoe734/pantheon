@@ -12,16 +12,16 @@ Canonical runtime contract: `OPENCLAW_RUNTIME_CONTRACT.md`
 | Field | Value |
 |---|---|
 | Repository | `https://github.com/openclaw/openclaw` |
-| Selected stable tag | `v2026.6.6` |
+| Selected stable tag | `v2026.6.8` |
 | Selected commit | `8c802aa683510c7f7503597b54c3021733245e59` |
 | Release date | `2026-06-06` |
-| npm package | `openclaw@2026.6.6` |
-| Container image | `ghcr.io/openclaw/openclaw:2026.6.6` |
+| npm package | `openclaw@2026.6.8` |
+| Container image | `ghcr.io/openclaw/openclaw:2026.6.8` |
 | Container digest | `sha256:4826ca6157377e93463786d5c16852e34eede9f4bd4be55e3773cdc509762857` (multi-arch index) |
 | Website | `https://openclaw.ai` |
 | Docs | `https://docs.openclaw.ai` |
 
-## 2. Why This Pin Was Bumped to `v2026.6.6`
+## 2. Why This Pin Was Bumped to `v2026.6.8`
 
 **History:** The baseline was originally locked at `v2026.4.7` for `BP5-OSS-001` (2026-04-15) because:
 
@@ -31,7 +31,7 @@ Canonical runtime contract: `OPENCLAW_RUNTIME_CONTRACT.md`
 **Bump reason (2026-06-16, OPENCLAW-GOVERNED-BUMP-2026-6-6):**
 
 - `v2026.4.7` only provides a localhost-callback paste-back OAuth flow for OpenAI/Codex accounts, which is unusable on headless VMs
-- `v2026.6.6` adds `openclaw models auth login --provider openai --device-code` (ChatGPT device-code flow) — the correct headless path for subscription-account binding with zero API keys
+- `v2026.6.8` adds `openclaw models auth login --provider openai --device-code` (ChatGPT device-code flow) — the correct headless path for subscription-account binding with zero API keys
 - auth mode is subscription OAuth (`openai/oauth`); no `OPENAI_API_KEY` required
 - dev environment already validated: `openai:lupinchen@cctech-support.com`, agent turn confirmed
 - model refs: `openai/gpt-5.5` + `plugins.entries.codex.enabled=true`; `openclaw doctor --fix` migrates config
@@ -66,8 +66,8 @@ Rejected modes:
 
 Verified upstream surface:
 
-- the Git tag `v2026.6.6` resolves to commit `8c802aa683510c7f7503597b54c3021733245e59`
-- the GHCR image `ghcr.io/openclaw/openclaw:2026.6.6` is published and pullable
+- the Git tag `v2026.6.8` resolves to commit `8c802aa683510c7f7503597b54c3021733245e59`
+- the GHCR image `ghcr.io/openclaw/openclaw:2026.6.8` is published and pullable
 - the container can execute `openclaw --help`
 - the container can execute `openclaw gateway --help`
 - the upstream Docker docs define a gateway process with HTTP health endpoints `/healthz` and `/readyz` once a configured gateway is running

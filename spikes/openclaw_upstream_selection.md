@@ -128,6 +128,6 @@ When this spike becomes implementation, create:
 
 All open questions have been resolved in `integrations/openclaw/integration.md` §7:
 
-- **Pinned release**: `v2026.6.6` (SHA `8c802aa`) — bumped by OPENCLAW-GOVERNED-BUMP-2026-6-6
+- **Pinned release**: `v2026.6.8` (SHA `8c802aa`) — bumped by OPENCLAW-GOVERNED-BUMP-2026-6-6
 - **Transport**: Deferred to adapter implementation phase — integration.md §7 tracks this
 - **First smoke test workflow**: research-intake (ingest) — defined in smoke_test.md §3 Step 2
