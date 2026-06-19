@@ -20,10 +20,10 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         == "${PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED:-true}"
     )
     assert env["MANAGEMENT_AI_STORE_BACKEND"] == "${MANAGEMENT_AI_STORE_BACKEND:-postgres}"
-    assert env["PANTHEON_ASSISTANT_PROVIDER"] == "${PANTHEON_ASSISTANT_PROVIDER:-codex_cli}"
+    assert env["PANTHEON_ASSISTANT_PROVIDER"] == "${PANTHEON_ASSISTANT_PROVIDER:-openclaw}"
     assert (
         env["PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS"]
-        == "${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-75.0}"
+        == "${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-180.0}"
     )
     assert env["PANTHEON_ASSISTANT_KERNEL_ENABLED"] == "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-false}"
     assert (
