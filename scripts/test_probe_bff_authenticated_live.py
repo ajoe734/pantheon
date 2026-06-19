@@ -194,6 +194,29 @@ def test_strict_live_evidence_rejects_dev_jwt_without_primary_bearer(monkeypatch
         raise AssertionError("strict live evidence must reject dev JWT-only auth")
 
 
+def test_strict_live_evidence_rejects_same_approval_race_bearer(monkeypatch) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "live-primary-token")
+    monkeypatch.setenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "Bearer same-race-token")
+    monkeypatch.setenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "same-race-token")
+    args = argparse.Namespace(
+        strict_live_evidence=True,
+        include_rbac_matrix=False,
+        include_dry_run=False,
+        include_approval_race=False,
+        require_provided_rbac_tokens=False,
+        require_provided_approval_race_tokens=False,
+        approval_race_id="approval-strict-race",
+    )
+
+    try:
+        probe.apply_strict_live_evidence(args)
+    except SystemExit as exc:
+        assert "distinct bearer tokens" in str(exc)
+    else:
+        raise AssertionError("strict live evidence must reject same approval race bearer")
+
+
 def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) -> None:
     probe = _load_probe_module()
     calls: list[str] = []

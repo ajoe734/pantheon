@@ -46,6 +46,10 @@ def present(value: str | None) -> bool:
     return bool((value or "").strip())
 
 
+def bearer_value(value: str | None) -> str:
+    return (value or "").removeprefix("Bearer ").strip()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=os.environ.get("PANTHEON_BFF_BASE_URL", ""))
@@ -124,6 +128,26 @@ def inspect_rbac_tokens_json(raw: str) -> tuple[dict[str, Any], list[dict[str, s
     }, invalid
 
 
+def inspect_approval_race_tokens(token_a: str, token_b: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    bearer_a = bearer_value(token_a)
+    bearer_b = bearer_value(token_b)
+    both_present = bool(bearer_a and bearer_b)
+    distinct = bool(both_present and bearer_a != bearer_b)
+    invalid = []
+    if both_present and not distinct:
+        invalid.append(
+            {
+                "name": "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A/B",
+                "reason": "must be distinct bearer tokens for two operators",
+            }
+        )
+    return {
+        "token_a_present": bool(bearer_a),
+        "token_b_present": bool(bearer_b),
+        "distinct_bearers": distinct,
+    }, invalid
+
+
 def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     required = [*REQUIRED_SECRET_ENV_VARS, *REQUIRED_INPUT_NAMES]
     present_map = {
@@ -135,12 +159,17 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     present_map["SOAK_SECONDS"] = present(args.soak_seconds)
     missing = [name for name in required if not present_map[name]]
     rbac_matrix, rbac_invalid = inspect_rbac_tokens_json(os.environ.get("PANTHEON_BFF_RBAC_TOKENS_JSON", ""))
+    approval_race_tokens, approval_race_invalid = inspect_approval_race_tokens(
+        os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", ""),
+        os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", ""),
+    )
     invalid = [
         {"name": "SOAK_SECONDS", "reason": reason}
         for reason in [invalid_soak_seconds(args.soak_seconds)]
         if reason
     ]
     invalid.extend(rbac_invalid)
+    invalid.extend(approval_race_invalid)
 
     return {
         "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
@@ -150,6 +179,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "soak_seconds": args.soak_seconds.strip(),
         "min_soak_seconds": STRICT_LIVE_SOAK_MIN_SECONDS,
         "rbac_matrix": rbac_matrix,
+        "approval_race_tokens": approval_race_tokens,
         "ref": os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", ""),
         "sha": os.environ.get("GITHUB_SHA", ""),
         "required": required,
