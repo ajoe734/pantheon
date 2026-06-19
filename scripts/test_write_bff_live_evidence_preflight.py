@@ -77,6 +77,11 @@ def test_preflight_writes_missing_inputs_without_secret_values(tmp_path: Path) -
         "provided_cases": 0,
         "expected_cases": len(RBAC_REQUIRED_LABELS),
     }
+    assert payload["approval_race_tokens"] == {
+        "token_a_present": False,
+        "token_b_present": False,
+        "distinct_bearers": False,
+    }
 
 
 def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -> None:
@@ -105,6 +110,11 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
         "missing_labels": [],
         "provided_cases": len(RBAC_REQUIRED_LABELS),
         "expected_cases": len(RBAC_REQUIRED_LABELS),
+    }
+    assert payload["approval_race_tokens"] == {
+        "token_a_present": True,
+        "token_b_present": True,
+        "distinct_bearers": True,
     }
     leaked_values = [
         "smoke-secret",
@@ -203,3 +213,37 @@ def test_preflight_rejects_malformed_rbac_json_with_safe_artifact(tmp_path: Path
     assert payload["invalid"][0]["reason"].startswith("must be valid JSON")
     assert "race-secret-a" not in text
     assert "race-secret-b" not in text
+
+
+def test_preflight_rejects_same_approval_race_bearer_before_live_race(tmp_path: Path) -> None:
+    env = clean_env()
+    rbac_tokens = {label: f"{label}-secret" for label in RBAC_REQUIRED_LABELS}
+    env.update(
+        {
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN": "smoke-secret",
+            "PANTHEON_BFF_RBAC_TOKENS_JSON": json.dumps(rbac_tokens),
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A": "Bearer same-race-secret",
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "same-race-secret",
+        }
+    )
+
+    result = run_preflight(tmp_path, env, approval_race_id="appr-live-123")
+    assert result.returncode == 1
+    assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A/B" in result.stderr
+
+    output = tmp_path / ".lovable" / "audits" / "current-run" / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    text = output.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    assert payload["missing"] == []
+    assert payload["approval_race_tokens"] == {
+        "token_a_present": True,
+        "token_b_present": True,
+        "distinct_bearers": False,
+    }
+    assert payload["invalid"] == [
+        {
+            "name": "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A/B",
+            "reason": "must be distinct bearer tokens for two operators",
+        }
+    ]
+    assert "same-race-secret" not in text

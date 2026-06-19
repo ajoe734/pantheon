@@ -894,13 +894,17 @@ def apply_strict_live_evidence(args: argparse.Namespace) -> None:
         )
     if not args.approval_race_id.strip():
         raise SystemExit("--strict-live-evidence requires --approval-race-id for an expendable staging approval")
-    if not (
-        os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "").strip()
-        and os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "").strip()
-    ):
+    race_token_a = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "").removeprefix("Bearer ").strip()
+    race_token_b = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "").removeprefix("Bearer ").strip()
+    if not (race_token_a and race_token_b):
         raise SystemExit(
             "--strict-live-evidence requires PANTHEON_BFF_APPROVAL_RACE_TOKEN_A and "
             "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B for two distinct operators"
+        )
+    if race_token_a == race_token_b:
+        raise SystemExit(
+            "--strict-live-evidence requires PANTHEON_BFF_APPROVAL_RACE_TOKEN_A and "
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B to be distinct bearer tokens"
         )
 
 
