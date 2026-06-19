@@ -46,11 +46,11 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 import httpx
 from fastapi import FastAPI, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from integrations.openclaw.search_gateway import OpenClawSearchGateway, SearchPolicyError as OpenClawSearchPolicyError
@@ -1078,6 +1078,57 @@ def invoke_openclaw_provider(
             "status": "ok",
             "data": result.to_dict(),
         },
+    )
+
+
+@app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream")
+def invoke_openclaw_provider_stream(
+    req: AssistantProviderInvokeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> StreamingResponse:
+    """Stream an OpenClaw agent turn as SSE via the gateway `POST /v1/responses`.
+
+    Emits normalized events the BFF can relay verbatim to the console:
+        data: {"type":"delta","text":"..."}
+        data: {"type":"done","text":"...","elapsed_ms":N,"transport":"responses_http"}
+        data: {"type":"error","error_code":"...","message":"..."}
+        data: [DONE]
+    The agent run preserves workspace/memory/persona (same codepath as `openclaw agent`).
+    """
+    operator = (x_operator_id or "").strip()
+    metadata = dict(req.metadata or {})
+    # Stable per-conversation session so multi-turn shares a warm agent session.
+    session_user = str(metadata.get("session_user") or metadata.get("session_id") or operator or "").strip() or None
+
+    def event_stream() -> Iterator[str]:
+        if not operator:
+            yield "data: " + json.dumps({
+                "type": "error", "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for OpenClaw provider invocation.",
+            }) + "\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        try:
+            for evt in _OPENCLAW_AGENT_PROVIDER.stream(
+                req.prompt,
+                mode=req.mode,
+                operator_id=operator,
+                trace_id=x_trace_id,
+                session_user=session_user,
+            ):
+                yield "data: " + json.dumps(evt, ensure_ascii=False) + "\n\n"
+        except Exception as exc:  # noqa: BLE001
+            yield "data: " + json.dumps({
+                "type": "error", "error_code": "ADAPTER_STREAM_ERROR",
+                "message": str(exc)[:200],
+            }) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 

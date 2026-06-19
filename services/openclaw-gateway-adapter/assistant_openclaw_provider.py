@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 
 OPENCLAW_PROVIDER = "openclaw"
@@ -318,6 +318,133 @@ class AssistantOpenClawProvider:
             except Exception as exc:  # noqa: BLE001
                 return {"reachable": False, "probe": path, "reason": str(exc)}
         return {"reachable": False, "reason": "no_probe_path_succeeded"}
+
+    def _http_base(self) -> str:
+        """HTTP base URL for the gateway's OpenAI-compatible endpoints (ws -> http)."""
+        base = self._gateway_url or _DEFAULT_GATEWAY_WS_URL
+        if base.startswith("ws://"):
+            base = "http://" + base[len("ws://"):]
+        elif base.startswith("wss://"):
+            base = "https://" + base[len("wss://"):]
+        return base.rstrip("/")
+
+    def stream(
+        self,
+        prompt: str,
+        *,
+        mode: str = "user",
+        operator_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        session_user: Optional[str] = None,
+    ) -> Iterator[Dict[str, Any]]:
+        """Stream an agent turn via the gateway OpenAI-compatible `POST /v1/responses`
+        (OpenResponses) endpoint with SSE, yielding NORMALIZED events:
+
+            {"type": "delta", "text": "<token chunk>"}
+            {"type": "done", "text": "<full reply>", "elapsed_ms": N, "transport": "responses_http"}
+            {"type": "error", "error_code": "...", "message": "..."}
+
+        The endpoint runs a normal Gateway agent run (workspace/memory/persona/tools
+        preserved). Requires the gateway-side `gateway.http.endpoints.responses.enabled`.
+        """
+        if not self._gateway_url:
+            yield {"type": "error", "error_code": "OPENCLAW_GATEWAY_URL_NOT_SET",
+                   "message": "OPENCLAW_GATEWAY_URL is not set."}
+            return
+        if not self._token:
+            yield {"type": "error", "error_code": "OPENCLAW_TOKEN_NOT_CONFIGURED",
+                   "message": "OPENCLAW_GATEWAY_TOKEN is not set."}
+            return
+
+        url = f"{self._http_base()}/v1/responses"
+        payload: Dict[str, Any] = {
+            "model": f"{OPENCLAW_PROVIDER}/{self._agent_id}",
+            "input": prompt,
+            "stream": True,
+        }
+        # Stable session key for warm multi-turn routing (per OpenResponses `user`).
+        if session_user:
+            payload["user"] = session_user
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+        )
+
+        started_at = time.monotonic()
+        chunks: List[str] = []
+        emitted_done = False
+        try:
+            resp = urllib.request.urlopen(req, timeout=self._timeout)
+        except urllib.error.HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read().decode("utf-8", errors="replace")[:300]
+            except Exception:  # noqa: BLE001
+                pass
+            code = "OPENCLAW_RESPONSES_DISABLED" if exc.code == 404 else "OPENCLAW_RESPONSES_HTTP_ERROR"
+            yield {"type": "error", "error_code": code,
+                   "message": f"/v1/responses HTTP {exc.code}: {body}"}
+            return
+        except Exception as exc:  # noqa: BLE001
+            yield {"type": "error", "error_code": "OPENCLAW_RESPONSES_UNREACHABLE",
+                   "message": f"/v1/responses request failed: {exc}"}
+            return
+
+        try:
+            for raw in resp:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                payload_str = line[len("data:"):].strip()
+                if payload_str == "[DONE]":
+                    break
+                try:
+                    evt = json.loads(payload_str)
+                except (ValueError, TypeError):
+                    continue
+                etype = evt.get("type")
+                if etype == "response.output_text.delta":
+                    delta = evt.get("delta", "")
+                    if delta:
+                        chunks.append(delta)
+                        yield {"type": "delta", "text": delta}
+                elif etype == "response.completed":
+                    emitted_done = True
+                    yield {
+                        "type": "done",
+                        "text": "".join(chunks),
+                        "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+                        "transport": "responses_http",
+                    }
+                elif etype in ("response.failed", "error"):
+                    yield {"type": "error", "error_code": "OPENCLAW_RESPONSES_FAILED",
+                           "message": json.dumps(evt)[:300]}
+                    return
+        except Exception as exc:  # noqa: BLE001
+            yield {"type": "error", "error_code": "OPENCLAW_RESPONSES_STREAM_INTERRUPTED",
+                   "message": f"stream interrupted: {exc}"}
+            return
+        finally:
+            try:
+                resp.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        if not emitted_done:
+            # Stream ended (e.g. [DONE]) without an explicit completed event.
+            yield {
+                "type": "done",
+                "text": "".join(chunks),
+                "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+                "transport": "responses_http",
+            }
 
     @staticmethod
     def _extract_reply(stdout: str) -> str:
