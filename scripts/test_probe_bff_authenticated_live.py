@@ -123,6 +123,70 @@ def test_request_json_accepts_expected_bff_error_envelope(monkeypatch) -> None:
     assert result["error_code"] == "FORBIDDEN"
 
 
+def test_build_dry_run_results_attaches_per_probe_side_effect_proofs(monkeypatch) -> None:
+    probe = _load_probe_module()
+
+    def fake_request_json(*, base_url: str, probe: Any, token: str, timeout: float, idempotency_prefix: str):
+        assert base_url == "https://bff.example.test"
+        assert token == "operator-token"
+        assert timeout == 4.0
+        assert idempotency_prefix == "idem-dry"
+        result = {
+            "family": probe.family,
+            "method": probe.method,
+            "path": probe.path,
+            "status": 200,
+            "ok": True,
+            "error_envelope": False,
+        }
+        if probe.family in {"dry-run-strategy-create", "dry-run-ranking-formula-create"}:
+            result["extracted"] = {
+                "meta.dryRun": True,
+                "meta.durable": False,
+                "meta.liveCapitalSideEffects": False,
+                "data.id": f"{probe.family}-id",
+            }
+        elif probe.family == "dry-run-v5-intervention-claim":
+            result["extracted"] = {
+                "meta.dryRun": True,
+                "meta.durable": False,
+                "meta.liveCapitalSideEffects": False,
+            }
+        elif probe.family.endswith("-readback-not-persisted"):
+            result.update({"status": 404, "error_envelope": True, "error_code": "RESOURCE_NOT_FOUND"})
+        elif probe.family.startswith("dry-run-invalid-"):
+            result.update({"status": 422, "error_envelope": True, "error_code": "VALIDATION_FAILED"})
+        return result
+
+    monkeypatch.setattr(probe, "request_json", fake_request_json)
+
+    results = probe.build_dry_run_results(
+        base_url="https://bff.example.test",
+        token="operator-token",
+        timeout=4.0,
+        idempotency_prefix="idem-dry",
+    )
+
+    assert len(results) == 7
+    assert all(result["side_effect_check"]["ok"] is True for result in results)
+    assert [result["side_effect_check"]["kind"] for result in results] == [
+        "dry_run_preview_meta",
+        "readback_not_persisted",
+        "dry_run_preview_meta",
+        "readback_not_persisted",
+        "dry_run_command_meta",
+        "validation_rejected_before_persistence",
+        "validation_rejected_before_persistence",
+    ]
+    readback_checks = [
+        result["side_effect_check"]
+        for result in results
+        if result["side_effect_check"]["kind"] == "readback_not_persisted"
+    ]
+    assert all("target_id_sha256_12" in check for check in readback_checks)
+    assert all("target_id" not in check for check in readback_checks)
+
+
 def test_make_rbac_tokens_mints_full_matrix_without_leaking_tokens(monkeypatch) -> None:
     probe = _load_probe_module()
     monkeypatch.delenv("PANTHEON_BFF_RBAC_TOKENS_JSON", raising=False)
