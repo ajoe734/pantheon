@@ -50,6 +50,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_CONFLICT_RESOLUTION_MODEL_ID,
     PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID,
     PERSONA_DECISION_ARTIFACT_MODEL_ID,
+    PERSONA_DECISION_COUNTERFACTUAL_MODEL_ID,
     PERSONA_DEGRADED_OSS_RESPONSE_MODEL_ID,
     PERSONA_EXPERIMENT_TRACKING_LINEAGE_HANDOFF_MODEL_ID,
     PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID,
@@ -328,6 +329,24 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["degraded_oss_response_repair_drives_decision_count"] == DEFAULT_CASE_COUNT
     assert summary["agent_decision_artifact_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["agent_decision_artifact_replay_count"] == DEFAULT_CASE_COUNT
+    assert summary["agent_decision_counterfactual_count"] == DEFAULT_CASE_COUNT * 2
+    assert summary["agent_decision_counterfactual_pass_count"] == DEFAULT_CASE_COUNT * 2
+    assert (
+        summary["agent_decision_counterfactual_wrong_scorer_rejected_count"]
+        == DEFAULT_CASE_COUNT * 2
+    )
+    assert (
+        summary["agent_decision_counterfactual_missing_risk_rejected_count"]
+        == DEFAULT_CASE_COUNT * 2
+    )
+    assert (
+        summary["agent_decision_counterfactual_wrong_risk_rejected_count"]
+        == DEFAULT_CASE_COUNT * 2
+    )
+    assert (
+        summary["agent_decision_counterfactual_wrong_reasoning_rejected_count"]
+        == DEFAULT_CASE_COUNT * 2
+    )
     assert summary["persona_reasoning_response_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["persona_reasoning_drives_candidate_generation_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_generation_evolution_count"] == DEFAULT_CASE_COUNT
@@ -1372,6 +1391,26 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert coverage["agent_candidate_generator_models"] == [PERSONA_CANDIDATE_GENERATOR_MODEL_ID]
     assert coverage["agent_candidate_scorer_models"] == [PERSONA_CANDIDATE_SCORER_MODEL_ID]
     assert coverage["agent_risk_evaluator_models"] == [PERSONA_RISK_EVALUATOR_MODEL_ID]
+    assert coverage["agent_decision_counterfactual_models"] == [
+        PERSONA_DECISION_COUNTERFACTUAL_MODEL_ID
+    ]
+    assert set(coverage["agent_decision_counterfactual_replay_flags"]) == {
+        "actual_scorer_selects_top_score",
+        "candidate_generation_bound_to_reasoning_ref",
+        "missing_risk_evaluator_rejects_selected",
+        "reasoning_ref_bound_to_scorer",
+        "replayable",
+        "risk_evaluator_passes_selected_candidate",
+        "risk_evaluator_required_by_reasoning",
+        "scorer_required_by_reasoning",
+        "selected_candidate_cites_risk_analytics",
+        "selected_score_margin_positive",
+        "selection_deltas_recomputed",
+        "selection_rejects_all_non_top_candidates",
+        "wrong_reasoning_ref_rejected",
+        "wrong_risk_evaluator_rejected",
+        "wrong_scorer_candidate_rejected",
+    }
     assert coverage["agent_decision_artifact_generations"] == [1, 2]
     assert coverage["agent_memory_influence_models"] == [PERSONA_MEMORY_INFLUENCE_MODEL_ID]
     assert coverage["agent_memory_influence_statuses"] == ["applied", "cold_start"]
@@ -1920,6 +1959,7 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert replay["uses_memory_or_declares_cold_start"] is True
         assert replay["uses_memory_in_scoring_or_declares_cold_start"] is True
         assert replay["memory_counterfactual_replays_score_delta"] is True
+        assert replay["agent_decision_counterfactual_replays_selection"] is True
         assert replay["uses_selected_oss_feedback"] is True
         assert replay["uses_policy_candidate_oss_metrics"] is True
         assert replay["uses_reflection_artifact_oss_metrics"] is True
@@ -1929,16 +1969,86 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
         assert replay["score_hash"]
         assert replay["selection_hash"]
         _assert_memory_counterfactual_proof(case, trace)
+        _assert_agent_decision_counterfactual_proof(case, trace)
 
     check_by_name = {
         check["check"]: check
         for check in case["validation_cycle"]["execution_review"]["checks"]
     }
     assert check_by_name["persona_decision_artifact_replays_candidate_selection"]["status"] == "passed"
+    assert (
+        check_by_name[
+            "agent_decision_counterfactual_rejects_wrong_scorer_risk_reasoning"
+        ]["status"]
+        == "passed"
+    )
     assert check_by_name["persona_reasoning_response_drives_candidate_generation"]["status"] == "passed"
     assert check_by_name["retrieved_memory_influences_persona_candidate_scoring"]["status"] == "passed"
     assert check_by_name["memory_counterfactual_proves_retrieval_materiality"]["status"] == "passed"
     assert check_by_name["oss_response_followup_loop_drives_persona_scoring"]["status"] == "passed"
+
+def _assert_agent_decision_counterfactual_proof(case: dict, trace: dict) -> None:
+    artifact = trace["agent_decision_artifact"]
+    proof = artifact["agent_decision_counterfactual"]
+    scorecards = artifact["scorer"]["scorecards"]
+    selected_id = trace["selected_candidate_id"]
+    selected_score = scorecards[selected_id]["candidate_score"]
+    non_selected_scores = {
+        candidate_id: card["candidate_score"]
+        for candidate_id, card in scorecards.items()
+        if candidate_id != selected_id
+    }
+    runner_up_id = max(non_selected_scores, key=non_selected_scores.__getitem__)
+    runner_up_score = non_selected_scores[runner_up_id]
+
+    assert proof["model_id"] == PERSONA_DECISION_COUNTERFACTUAL_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["generation"] == artifact["generation"]
+    assert proof["decision_trace_ref"] == trace["reflection_id"]
+    assert proof["proof_ref"] == (
+        f"agent-decision-counterfactual://{case['case_id']}/gen{artifact['generation']}"
+    )
+    assert proof["input_hash"]
+    assert proof["selected_candidate_id"] == selected_id
+    assert proof["selected_score"] == selected_score
+    assert proof["actual_winner_id"] == selected_id
+    assert proof["runner_up_candidate_id"] == runner_up_id
+    assert proof["runner_up_score"] == runner_up_score
+    assert proof["score_margin_to_runner_up"] == round(
+        selected_score - runner_up_score,
+        10,
+    )
+    assert proof["score_margin_to_runner_up"] > 0
+
+    for candidate_id, card in scorecards.items():
+        assert proof["actual_scores"][candidate_id] == card["candidate_score"]
+        if candidate_id != selected_id:
+            expected_delta = round(selected_score - card["candidate_score"], 10)
+            assert proof["selection_deltas_to_selected"][candidate_id] == expected_delta
+            assert proof["expected_selection_deltas_to_selected"][candidate_id] == expected_delta
+
+    assert proof["wrong_scorer_candidate_id"] == runner_up_id
+    assert proof["wrong_scorer_winner_id"] == runner_up_id
+    assert proof["wrong_scorer_scores"][runner_up_id] > proof["wrong_scorer_scores"][selected_id]
+    assert proof["wrong_scorer_replay_accepts_selected"] is False
+    assert proof["actual_reasoning_ref"] == artifact["persona_reasoning"]["response"]["reasoning_ref"]
+    assert proof["wrong_reasoning_ref"].startswith("persona-reasoning://wrong-")
+    assert proof["wrong_reasoning_ref"] != proof["actual_reasoning_ref"]
+    assert proof["wrong_reasoning_replay_accepts_candidate_generation"] is False
+    assert proof["candidate_generation_request_id"] == artifact["candidate_generation"]["request"]["request_id"]
+    assert proof["candidate_generation_response_id"] == artifact["candidate_generation"]["response"]["response_id"]
+    assert proof["scorer_required_by_reasoning"] is True
+    assert proof["risk_evaluator_required_by_reasoning"] is True
+    assert proof["risk_evaluator_passes_selected_candidate"] is True
+    assert proof["risk_analytics_ref"] == artifact["risk_evaluator"]["risk_analytics_ref"]
+    assert proof["risk_analytics_ref"] in trace["selected_candidate"]["evidence_refs"]
+    assert proof["missing_risk_evaluator_replay_accepts_selected"] is False
+    assert proof["missing_risk_evaluator_rejects_selected"] is True
+    assert proof["wrong_risk_evaluator_candidate_id"] == runner_up_id
+    assert proof["wrong_risk_evaluator_replay_accepts_selected"] is False
+    assert all(proof["replay"].values())
 
 
 def _assert_memory_counterfactual_proof(case: dict, trace: dict) -> None:

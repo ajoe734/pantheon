@@ -166,6 +166,7 @@ PERSONA_DECISION_ARTIFACT_MODEL_ID = "persona_replayable_candidate_decision_v1"
 PERSONA_CANDIDATE_GENERATOR_MODEL_ID = "persona_candidate_generation_from_oss_feedback_v1"
 PERSONA_CANDIDATE_SCORER_MODEL_ID = "persona_multi_factor_candidate_scorer_v1"
 PERSONA_RISK_EVALUATOR_MODEL_ID = "persona_oss_risk_turnover_evaluator_v1"
+PERSONA_DECISION_COUNTERFACTUAL_MODEL_ID = "persona_scorer_risk_reasoning_counterfactual_v1"
 PERSONA_MEMORY_INFLUENCE_MODEL_ID = "persona_retrieved_lesson_influence_v1"
 PERSONA_INSTITUTIONAL_MEMORY_LINEAGE_MODEL_ID = "persona_cross_persona_institutional_memory_lineage_v1"
 PERSONA_REASONING_MODEL_ID = "persona_structured_reasoning_candidate_generator_v1"
@@ -6490,6 +6491,218 @@ def _memory_counterfactual_proof_is_usable(proof: Mapping[str, Any]) -> bool:
         )
     )
 
+def _build_agent_decision_counterfactual_proof(
+    *,
+    episode: PortfolioEpisode,
+    generation: int,
+    decision_trace_ref: str,
+    persona_reasoning: Mapping[str, Any],
+    candidate_generation: Mapping[str, Any],
+    scoring_inputs: Mapping[str, Any],
+    scorecards: Mapping[str, Mapping[str, Any]],
+    selected_candidate: Mapping[str, Any],
+    risk_evaluator: Mapping[str, Any],
+    selection: Mapping[str, Any],
+) -> dict[str, Any]:
+    selected_id = str(selected_candidate["candidate_id"])
+    actual_scores = {
+        candidate_id: round(float(card["candidate_score"]), 10)
+        for candidate_id, card in scorecards.items()
+    }
+    ordered_scores = sorted(actual_scores.items(), key=lambda item: (-item[1], item[0]))
+    actual_winner_id = ordered_scores[0][0]
+    runner_up_id = next(candidate_id for candidate_id, _ in ordered_scores if candidate_id != selected_id)
+    selected_score = actual_scores[selected_id]
+    runner_up_score = actual_scores[runner_up_id]
+    score_margin = round(selected_score - runner_up_score, 10)
+    wrong_scorer_scores = dict(actual_scores)
+    wrong_scorer_scores[runner_up_id] = round(selected_score + abs(score_margin) + 0.1, 10)
+    wrong_scorer_winner_id = max(wrong_scorer_scores, key=wrong_scorer_scores.__getitem__)
+    selection_deltas_to_selected = {
+        str(item["candidate_id"]): round(float(item["score_delta_to_selected"]), 10)
+        for item in selection.get("rejected_candidates", [])
+    }
+    expected_selection_deltas_to_selected = {
+        candidate_id: round(selected_score - score, 10)
+        for candidate_id, score in actual_scores.items()
+        if candidate_id != selected_id
+    }
+    selection_deltas_recomputed = (
+        set(selection_deltas_to_selected) == set(expected_selection_deltas_to_selected)
+        and all(
+            abs(
+                selection_deltas_to_selected[candidate_id]
+                - expected_selection_deltas_to_selected[candidate_id]
+            ) <= 1e-9
+            for candidate_id in expected_selection_deltas_to_selected
+        )
+    )
+    reasoning_response = persona_reasoning.get("response", {})
+    output_contract = reasoning_response.get("output_contract", {})
+    reasoning_ref = str(reasoning_response.get("reasoning_ref"))
+    candidate_request = candidate_generation.get("request", {})
+    candidate_response = candidate_generation.get("response", {})
+    request_refs = {str(ref) for ref in candidate_request.get("input_refs", [])}
+    wrong_reasoning_hash = _stable_payload_hash(
+        "wrong-reasoning-counterfactual",
+        {
+            "case_id": episode.case_id,
+            "generation": generation,
+            "actual_reasoning_ref": reasoning_ref,
+            "selected_candidate_id": selected_id,
+        },
+    )
+    wrong_reasoning_ref = f"persona-reasoning://wrong-{wrong_reasoning_hash[:16]}"
+    wrong_reasoning_replay_accepts_candidate_generation = bool(
+        candidate_response.get("source_reasoning_ref") == wrong_reasoning_ref
+        and wrong_reasoning_ref in request_refs
+    )
+    risk_ref = risk_evaluator.get("risk_analytics_ref")
+    selected_refs = {str(ref) for ref in selected_candidate.get("evidence_refs", [])}
+    risk_evaluator_passes_selected_candidate = bool(
+        risk_evaluator.get("model_id") == PERSONA_RISK_EVALUATOR_MODEL_ID
+        and risk_evaluator.get("status") == "passed"
+        and risk_evaluator.get("selected_candidate_id") == selected_id
+        and all(check.get("status") == "passed" for check in risk_evaluator.get("checks", []))
+    )
+    risk_evaluator_required_by_reasoning = output_contract.get("risk_evaluator_required") is True
+    scorer_required_by_reasoning = output_contract.get("scorer_required") is True
+    missing_risk_evaluator_replay_accepts_selected = not risk_evaluator_required_by_reasoning
+    wrong_risk_evaluator_candidate_id = runner_up_id
+    wrong_risk_evaluator_replay_accepts_selected = bool(
+        wrong_risk_evaluator_candidate_id == selected_id
+        and risk_evaluator_passes_selected_candidate
+    )
+    replay = {
+        "replayable": True,
+        "actual_scorer_selects_top_score": actual_winner_id == selected_id,
+        "selected_score_margin_positive": score_margin > 0.0,
+        "selection_rejects_all_non_top_candidates": (
+            set(selection_deltas_to_selected)
+            == {candidate_id for candidate_id in actual_scores if candidate_id != selected_id}
+        ),
+        "selection_deltas_recomputed": selection_deltas_recomputed,
+        "candidate_generation_bound_to_reasoning_ref": (
+            candidate_response.get("source_reasoning_response_id")
+            == reasoning_response.get("response_id")
+            and candidate_response.get("source_reasoning_ref") == reasoning_ref
+            and reasoning_ref in request_refs
+        ),
+        "reasoning_ref_bound_to_scorer": (
+            scoring_inputs.get("persona_reasoning_ref") == reasoning_ref
+            and scoring_inputs.get("persona_reasoning_preferred_action")
+            == reasoning_response.get("preferred_action_hint")
+        ),
+        "scorer_required_by_reasoning": scorer_required_by_reasoning,
+        "risk_evaluator_required_by_reasoning": risk_evaluator_required_by_reasoning,
+        "risk_evaluator_passes_selected_candidate": risk_evaluator_passes_selected_candidate,
+        "selected_candidate_cites_risk_analytics": risk_ref in selected_refs,
+        "wrong_scorer_candidate_rejected": wrong_scorer_winner_id != selected_id,
+        "missing_risk_evaluator_rejects_selected": (
+            missing_risk_evaluator_replay_accepts_selected is False
+        ),
+        "wrong_risk_evaluator_rejected": (
+            wrong_risk_evaluator_replay_accepts_selected is False
+        ),
+        "wrong_reasoning_ref_rejected": (
+            wrong_reasoning_replay_accepts_candidate_generation is False
+        ),
+    }
+    return {
+        "proof_id": f"agent-decision-counterfactual-{episode.case_id}-gen{generation}",
+        "proof_ref": f"agent-decision-counterfactual://{episode.case_id}/gen{generation}",
+        "model_id": PERSONA_DECISION_COUNTERFACTUAL_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "generation": generation,
+        "decision_trace_ref": decision_trace_ref,
+        "selected_candidate_id": selected_id,
+        "selected_score": selected_score,
+        "actual_winner_id": actual_winner_id,
+        "runner_up_candidate_id": runner_up_id,
+        "runner_up_score": runner_up_score,
+        "score_margin_to_runner_up": score_margin,
+        "actual_scores": actual_scores,
+        "selection_deltas_to_selected": selection_deltas_to_selected,
+        "expected_selection_deltas_to_selected": expected_selection_deltas_to_selected,
+        "wrong_scorer_candidate_id": runner_up_id,
+        "wrong_scorer_scores": wrong_scorer_scores,
+        "wrong_scorer_winner_id": wrong_scorer_winner_id,
+        "wrong_scorer_replay_accepts_selected": wrong_scorer_winner_id == selected_id,
+        "actual_reasoning_ref": reasoning_ref,
+        "wrong_reasoning_ref": wrong_reasoning_ref,
+        "wrong_reasoning_replay_accepts_candidate_generation": (
+            wrong_reasoning_replay_accepts_candidate_generation
+        ),
+        "candidate_generation_request_id": candidate_request.get("request_id"),
+        "candidate_generation_response_id": candidate_response.get("response_id"),
+        "scorer_required_by_reasoning": scorer_required_by_reasoning,
+        "risk_evaluator_required_by_reasoning": risk_evaluator_required_by_reasoning,
+        "risk_evaluator_passes_selected_candidate": risk_evaluator_passes_selected_candidate,
+        "risk_analytics_ref": risk_ref,
+        "missing_risk_evaluator_replay_accepts_selected": (
+            missing_risk_evaluator_replay_accepts_selected
+        ),
+        "missing_risk_evaluator_rejects_selected": (
+            missing_risk_evaluator_replay_accepts_selected is False
+        ),
+        "wrong_risk_evaluator_candidate_id": wrong_risk_evaluator_candidate_id,
+        "wrong_risk_evaluator_replay_accepts_selected": (
+            wrong_risk_evaluator_replay_accepts_selected
+        ),
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "agent-decision-counterfactual-proof",
+            {
+                "case_id": episode.case_id,
+                "generation": generation,
+                "selected_candidate_id": selected_id,
+                "actual_scores": actual_scores,
+                "selection_deltas_to_selected": selection_deltas_to_selected,
+                "wrong_scorer_scores": wrong_scorer_scores,
+                "actual_reasoning_ref": reasoning_ref,
+                "wrong_reasoning_ref": wrong_reasoning_ref,
+                "risk_analytics_ref": risk_ref,
+                "wrong_risk_evaluator_candidate_id": wrong_risk_evaluator_candidate_id,
+            },
+        ),
+    }
+
+
+def _agent_decision_counterfactual_proof_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    return bool(
+        proof.get("model_id") == PERSONA_DECISION_COUNTERFACTUAL_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("agent-decision-counterfactual://")
+        and proof.get("input_hash")
+        and proof.get("actual_winner_id") == proof.get("selected_candidate_id")
+        and proof.get("runner_up_candidate_id") != proof.get("selected_candidate_id")
+        and float(proof.get("score_margin_to_runner_up", 0.0)) > 0.0
+        and proof.get("wrong_scorer_winner_id") == proof.get("wrong_scorer_candidate_id")
+        and proof.get("wrong_scorer_replay_accepts_selected") is False
+        and proof.get("missing_risk_evaluator_replay_accepts_selected") is False
+        and proof.get("missing_risk_evaluator_rejects_selected") is True
+        and proof.get("wrong_risk_evaluator_replay_accepts_selected") is False
+        and proof.get("wrong_reasoning_replay_accepts_candidate_generation") is False
+        and replay.get("replayable") is True
+        and replay.get("actual_scorer_selects_top_score") is True
+        and replay.get("selected_score_margin_positive") is True
+        and replay.get("selection_rejects_all_non_top_candidates") is True
+        and replay.get("selection_deltas_recomputed") is True
+        and replay.get("candidate_generation_bound_to_reasoning_ref") is True
+        and replay.get("reasoning_ref_bound_to_scorer") is True
+        and replay.get("scorer_required_by_reasoning") is True
+        and replay.get("risk_evaluator_required_by_reasoning") is True
+        and replay.get("risk_evaluator_passes_selected_candidate") is True
+        and replay.get("selected_candidate_cites_risk_analytics") is True
+        and replay.get("wrong_scorer_candidate_rejected") is True
+        and replay.get("missing_risk_evaluator_rejects_selected") is True
+        and replay.get("wrong_risk_evaluator_rejected") is True
+        and replay.get("wrong_reasoning_ref_rejected") is True
+    )
+
 
 def _build_institutional_memory_lineage_proof(
     *,
@@ -8426,6 +8639,18 @@ def _build_persona_decision_artifact(
         selected_candidate=selected_candidate,
         memory_influence=memory_influence,
     )
+    agent_decision_counterfactual = _build_agent_decision_counterfactual_proof(
+        episode=episode,
+        generation=generation,
+        decision_trace_ref=f"reflection-{episode.case_id}-gen{generation}",
+        persona_reasoning=persona_reasoning,
+        candidate_generation=candidate_generation,
+        scoring_inputs=scoring_inputs,
+        scorecards=scorecards,
+        selected_candidate=selected_candidate,
+        risk_evaluator=risk_evaluator,
+        selection=selection,
+    )
     replay = {
         "input_hash": _stable_payload_hash("decision-input", input_context),
         "candidate_hash": _stable_payload_hash("decision-candidates", candidate_generation["response"]),
@@ -8472,6 +8697,11 @@ def _build_persona_decision_artifact(
         ),
         "memory_counterfactual_replays_score_delta": _memory_counterfactual_proof_is_usable(
             memory_counterfactual
+        ),
+        "agent_decision_counterfactual_replays_selection": (
+            _agent_decision_counterfactual_proof_is_usable(
+                agent_decision_counterfactual
+            )
         ),
         "uses_persona_reasoning_response": candidate_generation["response"]["source_reasoning_response_id"]
         == persona_reasoning["response"]["response_id"]
@@ -8739,6 +8969,7 @@ def _build_persona_decision_artifact(
             "scorecards": scorecards,
         },
         "memory_counterfactual": memory_counterfactual,
+        "agent_decision_counterfactual": agent_decision_counterfactual,
         "risk_evaluator": risk_evaluator,
         "selection": selection,
         "evidence_refs": list(evidence_refs),
@@ -16826,10 +17057,24 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
     scorer = artifact.get("scorer", {})
     scorecards = scorer.get("scorecards", {})
     memory_counterfactual = artifact.get("memory_counterfactual", {})
+    agent_decision_counterfactual = artifact.get("agent_decision_counterfactual", {})
     risk_evaluator = artifact.get("risk_evaluator", {})
     selection = artifact.get("selection", {})
     replay = artifact.get("replay", {})
-    if not all(isinstance(item, Mapping) for item in (input_context, response, scorer, scorecards, memory_counterfactual, risk_evaluator, selection, replay)):
+    if not all(
+        isinstance(item, Mapping)
+        for item in (
+            input_context,
+            response,
+            scorer,
+            scorecards,
+            memory_counterfactual,
+            agent_decision_counterfactual,
+            risk_evaluator,
+            selection,
+            replay,
+        )
+    ):
         return False
 
     required_roles = {
@@ -16895,6 +17140,7 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and replay.get("uses_memory_in_scoring_or_declares_cold_start") is True
         and replay.get("uses_cross_persona_institutional_memory_or_declares_cold_start") is True
         and replay.get("memory_counterfactual_replays_score_delta") is True
+        and replay.get("agent_decision_counterfactual_replays_selection") is True
         and replay.get("uses_persona_reasoning_response") is True
         and replay.get("uses_selected_oss_feedback") is True
         and replay.get("uses_policy_candidate_oss_metrics") is True
@@ -16915,6 +17161,9 @@ def _persona_decision_artifact_is_usable(trace: Mapping[str, Any]) -> bool:
         and _trace_has_no_forbidden_window_leakage(trace)
         and _trace_memory_influence_is_usable(trace)
         and _memory_counterfactual_proof_is_usable(memory_counterfactual)
+        and _agent_decision_counterfactual_proof_is_usable(
+            agent_decision_counterfactual
+        )
         and _trace_persona_reasoning_is_usable(trace)
         and _trace_oss_followup_loop_is_usable(trace)
         and _trace_oss_disagreement_arbitration_is_usable(trace)
@@ -18870,6 +19119,12 @@ def _build_usability_dimensions(
         )
         for trace in decision_traces
     ) else 0.0
+    agent_decision_counterfactual = 1.0 if all(
+        _agent_decision_counterfactual_proof_is_usable(
+            trace["agent_decision_artifact"]["agent_decision_counterfactual"]
+        )
+        for trace in decision_traces
+    ) else 0.0
     institutional_memory_lineage_score = 1.0 if _institutional_memory_lineage_is_usable(
         institutional_memory_lineage
     ) else 0.0
@@ -19037,6 +19292,7 @@ def _build_usability_dimensions(
         "memory_reuse": memory_reuse,
         "memory_influences_decision": memory_influences_decision,
         "memory_counterfactual_decision": memory_counterfactual_decision,
+        "agent_decision_counterfactual": agent_decision_counterfactual,
         "institutional_memory_lineage": institutional_memory_lineage_score,
         "decision_explainability": decision_explainability,
         "persona_decision_artifact": persona_decision_artifact,
@@ -19188,6 +19444,29 @@ def _diagnose_validation_execution(
                 ],
                 "selected_candidate_ids": [
                     trace["selected_candidate_id"] for trace in decision_traces
+                ],
+            },
+        ),
+        _diagnostic_check(
+            "agent_decision_counterfactual_rejects_wrong_scorer_risk_reasoning",
+            all(
+                _agent_decision_counterfactual_proof_is_usable(
+                    trace["agent_decision_artifact"]["agent_decision_counterfactual"]
+                )
+                for trace in decision_traces
+            ),
+            {
+                "proof_ids": [
+                    trace["agent_decision_artifact"]["agent_decision_counterfactual"]["proof_id"]
+                    for trace in decision_traces
+                ],
+                "replay_flags": [
+                    copy.deepcopy(
+                        dict(
+                            trace["agent_decision_artifact"]["agent_decision_counterfactual"]["replay"]
+                        )
+                    )
+                    for trace in decision_traces
                 ],
             },
         ),
@@ -20366,6 +20645,9 @@ def _build_case_result(
                 "degraded_oss_response_repair"
             ] == 1.0,
             "persona_decision_artifacts_replay": usability_dimensions["persona_decision_artifact"] == 1.0,
+            "agent_decision_counterfactual_replays_selection": usability_dimensions[
+                "agent_decision_counterfactual"
+            ] == 1.0,
             "persona_reasoning_drives_candidate_generation": usability_dimensions[
                 "persona_reasoning_generation"
             ] == 1.0,
@@ -20495,6 +20777,9 @@ def _build_summary(
     ]
     memory_counterfactuals = [
         artifact["memory_counterfactual"] for artifact in decision_artifacts
+    ]
+    agent_decision_counterfactuals = [
+        artifact["agent_decision_counterfactual"] for artifact in decision_artifacts
     ]
     institutional_memory_lineages = [
         case["memory"]["institutional_memory_lineage"] for case in cases
@@ -21353,6 +21638,15 @@ def _build_summary(
         "agent_risk_evaluator_models": sorted({
             artifact["risk_evaluator"]["model_id"] for artifact in decision_artifacts
         }),
+        "agent_decision_counterfactual_models": sorted({
+            proof["model_id"] for proof in agent_decision_counterfactuals
+        }),
+        "agent_decision_counterfactual_replay_flags": sorted({
+            flag
+            for proof in agent_decision_counterfactuals
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
         "agent_decision_artifact_generations": sorted({
             artifact["generation"] for artifact in decision_artifacts
         }),
@@ -21965,6 +22259,32 @@ def _build_summary(
         "agent_decision_artifact_count": len(decision_artifacts),
         "agent_decision_artifact_replay_count": sum(
             1 for item in usable if item["persona_decision_artifacts_replay"]
+        ),
+        "agent_decision_counterfactual_count": len(agent_decision_counterfactuals),
+        "agent_decision_counterfactual_pass_count": sum(
+            1
+            for proof in agent_decision_counterfactuals
+            if _agent_decision_counterfactual_proof_is_usable(proof)
+        ),
+        "agent_decision_counterfactual_wrong_scorer_rejected_count": sum(
+            1
+            for proof in agent_decision_counterfactuals
+            if proof["replay"].get("wrong_scorer_candidate_rejected") is True
+        ),
+        "agent_decision_counterfactual_missing_risk_rejected_count": sum(
+            1
+            for proof in agent_decision_counterfactuals
+            if proof["replay"].get("missing_risk_evaluator_rejects_selected") is True
+        ),
+        "agent_decision_counterfactual_wrong_risk_rejected_count": sum(
+            1
+            for proof in agent_decision_counterfactuals
+            if proof["replay"].get("wrong_risk_evaluator_rejected") is True
+        ),
+        "agent_decision_counterfactual_wrong_reasoning_rejected_count": sum(
+            1
+            for proof in agent_decision_counterfactuals
+            if proof["replay"].get("wrong_reasoning_ref_rejected") is True
         ),
         "persona_reasoning_response_count": len(decision_artifacts),
         "persona_reasoning_drives_candidate_generation_count": sum(
