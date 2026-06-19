@@ -2658,34 +2658,127 @@ def _build_multi_oss_closed_loop_proof(
         reasoning_request = artifact["persona_reasoning"]["request"]
         candidate_request = artifact["candidate_generation"]["request"]
         scorer_inputs = artifact["scorer"]["scoring_inputs"]
+        scorecards = artifact["scorer"]["scorecards"]
         selected_candidate = trace["selected_candidate"]
+        selected_id = str(trace["selected_candidate_id"])
+        selected_action = _candidate_action_key(selected_id)
         selected_refs = set(str(ref) for ref in selected_candidate["evidence_refs"])
         reasoning_refs = set(str(ref) for ref in reasoning_request["input_refs"])
         candidate_refs = set(str(ref) for ref in candidate_request["input_refs"])
         scorer_adjustments = scorer_inputs["oss_followup_score_adjustments"]
+        actual_scores = {
+            candidate_id: round(float(card["candidate_score"]), 10)
+            for candidate_id, card in scorecards.items()
+        }
+        candidate_refs_by_id = {
+            candidate_id: {str(ref) for ref in card.get("evidence_refs", [])}
+            for candidate_id, card in scorecards.items()
+        }
         role_trace_bindings = []
         for record in role_records:
             candidate_action = str(record["followup_candidate_action"])
-            role_adjustment = float(
-                record["followup_score_adjustments"].get(candidate_action, 0.0)
+            role_adjustments = dict(record["followup_score_adjustments"])
+            role_adjustment = float(role_adjustments.get(candidate_action, 0.0))
+            missing_followup_ref = str(record["followup_output_ref"])
+            counterfactual_without_role_scores = {
+                candidate_id: round(
+                    score
+                    - float(role_adjustments.get(_candidate_action_key(candidate_id), 0.0)),
+                    10,
+                )
+                for candidate_id, score in actual_scores.items()
+            }
+            counterfactual_without_role_admissible_scores = {
+                candidate_id: score
+                for candidate_id, score in counterfactual_without_role_scores.items()
+                if missing_followup_ref not in candidate_refs_by_id[candidate_id]
+            }
+            selected_candidate_admissible_without_role = (
+                selected_id in counterfactual_without_role_admissible_scores
             )
+            missing_role_admissible_winner_id = (
+                max(
+                    counterfactual_without_role_admissible_scores,
+                    key=counterfactual_without_role_admissible_scores.__getitem__,
+                )
+                if counterfactual_without_role_admissible_scores
+                else None
+            )
+            wrong_role_hash = _stable_payload_hash(
+                "wrong-oss-followup-counterfactual",
+                {
+                    "case_id": episode.case_id,
+                    "trace_id": trace["reflection_id"],
+                    "role": record["role"],
+                    "source_oss_ref": record["source_oss_ref"],
+                    "followup_output_ref": missing_followup_ref,
+                },
+            )
+            wrong_followup_ref = f"followup://persona/wrong/{wrong_role_hash[:16]}"
+            wrong_source_ref = f"oss://wrong/{wrong_role_hash[:16]}"
             role_trace_bindings.append(
                 {
                     "role": record["role"],
                     "source_ref_in_reasoning_request": record["source_oss_ref"] in reasoning_refs,
-                    "followup_output_in_candidate_request": record["followup_output_ref"] in candidate_refs,
-                    "followup_output_in_selected_evidence": record["followup_output_ref"] in selected_refs,
+                    "followup_output_in_candidate_request": missing_followup_ref in candidate_refs,
+                    "followup_output_in_selected_evidence": missing_followup_ref in selected_refs,
                     "scorer_adjustment_available": float(
                         scorer_adjustments.get(candidate_action, 0.0)
                     ) >= role_adjustment > 0.0,
+                    "selected_action": selected_action,
+                    "missing_followup_ref": missing_followup_ref,
+                    "selected_role_score_delta": round(
+                        actual_scores[selected_id]
+                        - counterfactual_without_role_scores[selected_id],
+                        10,
+                    ),
+                    "expected_selected_role_score_delta": round(
+                        float(role_adjustments.get(selected_action, 0.0)),
+                        10,
+                    ),
+                    "counterfactual_without_role_followup_scores": (
+                        counterfactual_without_role_scores
+                    ),
+                    "counterfactual_without_role_admissible_scores": (
+                        counterfactual_without_role_admissible_scores
+                    ),
+                    "selected_candidate_admissible_without_role_followup": (
+                        selected_candidate_admissible_without_role
+                    ),
+                    "missing_role_admissible_winner_id": missing_role_admissible_winner_id,
+                    "missing_role_changes_admissible_decision": (
+                        missing_role_admissible_winner_id != selected_id
+                    ),
+                    "wrong_followup_ref": wrong_followup_ref,
+                    "wrong_source_ref": wrong_source_ref,
+                    "wrong_role_followup_replay_accepts_selected": bool(
+                        wrong_followup_ref in selected_refs
+                        and wrong_followup_ref in candidate_refs
+                        and wrong_source_ref in reasoning_refs
+                    ),
+                    "counterfactual_scores_recomputed": all(
+                        abs(
+                            counterfactual_without_role_scores[candidate_id]
+                            - round(
+                                actual_scores[candidate_id]
+                                - float(
+                                    role_adjustments.get(
+                                        _candidate_action_key(candidate_id), 0.0
+                                    )
+                                ),
+                                10,
+                            )
+                        ) <= 1e-9
+                        for candidate_id in actual_scores
+                    ),
                 }
             )
         trace_bindings.append(
             {
                 "generation": artifact["generation"],
                 "trace_id": trace["reflection_id"],
-                "selected_candidate_id": trace["selected_candidate_id"],
-                "selected_action": _candidate_action_key(str(trace["selected_candidate_id"])),
+                "selected_candidate_id": selected_id,
+                "selected_action": selected_action,
                 "oss_followup_loop_ref": oss_followup_loop["loop_ref"],
                 "reasoning_request_consumes_all_source_oss_refs": all(
                     binding["source_ref_in_reasoning_request"]
@@ -2748,6 +2841,34 @@ def _build_multi_oss_closed_loop_proof(
         "feedback_adapt_path_receives_all_oss_feedback": set(
             oss_followup_loop["candidate_evidence_refs_by_action"]["feedback-adapt"]
         ) == set(all_followup_output_refs),
+        "all_role_counterfactual_scores_recomputed": all(
+            role_binding["counterfactual_scores_recomputed"]
+            for binding in trace_bindings
+            for role_binding in binding["role_bindings"]
+        ),
+        "all_missing_role_followups_reject_selected_candidate": all(
+            role_binding["selected_candidate_admissible_without_role_followup"] is False
+            for binding in trace_bindings
+            for role_binding in binding["role_bindings"]
+        ),
+        "all_missing_role_followups_change_admissible_decision": all(
+            role_binding["missing_role_changes_admissible_decision"] is True
+            and role_binding["missing_role_admissible_winner_id"]
+            != binding["selected_candidate_id"]
+            for binding in trace_bindings
+            for role_binding in binding["role_bindings"]
+        ),
+        "all_wrong_role_followups_rejected": all(
+            role_binding["wrong_role_followup_replay_accepts_selected"] is False
+            for binding in trace_bindings
+            for role_binding in binding["role_bindings"]
+        ),
+        "selected_role_score_deltas_recomputed": all(
+            role_binding["selected_role_score_delta"]
+            == role_binding["expected_selected_role_score_delta"]
+            for binding in trace_bindings
+            for role_binding in binding["role_bindings"]
+        ),
     }
     return {
         "proof_id": f"multi-oss-closed-loop-proof-{episode.case_id}",
@@ -2811,6 +2932,17 @@ def _multi_oss_closed_loop_proof_is_usable(proof: Mapping[str, Any]) -> bool:
             and binding.get("candidate_request_consumes_all_followup_outputs") is True
             and binding.get("selected_candidate_cites_all_followup_outputs") is True
             and binding.get("scorer_has_all_role_adjustments") is True
+            and all(
+                role_binding.get("counterfactual_scores_recomputed") is True
+                and role_binding.get("selected_candidate_admissible_without_role_followup") is False
+                and role_binding.get("missing_role_changes_admissible_decision") is True
+                and role_binding.get("missing_role_admissible_winner_id")
+                != binding.get("selected_candidate_id")
+                and role_binding.get("wrong_role_followup_replay_accepts_selected") is False
+                and role_binding.get("selected_role_score_delta")
+                == role_binding.get("expected_selected_role_score_delta")
+                for role_binding in binding.get("role_bindings", [])
+            )
             for binding in trace_bindings
         )
         and replay.get("replayable") is True
@@ -2827,6 +2959,11 @@ def _multi_oss_closed_loop_proof_is_usable(proof: Mapping[str, Any]) -> bool:
         and replay.get("all_role_score_adjustments_available_to_scorer") is True
         and replay.get("selected_candidate_cites_all_followup_outputs") is True
         and replay.get("feedback_adapt_path_receives_all_oss_feedback") is True
+        and replay.get("all_role_counterfactual_scores_recomputed") is True
+        and replay.get("all_missing_role_followups_reject_selected_candidate") is True
+        and replay.get("all_missing_role_followups_change_admissible_decision") is True
+        and replay.get("all_wrong_role_followups_rejected") is True
+        and replay.get("selected_role_score_deltas_recomputed") is True
     )
 
 
@@ -21585,6 +21722,33 @@ def _build_summary(
         ),
         "multi_oss_closed_loop_trace_binding_count": sum(
             len(proof["trace_bindings"]) for proof in multi_oss_closed_loop_proofs
+        ),
+        "multi_oss_closed_loop_role_counterfactual_count": sum(
+            len(binding["role_bindings"])
+            for proof in multi_oss_closed_loop_proofs
+            for binding in proof["trace_bindings"]
+        ),
+        "multi_oss_closed_loop_missing_role_rejects_selected_count": sum(
+            1
+            for proof in multi_oss_closed_loop_proofs
+            for binding in proof["trace_bindings"]
+            for role_binding in binding["role_bindings"]
+            if role_binding["selected_candidate_admissible_without_role_followup"] is False
+        ),
+        "multi_oss_closed_loop_admissible_decision_flip_count": sum(
+            1
+            for proof in multi_oss_closed_loop_proofs
+            for binding in proof["trace_bindings"]
+            for role_binding in binding["role_bindings"]
+            if role_binding["missing_role_admissible_winner_id"]
+            != binding["selected_candidate_id"]
+        ),
+        "multi_oss_closed_loop_wrong_followup_rejected_count": sum(
+            1
+            for proof in multi_oss_closed_loop_proofs
+            for binding in proof["trace_bindings"]
+            for role_binding in binding["role_bindings"]
+            if role_binding["wrong_role_followup_replay_accepts_selected"] is False
         ),
         "multi_oss_closed_loop_role_component_matrix_expected_count": len(
             expected_oss_role_components

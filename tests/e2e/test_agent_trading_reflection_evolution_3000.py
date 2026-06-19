@@ -220,6 +220,19 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["multi_oss_closed_loop_proof_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_oss_closed_loop_role_binding_count"] == DEFAULT_CASE_COUNT * 8
     assert summary["multi_oss_closed_loop_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
+    expected_multi_oss_role_counterfactuals = DEFAULT_CASE_COUNT * 2 * 8
+    assert summary["multi_oss_closed_loop_role_counterfactual_count"] == (
+        expected_multi_oss_role_counterfactuals
+    )
+    assert summary["multi_oss_closed_loop_missing_role_rejects_selected_count"] == (
+        expected_multi_oss_role_counterfactuals
+    )
+    assert summary["multi_oss_closed_loop_admissible_decision_flip_count"] == (
+        expected_multi_oss_role_counterfactuals
+    )
+    assert summary["multi_oss_closed_loop_wrong_followup_rejected_count"] == (
+        expected_multi_oss_role_counterfactuals
+    )
     expected_oss_role_components = sorted(
         f"{role}:{component}"
         for role, components in OSS_ROLE_COMPONENT_MATRIX.items()
@@ -1213,15 +1226,20 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "all_followup_responses_completed",
         "all_followups_requested_after_oss_response",
         "all_oss_responses_completed",
+        "all_missing_role_followups_change_admissible_decision",
+        "all_missing_role_followups_reject_selected_candidate",
         "all_required_roles_present",
         "all_role_components_match_matrix",
+        "all_role_counterfactual_scores_recomputed",
         "all_role_score_adjustments_available_to_scorer",
         "all_source_oss_refs_consumed_by_reasoning",
         "all_source_refs_bound_to_followup_requests",
+        "all_wrong_role_followups_rejected",
         "feedback_adapt_path_receives_all_oss_feedback",
         "replayable",
         "selected_candidate_cites_all_followup_outputs",
         "selected_case_oss_roles_bound",
+        "selected_role_score_deltas_recomputed",
     }
     assert coverage["persona_oss_ooda_ledger_models"] == [PERSONA_OSS_OODA_LEDGER_MODEL_ID]
     assert set(coverage["persona_oss_ooda_ledger_phases"]) == {
@@ -2833,6 +2851,8 @@ def _assert_multi_oss_closed_loop_proof(case: dict) -> None:
         candidate_refs = set(artifact["candidate_generation"]["request"]["input_refs"])
         selected_refs = set(trace["selected_candidate"]["evidence_refs"])
         scorer_adjustments = artifact["scorer"]["scoring_inputs"]["oss_followup_score_adjustments"]
+        scorecards = artifact["scorer"]["scorecards"]
+        selected_id = trace["selected_candidate_id"]
 
         assert binding["generation"] == artifact["generation"]
         assert binding["trace_id"] == trace["reflection_id"]
@@ -2856,6 +2876,47 @@ def _assert_multi_oss_closed_loop_proof(case: dict) -> None:
             assert role_binding["followup_output_in_candidate_request"] is True
             assert role_binding["followup_output_in_selected_evidence"] is True
             assert role_binding["scorer_adjustment_available"] is True
+            assert role_binding["selected_action"] == binding["selected_action"]
+            assert role_binding["missing_followup_ref"] == record["followup_output_ref"]
+            assert role_binding["selected_role_score_delta"] == role_binding[
+                "expected_selected_role_score_delta"
+            ]
+            assert role_binding["expected_selected_role_score_delta"] == record[
+                "followup_score_adjustments"
+            ].get(binding["selected_action"], 0.0)
+            assert role_binding["counterfactual_scores_recomputed"] is True
+            for candidate_id, card in scorecards.items():
+                candidate_action = _candidate_action_from_id(candidate_id)
+                expected_without_role = round(
+                    card["candidate_score"]
+                    - record["followup_score_adjustments"].get(candidate_action, 0.0),
+                    10,
+                )
+                assert role_binding["counterfactual_without_role_followup_scores"][
+                    candidate_id
+                ] == expected_without_role
+                if record["followup_output_ref"] in card["evidence_refs"]:
+                    assert candidate_id not in role_binding[
+                        "counterfactual_without_role_admissible_scores"
+                    ]
+                else:
+                    assert role_binding["counterfactual_without_role_admissible_scores"][
+                        candidate_id
+                    ] == expected_without_role
+            assert role_binding[
+                "selected_candidate_admissible_without_role_followup"
+            ] is False
+            assert selected_id not in role_binding[
+                "counterfactual_without_role_admissible_scores"
+            ]
+            assert role_binding["missing_role_admissible_winner_id"] != selected_id
+            assert role_binding["missing_role_changes_admissible_decision"] is True
+            assert role_binding["wrong_followup_ref"].startswith("followup://persona/wrong/")
+            assert role_binding["wrong_source_ref"].startswith("oss://wrong/")
+            assert role_binding["wrong_followup_ref"] not in selected_refs
+            assert role_binding["wrong_followup_ref"] not in candidate_refs
+            assert role_binding["wrong_source_ref"] not in reasoning_refs
+            assert role_binding["wrong_role_followup_replay_accepts_selected"] is False
 
     assert all(proof["replay"].values())
     check_by_name = {
