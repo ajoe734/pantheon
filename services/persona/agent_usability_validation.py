@@ -183,6 +183,7 @@ PERSONA_CROSS_CYCLE_CARRYOVER_MODEL_ID = "persona_cross_cycle_runtime_carryover_
 PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID = "persona_portfolio_state_carryover_v1"
 PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID = "persona_broker_adapter_response_carryover_v1"
 PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID = "persona_persisted_cycle_resume_carryover_v1"
+PERSONA_RESTART_RECOVERY_COUNTERFACTUAL_MODEL_ID = "persona_restart_recovery_counterfactual_v1"
 PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID = "persona_multi_cycle_lineage_carryover_v1"
 OSS_RESPONSE_FOLLOWUP_LOOP_MODEL_ID = "persona_oss_response_followup_loop_v1"
 PERSONA_DEGRADED_OSS_RESPONSE_MODEL_ID = "persona_degraded_oss_response_repair_v1"
@@ -895,6 +896,14 @@ def run_agent_usability_validations(
             cross_cycle_context=cross_cycle_context,
             decision_traces=(decision_trace0, decision_trace1),
             cross_cycle_carryover=cross_cycle_carryover,
+        )
+        persisted_cycle_resume["restart_recovery_counterfactual"] = (
+            _build_restart_recovery_counterfactual_proof(
+                episode=episode,
+                cross_cycle_context=cross_cycle_context,
+                decision_traces=(decision_trace0, decision_trace1),
+                persisted_cycle_resume=persisted_cycle_resume,
+            )
         )
         multi_cycle_lineage = _build_multi_cycle_lineage_proof(
             episode=episode,
@@ -4616,6 +4625,7 @@ def _cross_cycle_context_for_episode(
             "previous_ooda_ledger_ref": None,
             "previous_selected_action_ref": None,
             "previous_restart_checkpoint_ref": None,
+            "previous_restart_idempotency_key": None,
             "previous_schedule_ref": None,
             "previous_next_cycle_due_at": None,
             "previous_feedback_scheduled_cycle_due_at": None,
@@ -4636,6 +4646,7 @@ def _cross_cycle_context_for_episode(
     state_ref = f"cross-cycle-runtime://{previous_case_id}->{episode.case_id}"
     runtime_feedback_ref = str(prior_cycle_state["runtime_feedback_ref"])
     restart_checkpoint_ref = str(prior_cycle_state["restart_checkpoint_ref"])
+    restart_idempotency_key = str(prior_cycle_state["restart_idempotency_key"])
     schedule_ref = str(prior_cycle_state["schedule_ref"])
     object_store_metadata_ref = str(prior_cycle_state["object_store_metadata_ref"])
     object_store_artifact_ref = str(prior_cycle_state["object_store_artifact_ref"])
@@ -4686,6 +4697,7 @@ def _cross_cycle_context_for_episode(
         "previous_ooda_ledger_ref": prior_cycle_state["ooda_ledger_ref"],
         "previous_selected_action_ref": prior_cycle_state["selected_action_ref"],
         "previous_restart_checkpoint_ref": restart_checkpoint_ref,
+        "previous_restart_idempotency_key": restart_idempotency_key,
         "previous_schedule_ref": schedule_ref,
         "previous_next_cycle_due_at": prior_cycle_state["next_cycle_due_at"],
         "previous_feedback_scheduled_cycle_due_at": prior_cycle_state["feedback_scheduled_cycle_due_at"],
@@ -4863,6 +4875,7 @@ def _cross_cycle_state_from_case(case: Mapping[str, Any]) -> dict[str, Any]:
         "ooda_ledger_ref": ledger["ledger_ref"],
         "selected_action_ref": selected_event["output_ref"],
         "restart_checkpoint_ref": f"checkpoint://{recovery['checkpoint_id']}",
+        "restart_idempotency_key": recovery["idempotency_key"],
         "schedule_ref": f"schedule://{schedule['schedule_id']}",
         "next_cycle_due_at": schedule["next_cycle_due_at"],
         "feedback_scheduled_cycle_due_at": feedback["state_updates"]["schedule_next_cycle_after_feedback"],
@@ -5791,6 +5804,7 @@ def _build_persisted_cycle_resume_proof(
     cross_cycle_carryover: Mapping[str, Any],
 ) -> dict[str, Any]:
     checkpoint_ref = cross_cycle_context.get("previous_restart_checkpoint_ref")
+    restart_idempotency_key = cross_cycle_context.get("previous_restart_idempotency_key")
     schedule_ref = cross_cycle_context.get("previous_schedule_ref")
     metadata_ref = cross_cycle_context.get("previous_object_store_metadata_ref")
     artifact_ref = cross_cycle_context.get("previous_object_store_artifact_ref")
@@ -5871,6 +5885,7 @@ def _build_persisted_cycle_resume_proof(
         "state_ref": cross_cycle_context.get("state_ref"),
         "runtime_feedback_ref": cross_cycle_context.get("runtime_feedback_ref"),
         "restart_checkpoint_ref": checkpoint_ref,
+        "restart_idempotency_key": restart_idempotency_key,
         "schedule_ref": schedule_ref,
         "next_cycle_due_at": cross_cycle_context.get("previous_next_cycle_due_at"),
         "feedback_scheduled_cycle_due_at": cross_cycle_context.get(
@@ -5941,6 +5956,293 @@ def _persisted_cycle_resume_is_usable(proof: Mapping[str, Any]) -> bool:
                 and proof.get("next_cycle_due_at") == proof.get("feedback_scheduled_cycle_due_at")
                 and float(proof.get("score_adjustments", {}).get("feedback-adapt", 0.0)) > 0.0
                 and all(binding.get("scorer_cross_cycle_adjustment", 0.0) > 0.0 for binding in trace_bindings)
+            )
+        )
+    )
+
+def _build_restart_recovery_counterfactual_proof(
+    *,
+    episode: PortfolioEpisode,
+    cross_cycle_context: Mapping[str, Any],
+    decision_traces: Sequence[Mapping[str, Any]],
+    persisted_cycle_resume: Mapping[str, Any],
+) -> dict[str, Any]:
+    status = str(persisted_cycle_resume.get("resume_status"))
+    cold_start = status == "cold_start"
+    applied = status == "applied"
+    checkpoint_ref = persisted_cycle_resume.get("restart_checkpoint_ref")
+    schedule_ref = persisted_cycle_resume.get("schedule_ref")
+    metadata_ref = persisted_cycle_resume.get("object_store_metadata_ref")
+    artifact_ref = persisted_cycle_resume.get("object_store_artifact_ref")
+    restart_idempotency_key = persisted_cycle_resume.get("restart_idempotency_key")
+    next_cycle_due_at = persisted_cycle_resume.get("next_cycle_due_at")
+    feedback_due_at = persisted_cycle_resume.get("feedback_scheduled_cycle_due_at")
+    actual_refs = [str(ref) for ref in persisted_cycle_resume.get("persisted_refs", [])]
+    expected_refs = [
+        str(ref)
+        for ref in (checkpoint_ref, schedule_ref, metadata_ref, artifact_ref)
+        if ref
+    ]
+    wrong_hash = _stable_payload_hash(
+        "restart-recovery-counterfactual",
+        {
+            "case_id": episode.case_id,
+            "previous_case_id": persisted_cycle_resume.get("previous_case_id"),
+            "checkpoint_ref": checkpoint_ref,
+            "schedule_ref": schedule_ref,
+            "metadata_ref": metadata_ref,
+            "artifact_ref": artifact_ref,
+        },
+    )
+    wrong_checkpoint_ref = f"checkpoint://wrong-{wrong_hash[:16]}" if applied else None
+    wrong_schedule_ref = f"schedule://wrong-{wrong_hash[16:32]}" if applied else None
+    wrong_schedule_due_at = f"{next_cycle_due_at}-wrong" if applied else None
+    missing_checkpoint_refs = [ref for ref in actual_refs if ref != checkpoint_ref]
+    wrong_checkpoint_refs = [
+        str(wrong_checkpoint_ref) if ref == checkpoint_ref else ref
+        for ref in actual_refs
+    ]
+    wrong_schedule_refs = [
+        str(wrong_schedule_ref) if ref == schedule_ref else ref
+        for ref in actual_refs
+    ]
+
+    trace_counterfactuals: list[dict[str, Any]] = []
+    for trace in decision_traces:
+        artifact = trace["agent_decision_artifact"]
+        reasoning_refs = set(artifact["persona_reasoning"]["request"].get("input_refs", []))
+        candidate_refs = set(artifact["candidate_generation"]["request"].get("input_refs", []))
+        selected_refs = set(trace["selected_candidate"].get("evidence_refs", []))
+        selected_action = _candidate_action_key(str(trace["selected_candidate_id"]))
+        scorer_adjustment = float(
+            artifact["scorer"]["scoring_inputs"]["cross_cycle_score_adjustments"].get(
+                selected_action,
+                0.0,
+            )
+        )
+        trace_counterfactuals.append(
+            {
+                "trace_id": trace["reflection_id"],
+                "generation": artifact["generation"],
+                "selected_action": selected_action,
+                "actual_refs_consumed": cold_start
+                or (
+                    set(actual_refs).issubset(reasoning_refs)
+                    and set(actual_refs).issubset(candidate_refs)
+                    and set(actual_refs).issubset(selected_refs)
+                ),
+                "missing_checkpoint_refs_consumed": applied
+                and bool(missing_checkpoint_refs)
+                and set(missing_checkpoint_refs).issubset(reasoning_refs)
+                and set(missing_checkpoint_refs).issubset(candidate_refs)
+                and set(missing_checkpoint_refs).issubset(selected_refs),
+                "wrong_checkpoint_refs_consumed": applied
+                and bool(wrong_checkpoint_ref)
+                and set(wrong_checkpoint_refs).issubset(reasoning_refs)
+                and set(wrong_checkpoint_refs).issubset(candidate_refs)
+                and set(wrong_checkpoint_refs).issubset(selected_refs),
+                "wrong_schedule_refs_consumed": applied
+                and bool(wrong_schedule_ref)
+                and set(wrong_schedule_refs).issubset(reasoning_refs)
+                and set(wrong_schedule_refs).issubset(candidate_refs)
+                and set(wrong_schedule_refs).issubset(selected_refs),
+                "scorer_after_resume_adjustment": scorer_adjustment,
+            }
+        )
+
+    def contract_accepts(
+        refs: Sequence[str],
+        *,
+        idempotency_key: Any,
+        due_at: Any,
+    ) -> bool:
+        if cold_start:
+            return not refs
+        return bool(
+            applied
+            and list(refs) == expected_refs
+            and list(refs) == actual_refs
+            and idempotency_key == restart_idempotency_key
+            and bool(idempotency_key)
+            and due_at == feedback_due_at
+            and next_cycle_due_at == feedback_due_at
+            and _persisted_cycle_resume_is_usable(persisted_cycle_resume)
+            and all(binding["actual_refs_consumed"] for binding in trace_counterfactuals)
+            and all(
+                float(binding["scorer_after_resume_adjustment"]) > 0.0
+                for binding in trace_counterfactuals
+            )
+        )
+
+    actual_resume_replay_accepts_resume = contract_accepts(
+        actual_refs,
+        idempotency_key=restart_idempotency_key,
+        due_at=next_cycle_due_at,
+    )
+    missing_checkpoint_replay_accepts_resume = False if cold_start else contract_accepts(
+        missing_checkpoint_refs,
+        idempotency_key=restart_idempotency_key,
+        due_at=next_cycle_due_at,
+    )
+    wrong_checkpoint_replay_accepts_resume = False if cold_start else contract_accepts(
+        wrong_checkpoint_refs,
+        idempotency_key=restart_idempotency_key,
+        due_at=next_cycle_due_at,
+    )
+    wrong_schedule_replay_accepts_resume = False if cold_start else contract_accepts(
+        wrong_schedule_refs,
+        idempotency_key=restart_idempotency_key,
+        due_at=next_cycle_due_at,
+    )
+    schedule_due_mismatch_replay_accepts_resume = False if cold_start else contract_accepts(
+        actual_refs,
+        idempotency_key=restart_idempotency_key,
+        due_at=wrong_schedule_due_at,
+    )
+    missing_idempotency_replay_accepts_resume = False if cold_start else contract_accepts(
+        actual_refs,
+        idempotency_key=None,
+        due_at=next_cycle_due_at,
+    )
+    replay = {
+        "replayable": True,
+        "actual_resume_replays_recovered_refs": actual_resume_replay_accepts_resume,
+        "checkpoint_required_for_applied_resume": cold_start
+        or (bool(checkpoint_ref) and str(checkpoint_ref) in actual_refs),
+        "schedule_required_for_applied_resume": cold_start
+        or (bool(schedule_ref) and str(schedule_ref) in actual_refs),
+        "runtime_object_store_readback_required_for_applied_resume": cold_start
+        or (bool(metadata_ref) and bool(artifact_ref) and str(metadata_ref) in actual_refs and str(artifact_ref) in actual_refs),
+        "decision_trace_refs_bound_after_recovery": cold_start
+        or all(binding["actual_refs_consumed"] for binding in trace_counterfactuals),
+        "score_adjustment_requires_recovered_resume": cold_start
+        or all(
+            float(binding["scorer_after_resume_adjustment"]) > 0.0
+            for binding in trace_counterfactuals
+        ),
+        "missing_checkpoint_rejected": missing_checkpoint_replay_accepts_resume is False,
+        "wrong_checkpoint_rejected": wrong_checkpoint_replay_accepts_resume is False,
+        "wrong_schedule_rejected": wrong_schedule_replay_accepts_resume is False,
+        "schedule_due_mismatch_rejected": schedule_due_mismatch_replay_accepts_resume is False,
+        "duplicate_execution_suppressed_by_idempotency": cold_start
+        or bool(restart_idempotency_key),
+        "missing_idempotency_rejects_duplicate_execution": missing_idempotency_replay_accepts_resume is False,
+        "no_current_case_checkpoint_used_as_prior": cold_start
+        or str(persisted_cycle_resume.get("previous_case_id")) != episode.case_id,
+    }
+    return {
+        "proof_id": f"restart-recovery-counterfactual-{episode.case_id}",
+        "proof_ref": f"restart-recovery-counterfactual://{episode.case_id}",
+        "model_id": PERSONA_RESTART_RECOVERY_COUNTERFACTUAL_MODEL_ID,
+        "status": "passed" if all(replay.values()) else "failed",
+        "case_id": episode.case_id,
+        "persona_id": _persona_id(episode.persona),
+        "resume_status": status,
+        "previous_case_id": persisted_cycle_resume.get("previous_case_id"),
+        "source_persisted_cycle_resume_ref": persisted_cycle_resume.get("proof_ref"),
+        "restart_checkpoint_ref": checkpoint_ref,
+        "restart_idempotency_key": restart_idempotency_key,
+        "schedule_ref": schedule_ref,
+        "object_store_metadata_ref": metadata_ref,
+        "object_store_artifact_ref": artifact_ref,
+        "actual_refs": actual_refs,
+        "expected_refs": expected_refs,
+        "missing_checkpoint_refs": missing_checkpoint_refs,
+        "wrong_checkpoint_ref": wrong_checkpoint_ref,
+        "wrong_checkpoint_refs": wrong_checkpoint_refs,
+        "wrong_schedule_ref": wrong_schedule_ref,
+        "wrong_schedule_refs": wrong_schedule_refs,
+        "next_cycle_due_at": next_cycle_due_at,
+        "feedback_scheduled_cycle_due_at": feedback_due_at,
+        "wrong_schedule_due_at": wrong_schedule_due_at,
+        "actual_resume_replay_accepts_resume": actual_resume_replay_accepts_resume,
+        "missing_checkpoint_replay_accepts_resume": missing_checkpoint_replay_accepts_resume,
+        "wrong_checkpoint_replay_accepts_resume": wrong_checkpoint_replay_accepts_resume,
+        "wrong_schedule_replay_accepts_resume": wrong_schedule_replay_accepts_resume,
+        "schedule_due_mismatch_replay_accepts_resume": schedule_due_mismatch_replay_accepts_resume,
+        "missing_idempotency_replay_accepts_resume": missing_idempotency_replay_accepts_resume,
+        "trace_counterfactuals": trace_counterfactuals,
+        "replay": replay,
+        "input_hash": _stable_payload_hash(
+            "restart-recovery-counterfactual-proof",
+            {
+                "case_id": episode.case_id,
+                "cross_cycle_context": cross_cycle_context,
+                "source_persisted_cycle_resume_ref": persisted_cycle_resume.get("proof_ref"),
+                "actual_refs": actual_refs,
+                "missing_checkpoint_refs": missing_checkpoint_refs,
+                "wrong_checkpoint_refs": wrong_checkpoint_refs,
+                "wrong_schedule_refs": wrong_schedule_refs,
+                "restart_idempotency_key": restart_idempotency_key,
+                "trace_counterfactuals": trace_counterfactuals,
+                "replay": replay,
+            },
+        ),
+    }
+
+
+def _restart_recovery_counterfactual_is_usable(proof: Mapping[str, Any]) -> bool:
+    replay = proof.get("replay", {})
+    status = proof.get("resume_status")
+    trace_counterfactuals = list(proof.get("trace_counterfactuals", []))
+    return bool(
+        proof.get("model_id") == PERSONA_RESTART_RECOVERY_COUNTERFACTUAL_MODEL_ID
+        and proof.get("status") == "passed"
+        and proof.get("proof_ref", "").startswith("restart-recovery-counterfactual://")
+        and proof.get("source_persisted_cycle_resume_ref", "").startswith(
+            "persisted-cycle-resume://"
+        )
+        and proof.get("input_hash")
+        and len(trace_counterfactuals) == 2
+        and all(
+            replay.get(flag) is True
+            for flag in (
+                "replayable",
+                "actual_resume_replays_recovered_refs",
+                "checkpoint_required_for_applied_resume",
+                "schedule_required_for_applied_resume",
+                "runtime_object_store_readback_required_for_applied_resume",
+                "decision_trace_refs_bound_after_recovery",
+                "score_adjustment_requires_recovered_resume",
+                "missing_checkpoint_rejected",
+                "wrong_checkpoint_rejected",
+                "wrong_schedule_rejected",
+                "schedule_due_mismatch_rejected",
+                "duplicate_execution_suppressed_by_idempotency",
+                "missing_idempotency_rejects_duplicate_execution",
+                "no_current_case_checkpoint_used_as_prior",
+            )
+        )
+        and proof.get("missing_checkpoint_replay_accepts_resume") is False
+        and proof.get("wrong_checkpoint_replay_accepts_resume") is False
+        and proof.get("wrong_schedule_replay_accepts_resume") is False
+        and proof.get("schedule_due_mismatch_replay_accepts_resume") is False
+        and proof.get("missing_idempotency_replay_accepts_resume") is False
+        and (
+            (
+                status == "cold_start"
+                and proof.get("previous_case_id") is None
+                and proof.get("actual_refs") == []
+                and proof.get("expected_refs") == []
+                and proof.get("restart_idempotency_key") is None
+                and proof.get("actual_resume_replay_accepts_resume") is True
+            )
+            or (
+                status == "applied"
+                and proof.get("previous_case_id")
+                and proof.get("restart_checkpoint_ref")
+                and proof.get("schedule_ref")
+                and proof.get("object_store_metadata_ref")
+                and proof.get("object_store_artifact_ref")
+                and proof.get("restart_idempotency_key")
+                and proof.get("actual_refs") == proof.get("expected_refs")
+                and proof.get("wrong_checkpoint_ref") not in proof.get("actual_refs", [])
+                and proof.get("wrong_schedule_ref") not in proof.get("actual_refs", [])
+                and all(
+                    binding.get("actual_refs_consumed") is True
+                    and float(binding.get("scorer_after_resume_adjustment", 0.0)) > 0.0
+                    for binding in trace_counterfactuals
+                )
             )
         )
     )
@@ -19255,6 +19557,11 @@ def _build_usability_dimensions(
     persisted_cycle_resume_carryover = 1.0 if _persisted_cycle_resume_is_usable(
         persisted_cycle_resume
     ) else 0.0
+    restart_recovery_counterfactual = 1.0 if (
+        _restart_recovery_counterfactual_is_usable(
+            persisted_cycle_resume.get("restart_recovery_counterfactual", {})
+        )
+    ) else 0.0
     multi_cycle_lineage_carryover = 1.0 if _multi_cycle_lineage_is_usable(
         multi_cycle_lineage
     ) else 0.0
@@ -19305,6 +19612,7 @@ def _build_usability_dimensions(
         "broker_adapter_carryover": broker_adapter_carryover_score,
         "openclaw_session_continuity": openclaw_session_continuity_score,
         "persisted_cycle_resume_carryover": persisted_cycle_resume_carryover,
+        "restart_recovery_counterfactual": restart_recovery_counterfactual,
         "multi_cycle_lineage_carryover": multi_cycle_lineage_carryover,
         "oss_disagreement_arbitration": oss_disagreement_arbitration,
         "tracking_reconciliation": tracking_reconciliation,
@@ -19894,6 +20202,27 @@ def _diagnose_validation_execution(
             "multi_dimensional_usability_threshold",
             mean(float(value) for value in usability_dimensions.values()) >= MIN_USABILITY_SCORE,
             {"dimension_minima": min(float(value) for value in usability_dimensions.values())},
+        ),
+        _diagnostic_check(
+            "restart_recovery_counterfactual_rejects_wrong_resume_refs",
+            _restart_recovery_counterfactual_is_usable(
+                persisted_cycle_resume.get("restart_recovery_counterfactual", {})
+            ),
+            {
+                "proof_id": persisted_cycle_resume["restart_recovery_counterfactual"][
+                    "proof_id"
+                ],
+                "resume_status": persisted_cycle_resume[
+                    "restart_recovery_counterfactual"
+                ]["resume_status"],
+                "replay": copy.deepcopy(
+                    dict(
+                        persisted_cycle_resume["restart_recovery_counterfactual"][
+                            "replay"
+                        ]
+                    )
+                ),
+            },
         ),
         _diagnostic_check(
             "market_friction_model_applied",
@@ -20632,6 +20961,9 @@ def _build_case_result(
             "persisted_cycle_resume_drives_next_case": usability_dimensions[
                 "persisted_cycle_resume_carryover"
             ] == 1.0,
+            "restart_recovery_counterfactual_replays_resume": usability_dimensions[
+                "restart_recovery_counterfactual"
+            ] == 1.0,
             "multi_cycle_lineage_drives_next_case": usability_dimensions[
                 "multi_cycle_lineage_carryover"
             ] == 1.0,
@@ -20819,6 +21151,10 @@ def _build_summary(
     ]
     persisted_cycle_resumes = [
         case["cross_cycle"]["persisted_cycle_resume"] for case in cases
+    ]
+    restart_recovery_counterfactuals = [
+        proof["restart_recovery_counterfactual"]
+        for proof in persisted_cycle_resumes
     ]
     multi_cycle_lineages = [
         case["cross_cycle"]["multi_cycle_lineage"] for case in cases
@@ -21504,6 +21840,18 @@ def _build_summary(
         "persisted_cycle_resume_replay_flags": sorted({
             flag
             for proof in persisted_cycle_resumes
+            for flag, value in proof["replay"].items()
+            if value is True
+        }),
+        "restart_recovery_counterfactual_models": sorted({
+            proof["model_id"] for proof in restart_recovery_counterfactuals
+        }),
+        "restart_recovery_counterfactual_statuses": sorted({
+            proof["resume_status"] for proof in restart_recovery_counterfactuals
+        }),
+        "restart_recovery_counterfactual_replay_flags": sorted({
+            flag
+            for proof in restart_recovery_counterfactuals
             for flag, value in proof["replay"].items()
             if value is True
         }),
@@ -22193,6 +22541,50 @@ def _build_summary(
         ),
         "persisted_cycle_resume_drives_next_case_count": sum(
             1 for item in usable if item["persisted_cycle_resume_drives_next_case"]
+        ),
+        "restart_recovery_counterfactual_count": len(
+            restart_recovery_counterfactuals
+        ),
+        "restart_recovery_counterfactual_pass_count": sum(
+            1
+            for proof in restart_recovery_counterfactuals
+            if _restart_recovery_counterfactual_is_usable(proof)
+        ),
+        "restart_recovery_counterfactual_applied_count": sum(
+            1
+            for proof in restart_recovery_counterfactuals
+            if proof["resume_status"] == "applied"
+        ),
+        "restart_recovery_counterfactual_missing_checkpoint_rejected_count": sum(
+            1
+            for proof in restart_recovery_counterfactuals
+            if proof["resume_status"] == "applied"
+            and proof["replay"].get("missing_checkpoint_rejected") is True
+        ),
+        "restart_recovery_counterfactual_wrong_checkpoint_rejected_count": sum(
+            1
+            for proof in restart_recovery_counterfactuals
+            if proof["resume_status"] == "applied"
+            and proof["replay"].get("wrong_checkpoint_rejected") is True
+        ),
+        "restart_recovery_counterfactual_wrong_schedule_rejected_count": sum(
+            1
+            for proof in restart_recovery_counterfactuals
+            if proof["resume_status"] == "applied"
+            and proof["replay"].get("wrong_schedule_rejected") is True
+        ),
+        "restart_recovery_counterfactual_missing_idempotency_rejected_count": sum(
+            1
+            for proof in restart_recovery_counterfactuals
+            if proof["resume_status"] == "applied"
+            and proof["replay"].get(
+                "missing_idempotency_rejects_duplicate_execution"
+            ) is True
+        ),
+        "restart_recovery_counterfactual_replay_count": sum(
+            1
+            for item in usable
+            if item["restart_recovery_counterfactual_replays_resume"]
         ),
         "multi_cycle_lineage_count": len(multi_cycle_lineages),
         "multi_cycle_lineage_pass_count": sum(

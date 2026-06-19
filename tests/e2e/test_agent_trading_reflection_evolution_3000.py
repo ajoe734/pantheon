@@ -63,6 +63,7 @@ from services.persona.agent_usability_validation import (
     PERSONA_OSS_DISAGREEMENT_ARBITRATION_MODEL_ID,
     PERSONA_OSS_QUALITY_REPAIR_HANDOFF_MODEL_ID,
     PERSONA_PERSISTED_CYCLE_RESUME_MODEL_ID,
+    PERSONA_RESTART_RECOVERY_COUNTERFACTUAL_MODEL_ID,
     PERSONA_PORTFOLIO_STATE_CARRYOVER_MODEL_ID,
     PERSONA_BROKER_ADAPTER_CARRYOVER_MODEL_ID,
     PERSONA_POLICY_CANDIDATE_MATERIALITY_MODEL_ID,
@@ -303,6 +304,30 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     assert summary["persisted_cycle_resume_cold_start_count"] == summary["persona_count"]
     assert summary["persisted_cycle_resume_trace_binding_count"] == DEFAULT_CASE_COUNT * 2
     assert summary["persisted_cycle_resume_drives_next_case_count"] == DEFAULT_CASE_COUNT
+    expected_restart_counterfactual_applied = DEFAULT_CASE_COUNT - summary["persona_count"]
+    assert summary["restart_recovery_counterfactual_count"] == DEFAULT_CASE_COUNT
+    assert summary["restart_recovery_counterfactual_pass_count"] == DEFAULT_CASE_COUNT
+    assert (
+        summary["restart_recovery_counterfactual_applied_count"]
+        == expected_restart_counterfactual_applied
+    )
+    assert (
+        summary["restart_recovery_counterfactual_missing_checkpoint_rejected_count"]
+        == expected_restart_counterfactual_applied
+    )
+    assert (
+        summary["restart_recovery_counterfactual_wrong_checkpoint_rejected_count"]
+        == expected_restart_counterfactual_applied
+    )
+    assert (
+        summary["restart_recovery_counterfactual_wrong_schedule_rejected_count"]
+        == expected_restart_counterfactual_applied
+    )
+    assert (
+        summary["restart_recovery_counterfactual_missing_idempotency_rejected_count"]
+        == expected_restart_counterfactual_applied
+    )
+    assert summary["restart_recovery_counterfactual_replay_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_cycle_lineage_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_cycle_lineage_pass_count"] == DEFAULT_CASE_COUNT
     assert summary["multi_cycle_lineage_cold_start_count"] == summary["persona_count"]
@@ -1046,6 +1071,29 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
         "scheduler_feedback_due_at_preserved",
         "scorer_applies_after_resume_adjustment",
         "selected_candidate_cites_persisted_resume_refs",
+    }
+    assert coverage["restart_recovery_counterfactual_models"] == [
+        PERSONA_RESTART_RECOVERY_COUNTERFACTUAL_MODEL_ID
+    ]
+    assert set(coverage["restart_recovery_counterfactual_statuses"]) == {
+        "applied",
+        "cold_start",
+    }
+    assert set(coverage["restart_recovery_counterfactual_replay_flags"]) == {
+        "actual_resume_replays_recovered_refs",
+        "checkpoint_required_for_applied_resume",
+        "decision_trace_refs_bound_after_recovery",
+        "duplicate_execution_suppressed_by_idempotency",
+        "missing_checkpoint_rejected",
+        "missing_idempotency_rejects_duplicate_execution",
+        "no_current_case_checkpoint_used_as_prior",
+        "replayable",
+        "runtime_object_store_readback_required_for_applied_resume",
+        "schedule_due_mismatch_rejected",
+        "schedule_required_for_applied_resume",
+        "score_adjustment_requires_recovered_resume",
+        "wrong_checkpoint_rejected",
+        "wrong_schedule_rejected",
     }
     assert coverage["multi_cycle_lineage_models"] == [
         PERSONA_MULTI_CYCLE_LINEAGE_MODEL_ID
@@ -3863,6 +3911,13 @@ def _assert_persisted_cycle_resume_carryover(case: dict, latest_case_by_persona:
         for check in case["validation_cycle"]["execution_review"]["checks"]
     }
     assert check_by_name["persisted_cycle_resume_replays_after_restart_and_schedule"]["status"] == "passed"
+    assert (
+        check_by_name[
+            "restart_recovery_counterfactual_rejects_wrong_resume_refs"
+        ]["status"]
+        == "passed"
+    )
+    _assert_restart_recovery_counterfactual(case, previous_case)
 
     if previous_case is None:
         assert proof["resume_status"] == "cold_start"
@@ -3948,6 +4003,77 @@ def _assert_persisted_cycle_resume_carryover(case: dict, latest_case_by_persona:
             assert persisted_refs.issubset(set(reasoning_request["input_refs"]))
             assert persisted_refs.issubset(set(candidate_request["input_refs"]))
             assert persisted_refs.issubset(set(trace["selected_candidate"]["evidence_refs"]))
+
+def _assert_restart_recovery_counterfactual(
+    case: dict,
+    previous_case: dict | None,
+) -> None:
+    resume = case["cross_cycle"]["persisted_cycle_resume"]
+    proof = resume["restart_recovery_counterfactual"]
+
+    assert proof["model_id"] == PERSONA_RESTART_RECOVERY_COUNTERFACTUAL_MODEL_ID
+    assert proof["status"] == "passed"
+    assert proof["case_id"] == case["case_id"]
+    assert proof["persona_id"] == case["persona_id"]
+    assert proof["proof_ref"] == f"restart-recovery-counterfactual://{case['case_id']}"
+    assert proof["source_persisted_cycle_resume_ref"] == resume["proof_ref"]
+    assert proof["input_hash"]
+    assert len(proof["trace_counterfactuals"]) == len(case["reflection"]["agent_decision_traces"]) == 2
+    assert proof["actual_resume_replay_accepts_resume"] is True
+    assert proof["missing_checkpoint_replay_accepts_resume"] is False
+    assert proof["wrong_checkpoint_replay_accepts_resume"] is False
+    assert proof["wrong_schedule_replay_accepts_resume"] is False
+    assert proof["schedule_due_mismatch_replay_accepts_resume"] is False
+    assert proof["missing_idempotency_replay_accepts_resume"] is False
+    assert all(proof["replay"].values())
+
+    if previous_case is None:
+        assert proof["resume_status"] == "cold_start"
+        assert proof["previous_case_id"] is None
+        assert proof["restart_checkpoint_ref"] is None
+        assert proof["restart_idempotency_key"] is None
+        assert proof["schedule_ref"] is None
+        assert proof["actual_refs"] == []
+        assert proof["expected_refs"] == []
+        assert proof["wrong_checkpoint_ref"] is None
+        assert proof["wrong_schedule_ref"] is None
+    else:
+        previous_recovery = previous_case["operational_context"]["restart_recovery"]
+        previous_schedule = previous_case["operational_context"]["autonomous_schedule"]
+        previous_feedback = previous_case["operational_context"]["lean_runtime_feedback"]
+        previous_readback = previous_feedback["runtime_feedback"]
+        expected_refs = [
+            f"checkpoint://{previous_recovery['checkpoint_id']}",
+            f"schedule://{previous_schedule['schedule_id']}",
+            f"object-store://{previous_readback['object_store_metadata_key']}",
+            f"object-store://{previous_readback['object_store_artifact_key']}",
+        ]
+        assert proof["resume_status"] == "applied"
+        assert proof["previous_case_id"] == previous_case["case_id"]
+        assert proof["restart_checkpoint_ref"] == expected_refs[0]
+        assert proof["restart_idempotency_key"] == previous_recovery["idempotency_key"]
+        assert proof["schedule_ref"] == expected_refs[1]
+        assert proof["object_store_metadata_ref"] == expected_refs[2]
+        assert proof["object_store_artifact_ref"] == expected_refs[3]
+        assert proof["actual_refs"] == expected_refs
+        assert proof["expected_refs"] == expected_refs
+        assert proof["missing_checkpoint_refs"] == expected_refs[1:]
+        assert proof["wrong_checkpoint_ref"].startswith("checkpoint://wrong-")
+        assert proof["wrong_schedule_ref"].startswith("schedule://wrong-")
+        assert proof["wrong_checkpoint_ref"] not in expected_refs
+        assert proof["wrong_schedule_ref"] not in expected_refs
+        assert proof["next_cycle_due_at"] == previous_schedule["next_cycle_due_at"]
+        assert proof["feedback_scheduled_cycle_due_at"] == previous_feedback["state_updates"][
+            "schedule_next_cycle_after_feedback"
+        ]
+        assert proof["next_cycle_due_at"] == proof["feedback_scheduled_cycle_due_at"]
+        assert proof["wrong_schedule_due_at"] != proof["feedback_scheduled_cycle_due_at"]
+        for binding in proof["trace_counterfactuals"]:
+            assert binding["actual_refs_consumed"] is True
+            assert binding["missing_checkpoint_refs_consumed"] is True
+            assert binding["wrong_checkpoint_refs_consumed"] is False
+            assert binding["wrong_schedule_refs_consumed"] is False
+            assert binding["scorer_after_resume_adjustment"] > 0.0
 
 
 def _assert_multi_cycle_lineage_carryover(case: dict, persona_case_history: list[dict]) -> None:
