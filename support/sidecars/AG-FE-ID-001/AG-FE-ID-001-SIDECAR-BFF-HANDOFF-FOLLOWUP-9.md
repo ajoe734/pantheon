@@ -17,7 +17,7 @@ governance implementation, OpenClaw adapter code, or execute-plans source.
 ## 1. Purpose
 
 This ninth followup packet updates the AG-FE-ID-001 handoff after the branch was
-fast-forwarded to `origin/dev` at merge commit `165e6e67`. Since FOLLOWUP-8,
+brought current with `origin/dev` at merge commit `ae7c693d`. Since FOLLOWUP-8,
 several adjacent contract and dashboard tasks have advanced:
 
 1. `AG-XR-OPENAPI-001` implementation merged into `dev` via PR #1841, so
@@ -31,6 +31,10 @@ several adjacent contract and dashboard tasks have advanced:
 4. `AG-XR-003` and `AG-FE-DB-001` are now `in_progress`; the
    `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3` support packet merged via PR
    #1850 without changing the `AG-XR-003` durable status.
+5. `AG-BE-DB-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` merged via PR #1851 and
+   records dashboard BFF/frontend handoff details. That packet is useful for
+   dashboard renderer work, but does not change the AG-FE-ID-001 servant/session
+   status shell handoff.
 
 The parent handoff outcome for `AG-FE-ID-001` remains unchanged for the
 servant/session success path. `AG-BE-ID-002` is still `todo`, `AG-BE-ID-003` is
@@ -82,6 +86,7 @@ the backend implementation tasks and generated frontend mirror work.
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8-REVIEW.md` | Claude approval record for the previous followup. |
 | `support/sidecars/AG-XR-OPENAPI-001/AG-XR-OPENAPI-001-SIDECAR-REVIEW.md` | Review evidence for servant/workshop v1.1 route coverage and safety boundaries. |
 | `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md` | Latest compatibility-manifest sidecar support packet; `AG-XR-003` durable status remains `in_progress`. |
+| `support/sidecars/AG-BE-DB-001/AG-BE-DB-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md` | Latest dashboard BFF/frontend handoff; reinforces dashboard separation from servant/session readiness. |
 | `services/control-plane/openapi/agora_v1_1.openapi.yaml` | Current v1.1 route artifact now visible in this checkout. |
 | `services/control-plane/specs/agora/v2/capability_manifest_v1_1.json` | v1.1 capability families for servant, workshop, and dashboard. |
 | `services/control-plane/specs/agora/widget_registry.v1.json` | Dashboard/widget registry added by `AG-BE-DB-001`. |
@@ -107,6 +112,7 @@ positive contract/dashboard progress, but not parent servant/session readiness.
 | `AG-BE-DB-001` -> `done` | Runtime dashboard v2 router implements 11 routes, ETag/If-Match concurrency, and core widget safety validation. | Do not confuse dashboard recipe/widget runtime readiness with servant ensure or session facade readiness. |
 | `AG-XR-003` -> `in_progress` | Compatibility manifest and checksum gate work has started. | Parent still needs checksum/type-mirror evidence before claiming cross-repo compatibility. |
 | `AG-FE-DB-001` -> `in_progress` | Dashboard WidgetRegistry/Renderer work has started in execute-plans scope. | Separate renderer stream; do not fold it into `AG-FE-ID-001` unless parent scope is explicitly expanded and reviewed. |
+| `AG-BE-DB-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` merged | Dashboard BFF/frontend handoff packet records strict adapter and ETag details for dashboard renderer work. | Helpful context for `AG-FE-DB-001`; no change to parent servant/session readiness. |
 | `AG-BE-ID-002` / `AG-BE-ID-003` | Both remain `todo`. | Successful servant profile, active servant, and session facade remain blocked. |
 
 ## 5. BFF Query Ledger For Parent
@@ -320,7 +326,8 @@ python3 -c "import yaml; yaml.safe_load(open('services/control-plane/openapi/ago
 Results:
 
 - Branch: `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9` (correct).
-- Branch was fast-forwarded to `origin/dev` merge commit `165e6e67`.
+- Branch was brought current with `origin/dev` merge commit `ae7c693d`; the task
+  branch then merged `origin/dev` before PR publication.
 - `AG-FE-ID-001`: `todo`.
 - `AG-XR-OPENAPI-001`: `review_approved`; v1.1 OpenAPI implementation PR #1841
   is already merged into `dev`.
