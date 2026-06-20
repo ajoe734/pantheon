@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Auto-reassigned ownership from Antigravity to Codex2 after repeated Antigravity terminal: Worker exited before the task reached a terminal status.
+- Next: Owner closeout packet refreshed; merge task PR, then run `AI_NAME=Codex2 ./scripts/ai-status.sh done`.
 
 ## Summary
 平行支援 AG-BE-ID-002，整理 acceptance checklist、dependency map 與阻塞釐清，不改 canonical truth。
