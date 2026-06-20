@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-20` |
-| Status | `ready for Claude review` |
+| Status | `review approved; ready for parent absorption` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -33,7 +33,7 @@ Status commands used `AI_NAME=Codex`.
 
 | Task | Observed status | Handoff implication |
 |---|---|---|
-| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | active `in_progress` | This support packet is the only intended deliverable. |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | active `review_approved` | This support packet is approved for parent absorption and owner closeout. |
 | `AG-FE-ID-001` | active `todo`; owner `Claude`, reviewer `Codex` | Parent implementation has not started in this checkout. |
 | `AG-FE-000` | archived `done` | Separate Agora/Management entry and bundle split exists as upstream base. |
 | `AG-BE-ID-002` | active `blocked`, waiting for `Codex` | Successful servant provisioning cannot be treated as available. |
@@ -56,6 +56,7 @@ while this backend dependency chain remains unresolved.
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md` | Bundle isolation and blocked-shell warning |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md` | Backend blocker impact and absorption gates |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-REVIEW.md` | Latest Claude approval record for this handoff family |
+| `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5-REVIEW.md` | Claude approval record for this followup |
 | `services/control-plane/bff/agora/router.py` | Implemented `/bff/agora/me` and `/bff/agora/capabilities` |
 | `services/control-plane/bff/agora/servant/router.py` | Current `/bff/agora/servant/ensure` 501 stub |
 | `services/control-plane/bff/agora/identity/router.py` | Documents identity/session route migration gap |
@@ -261,13 +262,14 @@ python3 -m pytest services/control-plane/bff/tests/test_agora_router.py services
 Final focused validation before handoff:
 
 ```bash
-git diff --check -- support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md
+git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_5.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5-REVIEW.md
 python3 -m pytest services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py -q
 ```
 
 Results:
 
-- Focused route tests: `22 passed in 8.77s`.
+- `git diff --check` passed.
+- Focused route tests: `22 passed in 12.02s`.
 - Exact route search confirmed `/me` and `/capabilities` only in
   `services/control-plane/bff/agora/router.py`.
 - Exact route search confirmed `/servant/ensure` only in
@@ -278,8 +280,8 @@ Results:
 
 ## 11. Handoff
 
-This packet is ready for Claude review. The intended parent use is to absorb the
-BFF query ledger, operator journey, and frontend checklist before any
-execute-plans implementation work begins. The parent should proceed only as a
-truthful blocked-shell implementation or stop on the unresolved backend/design
-blockers.
+Claude approved this packet for absorption by parent `AG-FE-ID-001`. The
+intended parent use is to absorb the BFF query ledger, operator journey, and
+frontend checklist before any execute-plans implementation work begins. The
+parent should proceed only as a truthful blocked-shell implementation or stop on
+the unresolved backend/design blockers.
