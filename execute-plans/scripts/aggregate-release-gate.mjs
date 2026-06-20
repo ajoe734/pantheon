@@ -556,6 +556,21 @@ function analyzeSseSmoke(stepOutcomes) {
   const heartbeatCount = Number(blocks?.heartbeat_count ?? 0);
   const duplicateEventIds = Array.isArray(blocks?.duplicate_event_ids) ? blocks.duplicate_event_ids : [];
   const missingExpected = Array.isArray(bearerSoak?.missing_expected_event_ids) ? bearerSoak.missing_expected_event_ids : [];
+  const bearerReconnect = json?.reconnect_sequence?.bearer_polyfill || {};
+  const reconnectAttempts = Array.isArray(bearerReconnect?.attempts)
+    ? bearerReconnect.attempts.length
+    : Number(bearerReconnect?.attempt_count ?? 0);
+  const reconnectDuplicateEventIds = Array.isArray(bearerReconnect?.duplicate_event_ids)
+    ? bearerReconnect.duplicate_event_ids
+    : [];
+  const reconnectMissingExpected = Array.isArray(bearerReconnect?.missing_expected_event_ids)
+    ? bearerReconnect.missing_expected_event_ids
+    : [];
+  const reconnectOk = bearerReconnect?.ok === true
+    && reconnectAttempts >= 2
+    && bearerReconnect?.cursors_advanced === true
+    && reconnectDuplicateEventIds.length === 0
+    && reconnectMissingExpected.length === 0;
   const strict = json?.strict_live_evidence === true;
   const summaryPassed = json?.summary?.passed === true;
   const soakOk = soak?.enabled === true
@@ -564,7 +579,8 @@ function analyzeSseSmoke(stepOutcomes) {
     && minHeartbeats >= 1
     && heartbeatCount >= minHeartbeats
     && duplicateEventIds.length === 0
-    && missingExpected.length === 0;
+    && missingExpected.length === 0
+    && reconnectOk;
   return {
     exists: Boolean(json),
     file,
@@ -576,6 +592,10 @@ function analyzeSseSmoke(stepOutcomes) {
     heartbeatCount,
     duplicateEventIds,
     missingExpected,
+    reconnectOk,
+    reconnectAttempts,
+    reconnectDuplicateEventIds,
+    reconnectMissingExpected,
     missingStatus: missingEvidenceStatus(step.status),
     missingNote: step.outcome
       ? `sse smoke outcome: ${step.outcome}; JSON evidence missing`
@@ -642,7 +662,7 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth) {
   const sseStrictOk = sseSmoke.exists && sseSmoke.strict && sseSmoke.summaryPassed && sseSmoke.soakOk;
   const sseStatus = sseSmoke.exists ? sseStrictOk ? "pass" : "fail" : sseSmoke.missingStatus;
   const sseNote = sseSmoke.exists
-    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} duplicates:${sseSmoke.duplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length}`
+    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/2 duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
     : sseSmoke.missingNote;
   const strictAuthStatus = (condition) => strictAuth.exists ? condition ? "pass" : "fail" : strictAuth.missingStatus;
   const strictAuthOwner = (condition) => strictAuth.exists && condition ? "" : GATE_OWNERS[3];

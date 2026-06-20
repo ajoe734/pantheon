@@ -55,6 +55,43 @@ def _event_block(event_id: str, sequence_no: int = 1) -> str:
     )
 
 
+def test_stream_reconnect_sequence_advances_cursor_without_duplicates(monkeypatch) -> None:
+    probe = _load_probe_module()
+    observed_cursors: list[str | None] = []
+    replay_by_cursor = {"evt-first": "evt-second", "evt-second": "evt-third"}
+
+    def fake_stream_first_event(**kwargs):
+        cursor = kwargs.get("last_event_id")
+        observed_cursors.append(cursor)
+        event_id = replay_by_cursor.get(cursor)
+        return {
+            "ok": True,
+            "first_event": {
+                "data": {"id": event_id},
+            },
+        }
+
+    monkeypatch.setattr(probe, "stream_first_event", fake_stream_first_event)
+
+    result = probe.stream_reconnect_sequence(
+        base_url="https://bff.example.test",
+        mode=probe.BEARER_MODE,
+        token="token",
+        timeout=1.0,
+        channel="approval",
+        cookie_name="pantheon_session",
+        expected_replays=[("evt-first", "evt-second"), ("evt-second", "evt-third")],
+    )
+
+    assert observed_cursors == ["evt-first", "evt-second"]
+    assert result["ok"] is True
+    assert result["attempt_count"] == 2
+    assert result["observed_event_ids"] == ["evt-second", "evt-third"]
+    assert result["duplicate_event_ids"] == []
+    assert result["missing_expected_event_ids"] == []
+    assert result["cursors_advanced"] is True
+
+
 def test_stream_soak_counts_heartbeat_and_expected_replay_event(monkeypatch) -> None:
     probe = _load_probe_module()
 

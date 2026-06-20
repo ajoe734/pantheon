@@ -263,6 +263,16 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
                         },
                     },
                 },
+                "reconnect_sequence": {
+                    "bearer_polyfill": {
+                        "ok": True,
+                        "attempt_count": 2,
+                        "cursors_advanced": True,
+                        "duplicate_event_ids": [],
+                        "missing_expected_event_ids": [],
+                        "attempts": [{"ok": True}, {"ok": True}],
+                    },
+                },
             }
         ),
         encoding="utf-8",
@@ -304,7 +314,78 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "pass"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:2/2 duplicates:0 missingReplay:0"
+
+
+def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-CONSOL-011",
+                "strict_live_evidence": True,
+                "summary": {"passed": True},
+                "soak": {
+                    "enabled": True,
+                    "seconds": 75.0,
+                    "min_heartbeats": 1,
+                    "bearer_polyfill": {
+                        "ok": True,
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    sse_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
+    )
+    assert sse_check["status"] == "fail"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:0/2 duplicates:0 missingReplay:0"
 
 
 def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> None:
