@@ -93,6 +93,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Diff against base
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -105,6 +108,8 @@ jobs:
           fi
           if [[ -z "$CHANGED" ]]; then exit 0; fi
           echo "$CHANGED" | xargs python3 scripts/check_staged_generated_files.py
+      - name: Check Agora contract drift
+        run: node execute-plans/scripts/contract-drift-check.mjs --check
 
   smoke:
     name: Smoke acceptance
