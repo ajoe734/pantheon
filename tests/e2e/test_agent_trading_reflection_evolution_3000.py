@@ -158,6 +158,13 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     )
     assert summary["future_blind_second_holdout_rejected_count"] > 0
     assert summary["future_blind_selected_second_holdout_improvement_window_count"] >= DEFAULT_CASE_COUNT
+    assert summary["future_blind_post_admission_failure_repair_queue_count"] == summary[
+        "future_blind_second_holdout_rejected_count"
+    ]
+    assert summary["future_blind_pre_verdict_admitted_window_count"] == (
+        summary["future_blind_selected_second_holdout_improvement_window_count"]
+        + summary["future_blind_second_holdout_rejected_count"]
+    )
     assert summary["future_blind_window_admission_uses_future_holdout"] is False
     assert summary["no_leakage_holdout_count"] == DEFAULT_CASE_COUNT
     assert summary["no_leakage_temporal_protocol_count"] == DEFAULT_CASE_COUNT
@@ -1558,12 +1565,15 @@ def test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases()
     ]
     assert set(coverage["future_blind_window_admission_replay_flags"]) == {
         "admission_uses_observe_feedback_holdout_only",
+        "failed_future_verdicts_are_audited_before_replacement",
         "future_holdout_absent_from_admission",
         "future_holdout_evaluated_only_after_admission",
         "post_admission_failures_are_counted",
+        "post_admission_failures_trigger_repair_queue",
         "replayable",
         "second_holdout_selected_windows_strictly_improve",
         "selected_pool_covers_default_case_count",
+        "selected_windows_are_post_repair_future_improvements",
     }
     assert coverage["strict_oos_evolution_proof_models"] == [STRICT_OOS_EVOLUTION_PROOF_MODEL_ID]
     assert coverage["strict_oos_evolution_source_to_validation_paths"] == [
@@ -1798,6 +1808,18 @@ def _assert_agent_decision_traces_are_no_leakage(case: dict) -> None:
     }
     assert traces[1]["decision_inputs"]["allowed_windows"] == ["observe", "feedback", "holdout"]
     assert traces[1]["decision_inputs"]["forbidden_windows_not_used"] == ["future_holdout"]
+
+    precommit_by_instrument = {
+        precommit["instrument"]: precommit
+        for precommit in case["evolution"]["no_leakage_protocol"]["blind_admission_precommits"]
+    }
+    for instrument in case["portfolio"]["instruments"]:
+        assert traces[0]["selected_candidate"]["direction_by_instrument"][instrument] == (
+            precommit_by_instrument[instrument]["directions"]["feedback"]
+        )
+        assert traces[1]["selected_candidate"]["direction_by_instrument"][instrument] == (
+            precommit_by_instrument[instrument]["directions"]["holdout"]
+        )
 
     for trace in traces:
         forbidden = set(trace["decision_inputs"]["forbidden_windows_not_used"])
