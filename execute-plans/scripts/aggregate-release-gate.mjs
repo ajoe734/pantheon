@@ -72,6 +72,15 @@ const REQUIRED_RBAC_MATRIX_FAMILIES = REQUIRED_RBAC_LABELS.flatMap((label) => [
   ...REQUIRED_RBAC_READ_FAMILIES.map((family) => `rbac-read-${label}-${family}`),
   ...REQUIRED_RBAC_WRITE_FAMILIES.map((family) => `rbac-write-${label}-${family}`),
 ]);
+const REQUIRED_DRY_RUN_FAMILIES = [
+  "dry-run-strategy-create",
+  "dry-run-strategy-create-readback-not-persisted",
+  "dry-run-ranking-formula-create",
+  "dry-run-ranking-formula-create-readback-not-persisted",
+  "dry-run-v5-intervention-claim",
+  "dry-run-invalid-strategy",
+  "dry-run-invalid-ranking-formula",
+];
 const APPROVAL_RACE_ACCEPTED_STATUSES = new Set([200, 201, 202]);
 const APPROVAL_RACE_SAFE_ERROR_CODES = new Set([
   "RESOURCE_NOT_FOUND",
@@ -562,6 +571,15 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && !family.endsWith("-readback-not-persisted");
   });
   const dryRunSideEffectProofs = dryRun.filter((item) => item?.side_effect_check?.ok === true);
+  const dryRunFamilyCounts = new Map();
+  for (const item of dryRun) {
+    const family = String(item?.family || "");
+    if (family) dryRunFamilyCounts.set(family, (dryRunFamilyCounts.get(family) || 0) + 1);
+  }
+  const missingDryRunFamilies = REQUIRED_DRY_RUN_FAMILIES.filter((family) => !dryRunFamilyCounts.has(family));
+  const duplicateDryRunFamilies = REQUIRED_DRY_RUN_FAMILIES.filter((family) => (dryRunFamilyCounts.get(family) || 0) > 1);
+  const dryRunCoveredFamilyCount = REQUIRED_DRY_RUN_FAMILIES.length - missingDryRunFamilies.length;
+  const dryRunFamilyCoverageOk = missingDryRunFamilies.length === 0 && duplicateDryRunFamilies.length === 0;
   const allRbacOk = rbacMatrix.length > 0 && rbacMatrix.every((item) => item?.ok === true);
   const rbacFamilyCounts = new Map();
   for (const item of rbacMatrix) {
@@ -672,6 +690,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     dryRunOk: baseOk
       && dryRunProbeCount >= 7
       && dryRunProbeCountMatches
+      && dryRunFamilyCoverageOk
       && allDryRunOk
       && invalidDryRunsEnvelope
       && invalidDryRunsNoPersistence
@@ -698,7 +717,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManTokenPairDistinct,
     note: {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length}`,
-      dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
+      dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
     },
