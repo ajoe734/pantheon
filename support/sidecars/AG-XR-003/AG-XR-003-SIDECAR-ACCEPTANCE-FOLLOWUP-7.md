@@ -8,6 +8,8 @@
 - Generated: `2026-06-20`
 - Mutates canonical truth: `no`
 - Baseline inspected: `origin/dev` `e51bc8fdcdce119bd66596367c468364d18bf835`
+- Closeout refresh: AG-XR/Agora scoped paths unchanged through `origin/dev`
+  `7e9937342d33405d1f5bc872c684e7c705327245`
 
 This is a support packet only. It does not edit
 `docs/contracts/agora/dev-compatibility-manifest.json`,
@@ -19,9 +21,9 @@ canonical documents.
 
 Follow-up 6 recorded that Pantheon PR #1852 had merged, execute-plans PR #63
 was still open/unstable, and the local manifest sanity checks still disagreed
-on the generated-types hash. This follow-up rechecks the latest `origin/dev`
-baseline, confirms the current GitHub PR state, and repackages the acceptance
-and dependency map for reviewer `Codex`.
+on the generated-types hash. This follow-up rechecked the `origin/dev`
+baseline, confirmed the GitHub PR state, and repackaged the acceptance and
+dependency map for reviewer `Codex`.
 
 The current conclusion is unchanged: parent `AG-XR-003` remains correctly
 blocked waiting for `Claude2`. Pantheon-side implementation is durable on
@@ -33,7 +35,7 @@ sanity path is not green.
 | Surface | Current state | Sidecar stance |
 |---|---|---|
 | Parent `AG-XR-003` | `blocked`, waiting for `Claude2` | Correct to keep blocked until PR #63 disposition and manifest sanity issues are resolved or explicitly deferred. |
-| This sidecar | `in_progress`, owner `Codex2`, reviewer `Codex` | This packet should move to review after commit. |
+| This sidecar | `review_approved`, owner `Codex2`, reviewer `Codex` | Reviewer accepted the support-only packet; owner should close it through task PR and `done` after merge. |
 | Pantheon PR #1852 | `MERGED` at merge commit `0765018c838547108fa56fcf089b5e2bbafd4387` | Pantheon-side manifest gate implementation is durable on `dev`. |
 | execute-plans PR #63 | `OPEN`, head `e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5`, `mergeStateStatus=UNSTABLE` | Cross-repo mirror is not merged; parent acceptance remains blocked. |
 | PR #63 integration gate | Failed at `Aggregate release gate` in run `27877483718` | The pipeline reached the aggregate decision; release gates remain red even though F13 Agora passes. |
@@ -41,11 +43,24 @@ sanity path is not green.
 | Local deployment gate | Fails closed | Correct behavior while status is pending, frontend commits are placeholders, hashes mismatch, and blockers remain. |
 | Agora frontend drift | `npm --prefix execute-plans run contract:drift` passes locally | Useful Agora evidence, but not equivalent to a green deployment gate or a merged mirror PR. |
 
+## Closeout Refresh
+
+Reviewer `Codex` approved this support-only packet. The closeout update is
+limited to this packet's review-approved/finalization note and the task brief
+status sync. After fetching `origin/dev`
+`7e9937342d33405d1f5bc872c684e7c705327245`, the AG-XR/Agora scoped diff from
+the packet baseline `e51bc8fdcdce119bd66596367c468364d18bf835` through current
+`origin/dev` was empty, so the reviewed packet still composes with the current
+dev branch.
+
+This sidecar does not approve or unblock parent `AG-XR-003`. The parent remains
+blocked on `Claude2` and execute-plans PR #63 disposition.
+
 ## Source Evidence
 
 | Source | Evidence used here |
 |---|---|
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7` | Sidecar is `in_progress`, owner `Codex2`, reviewer `Codex`, artifact path is this packet. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7` | Sidecar is `review_approved`, owner `Codex2`, reviewer `Codex`, artifact path is this packet, and reviewer notes accept the support-only scope. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003` | Parent is `blocked`, waiting for `Claude2`; note records PR #1852 merged and PR #63 blocked at integration gate. |
 | `gh pr view 1852 --repo ajoe734/pantheon ...` | PR #1852 is merged at `0765018...`; Branch CI and orchestrator sync checks succeeded. |
 | `gh pr view 63 --repo ajoe734/execute-plans ...` | PR #63 is still open, unstable, with `integration-gate` failure. |
@@ -162,12 +177,14 @@ cross-repo delivery complete.
 ## Suggested Handoff To Reviewer
 
 ```text
-Follow-up 7 packet ready:
+Follow-up 7 packet review-approved and ready for owner closeout:
 support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7.md
 
-Current origin/dev is e51bc8fd. Parent AG-XR-003 remains blocked waiting for
-Claude2. Pantheon PR #1852 is merged at 0765018..., but execute-plans PR #63 is
-still open/unstable with integration-gate failing at Aggregate release gate.
+Reviewed packet baseline was origin/dev e51bc8fd; closeout refresh confirmed
+AG-XR/Agora scoped paths are unchanged through origin/dev 7e993734. Parent
+AG-XR-003 remains blocked waiting for Claude2. Pantheon PR #1852 is merged at
+0765018..., but execute-plans PR #63 is still open/unstable with
+integration-gate failing at Aggregate release gate.
 
 Local validation shows the committed manifest is stale relative to the fresh
 generator: manifest has backend 7ab267... and generated_types_sha256 a6a9296...,
@@ -200,6 +217,20 @@ python3 -m pytest scripts/test_agora_compat_manifest.py -v
 npm --prefix execute-plans run contract:drift
 python3 scripts/agora_compat_manifest.py write --stdout
 sha256sum docs/contracts/agora/dev-compatibility-manifest.json execute-plans/src/lib/bff-v1/agora/contract-snapshot.json execute-plans/src/lib/bff-v1/agora/types.ts services/control-plane/specs/agora/bundle_index.json services/control-plane/specs/agora/bundle_index.v1_1.json services/control-plane/openapi/agora_v1_1.openapi.yaml
+
+# closeout refresh
+git fetch origin dev
+git rev-parse origin/dev
+git diff --name-status e51bc8fdcdce119bd66596367c468364d18bf835..origin/dev -- docs/contracts/agora scripts/agora_compat_manifest.py scripts/test_agora_compat_manifest.py execute-plans/src/lib/bff-v1/agora services/control-plane/specs/agora services/control-plane/openapi/agora_v1_1.openapi.yaml support/sidecars/AG-XR-003 .orchestrator/task-briefs/ag_xr_003_sidecar_acceptance_followup_7.md
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003
+gh pr view 63 --repo ajoe734/execute-plans --json number,title,state,mergeStateStatus,statusCheckRollup,headRefOid,headRefName,baseRefName,url,isDraft,mergedAt,reviewDecision
+gh pr view 1852 --repo ajoe734/pantheon --json number,title,state,mergeStateStatus,statusCheckRollup,headRefOid,headRefName,baseRefName,url,isDraft,mergedAt,reviewDecision,mergeCommit
+python3 scripts/agora_schema_bundle.py --verify
+python3 scripts/agora_compat_manifest.py verify --allow-pending --manifest docs/contracts/agora/dev-compatibility-manifest.json
+python3 scripts/agora_compat_manifest.py deployment-gate --manifest docs/contracts/agora/dev-compatibility-manifest.json
+python3 -m pytest scripts/test_agora_compat_manifest.py -q
+npm --prefix execute-plans run contract:drift
 ```
 
 Results:
@@ -243,3 +274,26 @@ Results:
 - Extension bundle index sha256: `5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee`.
 - Agora v1.1 OpenAPI sha256:
   `16aa660db15a32aaccd63a7f0594abb4339e9ae95afae18353fbee532c2c0749`.
+- Closeout `git rev-parse origin/dev`:
+  `7e9937342d33405d1f5bc872c684e7c705327245`.
+- Closeout AG-XR/Agora scoped diff from packet baseline through current
+  `origin/dev`: no changed paths.
+- Closeout sidecar status show: `review_approved`, owner `Codex2`, reviewer
+  `Codex`; reviewer notes accepted the support-only packet and kept parent
+  `AG-XR-003` blocked pending `Claude2`/PR #63 disposition.
+- Closeout parent status show: `blocked`, waiting for `Claude2`.
+- Closeout PR recheck: Pantheon PR #1852 remains `MERGED`; execute-plans PR
+  #63 remains `OPEN`, `UNSTABLE`, with `integration-gate` failed.
+- Closeout `python3 scripts/agora_schema_bundle.py --verify`: pass.
+- Closeout `python3 scripts/agora_compat_manifest.py verify --allow-pending
+  --manifest docs/contracts/agora/dev-compatibility-manifest.json`: expected
+  fail on generated-types sha256 mismatch
+  `0244eb11...` expected vs `a6a9296...` committed.
+- Closeout `python3 scripts/agora_compat_manifest.py deployment-gate
+  --manifest docs/contracts/agora/dev-compatibility-manifest.json`: expected
+  fail-closed on generated-types mismatch, pending status, placeholder
+  frontend commits, frontend/backend commit mismatch, and non-empty blockers.
+- Closeout `python3 -m pytest scripts/test_agora_compat_manifest.py -q`:
+  expected partial fail, 1 failed and 3 passed; stale assertion still expects
+  `frontend-generated-types-not-agora-v1.1`.
+- Closeout `npm --prefix execute-plans run contract:drift`: pass.
