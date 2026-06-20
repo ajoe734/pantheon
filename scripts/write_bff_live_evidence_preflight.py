@@ -34,6 +34,7 @@ RBAC_REQUIRED_LABELS = (
 REQUIRED_INPUT_NAMES = (
     "PANTHEON_BFF_BASE_URL",
     "APPROVAL_RACE_ID",
+    "TWO_MAN_RACE_ID",
     "SOAK_SECONDS",
 )
 
@@ -54,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=os.environ.get("PANTHEON_BFF_BASE_URL", ""))
     parser.add_argument("--approval-race-id", default=os.environ.get("APPROVAL_RACE_ID", ""))
+    parser.add_argument("--two-man-race-id", default=os.environ.get("TWO_MAN_RACE_ID", ""))
     parser.add_argument("--soak-seconds", default=os.environ.get("SOAK_SECONDS", ""))
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     return parser.parse_args()
@@ -156,6 +158,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     }
     present_map["PANTHEON_BFF_BASE_URL"] = present(args.base_url)
     present_map["APPROVAL_RACE_ID"] = present(args.approval_race_id)
+    present_map["TWO_MAN_RACE_ID"] = present(args.two_man_race_id)
     present_map["SOAK_SECONDS"] = present(args.soak_seconds)
     missing = [name for name in required if not present_map[name]]
     rbac_matrix, rbac_invalid = inspect_rbac_tokens_json(os.environ.get("PANTHEON_BFF_RBAC_TOKENS_JSON", ""))
@@ -176,6 +179,8 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "strict_live_evidence_preflight": True,
         "generated_at": utc_now(),
         "target_url": args.base_url.strip(),
+        "approval_race_id_present": present(args.approval_race_id),
+        "two_man_race_id_present": present(args.two_man_race_id),
         "soak_seconds": args.soak_seconds.strip(),
         "min_soak_seconds": STRICT_LIVE_SOAK_MIN_SECONDS,
         "rbac_matrix": rbac_matrix,

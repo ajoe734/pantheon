@@ -220,9 +220,11 @@ def test_strict_live_evidence_forces_real_bearer_matrix_and_race_tokens(monkeypa
         include_rbac_matrix=False,
         include_dry_run=False,
         include_approval_race=False,
+        include_two_man_race=False,
         require_provided_rbac_tokens=False,
         require_provided_approval_race_tokens=False,
         approval_race_id="approval-strict-race",
+        two_man_race_id="intervention-strict-race",
     )
 
     probe.apply_strict_live_evidence(args)
@@ -230,6 +232,7 @@ def test_strict_live_evidence_forces_real_bearer_matrix_and_race_tokens(monkeypa
     assert args.include_rbac_matrix is True
     assert args.include_dry_run is True
     assert args.include_approval_race is True
+    assert args.include_two_man_race is True
     assert args.require_provided_rbac_tokens is True
     assert args.require_provided_approval_race_tokens is True
 
@@ -245,9 +248,11 @@ def test_strict_live_evidence_rejects_dev_jwt_without_primary_bearer(monkeypatch
         include_rbac_matrix=False,
         include_dry_run=False,
         include_approval_race=False,
+        include_two_man_race=False,
         require_provided_rbac_tokens=False,
         require_provided_approval_race_tokens=False,
         approval_race_id="approval-strict-race",
+        two_man_race_id="intervention-strict-race",
     )
 
     try:
@@ -268,9 +273,11 @@ def test_strict_live_evidence_rejects_same_approval_race_bearer(monkeypatch) -> 
         include_rbac_matrix=False,
         include_dry_run=False,
         include_approval_race=False,
+        include_two_man_race=False,
         require_provided_rbac_tokens=False,
         require_provided_approval_race_tokens=False,
         approval_race_id="approval-strict-race",
+        two_man_race_id="intervention-strict-race",
     )
 
     try:
@@ -348,6 +355,106 @@ def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) ->
     assert result["safe_error_count"] == 1
     assert result["duplicate_winners"] is False
     assert sorted(calls) == ["Bearer token-a", "Bearer token-b"]
+
+
+def test_build_two_man_race_accepts_two_operator_scoped_signatures(monkeypatch) -> None:
+    probe = _load_probe_module()
+    calls: list[str] = []
+    lock = threading.Lock()
+
+    monkeypatch.setattr(
+        probe,
+        "approval_race_tokens",
+        lambda _args, _primary_token: ("token-a", "token-b", {"kind": "provided_bearer_pair"}),
+    )
+
+    def fake_urlopen(request, timeout: float):
+        assert timeout == 5.0
+        with lock:
+            calls.append(request.headers["Authorization"])
+            call_number = len(calls)
+        return _FakeResponse(
+            status=202,
+            body={
+                "data": {"command_id": f"cmd-two-man-{call_number}"},
+                "meta": {"idempotency": {"replayed": False}},
+            },
+        )
+
+    monkeypatch.setattr(probe.urllib.request, "urlopen", fake_urlopen)
+    args = argparse.Namespace(
+        two_man_race_id="intervention-race-unit",
+        approval_race_id="approval-race-unit",
+        approval_race_decision="approve",
+        subject="op-live-smoke",
+        issuer="pantheon-dev",
+        audience="bff-operators",
+        ttl_seconds=3600,
+        require_provided_approval_race_tokens=False,
+        allow_single_token_approval_race=False,
+    )
+
+    result = probe.build_two_man_race_results(
+        args=args,
+        base_url="https://bff.example.test",
+        token="primary",
+        timeout=5.0,
+        idempotency_prefix="idem-unit",
+    )
+
+    assert result["ok"] is True
+    assert result["operator_scoped"] is True
+    assert result["accepted_count"] == 2
+    assert result["replayed_count"] == 0
+    assert result["distinct_command_ids"] is True
+    assert result["command_id_count"] == 2
+    assert sorted(calls) == ["Bearer token-a", "Bearer token-b"]
+
+
+def test_build_two_man_race_rejects_idempotency_replay(monkeypatch) -> None:
+    probe = _load_probe_module()
+
+    monkeypatch.setattr(
+        probe,
+        "approval_race_tokens",
+        lambda _args, _primary_token: ("token-a", "token-b", {"kind": "provided_bearer_pair"}),
+    )
+
+    def fake_urlopen(_request, timeout: float):
+        assert timeout == 5.0
+        return _FakeResponse(
+            status=202,
+            body={
+                "data": {"command_id": "cmd-two-man-replayed"},
+                "meta": {"idempotency": {"replayed": True}},
+            },
+        )
+
+    monkeypatch.setattr(probe.urllib.request, "urlopen", fake_urlopen)
+    args = argparse.Namespace(
+        two_man_race_id="intervention-race-unit",
+        approval_race_id="approval-race-unit",
+        approval_race_decision="approve",
+        subject="op-live-smoke",
+        issuer="pantheon-dev",
+        audience="bff-operators",
+        ttl_seconds=3600,
+        require_provided_approval_race_tokens=False,
+        allow_single_token_approval_race=False,
+    )
+
+    result = probe.build_two_man_race_results(
+        args=args,
+        base_url="https://bff.example.test",
+        token="primary",
+        timeout=5.0,
+        idempotency_prefix="idem-unit",
+    )
+
+    assert result["ok"] is False
+    assert result["operator_scoped"] is False
+    assert result["accepted_count"] == 2
+    assert result["replayed_count"] == 2
 
 
 def test_build_approval_race_rejects_two_safe_errors_without_winner(monkeypatch) -> None:

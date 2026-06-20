@@ -20,6 +20,7 @@ def run_preflight(
     tmp_path: Path,
     env: dict[str, str],
     approval_race_id: str = "",
+    two_man_race_id: str = "",
     soak_seconds: str = "75",
 ) -> subprocess.CompletedProcess[str]:
     repo_root = Path(__file__).resolve().parents[1]
@@ -32,6 +33,8 @@ def run_preflight(
             "https://bff.example.test",
             "--approval-race-id",
             approval_race_id,
+            "--two-man-race-id",
+            two_man_race_id,
             "--soak-seconds",
             soak_seconds,
             "--output",
@@ -47,7 +50,13 @@ def run_preflight(
 
 def clean_env() -> dict[str, str]:
     env = os.environ.copy()
-    for name in (*REQUIRED_SECRET_ENV_VARS, "PANTHEON_BFF_BASE_URL", "APPROVAL_RACE_ID", "SOAK_SECONDS"):
+    for name in (
+        *REQUIRED_SECRET_ENV_VARS,
+        "PANTHEON_BFF_BASE_URL",
+        "APPROVAL_RACE_ID",
+        "TWO_MAN_RACE_ID",
+        "SOAK_SECONDS",
+    ):
         env.pop(name, None)
     return env
 
@@ -67,8 +76,9 @@ def test_preflight_writes_missing_inputs_without_secret_values(tmp_path: Path) -
     assert payload["secret_values_written"] is False
     assert payload["present"]["PANTHEON_BFF_BASE_URL"] is True
     assert payload["present"]["APPROVAL_RACE_ID"] is False
+    assert payload["present"]["TWO_MAN_RACE_ID"] is False
     assert payload["present"]["SOAK_SECONDS"] is True
-    assert payload["missing"] == [*REQUIRED_SECRET_ENV_VARS, "APPROVAL_RACE_ID"]
+    assert payload["missing"] == [*REQUIRED_SECRET_ENV_VARS, "APPROVAL_RACE_ID", "TWO_MAN_RACE_ID"]
     assert payload["invalid"] == []
     assert payload["rbac_matrix"] == {
         "required_labels": list(RBAC_REQUIRED_LABELS),
@@ -95,7 +105,12 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
     }
     env.update(secret_values)
 
-    result = run_preflight(tmp_path, env, approval_race_id="appr-live-123")
+    result = run_preflight(
+        tmp_path,
+        env,
+        approval_race_id="appr-live-123",
+        two_man_race_id="int-live-123",
+    )
     assert result.returncode == 0, result.stderr
 
     output = tmp_path / ".lovable" / "audits" / "current-run" / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
@@ -104,6 +119,8 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
     assert payload["missing"] == []
     assert payload["invalid"] == []
     assert all(payload["present"].values())
+    assert payload["approval_race_id_present"] is True
+    assert payload["two_man_race_id_present"] is True
     assert payload["rbac_matrix"] == {
         "required_labels": list(RBAC_REQUIRED_LABELS),
         "present_labels": list(RBAC_REQUIRED_LABELS),
@@ -121,6 +138,8 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
         *rbac_tokens.values(),
         "race-secret-a",
         "race-secret-b",
+        "appr-live-123",
+        "int-live-123",
     ]
     for secret_value in leaked_values:
         assert secret_value not in text
@@ -139,7 +158,13 @@ def test_preflight_rejects_short_sse_soak_before_live_write_steps(tmp_path: Path
         }
     )
 
-    result = run_preflight(tmp_path, env, approval_race_id="appr-live-123", soak_seconds="1")
+    result = run_preflight(
+        tmp_path,
+        env,
+        approval_race_id="appr-live-123",
+        two_man_race_id="int-live-123",
+        soak_seconds="1",
+    )
     assert result.returncode == 1
     assert "Invalid strict live evidence inputs" in result.stderr
 
@@ -164,7 +189,12 @@ def test_preflight_rejects_incomplete_rbac_matrix_before_live_probes(tmp_path: P
         }
     )
 
-    result = run_preflight(tmp_path, env, approval_race_id="appr-live-123")
+    result = run_preflight(
+        tmp_path,
+        env,
+        approval_race_id="appr-live-123",
+        two_man_race_id="int-live-123",
+    )
     assert result.returncode == 1
     assert "Invalid strict live evidence inputs" in result.stderr
 
@@ -199,7 +229,12 @@ def test_preflight_rejects_malformed_rbac_json_with_safe_artifact(tmp_path: Path
         }
     )
 
-    result = run_preflight(tmp_path, env, approval_race_id="appr-live-123")
+    result = run_preflight(
+        tmp_path,
+        env,
+        approval_race_id="appr-live-123",
+        two_man_race_id="int-live-123",
+    )
     assert result.returncode == 1
     assert "PANTHEON_BFF_RBAC_TOKENS_JSON" in result.stderr
 
@@ -227,7 +262,12 @@ def test_preflight_rejects_same_approval_race_bearer_before_live_race(tmp_path: 
         }
     )
 
-    result = run_preflight(tmp_path, env, approval_race_id="appr-live-123")
+    result = run_preflight(
+        tmp_path,
+        env,
+        approval_race_id="appr-live-123",
+        two_man_race_id="int-live-123",
+    )
     assert result.returncode == 1
     assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A/B" in result.stderr
 
