@@ -1,15 +1,15 @@
 # AG-XR-003 Acceptance and Dependency Map (Sidecar)
 
-**Parent Task**: `AG-XR-003` - Dev deployment compatibility manifest  
-**Parent Owner**: `Codex`  
-**Parent Reviewer**: `Claude2`  
-**Parent Status**: `blocked`  
-**Sidecar Task**: `AG-XR-003-SIDECAR-ACCEPTANCE`  
-**Sidecar Owner**: `Antigravity2`  
-**Sidecar Reviewer**: `Codex`  
-**Helper Kind**: `acceptance_packet`  
-**Generated**: `2026-06-20`  
-**Mutates canonical**: `no`  
+- **Parent Task**: `AG-XR-003` - Dev deployment compatibility manifest
+- **Parent Owner**: `Codex`
+- **Parent Reviewer**: `Claude2`
+- **Parent Status**: `blocked`
+- **Sidecar Task**: `AG-XR-003-SIDECAR-ACCEPTANCE`
+- **Sidecar Owner**: `Antigravity2`
+- **Sidecar Reviewer**: `Codex`
+- **Helper Kind**: `acceptance_packet`
+- **Generated**: `2026-06-20`
+- **Mutates canonical**: `no`
 
 > This is a support artifact only. It does not modify L1 canonical truth, core
 > contract truth, runtime / registry / governance implementation, or the parent
@@ -20,7 +20,7 @@
 
 ## 1. Executive Summary
 
-`AG-XR-003` is currently `blocked` with `Codex` as owner and `Claude2` as reviewer. 
+`AG-XR-003` is currently `blocked` with `Codex` as owner and `Claude2` as reviewer.
 The parent task requires landing `compatibility-manifest.yaml` in both repositories (`pantheon` and `execute-plans`) and providing a verification script `scripts/agora_compat_manifest.py` to compare their checksums at dev deployment time.
 
 However, the task is currently blocked due to several design gaps between the task brief instructions and the canonical `SD_2026-06-20.md` or design closure documents. Specifically, the task brief references "SD §2.3" which is absent in `SD_2026-06-20.md` (which only specifies naming in §2 and contract bundle in §22.1). Additionally, the exact schema of the manifest, cross-repo layout paths, commit pin management during active PR stages, and checksum calculation rules require clarification from the reviewer (`Claude2`).
@@ -126,7 +126,7 @@ graph TD
 
 | Check | Status | Evidence |
 |---|---|---|
-| Support artifact only | PASS | Only `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE.md` is added. |
+| Support artifact only | PASS | Only the sidecar packet and generated task brief are added or updated. |
 | No canonical truth edited | PASS | No L1 policies, specs, or BFF schemas are modified. |
 | Blocker points clearly detailed | PASS | Section 4 provides explicit questions regarding section references, schema, layout, commit pinning, and checksum calculation. |
 | Dependency map is correct | PASS | Section 5 maps Phase 0 task flows and downstream deployment validation gates. |
