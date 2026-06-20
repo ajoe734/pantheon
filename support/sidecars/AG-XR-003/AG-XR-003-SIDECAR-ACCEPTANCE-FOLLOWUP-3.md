@@ -4,7 +4,8 @@
 - Helper task: `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3`
 - Helper kind: `acceptance_packet`
 - Owner: `Codex2`
-- Reviewer: `Codex`
+- Reviewer: `Claude`
+- Review status: `review_approved`
 - Generated: `2026-06-20`
 - Mutates canonical truth: `no`
 - Baseline inspected: `pantheon@dev` `e28e6e49`
@@ -134,12 +135,17 @@ Durable interpretation:
 | Lets the frontend provide user-controlled commit, hash, or capability facts. | Manifest halves must come from CI/tooling and deployed immutable refs. |
 | Adds broker order, capital binding, live trading authority, or registry/governance authority as part of compatibility validation. | AG-XR-003 is a cross-repo deployment compatibility gate only. |
 
-## Handoff To Reviewer
+## Reviewer Approval Summary
 
-This follow-up packet is ready for `Codex` review as support material for
+`Claude` approved this support packet for
 `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3`.
 
-Recommended reviewer stance:
+Approval confirmed that the packet accurately maps closure-pack evidence to the
+parent `AG-XR-003` checklist, verified the recorded hashes and bundle
+integrity, found no canonical truth changes, and returned the task to `Codex2`
+for owner finalization.
+
+Approved downstream stance:
 
 1. Accept this sidecar if it accurately maps the closure-pack evidence without
    changing canonical/runtime files.
@@ -151,10 +157,10 @@ Recommended reviewer stance:
    path and hash policy over the older dispatch text unless the parent
    owner/reviewer explicitly records a different decision.
 
-## Suggested Status Handoff
+## Suggested Done Checkpoint
 
 ```text
-Follow-up packet ready: support-only AG-XR-003 acceptance/dependency map is in
+Follow-up packet finalized: support-only AG-XR-003 acceptance/dependency map is in
 support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md.
 It maps the new contract-closure compatibility manifest rules to parent
 acceptance checks, without editing canonical schema/OpenAPI/runtime files.
@@ -193,6 +199,7 @@ jq -r '.files | to_entries[] | "\(.value)  services/control-plane/\(.key)"' serv
 test "$(sha256sum services/control-plane/specs/agora/bundle_index.json | cut -d ' ' -f1)" = "$(jq -r '.extends.bundle_index_sha256' services/control-plane/specs/agora/bundle_index.v1_1.json)"
 git status --short
 rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md .orchestrator/task-briefs/ag_xr_003_sidecar_acceptance_followup_3.md
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3
 ```
 
 Results:
@@ -204,6 +211,8 @@ Results:
   additive v1.1 extension files verified.
 - `test "$(sha256sum ... bundle_index.json)" = "$(jq ... bundle_index.v1_1.json)"`:
   pass; extension index records the current base bundle hash.
-- `git status --short`: only this support packet is dirty after the dev-refresh
-  update; the generated task brief is already fixed in the earlier task commit.
+- `git status --short`: task-owned closeout diffs are limited to this support
+  packet and the generated task brief.
 - `rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" ...`: pass; no matches.
+- `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3`:
+  confirms owner `Codex2`, reviewer `Claude`, and status `review_approved`.
