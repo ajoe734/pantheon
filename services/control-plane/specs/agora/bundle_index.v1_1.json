@@ -1,0 +1,16 @@
+{
+  "bundle_version": "1.1",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.json",
+    "bundle_version": "1.0",
+    "frozen_by": "AG-XR-001",
+    "bundle_index_sha256": "286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b"
+  },
+  "files": {
+    "specs/agora/v2/widget_spec_v2.schema.json": "d360a17a9762d69e6a5e2c87921117bb85ee34d972fd8034f8904df6facb993f",
+    "specs/agora/v2/chart_spec_v1.schema.json": "0bcd0fa5fc21d7c021d54803780e310cfd9234b3ea15c044fa0b5cdfffed0967",
+    "specs/agora/v2/dashboard_recipe_v2.schema.json": "34c7e0fab793ec79776e9ddd5cca98683cacc6b8bba328e02a8c4c5eba45c13a",
+    "specs/agora/v2/compatibility_manifest.schema.json": "84c3607195484d09710708c08e7c29821b75d83199376cd5374a2ce0c3ca7827",
+    "specs/agora/v2/capability_manifest_v1_1.json": "6a729d1284ca8f88058a4c301dc67a4c17fd76097190bf020310f4f2cab3db41"
+  }
+}
