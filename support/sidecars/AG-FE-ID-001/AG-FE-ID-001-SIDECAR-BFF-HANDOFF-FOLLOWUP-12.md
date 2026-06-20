@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-20` |
-| Status | `ready for reviewer handoff` |
+| Status | `review approved; owner closeout prepared` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -44,7 +44,7 @@ Status commands used `AI_NAME=Codex2`.
 
 | Task | Status | Handoff implication |
 |---|---|---|
-| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-12` | `in_progress` | This packet is the intended deliverable. |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-12` | `review_approved` | Reviewer approved the support-only packet; owner closeout records the approved state. |
 | `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-11` | archived `done`; PR #1880 and closeout PR #1881 merged | Previous approved packet is now the current parent handoff baseline on `dev`. |
 | `AG-FE-ID-001` | `todo`; owner `Claude`, reviewer `Codex`; depends on `AG-FE-000`, `AG-BE-ID-003` | Parent implementation has not started in durable task state. |
 | `AG-BE-ID-002` | archived `done` | `/bff/agora/servant/ensure` remains a successful create/reconcile runtime path. |
@@ -62,7 +62,7 @@ readiness.
 | Source | Why it matters |
 |---|---|
 | `.orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_12.md` | This sidecar's support-only assignment. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-12` | Confirms owner, reviewer, artifact, and in-progress state. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-12` | Confirms owner, reviewer, artifact, review-approved state, and Claude review notes. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-11` | Confirms previous packet archived `done` through PR #1880 and PR #1881. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms parent remains `todo` and depends on `AG-BE-ID-003`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-002` | Confirms servant ensure/provision/reconcile remains archived `done`. |
@@ -302,7 +302,7 @@ git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_f
 Results:
 
 - Branch confirmed correct and already up to date with `origin/dev`.
-- Task state confirmed: sidecar `in_progress`, FOLLOWUP-11 archived `done`,
+- Task state confirmed: sidecar `review_approved`, FOLLOWUP-11 archived `done`,
   parent `todo`, `AG-BE-ID-002` archived `done`, `AG-BE-ID-003` blocked,
   `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` archived `done`, and
   `AG-XR-003` blocked.
@@ -319,32 +319,27 @@ Results:
 - Agora generated types check passed: `17 schemas, 96 operations`.
 - `git diff --check` passed for the task-owned files.
 
-## 12. Reviewer Handoff
+## 12. Reviewer Approval And Owner Closeout
 
-Reviewer `Claude` should review this packet as a support-only followup for
-`AG-FE-ID-001`.
+Reviewer `Claude` approved this packet in task state with these review notes:
 
-Approve this sidecar if:
+- 審查通過：FOLLOWUP-11 已歸檔 done（PR #1880/#1881），父任務仍 todo，
+  servant ensure 就緒，AG-BE-ID-003 session 封鎖狀態正確，未修改 canonical
+  truth。
+- 後續追蹤：parent AG-FE-ID-001 待 AG-BE-ID-003 解除封鎖後實作
+  `AgoraApp.tsx`、`identity.ts`、`servant.ts`。
 
-1. the delta from FOLLOWUP-11 is accurate, especially that FOLLOWUP-11 is now
-   archived `done` via PR #1880 and PR #1881;
-2. the parent handoff correctly says no new BFF/frontend implementation has
-   appeared since the previous approved packet;
-3. the packet preserves servant ensure readiness while keeping session facade
-   behavior blocked behind `AG-BE-ID-003`;
-4. the packet does not modify canonical truth or runtime/frontend
-   implementation.
+Owner `Codex2` re-read the task brief, support packet, and review-approved task
+state during `owned_finalize_dispatch` closeout. The closeout change is limited
+to task-scoped support metadata and the task brief review status. Canonical
+truth, runtime implementation, OpenAPI, capability manifests, and frontend
+source remain unchanged.
 
-Suggested approval command:
-
-```bash
-AI_NAME=Claude ./scripts/ai-status.sh approve AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-12 "Followup packet approved; support-only handoff accurately records FOLLOWUP-11 closeout on dev, no new parent implementation, unchanged servant ensure readiness, unchanged AG-BE-ID-003 session blocker state, and missing frontend targets."
-```
-
-Suggested reopen command if changes are required:
+Closeout verification:
 
 ```bash
-AI_NAME=Claude ./scripts/ai-status.sh reopen AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-12 "Describe the exact packet correction needed."
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-12
+git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_12.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md
 ```
 
 *Prepared by Codex2 for the `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-12` support slice.*
