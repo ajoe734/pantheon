@@ -7067,6 +7067,12 @@ def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, A
         "tick_interval_seconds": int(settings.get("tick_interval_seconds", 600) or 0),
         "base_branches": [str(b).strip() for b in (settings.get("base_branches") or ["dev", "master", "main"]) if str(b).strip()],
         "max_removals_per_tick": int(settings.get("max_removals_per_tick", 5)),
+        # Ephemeral chair-review worktrees are timestamp-keyed (never reused) and
+        # dirty by design, so prune_orphan_worktrees' merged+clean criteria never
+        # match them. They get their own reaper with an age guard so an in-flight
+        # review is not yanked, and a larger per-tick budget to drain backlogs.
+        "chair_review_max_age_seconds": int(settings.get("chair_review_max_age_seconds", 7200)),
+        "chair_review_max_removals_per_tick": int(settings.get("chair_review_max_removals_per_tick", 30)),
     }
 
 
@@ -7203,6 +7209,102 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
             {
                 "type": "worktree_pruned",
                 "message": f"Pruned {len(removed)} orphan worker worktree(s): {', '.join(removed)}",
+            },
+        )
+        return True
+    return False
+
+
+def prune_chair_review_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Reap ephemeral chair-review worktrees that work has left behind.
+
+    Each chair-review cycle creates a fresh, timestamp-keyed worktree
+    (workspace_task_id=chair-review-<stamp>-<agent>) that is never reused and is
+    dirty by design - the brief gets annotated and the review artifact rewritten
+    in-tree. That means it matches none of prune_orphan_worktrees' criteria (not a
+    merged task/* branch, not clean), so without this reaper they accumulate one
+    per review forever (~150M each). Remove any chair-review worktree that is not
+    currently claimed/live and is older than the age guard.
+    """
+    settings = worker_worktree_housekeeping_settings(config)
+    if not settings["enabled"]:
+        return False
+
+    interval = settings["tick_interval_seconds"]
+    bucket = state.setdefault("chair_review_worktree_housekeeping", {})
+    if interval > 0:
+        last_dt = _parse_iso_utc(str(bucket.get("last_run_at") or ""))
+        now = datetime.now(timezone.utc)
+        if last_dt is not None and (now - last_dt).total_seconds() < interval:
+            return False
+    bucket["last_run_at"] = utc_now()
+
+    worktree_settings = worker_worktree_settings(config)
+    if not worktree_settings.get("enabled", False):
+        return False
+    base_root = _worker_worktree_base_root(config, worktree_settings)
+    if not base_root.exists():
+        return False
+    repo_root = config_path(config, "status_file").parents[0]
+
+    max_age = settings["chair_review_max_age_seconds"]
+    max_removals = max(0, settings["chair_review_max_removals_per_tick"])
+    if max_removals <= 0:
+        return False
+
+    claimed_paths: set[Path] = set()
+    for worker in state.get("workers", {}).values():
+        wp = worker.get("workspace_path")
+        if not wp:
+            continue
+        try:
+            claimed_paths.add(Path(str(wp)).resolve())
+        except OSError:
+            continue
+    live_paths = _scan_process_paths_in_root(base_root)
+
+    now_ts = time.time()
+    base_root_str = str(base_root)
+    removed: list[str] = []
+    for record in _git_worktree_records(repo_root):
+        if len(removed) >= max_removals:
+            break
+        wt_value = record.get("worktree")
+        if not wt_value or not wt_value.startswith(base_root_str):
+            continue
+        try:
+            wt_path = Path(wt_value).resolve()
+        except OSError:
+            continue
+        if not wt_path.name.startswith("chair-review-"):
+            continue
+        if wt_path in claimed_paths:
+            continue
+        if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
+            continue
+        try:
+            age = now_ts - wt_path.stat().st_mtime
+        except OSError:
+            continue
+        if age < max_age:
+            continue
+        # --force because chair-review worktrees are dirty by design; they hold no
+        # state worth preserving (the review artifact is synced out separately).
+        remove_proc = subprocess.run(
+            ["git", "-C", str(repo_root), "worktree", "remove", "--force", str(wt_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if remove_proc.returncode == 0:
+            removed.append(str(wt_path))
+
+    if removed:
+        write_activity_log(
+            config,
+            {
+                "type": "worktree_pruned",
+                "message": f"Reaped {len(removed)} chair-review worktree(s): {', '.join(removed)}",
             },
         )
         return True
@@ -9709,6 +9811,7 @@ def run_once(
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
         changed = prune_orphan_worktrees(config, state) or changed
+        changed = prune_chair_review_worktrees(config, state) or changed
         changed = maybe_auto_commit_archive(config, state) or changed
 
         loop_finished_at = utc_now()
