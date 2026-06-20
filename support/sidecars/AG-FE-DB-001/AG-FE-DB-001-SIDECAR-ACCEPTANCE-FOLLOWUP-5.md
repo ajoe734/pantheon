@@ -29,7 +29,7 @@ governance logic, or status files by hand.
 |---|---|---|
 | `AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5` | `review_approved`, owner `Codex`, reviewer `Codex2`, artifact scoped to this file plus the task-scoped review note. | Owner closeout may proceed after PR #1857 is refreshed and merged. |
 | Parent `AG-FE-DB-001` | `review_approved`, owner `Codex`, reviewer `Claude2`. Review notes approve registry/renderer acceptance and return to owner for closeout. | Parent implementation has passed review, but the owner must still perform formal closeout before the task is `done`. |
-| Parent code delivery | PR #1854 merged into `dev` at merge commit `34ec8a6a44dbfca43a3af3b0d15df4e065705fd4`; implementation commit `6062cb2cc850f032de9b890a47db55a60a6033cf`; current `origin/dev` is `0176f9a4b70d7def6f8ab78f1d232323a11365c6` and contains the merge. | The code is visible on `dev`; the remaining gap is status/archive closeout, not code merge. |
+| Parent code delivery | PR #1854 merged into `dev` at merge commit `34ec8a6a44dbfca43a3af3b0d15df4e065705fd4`; implementation commit `6062cb2cc850f032de9b890a47db55a60a6033cf`; fetched `origin/dev` during closeout reached `df2bdb393053ce3e4b0470e416a98597f4d314d7` and contains the merge. | The code is visible on `dev`; the remaining gap is status/archive closeout, not code merge. |
 | Backend sibling `AG-BE-DB-001` | Archived `done`; PR #1847 merged, implementation enforced 11 dashboard routes, ETag/If-Match concurrency, and A3 safety rules. | FE renderer acceptance no longer needs to treat backend persistence as an active blocker, but downstream live wiring must still honor the merged BFF contract. |
 | Contract predecessor `AG-XR-DASH-001` | Archived `done`; delivered `agora_v1_1.openapi.yaml`, v2 schemas, and `agora.dashboard.v2`. | The v1.1 contract remains the schema/BFF authority for the renderer task. |
 | Review artifact | `ai-status` names `.orchestrator/task-reviews/ag_fe_db_001_review_claude2.md`, but that file is not present in the current `dev` tree. | Parent closeout should rely on the `ai-status` review notes unless a task-scoped review file is separately published. |
@@ -151,8 +151,8 @@ Observed results:
 
 - The current branch is `task/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5`.
 - The branch was initially fast-forwarded to the then-current `origin/dev`;
-  closeout later found PR #1857 behind the newer `origin/dev` at
-  `0176f9a4b70d7def6f8ab78f1d232323a11365c6`.
+  closeout later found PR #1857 behind, then merged fetched `origin/dev`
+  through `df2bdb393053ce3e4b0470e416a98597f4d314d7`.
 - The only task-owned dirty file before this packet was the generated
   follow-up 5 task brief.
 - The parent is `review_approved`; parent code is merged to `dev`.
