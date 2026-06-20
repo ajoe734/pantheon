@@ -1,0 +1,86 @@
+{
+  "manifest_version": "1.0",
+  "contract_family": "agora.v1.1",
+  "environment": "dev",
+  "generated": true,
+  "backend": {
+    "repo": "ajoe734/pantheon",
+    "runtime_commit": "7ab267adc9f88519149ae01a874764d8fd8c1108",
+    "contract_commit": "7ab267adc9f88519149ae01a874764d8fd8c1108",
+    "base_bundle_index_sha256": "286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b",
+    "extension_bundle_index_sha256": "5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee",
+    "openapi_sha256": "16aa660db15a32aaccd63a7f0594abb4339e9ae95afae18353fbee532c2c0749"
+  },
+  "frontend": {
+    "repo": "ajoe734/execute-plans",
+    "runtime_commit": "0000000000000000000000000000000000000000",
+    "generated_from_contract_commit": "0000000000000000000000000000000000000000",
+    "base_bundle_index_sha256": "286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b",
+    "extension_bundle_index_sha256": "5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee",
+    "openapi_sha256": "16aa660db15a32aaccd63a7f0594abb4339e9ae95afae18353fbee532c2c0749",
+    "generated_types_sha256": "a6a9296efed4c3d00a3bb4d5d20896fd17027bd2484c4ead7b560785772319be"
+  },
+  "contract_bundle": {
+    "base_path": "services/control-plane/specs/agora/bundle_index.json",
+    "extension_path": "services/control-plane/specs/agora/bundle_index.v1_1.json",
+    "openapi_path": "services/control-plane/openapi/agora_v1_1.openapi.yaml"
+  },
+  "required_capabilities": [
+    {
+      "name": "agora.dashboard.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.dashboard.v2",
+      "version": "2.0",
+      "required": true
+    },
+    {
+      "name": "agora.identity.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.personalization.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.research.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.servant.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.session.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.trading.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.workshop.v1",
+      "version": "1.1",
+      "required": true
+    }
+  ],
+  "hash_policy": {
+    "file_hash": "sha256-exact-git-bytes-v1",
+    "generated_types_hash": "sha256-path-tab-filehash-lf-v1"
+  },
+  "compatibility_status": "pending",
+  "blocking_reasons": [
+    "frontend-generated-contract-commit-placeholder",
+    "frontend-generated-types-not-agora-v1.1",
+    "frontend-runtime-commit-placeholder"
+  ],
+  "generated_at": "2026-06-21T00:19:04+08:00"
+}
