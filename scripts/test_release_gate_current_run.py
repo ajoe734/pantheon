@@ -54,6 +54,43 @@ def _strict_dry_run_items(*, with_side_effect_checks: bool = True):
     return items
 
 
+def _strict_rbac_matrix_items(*, with_write_side_effect_checks: bool = True):
+    labels = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    write_names = ["strategy", "ranking-formula", "agora-note", "intervention-claim"]
+    write_allowed = {"operator", "reviewer", "approver", "admin"}
+    items = [
+        {"family": f"rbac-read-{label}-{index}", "ok": True}
+        for label in labels
+        for index in range(3)
+    ]
+    for label in labels:
+        for name in write_names:
+            item = {
+                "family": f"rbac-write-{label}-{name}",
+                "ok": True,
+                "error_envelope": label not in write_allowed,
+            }
+            if with_write_side_effect_checks:
+                if label in write_allowed:
+                    item["side_effect_check"] = {
+                        "kind": "rbac_dry_run_write_meta",
+                        "ok": True,
+                        "dryRun": True,
+                        "durable": False,
+                        "liveCapitalSideEffects": False,
+                        "target_marker_sha256_12": "abc123",
+                    }
+                else:
+                    item["side_effect_check"] = {
+                        "kind": "authorization_rejected_before_persistence",
+                        "ok": True,
+                        "error_code": "FORBIDDEN",
+                        "target_marker_sha256_12": "abc123",
+                    }
+            items.append(item)
+    return items
+
+
 def _strict_two_man_race_item(*, operator_scoped: bool = True):
     return {
         "family": "two-man-race",
@@ -502,6 +539,8 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -509,7 +548,7 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
                     "two_man_race_operator_scoped": True,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": dry_run,
                 "approval_race": {
                     "family": "approval-race",
@@ -579,7 +618,7 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     )
 
     assert rbac_check["status"] == "pass"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7 distinctBearers:7/7"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32"
     assert dry_run_check["status"] == "pass"
     assert dry_run_check["note"] == "strict:true dryRun:7/7 invalidEnvelope:true sideEffectProofs:7/7 sideEffects:none"
     assert race_check["status"] == "pass"
@@ -625,6 +664,8 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -632,7 +673,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
                     "two_man_race_operator_scoped": True,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(),
                 "approval_race": {
                     "family": "approval-race",
@@ -685,7 +726,108 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7 distinctBearers:6/7"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7 distinctBearers:6/7 writeSideEffectProofs:32/32"
+
+
+def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proofs(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 0,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": _strict_rbac_matrix_items(with_write_side_effect_checks=False),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": {
+                    "family": "approval-race",
+                    "ok": True,
+                    "bounded": True,
+                    "accepted_count": 1,
+                    "safe_error_count": 1,
+                    "duplicate_winners": False,
+                    "token_source": {"kind": "provided_bearer_pair"},
+                },
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    rbac_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    assert rbac_check["status"] == "fail"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:0/32"
 
 
 def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_path: Path) -> None:
@@ -724,6 +866,8 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -731,7 +875,7 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
                     "two_man_race_operator_scoped": False,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(),
                 "approval_race": {
                     "family": "approval-race",
@@ -823,6 +967,8 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -830,7 +976,7 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
                     "two_man_race_operator_scoped": True,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(with_side_effect_checks=False),
                 "approval_race": {
                     "family": "approval-race",
@@ -923,6 +1069,8 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -930,7 +1078,7 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
                     "two_man_race_operator_scoped": True,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": dry_run,
                 "approval_race": {
                     "family": "approval-race",
