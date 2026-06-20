@@ -1788,11 +1788,11 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
             depends = ", ".join(f"`{item}`" for item in task.get("depends_on", [])) or "-"
             lines.append(
                 "| `{id}` | {phase} | {title} | {owner} | {status} | {depends} | {summary} |".format(
-                    id=cell(task["id"]),
-                    phase=cell(task.get("phase") or "-"),
+                    id=cell(task.get("id")),
+                    phase=cell(task.get("phase") or "Unassigned"),
                     title=cell(display_task_title(task)),
-                    owner=cell(task.get("owner") or "-"),
-                    status=cell(task.get("status") or "-"),
+                    owner=cell(task.get("owner")),
+                    status=cell(task.get("status")),
                     depends=cell(depends),
                     summary=cell(task.get("summary_zh") or "-"),
                 )
@@ -1923,13 +1923,13 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         depends = ", ".join(f"`{item}`" for item in task.get("depends_on", [])) or "-"
         lines.append(
             "| `{id}` | {phase} | {title} | {summary} | {owner} | {reviewer} | {status} | {depends} | {last_update} | {next} |".format(
-                id=cell(task["id"]),
-                phase=cell(task.get("phase") or "-"),
+                id=cell(task.get("id")),
+                phase=cell(task.get("phase") or "Unassigned"),
                 title=cell(display_task_title(task)),
                 summary=cell(task.get("summary_zh") or "-"),
-                owner=cell(task.get("owner") or "-"),
-                reviewer=cell(task.get("reviewer") or "-"),
-                status=cell(task.get("status") or "-"),
+                owner=cell(task.get("owner")),
+                reviewer=cell(task.get("reviewer")),
+                status=cell(task.get("status")),
                 depends=cell(depends),
                 last_update=cell(format_display_timestamp(task.get("last_update"))),
                 next=cell(localize_embedded_timestamps(task.get("next") or "-")),
