@@ -6,7 +6,7 @@ Typed errors: AgoraErrorCode + AgoraError for domain-specific failure modes.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -43,15 +43,81 @@ class AgoraListEnvelope(BaseModel, Generic[T]):
 
 
 # --------------------------------------------------------------------------- #
-# Identity / scope models (skeleton — AG-BE-ID-001 fills the real fields)
+# Identity / scope models
 # --------------------------------------------------------------------------- #
+
+
+class AgoraReadPredicate(BaseModel):
+    """Mandatory backend predicate for user-private Agora read models."""
+    tenant_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    required_fields: List[str] = Field(default_factory=lambda: ["tenant_id", "user_id"])
+    fail_closed: bool = True
+
+
+class AgoraServantPolicy(BaseModel):
+    """Phase-1 servant persona metadata/policy carried in existing Persona records."""
+    persona_class: Literal["agora_servant"] = "agora_servant"
+    owner_scope: Literal["user_private"] = "user_private"
+    visibility_scope: Literal["private", "redacted_management"] = "private"
+    memory_scope: Literal["private_user"] = "private_user"
+    persona_registry_backed: bool = True
+    execution_authority: Literal["none"] = "none"
+    prohibited_authority: List[str] = Field(
+        default_factory=lambda: ["runtime_binding", "broker_order", "capital_binding"]
+    )
+
 
 class AgoraCapabilityScope(BaseModel):
     """Operator-level Agora capability scope returned by /bff/agora/me."""
-    user_id: Optional[str] = None
-    tenant_id: Optional[str] = None
+    spec_version: Literal["1.0"] = "1.0"
+    scope_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    operator_id: str = Field(min_length=1)
+    granted_capabilities: List[str] = Field(default_factory=list)
     capabilities: List[str] = Field(default_factory=list)
     roles: List[str] = Field(default_factory=list)
+    denied_capabilities: List[str] = Field(default_factory=list)
+    surfaces: List[str] = Field(default_factory=lambda: ["agora"])
+    persona_ids: List[str] = Field(default_factory=list)
+    read_predicate: AgoraReadPredicate
+    servant_policy: AgoraServantPolicy = Field(default_factory=AgoraServantPolicy)
+    created_at: str
+    expires_at: Optional[str] = None
+    policy_refs: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ServantCapabilitySummary(BaseModel):
+    """Operator-visible high-level servant capability flags."""
+    can_ask: bool
+    can_research: bool
+    can_workshop: bool
+    can_shadow: bool = False
+    asset_classes: List[str] = Field(default_factory=list)
+    strategy_families: List[str] = Field(default_factory=list)
+    allowed_agora_capabilities: List[str] = Field(default_factory=list)
+
+
+class ServantProfile(BaseModel):
+    """User-private Agora servant profile backed by the existing Persona Registry."""
+    spec_version: Literal["1.0"] = "1.0"
+    persona_id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    status: Literal["active", "suspended", "paper_only", "shadow_only", "retired"]
+    tenant_id: str = Field(min_length=1)
+    agora_user_id: str = Field(min_length=1)
+    persona_class: Literal["agora_servant"] = "agora_servant"
+    owner_scope: Literal["user_private"] = "user_private"
+    visibility_scope: Literal["private", "redacted_management"] = "private"
+    memory_scope: Literal["private_user"] = "private_user"
+    capability_summary: ServantCapabilitySummary
+    policy: AgoraServantPolicy = Field(default_factory=AgoraServantPolicy)
+    description: Optional[str] = None
+    avatar_ref: Optional[str] = None
+    last_active_at: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #

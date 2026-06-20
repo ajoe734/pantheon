@@ -18,12 +18,11 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from .models import (
-    AGORA_CAPABILITIES,
-    AGORA_REQUIRED_ROLES,
     AgoraCapabilityScope,
     AgoraEnvelope,
     AgoraMeta,
 )
+from .identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 from .identity.router import create_identity_router
 from .servant.router import create_servant_router
 from .strategy_workshop.router import create_strategy_workshop_router
@@ -49,11 +48,18 @@ def _load_capability_manifest() -> Dict[str, Any]:
         return {"capabilities": [], "manifest_version": "1.0", "source": "unavailable"}
 
 
-def _audience_capabilities(roles: list[str]) -> list[str]:
-    """Return the subset of Agora capabilities accessible to the operator's roles."""
-    if AGORA_REQUIRED_ROLES.intersection(roles):
-        return list(AGORA_CAPABILITIES)
-    return []
+def _raise_scope_error(exc: AgoraScopeResolutionError, bff_error: Callable[..., HTTPException]) -> None:
+    from models import ErrorCode  # BFF top-level models; available via sys.path in runtime
+
+    code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
+    raise bff_error(
+        exc.status_code,
+        code,
+        exc.message,
+        exc.reason,
+        precondition_failed="agora_user_scope",
+        details_extra=exc.details,
+    )
 
 
 def create_agora_router(
@@ -75,23 +81,27 @@ def create_agora_router(
     @router.get("/bff/agora/me")
     def agora_me(
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> Dict[str, Any]:
         """Return the operator's Agora identity scope and audience-filtered capabilities."""
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        caps = _audience_capabilities(list(getattr(identity, "roles", [])))
-        scope = AgoraCapabilityScope(
-            user_id=getattr(identity, "operator_id", None),
-            tenant_id=getattr(identity, "tenant_id", None),
-            capabilities=caps,
-            roles=list(getattr(identity, "roles", [])),
-        )
+        try:
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
+            )
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
         envelope = AgoraEnvelope(
             data=scope.model_dump(),
             meta=AgoraMeta(
                 snapshot_at=utc_now(),
                 capability="agora.identity.v1",
+                audience=f"tenant:{scope.tenant_id}:user:{scope.user_id}",
             ),
         )
         return envelope.model_dump()
@@ -102,23 +112,43 @@ def create_agora_router(
     @router.get("/bff/agora/capabilities")
     def agora_capabilities(
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> Dict[str, Any]:
         """Return the frozen Agora v1 capability manifest filtered by audience."""
         identity = extract_identity(authorization)
         require_read_role(identity)
 
         manifest = _load_capability_manifest()
-        caps = _audience_capabilities(list(getattr(identity, "roles", [])))
+        try:
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
+            )
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
+        caps = scope.granted_capabilities
         allowed = {c["name"] for c in manifest.get("capabilities", [])} & set(caps)
         manifest_filtered = {
             **manifest,
             "capabilities": [
                 c for c in manifest.get("capabilities", []) if c["name"] in allowed
             ],
+            "scope": {
+                "scope_id": scope.scope_id,
+                "tenant_id": scope.tenant_id,
+                "user_id": scope.user_id,
+                "read_predicate": scope.read_predicate.model_dump(),
+            },
         }
         return {
             "data": manifest_filtered,
-            "meta": {"snapshot_at": utc_now(), "capability": "agora.identity.v1"},
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.identity.v1",
+                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+            },
         }
 
     # ------------------------------------------------------------------ #
