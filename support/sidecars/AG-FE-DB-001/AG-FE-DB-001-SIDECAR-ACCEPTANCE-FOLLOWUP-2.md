@@ -1,11 +1,17 @@
 # AG-FE-DB-001 Sidecar Acceptance Follow-up 2
 
-**Sidecar task:** `AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2`  
-**Helper parent:** `AG-FE-DB-001`  
-**Helper kind:** `acceptance_packet`  
-**Sidecar owner:** `Codex`  
-**Sidecar reviewer:** `Codex2`  
-**Date:** `2026-06-20`  
+**Sidecar task:** `AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2`
+
+**Helper parent:** `AG-FE-DB-001`
+
+**Helper kind:** `acceptance_packet`
+
+**Sidecar owner:** `Codex`
+
+**Sidecar reviewer:** `Codex2`
+
+**Date:** `2026-06-20`
+
 **Status:** ready for sidecar review
 
 Scope constraint: support artifact only. This packet does not change L1
@@ -185,4 +191,3 @@ Suggested reviewer command:
 ```bash
 AI_NAME=Codex2 ./scripts/ai-status.sh approve AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2 "Review approved: follow-up acceptance packet is support-only, preserves the parent blocker, and clarifies registry shape, schema-source conflict, frontend file baseline, chart dependency gap, and downstream dependency map for AG-FE-DB-001."
 ```
-
