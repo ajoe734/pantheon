@@ -34811,7 +34811,14 @@ async def bff_management_nl_ask(
     )
     openclaw_repair_metadata = _mgmt_nl_openclaw_repair_metadata(payload)
 
-    provider_answer, provider_status, actions = _mgmt_nl_maybe_provider_answer(
+    # _mgmt_nl_maybe_provider_answer issues a synchronous, blocking HTTP call to
+    # the OpenClaw adapter (OpenClawOpsClient.invoke_assistant_provider), which
+    # drives the Claude/Codex CLI agent and can take 30s+. The BFF runs a single
+    # uvicorn worker, so calling it inline would block the event loop and freeze
+    # every other request (reads, writes, SSE) for the whole agent turn. Offload
+    # it to a worker thread so the event loop stays free to serve concurrently.
+    provider_answer, provider_status, actions = await asyncio.to_thread(
+        _mgmt_nl_maybe_provider_answer,
         provider=_mgmt_nl_provider_name(),
         question=question,
         focus=focus,
