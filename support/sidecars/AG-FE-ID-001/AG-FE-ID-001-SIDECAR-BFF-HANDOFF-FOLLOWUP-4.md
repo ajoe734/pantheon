@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-20` |
-| Status | `ready for Claude review` |
+| Status | `review approved; ready for parent absorption` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this is support material only. It does not change L1
@@ -59,6 +59,7 @@ servant/session flow while this backend chain remains unresolved.
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md` | Bundle isolation and blocked-shell packet |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-REVIEW.md` | Claude approval record for followup-2 |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-REVIEW.md` | Claude approval record for followup-3 |
+| `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-REVIEW.md` | Claude approval record for this followup |
 | `support/sidecars/AG-BE-ID-002/AG-BE-ID-002-SIDECAR-BFF-HANDOFF.md` | Backend servant ensure gap packet |
 | `support/sidecars/AG-BE-ID-002/AG-BE-ID-002-SIDECAR-ACCEPTANCE.md` | Backend acceptance/blocker framing |
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/SD_2026-06-20.md` | Frozen local Agora route/schema/capability snapshot |
@@ -299,7 +300,7 @@ Results:
 
 ## 12. Handoff
 
-This packet is ready for Claude review. The intended parent use is to decide
-whether `AG-FE-ID-001` should stop on backend blockers or proceed only as a
-truthful blocked-shell implementation, with no successful servant/session
-claims until the backend dependency chain clears.
+Claude approved this packet for absorption by parent `AG-FE-ID-001`. The
+intended parent use is to decide whether `AG-FE-ID-001` should stop on backend
+blockers or proceed only as a truthful blocked-shell implementation, with no
+successful servant/session claims until the backend dependency chain clears.
