@@ -19,22 +19,32 @@ migrations, or execute-plans source.
 
 This fourteenth followup refreshes the `AG-FE-ID-001` BFF/frontend handoff
 after `origin/dev` advanced to merge commit
-`2eae7afb047a7237548240f94f0cd253f53d7a76`.
+`c9f6c2e5c4d340d97d1cbcaeacf8f82545eaa7a5`.
+
+The earlier FOLLOWUP-14 baseline was merge commit
+`2eae7afbb9323063a9369ae31dfd3f90acd0eba4`; it is now historical and is not
+the current freshness baseline for this packet.
 
 The important delta from FOLLOWUP-13 is a downstream session-gate freshness
 update, not a new BFF or frontend implementation:
 
 1. FOLLOWUP-13 is archived `done`; its packet and closeout are durable on
    `dev`.
-2. `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` is archived `done`; it
-   clarifies that the parent BFF session decision is now the v1.1
+2. `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` is archived `done`; it first
+   clarified that the parent BFF session decision is now the v1.1
    `/bff/agora/servant/sessions` contract, where
    `ServantSessionCreateRequest` lacks `session_type` and has
    `additionalProperties: false`.
-3. Parent `AG-FE-ID-001` remains `todo` and still depends on `AG-BE-ID-003`.
-4. `AG-BE-ID-003` itself remains `blocked`, waiting for `Claude`, on the
+3. `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` is now present on
+   `origin/dev` through PR #1895 / packet commit `7de50e42`; active status is
+   `review_approved` pending owner finalization. It refines the same blocker
+   into a decision-ready matrix covering the public type contract,
+   `research_task` skill mapping, capability manifest alignment, legacy route
+   substitution risk, and `OPENCLAW_UPSTREAM_DEGRADED`.
+4. Parent `AG-FE-ID-001` remains `todo` and still depends on `AG-BE-ID-003`.
+5. `AG-BE-ID-003` itself remains `blocked`, waiting for `Claude`, on the
    servant session type contract disposition.
-5. The required parent frontend targets remain missing:
+6. The required parent frontend targets remain missing:
    `AgoraApp.tsx`, `identity.ts`, and `servant.ts`.
 
 This sidecar does not approve, reopen, or implement parent `AG-FE-ID-001`.
@@ -50,7 +60,8 @@ Status commands used `AI_NAME=Codex2`.
 | `AG-FE-ID-001` | `todo`; owner `Claude`, reviewer `Codex`; depends on `AG-FE-000`, `AG-BE-ID-003` | Parent implementation has not started in durable task state. |
 | `AG-BE-ID-002` | archived `done` | `/bff/agora/servant/ensure` remains a successful create/reconcile runtime path. |
 | `AG-BE-ID-003` | `blocked`; owner `Codex2`, reviewer `Claude`, waiting for `Claude` | Servant session facade remains unavailable pending `session_type` contract disposition. |
-| `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` | archived `done`; packet PR #1886 and closeout PR #1890 merged | Latest support finding is the current frontend gate reference for servant sessions. |
+| `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` | archived `done`; packet PR #1886 and closeout PR #1890 merged | Predecessor support finding; no longer the latest session-gate packet. |
+| `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | `review_approved`; artifact visible on `origin/dev` through PR #1895 / packet commit `7de50e42` | Current session-gate packet for frontend handoff purposes; final status closeout is still pending owner finalization. |
 | `AG-XR-003` | `blocked`; waiting for `Claude2` | Compatibility manifest/deployment gate is still not complete frontend deployment proof. |
 | `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-6` | `review_approved` | Acceptance support packet does not unblock parent `AG-XR-003` or `AG-FE-ID-001`. |
 
@@ -69,11 +80,13 @@ readiness.
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms parent remains `todo` and depends on `AG-BE-ID-003`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-002` | Confirms servant ensure/provision/reconcile remains archived `done`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003` | Confirms session facade remains `blocked` on the missing `session_type` contract decision. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` | Confirms latest session sidecar archived `done` after PR #1886 and #1890. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` | Confirms predecessor session sidecar archived `done` after PR #1886 and #1890. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | Confirms latest session sidecar is `review_approved` and awaiting owner finalization. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003` | Confirms compatibility manifest/deployment gate remains blocked. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md` | Previous approved handoff baseline. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-REVIEW.md` | Previous explicit Claude approval record. |
-| `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md` | Current servant-session contract blocker and frontend gate reference. |
+| `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md` | Predecessor servant-session contract blocker and frontend gate reference. |
+| `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md` | Current servant-session contract decision matrix and frontend gate reference. |
 | `services/control-plane/bff/agora/router.py` | Runtime identity/capability readiness routes. |
 | `services/control-plane/bff/agora/servant/router.py` | Runtime servant ensure implementation; no servant session routes. |
 | `services/control-plane/bff/main.py` | Existing legacy Agora session, ask/session, and SSE routes. |
@@ -86,9 +99,11 @@ readiness.
 
 | Change | What changed | Parent implication |
 |---|---|---|
-| Branch currentness | This task branch was fast-forwarded to `origin/dev` at `2eae7afb`. | FOLLOWUP-14 starts from the current dev tip and includes PR #1890/#1891 support changes. |
+| Branch currentness | This task branch was fast-forwarded to `origin/dev` at `c9f6c2e5`. | FOLLOWUP-14 now starts from the current dev tip and includes PR #1895 followup-4, plus later unrelated support merge PR #1896. |
+| Older baseline correction | The previous branch-currentness merge was `2eae7afbb9323063a9369ae31dfd3f90acd0eba4`. | Do not use the previously recorded invalid full SHA or treat `2eae7afb` as the latest dev baseline. |
 | FOLLOWUP-13 closed | Archived `done`; delivery records packet PR #1884 and closeout PR #1885. | Treat FOLLOWUP-13 as accepted support evidence unless superseded by this packet. |
-| AG-BE-ID-003 followup-3 closed | Archived `done`; it records packet PR #1886 and closeout PR #1890. | The current session gate is the `servant/sessions` contract decision, not merely the older legacy sessions gap list. |
+| AG-BE-ID-003 followup-3 closed | Archived `done`; it records packet PR #1886 and closeout PR #1890. | Treat it as predecessor evidence for the `servant/sessions` blocker, not the latest frontend gate reference. |
+| AG-BE-ID-003 followup-4 merged to dev | Artifact merged through PR #1895 / packet commit `7de50e42`; active status is `review_approved` pending owner closeout. | The current session gate includes explicit type-contract decision, research mapping, capability manifest, legacy substitution, and degradation-code questions. |
 | Parent AG-FE-ID-001 unchanged | Parent remains `todo` and target files are still absent. | There is still no `AgoraApp.tsx`, `identity.ts`, or `servant.ts` implementation to review or absorb. |
 | AG-BE-ID-003 unchanged | Still `blocked` waiting for `Claude`; canonical create request lacks `session_type`. | Parent frontend must keep create/message/terminate/stream controls unavailable. |
 | Servant ensure unchanged | Runtime still has successful `/bff/agora/servant/ensure` with required `Idempotency-Key` and `X-Request-Id`. | Parent `servant.ts` should target observed 200 create/reconcile behavior and explicit 401/403/422/503 handling. |
@@ -162,10 +177,15 @@ Required shell states:
 `prohibited_authority = ["runtime_binding", "broker_order", "capital_binding"]`
 may be displayed as safety facts. They must not become operator controls.
 
-## 8. Session Gate Update From AG-BE-ID-003 Followup-3
+## 8. Session Gate Update From AG-BE-ID-003 Followup-4
 
-The latest merged session support packet changes the frontend gate wording from
-"legacy sessions are incomplete" to a sharper contract decision:
+The latest session support packet on `origin/dev` is
+`AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` from PR #1895. Its task status is
+`review_approved` pending owner finalization, so FOLLOWUP-14 can absorb it as
+current support evidence without treating it as parent implementation closure.
+
+Followup-4 preserves followup-3's `ServantSessionCreateRequest` blocker and
+adds the decision matrix the frontend must wait on:
 
 | Gate | Current blocker | Frontend rule |
 |---|---|---|
@@ -263,7 +283,7 @@ python3 scripts/agora_schema_bundle.py --verify
 python3 -c "import yaml; yaml.safe_load(open('services/control-plane/openapi/agora_v1_1.openapi.yaml'))"
 node execute-plans/scripts/generate-agora-types.mjs --check --pantheon-root .
 rg -n "/bff/agora/me|/bff/agora/capabilities" services/control-plane/openapi/agora_v1_1.openapi.yaml services/control-plane/openapi/agora_v1.openapi.yaml execute-plans/src/lib/bff-v1/agora/types.ts services/control-plane/bff/agora/router.py
-rg -n "ServantSessionCreateRequest|servant/sessions|session_type|quick_ask|OPENCLAW_UPSTREAM_DEGRADED" services/control-plane/openapi/agora_v1_1.openapi.yaml execute-plans/src/lib/bff-v1/agora/types.ts services/control-plane/bff/main.py services/control-plane/bff/agora/servant/router.py support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md
+rg -n "ServantSessionCreateRequest|servant/sessions|session_type|quick_ask|OPENCLAW_UPSTREAM_DEGRADED" services/control-plane/openapi/agora_v1_1.openapi.yaml execute-plans/src/lib/bff-v1/agora/types.ts services/control-plane/bff/main.py services/control-plane/bff/agora/servant/router.py support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md
 ```
 
 Frontend parent checks after implementation:
@@ -297,25 +317,23 @@ Expected current interpretation:
 ## 12. Sidecar Verification
 
 Commands run from branch
-`task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` after confirming
-`origin/dev` at `2eae7afb047a7237548240f94f0cd253f53d7a76`:
+`task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` for this freshness
+correction:
 
 ```bash
 git status -sb
 git branch --show-current
 git remote -v
 git fetch origin
+git rev-parse origin/dev
 git merge --ff-only origin/dev
+git rev-parse 2eae7afb
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14
-AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001
-AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-002
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003
-AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3
-AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003
-AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-6
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4
 rg -n "@router\\.(get|post)|/bff/agora/servant|ensure|Idempotency-Key|X-Request-Id|DEPENDENCY_UNAVAILABLE" services/control-plane/bff/agora/router.py services/control-plane/bff/agora/servant/router.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py
-rg -n "ServantSessionCreateRequest|servant/sessions|session_type|sessionType|quick_ask|bff/sse/agora/sessions|OPENCLAW_UPSTREAM_DEGRADED|createServantSession" services/control-plane/openapi/agora_v1_1.openapi.yaml execute-plans/src/lib/bff-v1/agora/types.ts services/control-plane/bff/main.py services/control-plane/bff/agora/servant/router.py services/control-plane/specs/agora/capability_manifest.json support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md
+rg -n "ServantSessionCreateRequest|servant/sessions|session_type|sessionType|quick_ask|bff/sse/agora/sessions|OPENCLAW_UPSTREAM_DEGRADED|createServantSession" services/control-plane/openapi/agora_v1_1.openapi.yaml execute-plans/src/lib/bff-v1/agora/types.ts services/control-plane/bff/main.py services/control-plane/bff/agora/servant/router.py services/control-plane/specs/agora/capability_manifest.json support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md
 test -f execute-plans/src/agora/AgoraApp.tsx
 test -f execute-plans/src/lib/bff-v1/agora/identity.ts
 test -f execute-plans/src/lib/bff-v1/agora/servant.ts
@@ -330,25 +348,29 @@ python3 scripts/agora_schema_bundle.py --verify
 python3 -c "import yaml; yaml.safe_load(open('services/control-plane/openapi/agora_v1_1.openapi.yaml'))"
 node execute-plans/scripts/generate-agora-types.mjs --check --pantheon-root .
 git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_14.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.md
-git diff --no-index --check -- /dev/null .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_14.md
-git diff --no-index --check -- /dev/null support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.md
 ```
 
 Results:
 
-- Branch was correct and fast-forwarded to `origin/dev` at `2eae7afb`.
+- Branch was correct and fast-forwarded to `origin/dev` at `c9f6c2e5`.
+- The older `2eae7afb` merge resolves locally to
+  `2eae7afbb9323063a9369ae31dfd3f90acd0eba4`; the invalid previous full SHA
+  is no longer used.
 - Parent `AG-FE-ID-001` remains `todo`.
 - `AG-BE-ID-003` remains blocked on the `session_type` contract decision.
-- `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` is archived `done`.
+- `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` is archived `done` and is now
+  predecessor evidence.
+- `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` is `review_approved`; its
+  packet artifact is on `origin/dev` through PR #1895 / packet commit
+  `7de50e42`, and it is the current session-gate reference for this handoff.
 - `AG-XR-003` remains blocked; its followup-6 support packet is
   `review_approved` but does not unblock parent FE readiness.
 - `AgoraApp.tsx`, `identity.ts`, and `servant.ts` are still missing.
-- Focused BFF/OpenClaw pytest passed: `35 passed in 15.10s`.
+- Focused BFF/OpenClaw pytest passed: `35 passed in 36.46s`.
 - Agora schema bundle verify passed.
 - v1.1 OpenAPI YAML parse passed.
 - Generated Agora types are current: `17` schemas and `96` operations.
-- Scoped tracked diff check passed; new-file no-index whitespace checks
-  produced no whitespace diagnostics.
+- Scoped tracked diff check passed.
 
 ## 13. Reviewer Handoff
 
@@ -357,7 +379,8 @@ Reviewer: `Codex`
 Please review this support packet for:
 
 1. support-only scope compliance
-2. correct absorption of FOLLOWUP-13 and AG-BE-ID-003 FOLLOWUP-3
+2. correct absorption of FOLLOWUP-13, AG-BE-ID-003 FOLLOWUP-3, and
+   AG-BE-ID-003 FOLLOWUP-4
 3. accurate statement that parent `AG-FE-ID-001` remains `todo`
 4. accurate statement that `AG-BE-ID-003` remains blocked on the servant
    session type contract decision
@@ -367,5 +390,5 @@ Please review this support packet for:
 Suggested approval command:
 
 ```bash
-AI_NAME=Codex ./scripts/ai-status.sh approve AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14 "Support packet approved; scope is support-only; FOLLOWUP-13 and AG-BE-ID-003 followup-3 are correctly absorbed; parent AG-FE-ID-001 remains todo; AG-BE-ID-003 session gate remains blocked; frontend targets remain missing."
+AI_NAME=Codex ./scripts/ai-status.sh approve AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14 "Support packet approved; scope is support-only; FOLLOWUP-13 plus AG-BE-ID-003 followup-3/followup-4 are correctly absorbed; parent AG-FE-ID-001 remains todo; AG-BE-ID-003 session gate remains blocked; frontend targets remain missing."
 ```
