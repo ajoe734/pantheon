@@ -303,6 +303,28 @@ function extractedResultValue(result, key) {
 
 function twoManRaceDetailProof(race) {
   const results = Array.isArray(race?.results) ? race.results : [];
+  const targetId = String(race?.target_id || "");
+  const targetHash = targetId ? sha256_12(targetId) : "";
+  const expectedPath = targetId ? `/bff/v5/interventions/${encodeURIComponent(targetId)}/two-man-sign` : "";
+  const raceTargetLinked = Boolean(
+    targetId
+    && targetHash
+    && race?.target_id_sha256_12 === targetHash
+    && race?.path === expectedPath
+  );
+  const targetLinked = results.filter((result) =>
+    raceTargetLinked
+    && result?.method === "POST"
+    && result?.path === expectedPath
+    && result?.target_id_sha256_12 === targetHash
+  );
+  const signatureHashes = targetLinked
+    .map((result) => String(result?.request_signature_id_sha256_12 || ""))
+    .filter(Boolean);
+  const signatureHashCount = new Set(signatureHashes).size;
+  const signaturesLinked = signatureHashes.length === targetLinked.length
+    && signatureHashCount === signatureHashes.length
+    && signatureHashes.length === 2;
   const accepted = results.filter((result) => APPROVAL_RACE_ACCEPTED_STATUSES.has(Number(result?.status ?? 0)));
   const replayed = results.filter((result) => extractedResultValue(result, "meta.idempotency.replayed") === true);
   const commandIds = accepted
@@ -320,12 +342,16 @@ function twoManRaceDetailProof(race) {
     replayedCount: replayed.length,
     commandIdCount: distinctCommandIdCount,
     transportFailureCount: transportFailures.length,
+    targetLinkedCount: targetLinked.length,
+    signatureLinkedCount: signatureHashCount,
     distinctCommandIds,
     ok: results.length === 2
       && transportFailures.length === 0
       && accepted.length === 2
       && replayed.length === 0
-      && distinctCommandIds,
+      && distinctCommandIds
+      && targetLinked.length === 2
+      && signaturesLinked,
   };
 }
 
@@ -757,7 +783,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 targetLinks:${approvalDetailProof.targetLinkedCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
-      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
+      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 targetLinks:${twoManDetailProof.targetLinkedCount}/2 signatureLinks:${twoManDetailProof.signatureLinkedCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
     },
     missingStatus: missingEvidenceStatus(step.status),
     missingNote: step.outcome

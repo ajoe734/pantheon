@@ -253,14 +253,30 @@ def _strict_two_man_race_item(
     distinct_token_pair: bool = True,
     detail_replayed: bool = False,
     detail_duplicate_command_ids: bool = False,
+    mismatched_target_link: bool = False,
+    duplicate_signature_link: bool = False,
 ):
+    target_id = "two-man-target-001"
+    target_hash = _sha256_12(target_id)
+    path = f"/bff/v5/interventions/{target_id}/two-man-sign"
     accepted_count = 2 if operator_scoped else 1
     command_ids = ["cmd-two-man-a", "cmd-two-man-b"]
     if detail_duplicate_command_ids:
         command_ids = ["cmd-two-man-same", "cmd-two-man-same"]
+    signature_hashes = [_sha256_12(f"sig-{target_id}-{index}") for index in range(2)]
+    if duplicate_signature_link:
+        signature_hashes = [signature_hashes[0], signature_hashes[0]]
     results = [
         {
             "family": f"two-man-race-{index}",
+            "method": "POST",
+            "path": path,
+            "target_id_sha256_12": (
+                _sha256_12("other-two-man-target")
+                if mismatched_target_link and index == accepted_count - 1
+                else target_hash
+            ),
+            "request_signature_id_sha256_12": signature_hashes[index],
             "status": 202,
             "ok": not detail_replayed,
             "extracted": {
@@ -272,6 +288,10 @@ def _strict_two_man_race_item(
     ]
     return {
         "family": "two-man-race",
+        "method": "POST",
+        "path": path,
+        "target_id": target_id,
+        "target_id_sha256_12": target_hash,
         "ok": operator_scoped,
         "operator_scoped": operator_scoped,
         "accepted_count": accepted_count,
@@ -1171,7 +1191,7 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     assert race_check["status"] == "pass"
     assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 targetLinks:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
     assert two_man_check["status"] == "pass"
-    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:0/0 detailCommandIds:2/2 results:2/2 tokenPair:true tokenPairDistinct:true"
+    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:0/0 detailCommandIds:2/2 results:2/2 targetLinks:2/2 signatureLinks:2/2 tokenPair:true tokenPairDistinct:true"
 
 
 def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_path: Path) -> None:
@@ -1272,7 +1292,7 @@ def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_pa
     assert race_check["status"] == "fail"
     assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 targetLinks:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:false"
     assert two_man_check["status"] == "fail"
-    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:0/0 detailCommandIds:2/2 results:2/2 tokenPair:true tokenPairDistinct:false"
+    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:0/0 detailCommandIds:2/2 results:2/2 targetLinks:2/2 signatureLinks:2/2 tokenPair:true tokenPairDistinct:false"
 
 
 def test_release_gate_rejects_approval_race_without_safe_error_envelope(tmp_path: Path) -> None:
@@ -1553,8 +1573,193 @@ def test_release_gate_rejects_two_man_race_with_replayed_detail(tmp_path: Path) 
         if check["label"] == "Authenticated: strict two-man-sign race evidence is operator-scoped."
     )
     assert two_man_check["status"] == "fail"
-    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:2/0 detailCommandIds:1/2 results:2/2 tokenPair:true tokenPairDistinct:true"
+    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:2/0 detailCommandIds:1/2 results:2/2 targetLinks:2/2 signatureLinks:2/2 tokenPair:true tokenPairDistinct:true"
 
+
+def test_release_gate_rejects_two_man_race_with_unlinked_target_detail(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": _strict_rbac_matrix_items(),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(),
+                "two_man_race": _strict_two_man_race_item(mismatched_target_link=True),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    two_man_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict two-man-sign race evidence is operator-scoped."
+    )
+    assert two_man_check["status"] == "fail"
+    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:0/0 detailCommandIds:2/2 results:2/2 targetLinks:1/2 signatureLinks:1/2 tokenPair:true tokenPairDistinct:true"
+
+
+def test_release_gate_rejects_two_man_race_with_duplicate_signature_link(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": _strict_rbac_matrix_items(),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(),
+                "two_man_race": _strict_two_man_race_item(duplicate_signature_link=True),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    two_man_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict two-man-sign race evidence is operator-scoped."
+    )
+    assert two_man_check["status"] == "fail"
+    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 detailAccepted:2/2 detailReplayed:0/0 detailCommandIds:2/2 results:2/2 targetLinks:2/2 signatureLinks:1/2 tokenPair:true tokenPairDistinct:true"
 
 def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverage(tmp_path: Path) -> None:
     if shutil.which("node") is None:
@@ -2024,7 +2229,7 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
         if check["label"] == "Authenticated: strict two-man-sign race evidence is operator-scoped."
     )
     assert two_man_check["status"] == "fail"
-    assert two_man_check["note"] == "strict:true operatorScoped:false accepted:1 replayed:0 commandIds:1/2 detailAccepted:1/2 detailReplayed:0/0 detailCommandIds:1/2 results:1/2 tokenPair:true tokenPairDistinct:true"
+    assert two_man_check["note"] == "strict:true operatorScoped:false accepted:1 replayed:0 commandIds:1/2 detailAccepted:1/2 detailReplayed:0/0 detailCommandIds:1/2 results:1/2 targetLinks:1/2 signatureLinks:1/2 tokenPair:true tokenPairDistinct:true"
 
 
 def test_release_gate_rejects_strict_dry_run_without_required_family_coverage(tmp_path: Path) -> None:
