@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/schemas/agora/chart_spec.v1.json",
+  "title": "ChartSpec",
+  "type": "object",
+  "required": ["kind", "encodings"],
+  "properties": {
+    "kind": {"enum": ["metric", "table", "line", "area", "bar", "stacked_bar", "heatmap", "scatter", "network", "timeline", "sankey", "candlestick", "gauge"]},
+    "encodings": {
+      "type": "object",
+      "propertyNames": {"enum": ["x", "y", "color", "size", "shape", "opacity", "row", "column", "label", "source", "target", "value", "open", "high", "low", "close", "volume", "time"]},
+      "additionalProperties": {"$ref": "#/$defs/fieldEncoding"}
+    },
+    "transforms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {"enum": ["filter", "sort", "top_k", "aggregate", "window", "rolling_mean", "rolling_sum", "percent_change", "rank", "percentile", "normalize", "winsorize", "zscore", "bucket", "time_bucket", "join_by_key"]},
+          "params": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "tooltip_fields": {"type": "array", "items": {"type": "string"}},
+    "thresholds": {"type": "array", "items": {"type": "object"}},
+    "click_action": {"$ref": "#/$defs/interaction"},
+    "options": {"type": "object"}
+  },
+  "$defs": {
+    "fieldEncoding": {
+      "type": "object",
+      "required": ["field", "type"],
+      "properties": {
+        "field": {"type": "string"},
+        "type": {"enum": ["quantitative", "temporal", "nominal", "ordinal"]},
+        "aggregate": {"enum": ["sum", "mean", "median", "min", "max", "count", "distinct_count"]},
+        "scale": {"enum": ["linear", "log", "symlog", "time", "band"]},
+        "format": {"type": "string"},
+        "title": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "interaction": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["open_candidate", "open_strategy", "open_position", "open_evidence", "open_research_run", "open_shadow_record", "filter_workspace", "cross_highlight", "add_to_monitoring", "remove_from_monitoring", "park_candidate", "request_more_research", "send_to_shadow", "request_widget_revision", "create_journal_note"]},
+        "params": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,38 @@
+{
+  "recipe_id": "recipe_winner_branch_v1",
+  "strategy_family": "winner_branch",
+  "strategy_id": null,
+  "strategy_version_id": null,
+  "version": 1,
+  "positive_components": [
+    {"component_id":"branch_historical_profitability","label":"分點歷史獲利能力","category":"alpha","weight":0.20,"direction":"higher_better","transform":"percentile_rank","transform_params":{"winsorize":[0.01,0.99]},"missing_policy":"mark_needs_research","max_contribution":20,"required_evidence_types":["branch_round_trip_report"]},
+    {"component_id":"branch_identity_confidence","label":"關係人—分點映射信賴值","category":"confidence","weight":0.10,"direction":"higher_better","transform":"min_max","transform_params":{},"missing_policy":"cap_final_score","max_contribution":10,"required_evidence_types":["identity_probability_report"]},
+    {"component_id":"information_lead_proxy","label":"事件領先關聯 Proxy","category":"alpha","weight":0.12,"direction":"higher_better","transform":"min_max","transform_params":{},"missing_policy":"mark_needs_research","max_contribution":12,"required_evidence_types":["event_lead_report"]},
+    {"component_id":"accumulation_persistence","label":"吸貨持續性","category":"alpha","weight":0.12,"direction":"higher_better","transform":"percentile_rank","transform_params":{},"missing_policy":"score_zero","max_contribution":12,"required_evidence_types":["branch_flow_series"]},
+    {"component_id":"expected_value","label":"成本後期望值","category":"alpha","weight":0.18,"direction":"higher_better","transform":"percentile_rank","transform_params":{},"missing_policy":"mark_needs_research","max_contribution":18,"required_evidence_types":["ev_calibration_report"]},
+    {"component_id":"liquidity_capacity","label":"流動性與容量","category":"liquidity","weight":0.10,"direction":"higher_better","transform":"percentile_rank","transform_params":{},"missing_policy":"reject_candidate","max_contribution":10,"required_evidence_types":["liquidity_report"]},
+    {"component_id":"catalyst_alignment","label":"催化一致性","category":"alpha","weight":0.08,"direction":"higher_better","transform":"min_max","transform_params":{},"missing_policy":"score_zero","max_contribution":8,"required_evidence_types":["catalyst_report"]},
+    {"component_id":"data_quality","label":"資料品質","category":"data_quality","weight":0.10,"direction":"higher_better","transform":"min_max","transform_params":{},"missing_policy":"cap_final_score","max_contribution":10,"required_evidence_types":["data_quality_report"]}
+  ],
+  "penalty_components": [
+    {"component_id":"related_branch_distribution_risk","label":"關聯分點出貨風險","category":"risk","weight":0.15,"direction":"higher_better","transform":"min_max","transform_params":{},"missing_policy":"mark_needs_research","max_contribution":15,"required_evidence_types":["related_branch_flow_report"]},
+    {"component_id":"price_extension_risk","label":"價格過度擴張風險","category":"risk","weight":0.10,"direction":"higher_better","transform":"percentile_rank","transform_params":{},"missing_policy":"score_zero","max_contribution":10,"required_evidence_types":["price_extension_report"]},
+    {"component_id":"concentration_risk","label":"集中度風險","category":"risk","weight":0.08,"direction":"higher_better","transform":"min_max","transform_params":{},"missing_policy":"score_zero","max_contribution":8,"required_evidence_types":["concentration_report"]},
+    {"component_id":"capacity_shortfall","label":"容量不足","category":"execution","weight":0.10,"direction":"higher_better","transform":"min_max","transform_params":{},"missing_policy":"reject_candidate","max_contribution":10,"required_evidence_types":["liquidity_report"]}
+  ],
+  "confidence_policy": {"multiplier_floor":0.60,"multiplier_weight":0.40},
+  "score_bands": [
+    {"name":"priority_review","min_inclusive":80,"max_inclusive":100},
+    {"name":"discuss","min_inclusive":65,"max_inclusive":79.999},
+    {"name":"needs_research","min_inclusive":50,"max_inclusive":64.999},
+    {"name":"park","min_inclusive":0,"max_inclusive":49.999}
+  ],
+  "critical_gates": [
+    {"field":"data_quality","operator":"gte","value":0.50,"on_fail":"cap_49"},
+    {"field":"liquidity_capacity","operator":"present","on_fail":"reject_candidate"},
+    {"field":"related_branch_distribution_risk","operator":"lte","value":0.80,"on_fail":"cap_needs_research"}
+  ],
+  "status":"active",
+  "created_at":"2026-06-20T00:00:00Z",
+  "created_by":"system-design"
+}

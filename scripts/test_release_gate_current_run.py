@@ -54,7 +54,94 @@ def _strict_dry_run_items(*, with_side_effect_checks: bool = True):
     return items
 
 
-def _strict_two_man_race_item(*, operator_scoped: bool = True):
+def _strict_rbac_matrix_items(*, with_write_side_effect_checks: bool = True):
+    labels = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    read_names = ["bff-strategies", "bff-ranking-formulas", "bff-agora-signals"]
+    write_names = ["strategy", "ranking-formula", "agora-note", "intervention-claim"]
+    write_allowed = {"operator", "reviewer", "approver", "admin"}
+    items = [
+        {"family": f"rbac-read-{label}-{name}", "ok": True}
+        for label in labels
+        for name in read_names
+    ]
+    for label in labels:
+        for name in write_names:
+            item = {
+                "family": f"rbac-write-{label}-{name}",
+                "ok": True,
+                "error_envelope": label not in write_allowed,
+            }
+            if with_write_side_effect_checks:
+                if label in write_allowed:
+                    item["side_effect_check"] = {
+                        "kind": "rbac_dry_run_write_meta",
+                        "ok": True,
+                        "dryRun": True,
+                        "durable": False,
+                        "liveCapitalSideEffects": False,
+                        "target_marker_sha256_12": "abc123",
+                    }
+                else:
+                    item["side_effect_check"] = {
+                        "kind": "authorization_rejected_before_persistence",
+                        "ok": True,
+                        "error_code": "FORBIDDEN",
+                        "target_marker_sha256_12": "abc123",
+                    }
+            items.append(item)
+    return items
+
+
+
+def _provided_bearer_pair_source(*, distinct: bool = True):
+    return {
+        "kind": "provided_bearer_pair",
+        "token_a_sha256_12": "race-token-a" if distinct else "same-race-token",
+        "token_b_sha256_12": "race-token-b" if distinct else "same-race-token",
+    }
+
+
+def _strict_approval_race_item(
+    *,
+    accepted_count: int = 1,
+    safe_error_count: int = 1,
+    bounded: bool = True,
+    distinct_token_pair: bool = True,
+    safe_error_envelope: bool = True,
+):
+    results = [
+        {
+            "family": f"approval-race-winner-{index}",
+            "status": 202,
+            "ok": True,
+            "error_envelope": False,
+            "error_code": None,
+        }
+        for index in range(accepted_count)
+    ]
+    results.extend(
+        {
+            "family": f"approval-race-loser-{index}",
+            "status": 409,
+            "ok": safe_error_envelope,
+            "error_envelope": safe_error_envelope,
+            "error_code": "STATE_CONFLICT" if safe_error_envelope else None,
+        }
+        for index in range(safe_error_count)
+    )
+    return {
+        "family": "approval-race",
+        "ok": bounded,
+        "bounded": bounded,
+        "accepted_count": accepted_count,
+        "safe_error_count": safe_error_count,
+        "duplicate_winners": accepted_count > 1,
+        "token_source": _provided_bearer_pair_source(distinct=distinct_token_pair),
+        "results": results,
+    }
+
+
+def _strict_two_man_race_item(*, operator_scoped: bool = True, distinct_token_pair: bool = True):
     return {
         "family": "two-man-race",
         "ok": operator_scoped,
@@ -63,7 +150,7 @@ def _strict_two_man_race_item(*, operator_scoped: bool = True):
         "replayed_count": 0,
         "distinct_command_ids": operator_scoped,
         "command_id_count": 2 if operator_scoped else 1,
-        "token_source": {"kind": "provided_bearer_pair"},
+        "token_source": _provided_bearer_pair_source(distinct=distinct_token_pair),
     }
 
 
@@ -171,6 +258,158 @@ def test_release_gate_counts_generated_summary_files_as_current_run_evidence(tmp
     assert evidence_check["note"] == "2 audit file(s) found"
 
 
+def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    historical = tmp_path / ".lovable" / "audits" / "historical"
+    current_run.mkdir(parents=True)
+    historical.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    (historical / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": _strict_rbac_matrix_items(),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(),
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (historical / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-CONSOL-011",
+                "strict_live_evidence": True,
+                "strict_live_evidence_requirements": {"min_reconnect_attempts": 5},
+                "summary": {"passed": True},
+                "soak": {
+                    "enabled": True,
+                    "seconds": 75.0,
+                    "min_heartbeats": 1,
+                    "bearer_polyfill": {
+                        "ok": True,
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
+                },
+                "reconnect_sequence": {
+                    "bearer_polyfill": {
+                        "ok": True,
+                        "attempt_count": 5,
+                        "cursors_advanced": True,
+                        "duplicate_event_ids": [],
+                        "missing_expected_event_ids": [],
+                        "attempts": [{"ok": True} for _ in range(5)],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (current_run / "release-gate-step-outcomes.json").write_text(
+        json.dumps(
+            {
+                "auth_smoke": {
+                    "outcome": "success",
+                    "evidence": ".lovable/audits/historical/BFF-LUV-AUTHED-LIVE-001-live-smoke.json",
+                },
+                "sse_smoke": {
+                    "outcome": "success",
+                    "evidence": ".lovable/audits/historical/BFF-CONSOL-011-sse-replay-smoke.json",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads((current_run / "release-gate-summary.json").read_text(encoding="utf-8"))
+    gate3 = summary["gates"]["3"]
+    rbac_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    sse_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
+    )
+
+    assert rbac_check["status"] == "missing"
+    assert rbac_check["note"] == "authenticated strict live evidence outcome: success; JSON evidence missing"
+    assert sse_check["status"] == "missing"
+    assert sse_check["note"] == "sse smoke outcome: success; JSON evidence missing"
+    assert ".lovable/audits/historical" not in json.dumps(summary)
+
+
 def test_integration_gate_uploads_only_current_run_audits() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workflow = repo_root / "execute-plans" / ".github" / "workflows" / "pantheon-integration-gate.yml"
@@ -183,6 +422,7 @@ def test_integration_gate_uploads_only_current_run_audits() -> None:
     assert "scripts/probe_bff_sse_stream.py" in text
     assert "--strict-live-evidence" in text
     assert "--soak-seconds 75" in text
+    assert "--reconnect-attempts 5" in text
     assert "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json" in text
 
 
@@ -262,6 +502,89 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
             {
                 "task_id": "BFF-CONSOL-011",
                 "strict_live_evidence": True,
+                "strict_live_evidence_requirements": {"min_reconnect_attempts": 5},
+                "summary": {"passed": True},
+                "soak": {
+                    "enabled": True,
+                    "seconds": 75.0,
+                    "min_heartbeats": 1,
+                    "bearer_polyfill": {
+                        "ok": True,
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
+                },
+                "reconnect_sequence": {
+                    "bearer_polyfill": {
+                        "ok": True,
+                        "attempt_count": 5,
+                        "cursors_advanced": True,
+                        "duplicate_event_ids": [],
+                        "missing_expected_event_ids": [],
+                        "attempts": [{"ok": True} for _ in range(5)],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode in {0, 1}, result.stderr
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    sse_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
+    )
+    assert sse_check["status"] == "pass"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 duplicates:0 missingReplay:0"
+
+
+def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-CONSOL-011",
+                "strict_live_evidence": True,
+                "strict_live_evidence_requirements": {"min_reconnect_attempts": 5},
                 "summary": {"passed": True},
                 "soak": {
                     "enabled": True,
@@ -316,7 +639,7 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
         capture_output=True,
         check=False,
     )
-    assert result.returncode in {0, 1}, result.stderr
+    assert result.returncode == 1, result.stdout
 
     summary = json.loads(
         (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
@@ -326,8 +649,8 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
         for check in summary["gates"]["3"]
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
-    assert sse_check["status"] == "pass"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:2/2 duplicates:0 missingReplay:0"
+    assert sse_check["status"] == "fail"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:2/5 duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_path: Path) -> None:
@@ -343,6 +666,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
             {
                 "task_id": "BFF-CONSOL-011",
                 "strict_live_evidence": True,
+                "strict_live_evidence_requirements": {"min_reconnect_attempts": 5},
                 "summary": {"passed": True},
                 "soak": {
                     "enabled": True,
@@ -398,7 +722,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:0/2 duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:0/5 duplicates:0 missingReplay:0"
 
 
 def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> None:
@@ -424,6 +748,7 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
     assert "scripts/probe_bff_sse_stream.py" in text
     assert "--soak-min-heartbeats 1" in text
+    assert "--reconnect-attempts 5" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "path: .lovable/audits/current-run" in text
@@ -459,6 +784,7 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
     assert "scripts/probe_bff_sse_stream.py" in text
     assert "--soak-min-heartbeats 1" in text
+    assert "--reconnect-attempts 5" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "path: .lovable/audits/current-run" in text
@@ -502,6 +828,8 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -509,17 +837,9 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
                     "two_man_race_operator_scoped": True,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": dry_run,
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": {"kind": "provided_bearer_pair"},
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -579,16 +899,16 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     )
 
     assert rbac_check["status"] == "pass"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7 distinctBearers:7/7"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32"
     assert dry_run_check["status"] == "pass"
     assert dry_run_check["note"] == "strict:true dryRun:7/7 invalidEnvelope:true sideEffectProofs:7/7 sideEffects:none"
     assert race_check["status"] == "pass"
-    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 duplicateWinners:false tokenPair:true"
+    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
     assert two_man_check["status"] == "pass"
-    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 tokenPair:true"
+    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 tokenPair:true tokenPairDistinct:true"
 
 
-def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_path: Path) -> None:
+def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_path: Path) -> None:
     if shutil.which("node") is None:
         pytest.skip("node is required to execute aggregate-release-gate.mjs")
 
@@ -600,7 +920,6 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
     rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
     rbac_cases = {"anonymous": {"kind": "anonymous"}}
     rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
-    rbac_cases["operator"]["sha256_12"] = rbac_cases["viewer"]["sha256_12"]
     (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
         json.dumps(
             {
@@ -611,9 +930,9 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
                     "kind": "rbac_matrix",
                     "cases": rbac_cases,
                     "provided_bearer_count": 7,
-                    "distinct_provided_bearer_count": 6,
-                    "distinct_provided_bearers": False,
-                    "duplicate_bearer_label_groups": [["viewer", "operator"]],
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
                 },
                 "include_writes": True,
                 "include_rbac_matrix": True,
@@ -625,6 +944,8 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -632,17 +953,209 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
                     "two_man_race_operator_scoped": True,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": {"kind": "provided_bearer_pair"},
+                "approval_race": _strict_approval_race_item(distinct_token_pair=False),
+                "two_man_race": _strict_two_man_race_item(distinct_token_pair=False),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    race_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict multi-operator approval race evidence is bounded."
+    )
+    two_man_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict two-man-sign race evidence is operator-scoped."
+    )
+
+    assert race_check["status"] == "fail"
+    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:false"
+    assert two_man_check["status"] == "fail"
+    assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 tokenPair:true tokenPairDistinct:false"
+
+
+def test_release_gate_rejects_approval_race_without_safe_error_envelope(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
                 },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": _strict_rbac_matrix_items(),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(safe_error_envelope=False),
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    race_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict multi-operator approval race evidence is bounded."
+    )
+    assert race_check["status"] == "fail"
+    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:0/1 results:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
+
+
+def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverage(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    rbac_matrix = _strict_rbac_matrix_items()
+    for item in rbac_matrix:
+        if item["family"] == "rbac-read-viewer-bff-strategies":
+            item["family"] = "rbac-read-viewer-bff-strategies-duplicate-gap"
+            break
+
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": rbac_matrix,
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -685,7 +1198,194 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
         if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
     )
     assert rbac_check["status"] == "fail"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7 distinctBearers:6/7"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:55/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32"
+
+
+def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    rbac_cases["operator"]["sha256_12"] = rbac_cases["viewer"]["sha256_12"]
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 6,
+                    "distinct_provided_bearers": False,
+                    "duplicate_bearer_label_groups": [["viewer", "operator"]],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": _strict_rbac_matrix_items(),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(),
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    rbac_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    assert rbac_check["status"] == "fail"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 providedCases:7/7 distinctBearers:6/7 writeSideEffectProofs:32/32"
+
+
+def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proofs(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 0,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": _strict_rbac_matrix_items(with_write_side_effect_checks=False),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(),
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    rbac_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    assert rbac_check["status"] == "fail"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:0/32"
 
 
 def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_path: Path) -> None:
@@ -724,6 +1424,8 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -731,17 +1433,9 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
                     "two_man_race_operator_scoped": False,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": {"kind": "provided_bearer_pair"},
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(operator_scoped=False),
             }
         ),
@@ -784,7 +1478,7 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
         if check["label"] == "Authenticated: strict two-man-sign race evidence is operator-scoped."
     )
     assert two_man_check["status"] == "fail"
-    assert two_man_check["note"] == "strict:true operatorScoped:false accepted:1 replayed:0 commandIds:1/2 tokenPair:true"
+    assert two_man_check["note"] == "strict:true operatorScoped:false accepted:1 replayed:0 commandIds:1/2 tokenPair:true tokenPairDistinct:true"
 
 
 def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proofs(tmp_path: Path) -> None:
@@ -823,6 +1517,8 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -830,17 +1526,9 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
                     "two_man_race_operator_scoped": True,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(with_side_effect_checks=False),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": {"kind": "provided_bearer_pair"},
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -923,6 +1611,8 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
                     "passed": 65,
                     "failed": 0,
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -930,17 +1620,9 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
                     "two_man_race_operator_scoped": True,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": dry_run,
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 0,
-                    "safe_error_count": 2,
-                    "duplicate_winners": False,
-                    "token_source": {"kind": "provided_bearer_pair"},
-                },
+                "approval_race": _strict_approval_race_item(accepted_count=0, safe_error_count=2),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -983,4 +1665,4 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
         if check["label"] == "Authenticated: strict multi-operator approval race evidence is bounded."
     )
     assert race_check["status"] == "fail"
-    assert race_check["note"] == "strict:true bounded:true accepted:0 safeErrors:2 duplicateWinners:false tokenPair:true"
+    assert race_check["note"] == "strict:true bounded:true accepted:0 safeErrors:2 safeErrorEnvelope:2/1 results:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"

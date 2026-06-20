@@ -928,6 +928,7 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
     deny = [
         "Bash(git reset --hard*)",
         "Bash(git checkout -- *)",
+        "Bash(git clean *)",
         "Bash(sudo *)",
         "Bash(rm -rf /*)",
         "Bash(chmod 777 *)",

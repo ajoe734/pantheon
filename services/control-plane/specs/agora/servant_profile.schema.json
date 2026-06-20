@@ -2,14 +2,21 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://pantheon/agora/servant_profile/v1",
   "title": "ServantProfile",
-  "description": "Public profile of a trading persona (servant) visible to Agora users. Read-only surface — never exposes internal policy, memory, or model weights.",
+  "description": "User-private Agora servant persona profile backed by the existing Persona Registry. This profile grants no runtime binding, broker, or capital authority.",
   "type": "object",
   "required": [
     "spec_version",
     "persona_id",
     "display_name",
     "status",
-    "capability_summary"
+    "tenant_id",
+    "agora_user_id",
+    "persona_class",
+    "owner_scope",
+    "visibility_scope",
+    "memory_scope",
+    "capability_summary",
+    "policy"
   ],
   "properties": {
     "spec_version": {
@@ -30,6 +37,33 @@
       "type": "string",
       "enum": ["active", "suspended", "paper_only", "shadow_only", "retired"],
       "description": "Current operational status of the persona."
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant owner of this user-private servant profile."
+    },
+    "agora_user_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Agora user that owns this servant persona profile."
+    },
+    "persona_class": {
+      "type": "string",
+      "enum": ["agora_servant"],
+      "description": "Phase-1 metadata stored on the existing Persona Registry record."
+    },
+    "owner_scope": {
+      "type": "string",
+      "enum": ["user_private"]
+    },
+    "visibility_scope": {
+      "type": "string",
+      "enum": ["private", "redacted_management"]
+    },
+    "memory_scope": {
+      "type": "string",
+      "enum": ["private_user"]
     },
     "capability_summary": {
       "type": "object",
@@ -63,10 +97,17 @@
           "items": { "type": "string", "minLength": 1 },
           "description": "Strategy families this persona specialises in.",
           "default": []
+        },
+        "allowed_agora_capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/agora_capability" },
+          "description": "Agora-only capabilities exposed by this profile.",
+          "default": []
         }
       },
       "additionalProperties": false
     },
+    "policy": { "$ref": "#/definitions/agora_servant_policy" },
     "description": {
       "type": "string",
       "description": "Optional operator-facing description of the persona's role."
@@ -83,6 +124,50 @@
     "metadata": {
       "type": "object",
       "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "agora_capability": {
+      "type": "string",
+      "enum": [
+        "agora.identity.v1",
+        "agora.session.v1",
+        "agora.workshop.v1",
+        "agora.research.v1",
+        "agora.trading.v1",
+        "agora.dashboard.v1",
+        "agora.personalization.v1"
+      ]
+    },
+    "agora_servant_policy": {
+      "type": "object",
+      "required": [
+        "persona_class",
+        "owner_scope",
+        "visibility_scope",
+        "memory_scope",
+        "persona_registry_backed",
+        "execution_authority",
+        "prohibited_authority"
+      ],
+      "properties": {
+        "persona_class": { "type": "string", "enum": ["agora_servant"] },
+        "owner_scope": { "type": "string", "enum": ["user_private"] },
+        "visibility_scope": { "type": "string", "enum": ["private", "redacted_management"] },
+        "memory_scope": { "type": "string", "enum": ["private_user"] },
+        "persona_registry_backed": { "type": "boolean", "const": true },
+        "execution_authority": { "type": "string", "enum": ["none"] },
+        "prohibited_authority": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["runtime_binding", "broker_order", "capital_binding"]
+          },
+          "minItems": 3,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

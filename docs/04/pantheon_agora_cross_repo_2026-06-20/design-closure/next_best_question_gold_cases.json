@@ -1,0 +1,64 @@
+{
+  "schema_version": "agora.nbq.gold.v1",
+  "cases": [
+    {
+      "id": "winner_branch_identity_role",
+      "summary": "交易員完整描述關係人持股、分點績效、分點遷移、事件領先與EV方法",
+      "missing": ["identity_mapping_role", "position_sizing"],
+      "expected_primary_target": "identity_mapping_role",
+      "expected_question_contains": ["必要條件", "加權證據"],
+      "forbidden_question_contains": ["用哪個API", "資料格式", "要不要用Qlib"]
+    },
+    {
+      "id": "industry_laggard_missing_exit",
+      "summary": "產業、候選與入場定義完成，但無失效與出場",
+      "expected_primary_target": "exit_invalidation"
+    },
+    {
+      "id": "breakout_missing_position",
+      "summary": "突破、成交量、停損條件完整，未定單檔與總曝險",
+      "expected_primary_target": "position_sizing"
+    },
+    {
+      "id": "event_pit_missing",
+      "summary": "事件策略使用財報發布，但可得時間未定",
+      "expected_primary_target": "data_availability_cutoff",
+      "mandatory": true
+    },
+    {
+      "id": "fully_described_strategy",
+      "summary": "所有研究最低條件已完整",
+      "expected_no_primary_question": true,
+      "expected_action": "build_research_plan"
+    },
+    {
+      "id": "tool_derivable_liquidity",
+      "summary": "交易員已指定最低成交金額，資料庫可直接查",
+      "expected_suppressed_reason": "derivable_by_tool"
+    },
+    {
+      "id": "options_missing_max_loss",
+      "summary": "選擇權組合與情境已定，未定最大損失",
+      "expected_primary_target": "risk.max_loss",
+      "mandatory": true
+    },
+    {
+      "id": "pair_missing_hedge",
+      "summary": "pair 已選，允許由統計工具估 hedge ratio",
+      "expected_action": "use_provisional_tool_estimate",
+      "expected_no_primary_question": true
+    },
+    {
+      "id": "conflicting_holding_period",
+      "summary": "前文說隔日，後文說持有三個月",
+      "expected_primary_target": "holding_period",
+      "mandatory": true
+    },
+    {
+      "id": "low_level_model_choice",
+      "summary": "策略可由 router 選工具",
+      "forbidden_question_contains": ["vectorbt", "statsmodels", "LightGBM"],
+      "expected_no_primary_question": true
+    }
+  ]
+}
