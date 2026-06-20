@@ -2,14 +2,20 @@
 /**
  * GENERATED FILE - DO NOT EDIT BY HAND.
  *
- * Source: Pantheon AG-XR-001 Agora v1 OpenAPI/schema bundle.
+ * Source: Pantheon Agora OpenAPI/schema bundle.
  * Regenerate with: node scripts/generate-agora-types.mjs
  */
 
 export const AGORA_V1_CONTRACT_SNAPSHOT = {
-  "capability_count": 7,
+  "capability_count": 9,
   "contract_name": "pantheon-agora-v1",
-  "contract_version": "1.0",
+  "contract_version": "1.1",
+  "extends": {
+    "bundle_index_sha256": "286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b",
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.json",
+    "bundle_version": "1.0",
+    "frozen_by": "AG-XR-001"
+  },
   "files": {
     "openapi/agora_v1.openapi.yaml": "4da5ea91923e40c13a9118ee4f784a5d6627e6cb91e4d4712d8fac244912118f",
     "specs/agora/agora_user_scope.schema.json": "ae660aa7719ded37ca8b41bfc6ac287d1eae0bb85a8389b08d069c528a934dee",
@@ -25,12 +31,17 @@ export const AGORA_V1_CONTRACT_SNAPSHOT = {
     "specs/agora/strategy_workshop.schema.json": "d8d1662790f35d61fdaff0580ca488011dd90f4b4007d78e9fb77a5065396aec",
     "specs/agora/trading_event.schema.json": "14bd9e788c855c30a1803a767e66a38efc6f7505bfddf59d3095499d113f02f4",
     "specs/agora/trading_intent.schema.json": "588a0508e6b00206be1361e6337b440b7710df0075d6272adb4e85040be4f7ad",
+    "specs/agora/v2/capability_manifest_v1_1.json": "6a729d1284ca8f88058a4c301dc67a4c17fd76097190bf020310f4f2cab3db41",
+    "specs/agora/v2/chart_spec_v1.schema.json": "0bcd0fa5fc21d7c021d54803780e310cfd9234b3ea15c044fa0b5cdfffed0967",
+    "specs/agora/v2/compatibility_manifest.schema.json": "84c3607195484d09710708c08e7c29821b75d83199376cd5374a2ce0c3ca7827",
+    "specs/agora/v2/dashboard_recipe_v2.schema.json": "34c7e0fab793ec79776e9ddd5cca98683cacc6b8bba328e02a8c4c5eba45c13a",
+    "specs/agora/v2/widget_spec_v2.schema.json": "d360a17a9762d69e6a5e2c87921117bb85ee34d972fd8034f8904df6facb993f",
     "specs/agora/widget_spec.schema.json": "0749275943dc155afa08dbb8736c336d613daf18b99b42f6c10aec15d2eabedb"
   },
   "frozen_by": "AG-XR-001",
-  "operation_count": 61,
-  "schema_count": 13,
-  "source_bundle": "services/control-plane/specs/agora/bundle_index.json"
+  "operation_count": 96,
+  "schema_count": 17,
+  "source_bundle": "services/control-plane/specs/agora/bundle_index.v1_1.json"
 } as const;
 
 export type AgoraV1ContractFile = keyof typeof AGORA_V1_CONTRACT_SNAPSHOT.files;
@@ -70,20 +81,11 @@ export const AGORA_V1_CAPABILITIES = [
   "schemas": []
 },
   {
-  "auth_level": "operator",
+  "auth_level": "agora_user",
   "bff_path_prefixes": [
-    "/bff/agora/evaluation-runs",
-    "/bff/agora/evaluation-suites",
-    "/bff/agora/training-examples",
-    "/bff/agora/skill-coaching",
-    "/bff/agora/committee",
-    "/bff/agora/committee-sessions",
-    "/bff/agora/persona-lab"
+    "/bff/agora/workshops"
   ],
-  "bff_route_families": [
-    "agora-core",
-    "agora-extended"
-  ],
+  "bff_route_families": [],
   "name": "agora.workshop.v1",
   "schemas": [
     "strategy_workshop.schema.json",
@@ -160,10 +162,34 @@ export const AGORA_V1_CAPABILITIES = [
     "personalization_event.schema.json"
   ]
 },
+  {
+  "auth_level": "agora_user",
+  "bff_path_prefixes": [
+    "/bff/agora/servant"
+  ],
+  "bff_route_families": [],
+  "name": "agora.servant.v1",
+  "schemas": []
+},
+  {
+  "auth_level": "agora_user",
+  "bff_path_prefixes": [
+    "/bff/agora/dashboard-recipes",
+    "/bff/agora/strategies",
+    "/bff/agora/widgets"
+  ],
+  "bff_route_families": [],
+  "name": "agora.dashboard.v2",
+  "schemas": [
+    "v2/dashboard_recipe_v2.schema.json",
+    "v2/widget_spec_v2.schema.json",
+    "v2/chart_spec_v1.schema.json"
+  ]
+},
 ] as const;
 
 export type AgoraCapability = typeof AGORA_V1_CAPABILITIES[number];
-export type AgoraCapabilityName = "agora.identity.v1" | "agora.session.v1" | "agora.workshop.v1" | "agora.research.v1" | "agora.trading.v1" | "agora.dashboard.v1" | "agora.personalization.v1";
+export type AgoraCapabilityName = "agora.identity.v1" | "agora.session.v1" | "agora.workshop.v1" | "agora.research.v1" | "agora.trading.v1" | "agora.dashboard.v1" | "agora.personalization.v1" | "agora.servant.v1" | "agora.dashboard.v2";
 
 export const AGORA_V1_OPERATIONS = [
   {
@@ -654,6 +680,286 @@ export const AGORA_V1_OPERATIONS = [
     "agora-personalization"
   ]
 },
+  {
+  "method": "GET",
+  "operationId": "getAgoraServant",
+  "path": "/bff/agora/servant",
+  "tags": [
+    "agora-servant"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "ensureAgoraServant",
+  "path": "/bff/agora/servant/ensure",
+  "tags": [
+    "agora-servant"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "reconcileAgoraServant",
+  "path": "/bff/agora/servant/reconcile",
+  "tags": [
+    "agora-servant"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "createServantSession",
+  "path": "/bff/agora/servant/sessions",
+  "tags": [
+    "agora-servant"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "getServantSession",
+  "path": "/bff/agora/servant/sessions/{session_id}",
+  "tags": [
+    "agora-servant"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "postServantSessionMessage",
+  "path": "/bff/agora/servant/sessions/{session_id}/messages",
+  "tags": [
+    "agora-servant"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "terminateServantSession",
+  "path": "/bff/agora/servant/sessions/{session_id}/terminate",
+  "tags": [
+    "agora-servant"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "streamServantSession",
+  "path": "/bff/agora/servant/sessions/{session_id}/stream",
+  "tags": [
+    "agora-servant"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "listAgoraWorkshops",
+  "path": "/bff/agora/workshops",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "createAgoraWorkshop",
+  "path": "/bff/agora/workshops",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "getAgoraWorkshop",
+  "path": "/bff/agora/workshops/{workshop_id}",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "postAgoraWorkshopMessage",
+  "path": "/bff/agora/workshops/{workshop_id}/messages",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "listAgoraWorkshopEvents",
+  "path": "/bff/agora/workshops/{workshop_id}/events",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "getAgoraWorkshopCompleteness",
+  "path": "/bff/agora/workshops/{workshop_id}/completeness",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "listAgoraWorkshopVersions",
+  "path": "/bff/agora/workshops/{workshop_id}/versions",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "createAgoraWorkshopVersion",
+  "path": "/bff/agora/workshops/{workshop_id}/versions",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "selectAgoraWorkshopVersion",
+  "path": "/bff/agora/workshops/{workshop_id}/versions/{version_id}/select",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "dispatchAgoraWorkshopResearchRun",
+  "path": "/bff/agora/workshops/{workshop_id}/research-runs",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "openAgoraWorkshopConsultation",
+  "path": "/bff/agora/workshops/{workshop_id}/consultations",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "concludeAgoraWorkshop",
+  "path": "/bff/agora/workshops/{workshop_id}/conclude",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "streamAgoraWorkshop",
+  "path": "/bff/agora/workshops/{workshop_id}/stream",
+  "tags": [
+    "agora-workshop"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "listDashboardRecipes",
+  "path": "/bff/agora/strategies/{strategy_id}/dashboard-recipes",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "proposeDashboardRecipe",
+  "path": "/bff/agora/strategies/{strategy_id}/dashboard-recipes/proposals",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "getDashboardRecipe",
+  "path": "/bff/agora/dashboard-recipes/{recipe_id}",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "acceptDashboardRecipe",
+  "path": "/bff/agora/dashboard-recipes/{recipe_id}/accept",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "PATCH",
+  "operationId": "patchDashboardRecipeLayout",
+  "path": "/bff/agora/dashboard-recipes/{recipe_id}/layout",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "rollbackDashboardRecipe",
+  "path": "/bff/agora/dashboard-recipes/{recipe_id}/rollback",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "submitDashboardRecipeFeedback",
+  "path": "/bff/agora/dashboard-recipes/{recipe_id}/feedback",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "listDashboardRecipeVersions",
+  "path": "/bff/agora/dashboard-recipes/{recipe_id}/versions",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "validateAgoraWidget",
+  "path": "/bff/agora/widgets/validate",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "submitWidgetFeedback",
+  "path": "/bff/agora/widgets/{widget_id}/feedback",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "proposeWidgetPlugin",
+  "path": "/bff/agora/widgets/propose-plugin",
+  "tags": [
+    "agora-dashboard-v2"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "openclawAdapterEnsureAgent",
+  "path": "/api/openclaw-adapter/agents/ensure",
+  "tags": [
+    "openclaw-adapter"
+  ]
+},
+  {
+  "method": "GET",
+  "operationId": "openclawAdapterGetAgent",
+  "path": "/api/openclaw-adapter/agents/{persona_id}",
+  "tags": [
+    "openclaw-adapter"
+  ]
+},
+  {
+  "method": "POST",
+  "operationId": "openclawAdapterReconcileAgent",
+  "path": "/api/openclaw-adapter/agents/{persona_id}/reconcile",
+  "tags": [
+    "openclaw-adapter"
+  ]
+},
 ] as const;
 
 export type AgoraRoute = typeof AGORA_V1_OPERATIONS[number];
@@ -666,8 +972,8 @@ export interface AgoraUserScope {
   tenant_id: string;
   user_id: string;
   operator_id: string;
-  granted_capabilities: Array<unknown>;
-  capabilities?: Array<unknown>;
+  granted_capabilities: Array<"agora.identity.v1" | "agora.session.v1" | "agora.workshop.v1" | "agora.research.v1" | "agora.trading.v1" | "agora.dashboard.v1" | "agora.personalization.v1">;
+  capabilities?: Array<"agora.identity.v1" | "agora.session.v1" | "agora.workshop.v1" | "agora.research.v1" | "agora.trading.v1" | "agora.dashboard.v1" | "agora.personalization.v1">;
   roles?: Array<string>;
   denied_capabilities?: Array<string>;
   surfaces?: Array<"agora">;
@@ -678,7 +984,15 @@ export interface AgoraUserScope {
     required_fields: Array<"tenant_id" | "user_id">;
     fail_closed: true;
   };
-  servant_policy: unknown;
+  servant_policy: {
+    persona_class: "agora_servant";
+    owner_scope: "user_private";
+    visibility_scope: "private" | "redacted_management";
+    memory_scope: "private_user";
+    persona_registry_backed: true;
+    execution_authority: "none";
+    prohibited_authority: Array<"runtime_binding" | "broker_order" | "capital_binding">;
+  };
   created_at: string;
   expires_at?: string | null;
   policy_refs?: Array<string>;
@@ -703,9 +1017,17 @@ export interface ServantProfile {
     can_shadow?: boolean;
     asset_classes?: Array<string>;
     strategy_families?: Array<string>;
-    allowed_agora_capabilities?: Array<unknown>;
+    allowed_agora_capabilities?: Array<"agora.identity.v1" | "agora.session.v1" | "agora.workshop.v1" | "agora.research.v1" | "agora.trading.v1" | "agora.dashboard.v1" | "agora.personalization.v1">;
   };
-  policy: unknown;
+  policy: {
+    persona_class: "agora_servant";
+    owner_scope: "user_private";
+    visibility_scope: "private" | "redacted_management";
+    memory_scope: "private_user";
+    persona_registry_backed: true;
+    execution_authority: "none";
+    prohibited_authority: Array<"runtime_binding" | "broker_order" | "capital_binding">;
+  };
   description?: string;
   avatar_ref?: string;
   last_active_at?: string;
@@ -973,6 +1295,152 @@ export interface PersonalizationEvent {
   metadata?: Record<string, unknown>;
 }
 
+export interface WidgetSpecV2 {
+  spec_version: "2.0";
+  widget_id: string;
+  widget_type: string;
+  title: string;
+  description?: string;
+  why_this_widget?: string;
+  data_source_id: string;
+  query: {
+    filters: Record<string, unknown>;
+    sort?: Record<string, "asc" | "desc">;
+    limit?: number;
+    window?: string;
+  };
+  chart_spec: ChartSpecV1;
+  interactions: Array<{
+    kind: "open_candidate" | "open_strategy" | "open_position" | "open_evidence" | "open_research_run" | "open_shadow_record" | "filter_workspace" | "cross_highlight" | "add_to_monitoring" | "remove_from_monitoring" | "park_candidate" | "request_more_research" | "send_to_shadow" | "request_widget_revision" | "create_journal_note";
+    params?: Record<string, unknown>;
+  }>;
+  sensitivity: "public_market" | "user_private" | "broker_sensitive" | "restricted";
+  can_export: boolean;
+  registry_version: "widget_registry.v1";
+  layout_constraints?: {
+    min_w?: number;
+    min_h?: number;
+    max_w?: number;
+    max_h?: number;
+  };
+  version: number;
+  content_sha256?: string;
+  created_at: string;
+  updated_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ChartSpecV1 {
+  spec_version: "1.0";
+  kind: "metric" | "table" | "line" | "area" | "bar" | "stacked_bar" | "heatmap" | "scatter" | "network" | "timeline" | "sankey" | "candlestick" | "gauge";
+  encodings: Record<string, {
+    field: string;
+    type: "quantitative" | "temporal" | "nominal" | "ordinal";
+    aggregate?: "sum" | "mean" | "median" | "min" | "max" | "count" | "distinct_count";
+    scale?: "linear" | "log" | "symlog" | "time" | "band";
+    format?: string;
+    title?: string;
+  }>;
+  transforms?: Array<{
+    type: "filter" | "sort" | "top_k" | "aggregate" | "window" | "rolling_mean" | "rolling_sum" | "percent_change" | "rank" | "percentile" | "normalize" | "winsorize" | "zscore" | "bucket" | "time_bucket" | "join_by_key";
+    params?: Record<string, unknown>;
+  }>;
+  tooltip_fields?: Array<string>;
+  thresholds?: Array<{
+    field: string;
+    operator: "lt" | "lte" | "eq" | "gte" | "gt" | "between";
+    value: unknown;
+    severity?: "info" | "watch" | "warning" | "high" | "critical";
+    label?: string;
+  }>;
+  click_action?: {
+    kind: "open_candidate" | "open_strategy" | "open_position" | "open_evidence" | "open_research_run" | "open_shadow_record" | "filter_workspace" | "cross_highlight" | "add_to_monitoring" | "remove_from_monitoring" | "park_candidate" | "request_more_research" | "send_to_shadow" | "request_widget_revision" | "create_journal_note";
+    params?: Record<string, unknown>;
+  };
+  options?: Record<string, unknown>;
+}
+
+export interface DashboardRecipeV2 {
+  spec_version: "2.0";
+  recipe_id: string;
+  tenant_id: string;
+  user_id: string;
+  strategy_id: string;
+  strategy_version_id: string;
+  workspace: "trading_room" | "strategy_workshop" | "strategy_performance";
+  phase: "candidate_review" | "monitoring" | "position_monitoring" | "post_trade_review";
+  views: Array<{
+    view_id: string;
+    title: string;
+    purpose: string;
+    layout_template_id: string;
+    breakpoints: Record<string, number>;
+    placements: Array<{
+      widget_id: string;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      min_w: number;
+      min_h: number;
+      max_w?: number;
+      max_h?: number;
+      pinned?: boolean;
+    }>;
+    widgets: Array<WidgetSpecV2>;
+  }>;
+  generated_by: "system_default" | "servant" | "user" | "learned";
+  change_reason: string;
+  version: number;
+  previous_version?: number | null;
+  status: "proposal" | "active" | "archived" | "rolled_back";
+  content_sha256?: string;
+  created_at: string;
+  updated_at: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgoraCrossRepoCompatibilityManifest {
+  manifest_version: "1.0";
+  contract_family: "agora.v1.1";
+  environment: "dev" | "staging" | "production";
+  generated: true;
+  backend: {
+    repo: "ajoe734/pantheon";
+    runtime_commit: string;
+    contract_commit: string;
+    base_bundle_index_sha256: string;
+    extension_bundle_index_sha256: string;
+    openapi_sha256: string;
+  };
+  frontend: {
+    repo: "ajoe734/execute-plans";
+    runtime_commit: string;
+    generated_from_contract_commit: string;
+    base_bundle_index_sha256: string;
+    extension_bundle_index_sha256: string;
+    openapi_sha256: string;
+    generated_types_sha256: string;
+  };
+  contract_bundle: {
+    base_path: "services/control-plane/specs/agora/bundle_index.json";
+    extension_path: "services/control-plane/specs/agora/bundle_index.v1_1.json";
+    openapi_path: "services/control-plane/openapi/agora_v1_1.openapi.yaml";
+  };
+  required_capabilities: Array<{
+    name: string;
+    version: string;
+    required: boolean;
+  }>;
+  hash_policy: {
+    file_hash: "sha256-exact-git-bytes-v1";
+    generated_types_hash: "sha256-path-tab-filehash-lf-v1";
+  };
+  compatibility_status: "compatible" | "incompatible" | "pending";
+  blocking_reasons?: Array<string>;
+  generated_at: string;
+}
+
 export interface AgoraSchemaMap {
   AgoraUserScope: AgoraUserScope;
   ServantProfile: ServantProfile;
@@ -987,7 +1455,11 @@ export interface AgoraSchemaMap {
   TradingIntent: TradingIntent;
   ShadowDecision: ShadowDecision;
   PersonalizationEvent: PersonalizationEvent;
+  WidgetSpecV2: WidgetSpecV2;
+  ChartSpecV1: ChartSpecV1;
+  DashboardRecipeV2: DashboardRecipeV2;
+  AgoraCrossRepoCompatibilityManifest: AgoraCrossRepoCompatibilityManifest;
 }
 
-export type AgoraSchemaName = "AgoraUserScope" | "ServantProfile" | "StrategyWorkshop" | "StrategyCompleteness" | "ResearchPlan" | "ResearchRunSummary" | "CandidatePool" | "DashboardRecipe" | "WidgetSpec" | "TradingEvent" | "TradingIntent" | "ShadowDecision" | "PersonalizationEvent";
+export type AgoraSchemaName = "AgoraUserScope" | "ServantProfile" | "StrategyWorkshop" | "StrategyCompleteness" | "ResearchPlan" | "ResearchRunSummary" | "CandidatePool" | "DashboardRecipe" | "WidgetSpec" | "TradingEvent" | "TradingIntent" | "ShadowDecision" | "PersonalizationEvent" | "WidgetSpecV2" | "ChartSpecV1" | "DashboardRecipeV2" | "AgoraCrossRepoCompatibilityManifest";
 export type AgoraSchema = AgoraSchemaMap[keyof AgoraSchemaMap];
