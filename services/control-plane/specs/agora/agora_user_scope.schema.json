@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/agora_user_scope/v1",
+  "title": "AgoraUserScope",
+  "description": "Operator-level access scope for Agora surfaces. Computed at session start and immutable for the session lifetime.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "scope_id",
+    "operator_id",
+    "granted_capabilities",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "scope_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this scope instance."
+    },
+    "operator_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator (user) this scope was computed for."
+    },
+    "granted_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^agora\\.[a-z]+\\.v[0-9]+$"
+      },
+      "description": "Frozen list of agora.*.v1 capabilities granted to this operator.",
+      "default": []
+    },
+    "denied_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Capabilities explicitly denied with reason.",
+      "default": []
+    },
+    "surfaces": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["management", "agora", "developer"]
+      },
+      "description": "UI surfaces accessible in this scope.",
+      "default": ["agora"]
+    },
+    "persona_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Persona IDs the operator may interact with via Agora.",
+      "default": []
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the scope was computed (UTC ISO-8601)."
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional expiry for session-scoped grants."
+    },
+    "policy_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Policy document refs used to compute this scope.",
+      "default": []
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

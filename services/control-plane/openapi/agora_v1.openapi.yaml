@@ -1,0 +1,1400 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1
+  version: "1.0.0"
+  description: |
+    Agora v1 OpenAPI surface covering all §17 routes (SD_2026-06-20.md §5).
+    This file is canonical for all 61 routes in the agora-core and agora-extended
+    BFF route families. Frozen as of AG-XR-001.
+
+    **Security note:** All paths require operator-level auth (Bearer token).
+    No route in this spec may route live broker orders.
+
+  contact:
+    name: Pantheon Platform
+  x-frozen-by: AG-XR-001
+  x-frozen-at: "2026-06-20"
+  x-capability-manifest: "services/control-plane/specs/agora/capability_manifest.json"
+
+servers:
+  - url: "{bff_base}"
+    description: Pantheon BFF (dev/prod)
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: "Operator auth token. Dev stub: 'op-dev:admin:mfa'"
+
+  parameters:
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Session identifier.
+
+    SignalId:
+      name: signal_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Signal identifier.
+
+    EntryId:
+      name: entry_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Journal entry identifier.
+
+    MemoryId:
+      name: memory_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Memory entry identifier.
+
+    InsightId:
+      name: insight_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Insight identifier.
+
+    MessageId:
+      name: message_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Message identifier.
+
+    Action:
+      name: action
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Action name.
+
+    CommitteeSessionId:
+      name: committee_session_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Committee session identifier.
+
+    MemoId:
+      name: memo_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Committee memo identifier.
+
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Run identifier.
+
+    ChannelId:
+      name: channel_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: SSE channel identifier.
+
+  schemas:
+    BffListEnvelope:
+      type: object
+      description: Standard BFF list response envelope.
+      properties:
+        data:
+          type: array
+          items: {}
+        items:
+          type: array
+          items: {}
+        page_info:
+          type: object
+          properties:
+            next_page_token:
+              type: string
+              nullable: true
+            total:
+              type: integer
+        meta:
+          type: object
+          properties:
+            snapshot_at:
+              type: string
+              format: date-time
+            surfaces:
+              type: object
+              additionalProperties: true
+            total:
+              type: integer
+      additionalProperties: true
+
+    BffDegradedEnvelope:
+      type: object
+      description: Degraded / empty response envelope when store is unavailable.
+      properties:
+        status:
+          type: string
+          enum: [unavailable]
+        source:
+          type: string
+          enum: [missing]
+        data:
+          type: array
+          items: {}
+          default: []
+      additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum:
+                - AUTHZ_DENIED
+                - OBJECT_NOT_FOUND
+                - INVALID_REQUEST
+                - INVALID_STATE
+                - CONCURRENT_MODIFICATION
+                - INVALID_PARAMS
+            message:
+              type: string
+          required: [code, message]
+
+tags:
+  - name: agora-identity
+    description: "Capability: agora.identity.v1 — User scope and servant profiles"
+    x-capability: agora.identity.v1
+
+  - name: agora-session
+    description: "Capability: agora.session.v1 — Ask sessions, messages, inbox"
+    x-capability: agora.session.v1
+
+  - name: agora-workshop
+    description: "Capability: agora.workshop.v1 — Strategy workshop, committee, evaluation"
+    x-capability: agora.workshop.v1
+
+  - name: agora-research
+    description: "Capability: agora.research.v1 — Research plans and runs"
+    x-capability: agora.research.v1
+
+  - name: agora-trading
+    description: "Capability: agora.trading.v1 — Signals, feedback, trading events"
+    x-capability: agora.trading.v1
+
+  - name: agora-dashboard
+    description: "Capability: agora.dashboard.v1 — Daily brief, journal, watchlist, market notes"
+    x-capability: agora.dashboard.v1
+
+  - name: agora-personalization
+    description: "Capability: agora.personalization.v1 — Memory, insights, personalization"
+    x-capability: agora.personalization.v1
+
+paths:
+
+  # ─── agora.identity.v1 ──────────────────────────────────────────────────────
+
+  /bff/agora/sessions:
+    get:
+      operationId: listAgoraSessions
+      summary: List Agora sessions
+      tags: [agora-identity]
+      parameters:
+        - name: page_token
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Session list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+        "401": { description: Unauthorized }
+
+    post:
+      operationId: createAgoraSession
+      summary: Create Agora session
+      tags: [agora-identity]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [persona_id]
+              properties:
+                persona_id: { type: string }
+                subject: { type: string }
+                metadata: { type: object }
+      responses:
+        "201":
+          description: Created session
+          content:
+            application/json:
+              schema: { type: object }
+        "401": { description: Unauthorized }
+
+  /bff/agora/sessions/{session_id}:
+    get:
+      operationId: getAgoraSession
+      summary: Get Agora session detail
+      tags: [agora-identity]
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session detail
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { description: Not found }
+
+  # ─── agora.session.v1 ───────────────────────────────────────────────────────
+
+  /bff/agora/sessions/{session_id}/messages:
+    get:
+      operationId: listSessionMessages
+      summary: List session messages
+      tags: [agora-session]
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - name: page_token
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Message list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+    post:
+      operationId: postSessionMessage
+      summary: Post message to Agora session
+      tags: [agora-session]
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+                role: { type: string, enum: [user, assistant] }
+      responses:
+        "201":
+          description: Message created
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/ask:
+    post:
+      operationId: submitAskPersonaQuery
+      summary: Submit ask-persona query
+      tags: [agora-session]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: { type: string }
+                persona_id: { type: string }
+                session_id: { type: string }
+                context_refs: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: Ask response (may be SSE-backed)
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/ask/sessions:
+    get:
+      operationId: listAskSessions
+      summary: List ask sessions
+      tags: [agora-session]
+      parameters:
+        - name: page_token
+          in: query
+          schema: { type: string }
+        - name: persona_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Ask session list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+    post:
+      operationId: createAskSession
+      summary: Create ask session
+      tags: [agora-session]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [persona_id]
+              properties:
+                persona_id: { type: string }
+                initial_context: { type: object }
+      responses:
+        "201":
+          description: Ask session created
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/ask/sessions/{session_id}:
+    get:
+      operationId: getAskSession
+      summary: Get ask session
+      tags: [agora-session]
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Ask session detail
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { description: Not found }
+
+  /bff/agora/ask/sessions/{session_id}/close:
+    post:
+      operationId: closeAskSession
+      summary: Close ask session
+      tags: [agora-session]
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session closed
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/messages/{message_id}/actions/{action}:
+    post:
+      operationId: messageAction
+      summary: Message action (endorse, reject, flag)
+      tags: [agora-session]
+      parameters:
+        - $ref: "#/components/parameters/MessageId"
+        - $ref: "#/components/parameters/Action"
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Action applied
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/inbox:
+    get:
+      operationId: getAgoraInbox
+      summary: Get Agora inbox
+      tags: [agora-session]
+      responses:
+        "200":
+          description: Inbox
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/incoming:
+    get:
+      operationId: getAgoraIncoming
+      summary: Incoming messages
+      tags: [agora-session]
+      responses:
+        "200":
+          description: Incoming message list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/handoffs:
+    get:
+      operationId: listAgoraHandoffs
+      summary: List Agora handoffs
+      tags: [agora-session]
+      responses:
+        "200":
+          description: Handoff list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/channels:
+    get:
+      operationId: listChannels
+      summary: List SSE channels
+      tags: [agora-session]
+      responses:
+        "200":
+          description: Channel list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/channels/{channel_id}:
+    get:
+      operationId: getChannel
+      summary: Get SSE channel info
+      tags: [agora-session]
+      parameters:
+        - $ref: "#/components/parameters/ChannelId"
+      responses:
+        "200":
+          description: Channel detail
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { description: Not found }
+
+  # ─── agora.workshop.v1 ──────────────────────────────────────────────────────
+
+  /bff/agora/evaluation-runs:
+    get:
+      operationId: listEvaluationRuns
+      summary: List evaluation runs
+      tags: [agora-workshop]
+      parameters:
+        - name: page_token
+          in: query
+          schema: { type: string }
+        - name: strategy_ref
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Evaluation run list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/evaluation-suites:
+    get:
+      operationId: listEvaluationSuites
+      summary: List evaluation suites
+      tags: [agora-workshop]
+      responses:
+        "200":
+          description: Evaluation suite list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/training-examples:
+    get:
+      operationId: listTrainingExamples
+      summary: List training examples
+      tags: [agora-workshop]
+      responses:
+        "200":
+          description: Training example list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+    post:
+      operationId: submitTrainingExample
+      summary: Submit training example
+      tags: [agora-workshop]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content_ref, label]
+              properties:
+                content_ref: { type: string }
+                label: { type: string }
+                notes: { type: string }
+                persona_id: { type: string }
+      responses:
+        "201":
+          description: Training example created
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/skill-coaching/sessions:
+    get:
+      operationId: listSkillCoachingSessions
+      summary: List skill coaching sessions
+      tags: [agora-workshop]
+      responses:
+        "200":
+          description: Skill coaching session list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/committee-sessions:
+    get:
+      operationId: listCommitteeSessionsAlias
+      summary: Committee sessions list (core alias)
+      tags: [agora-workshop]
+      responses:
+        "200":
+          description: Committee session list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/committee/sessions:
+    get:
+      operationId: listCommitteeSessions
+      summary: List committee sessions (extended)
+      tags: [agora-workshop]
+      parameters:
+        - name: page_token
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Committee session list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+    post:
+      operationId: createCommitteeSession
+      summary: Create committee session
+      tags: [agora-workshop]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject_ref]
+              properties:
+                subject_ref: { type: string }
+                subject_type: { type: string }
+                persona_ids: { type: array, items: { type: string } }
+      responses:
+        "201":
+          description: Committee session created
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/committee/sessions/{committee_session_id}:
+    get:
+      operationId: getCommitteeSession
+      summary: Get committee session
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/CommitteeSessionId"
+      responses:
+        "200":
+          description: Committee session detail
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { description: Not found }
+
+  /bff/agora/committee/sessions/{committee_session_id}/open:
+    post:
+      operationId: openCommitteeSession
+      summary: Open committee session
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/CommitteeSessionId"
+      responses:
+        "200":
+          description: Session opened
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/committee/sessions/{committee_session_id}/close:
+    post:
+      operationId: closeCommitteeSession
+      summary: Close committee session
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/CommitteeSessionId"
+      responses:
+        "200":
+          description: Session closed
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/committee/sessions/{committee_session_id}/memos:
+    get:
+      operationId: listCommitteeMemos
+      summary: List committee session memos
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/CommitteeSessionId"
+      responses:
+        "200":
+          description: Memo list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+    post:
+      operationId: createCommitteeMemo
+      summary: Create committee memo
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/CommitteeSessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+                author_persona_id: { type: string }
+      responses:
+        "201":
+          description: Memo created
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/committee/sessions/{committee_session_id}/memos/{memo_id}:
+    get:
+      operationId: getCommitteeMemo
+      summary: Get committee memo
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/CommitteeSessionId"
+        - $ref: "#/components/parameters/MemoId"
+      responses:
+        "200":
+          description: Memo detail
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/committee/sessions/{committee_session_id}/memos/{memo_id}/publish:
+    post:
+      operationId: publishCommitteeMemo
+      summary: Publish committee memo
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/CommitteeSessionId"
+        - $ref: "#/components/parameters/MemoId"
+      responses:
+        "200":
+          description: Memo published
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/committee/{committee_session_id}/evidence-pack:
+    post:
+      operationId: createEvidencePack
+      summary: Create evidence pack for committee session
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/CommitteeSessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description: { type: string }
+                artifact_refs: { type: array, items: { type: string } }
+      responses:
+        "201":
+          description: Evidence pack created
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/committee/{committee_session_id}/evidence-pack/files:
+    post:
+      operationId: uploadEvidenceFile
+      summary: Upload evidence file to evidence pack
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/CommitteeSessionId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                description: { type: string }
+      responses:
+        "201":
+          description: File uploaded
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/persona-lab/runs:
+    get:
+      operationId: listPersonaLabRuns
+      summary: List persona-lab runs
+      tags: [agora-workshop]
+      responses:
+        "200":
+          description: Persona-lab run list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/persona-lab/{run_id}/actions/submit-commit:
+    post:
+      operationId: submitPersonaLabCommit
+      summary: Submit persona-lab commit
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [commit_ref]
+              properties:
+                commit_ref: { type: string }
+                notes: { type: string }
+      responses:
+        "200":
+          description: Commit submitted
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ─── agora.research.v1 ──────────────────────────────────────────────────────
+
+  /bff/agora/research-tasks:
+    get:
+      operationId: listAgoraResearchTasks
+      summary: List research tasks
+      tags: [agora-research]
+      parameters:
+        - name: page_token
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: strategy_ref
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Research task list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/research/tasks:
+    get:
+      operationId: listResearchTasksAlias
+      summary: Research tasks (alias path)
+      tags: [agora-research]
+      parameters:
+        - name: page_token
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Research task list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  # ─── agora.trading.v1 ───────────────────────────────────────────────────────
+
+  /bff/agora/signals:
+    get:
+      operationId: listSignals
+      summary: List trading signals
+      tags: [agora-trading]
+      parameters:
+        - name: page_token
+          in: query
+          schema: { type: string }
+        - name: symbol
+          in: query
+          schema: { type: string }
+        - name: persona_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Signal list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+    post:
+      operationId: createSignalObservation
+      summary: Create signal observation
+      tags: [agora-trading]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [symbol, signal_type]
+              properties:
+                symbol: { type: string }
+                signal_type: { type: string }
+                direction: { type: string }
+                confidence: { type: number }
+                persona_id: { type: string }
+                rationale: { type: string }
+      responses:
+        "201":
+          description: Signal observation created
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/signals/{signal_id}:
+    get:
+      operationId: getSignal
+      summary: Get signal detail
+      tags: [agora-trading]
+      parameters:
+        - $ref: "#/components/parameters/SignalId"
+      responses:
+        "200":
+          description: Signal detail
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { description: Not found }
+
+  /bff/agora/signals/{signal_id}/feedback:
+    post:
+      operationId: submitSignalFeedback
+      summary: Submit signal feedback
+      tags: [agora-trading]
+      parameters:
+        - $ref: "#/components/parameters/SignalId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [feedback_type]
+              properties:
+                feedback_type:
+                  type: string
+                  enum: [agree, disagree, partial, flag]
+                rationale: { type: string }
+                correction: { type: object }
+      responses:
+        "200":
+          description: Feedback submitted
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/feedback:
+    post:
+      operationId: submitGeneralFeedback
+      summary: Submit general trading feedback
+      tags: [agora-trading]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [feedback_type, subject]
+              properties:
+                feedback_type:
+                  type: string
+                  enum: [signal, decision, persona, strategy, market]
+                subject: { type: object }
+                content: { type: string }
+                persona_id: { type: string }
+      responses:
+        "200":
+          description: Feedback recorded
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ─── agora.dashboard.v1 ─────────────────────────────────────────────────────
+
+  /bff/agora/daily:
+    get:
+      operationId: getDailyBriefing
+      summary: Daily briefing
+      tags: [agora-dashboard]
+      responses:
+        "200":
+          description: Daily briefing
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/markets:
+    get:
+      operationId: getMarketContext
+      summary: Market context
+      tags: [agora-dashboard]
+      responses:
+        "200":
+          description: Market context
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/market-notes:
+    get:
+      operationId: getMarketNotes
+      summary: Market notes
+      tags: [agora-dashboard]
+      responses:
+        "200":
+          description: Market notes
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/watchlist:
+    get:
+      operationId: getWatchlist
+      summary: User watchlist
+      tags: [agora-dashboard]
+      responses:
+        "200":
+          description: Watchlist
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/postmortems:
+    get:
+      operationId: listAgoraPostmortems
+      summary: Postmortems visible from Agora
+      tags: [agora-dashboard]
+      parameters:
+        - name: page_token
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Postmortem list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/alerts/triage:
+    get:
+      operationId: getAlertsTriage
+      summary: Alerts triage queue
+      tags: [agora-dashboard]
+      responses:
+        "200":
+          description: Alerts triage queue
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/decision-journal:
+    get:
+      operationId: getDecisionJournal
+      summary: Decision journal
+      tags: [agora-dashboard]
+      responses:
+        "200":
+          description: Decision journal
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/journal:
+    get:
+      operationId: listJournalEntries
+      summary: List journal entries
+      tags: [agora-dashboard]
+      responses:
+        "200":
+          description: Journal entry list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+    post:
+      operationId: createJournalEntry
+      summary: Create journal entry
+      tags: [agora-dashboard]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+                tags: { type: array, items: { type: string } }
+                persona_id: { type: string }
+      responses:
+        "201":
+          description: Journal entry created
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/journal/{entry_id}:
+    patch:
+      operationId: updateJournalEntry
+      summary: Update journal entry
+      tags: [agora-dashboard]
+      parameters:
+        - $ref: "#/components/parameters/EntryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string }
+                tags: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: Journal entry updated
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { description: Not found }
+
+  /bff/agora/notes:
+    get:
+      operationId: listNotes
+      summary: List notes
+      tags: [agora-dashboard]
+      responses:
+        "200":
+          description: Notes list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+    post:
+      operationId: createNote
+      summary: Create note
+      tags: [agora-dashboard]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+                tags: { type: array, items: { type: string } }
+                persona_id: { type: string }
+                subject_ref: { type: string }
+      responses:
+        "201":
+          description: Note created
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ─── agora.personalization.v1 ───────────────────────────────────────────────
+
+  /bff/agora/memory:
+    get:
+      operationId: getPersonaMemory
+      summary: Get persona memory visible to user
+      tags: [agora-personalization]
+      parameters:
+        - name: persona_id
+          in: query
+          schema: { type: string }
+        - name: page_token
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Memory entries
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+  /bff/agora/memory/{memory_id}/actions/{action}:
+    post:
+      operationId: memoryAction
+      summary: Memory action (quarantine, endorse)
+      tags: [agora-personalization]
+      parameters:
+        - $ref: "#/components/parameters/MemoryId"
+        - $ref: "#/components/parameters/Action"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: Action applied
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/memory/{memory_id}/actions/quarantine:
+    post:
+      operationId: quarantineMemoryEntry
+      summary: Quarantine memory entry
+      tags: [agora-personalization]
+      parameters:
+        - $ref: "#/components/parameters/MemoryId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: Memory entry quarantined
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/insights:
+    get:
+      operationId: listInsights
+      summary: List insights
+      tags: [agora-personalization]
+      parameters:
+        - name: page_token
+          in: query
+          schema: { type: string }
+        - name: persona_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Insight list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BffListEnvelope"
+                  - $ref: "#/components/schemas/BffDegradedEnvelope"
+
+    post:
+      operationId: createInsight
+      summary: Create insight
+      tags: [agora-personalization]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+                persona_id: { type: string }
+                source_refs: { type: array, items: { type: string } }
+      responses:
+        "201":
+          description: Insight created
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/agora/insights/{insight_id}/actions/{action}:
+    post:
+      operationId: insightAction
+      summary: Insight action
+      tags: [agora-personalization]
+      parameters:
+        - $ref: "#/components/parameters/InsightId"
+        - $ref: "#/components/parameters/Action"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Action applied
+          content:
+            application/json:
+              schema: { type: object }
+
+  /bff/insights/{insight_id}/actions/attach-strategy:
+    post:
+      operationId: attachStrategyToInsight
+      summary: Attach strategy to insight
+      tags: [agora-personalization]
+      parameters:
+        - $ref: "#/components/parameters/InsightId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [strategy_ref]
+              properties:
+                strategy_ref: { type: string }
+      responses:
+        "200":
+          description: Strategy attached
+          content:
+            application/json:
+              schema: { type: object }

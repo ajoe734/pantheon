@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/widget_spec/v1",
+  "title": "WidgetSpec",
+  "description": "Specification of a single UI widget in an Agora dashboard. Defines data source binding, display options, and refresh policy.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "widget_id",
+    "widget_type",
+    "data_source",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "widget_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique widget identifier."
+    },
+    "widget_type": {
+      "type": "string",
+      "enum": [
+        "market_summary",
+        "signal_list",
+        "candidate_pool",
+        "research_task_list",
+        "persona_status",
+        "watchlist",
+        "insight_feed",
+        "alert_triage",
+        "session_history",
+        "decision_journal",
+        "postmortem_feed",
+        "custom"
+      ],
+      "description": "Widget display category."
+    },
+    "title": {
+      "type": "string",
+      "description": "Widget display title."
+    },
+    "data_source": {
+      "type": "object",
+      "required": ["bff_path"],
+      "properties": {
+        "bff_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "BFF endpoint path for this widget's data (e.g. /bff/agora/signals)."
+        },
+        "query_params": {
+          "type": "object",
+          "description": "Default query parameters appended to the BFF path.",
+          "additionalProperties": { "type": "string" }
+        },
+        "sse_channel": {
+          "type": "string",
+          "description": "Optional SSE channel to subscribe for live updates."
+        },
+        "refresh_interval_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "description": "Polling interval when SSE is not available."
+        }
+      },
+      "additionalProperties": false
+    },
+    "display_options": {
+      "type": "object",
+      "description": "Presentation hints for the frontend renderer.",
+      "properties": {
+        "max_items": { "type": "integer", "minimum": 1 },
+        "show_sparkline": { "type": "boolean" },
+        "compact_mode": { "type": "boolean" },
+        "theme_variant": {
+          "type": "string",
+          "enum": ["default", "dark", "compact", "expanded"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "persona_filter": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Restrict widget data to these persona IDs.",
+      "default": []
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

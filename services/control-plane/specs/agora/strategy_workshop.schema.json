@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/strategy_workshop/v1",
+  "title": "StrategyWorkshop",
+  "description": "Collaborative strategy exploration session between an operator and one or more personas. Produces completeness assessments and research plan refs.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "workshop_id",
+    "operator_id",
+    "status",
+    "subject",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "workshop_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique workshop session identifier."
+    },
+    "operator_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator who initiated the workshop."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "in_review", "concluded", "archived"],
+      "description": "Current workshop lifecycle state."
+    },
+    "subject": {
+      "type": "object",
+      "required": ["kind", "ref"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["strategy_spec", "research_plan", "candidate_artifact", "free_form"],
+          "description": "What the workshop is examining."
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Ref to the subject object (strategy ID, plan ID, artifact ID, or free-form title)."
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable subject label."
+        }
+      },
+      "additionalProperties": false
+    },
+    "participant_persona_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Persona IDs participating in this workshop.",
+      "default": []
+    },
+    "completeness_ref": {
+      "type": "string",
+      "description": "ID of the StrategyCompleteness assessment produced in this workshop."
+    },
+    "research_plan_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Research plan IDs emitted during this workshop.",
+      "default": []
+    },
+    "message_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of messages in the workshop session."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "concluded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

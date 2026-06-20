@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/dashboard_recipe/v1",
+  "title": "DashboardRecipe",
+  "description": "Named dashboard layout recipe defining an ordered set of widget specs. Recipes are per-operator and surface-specific.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "recipe_id",
+    "operator_id",
+    "name",
+    "surface",
+    "widgets",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "recipe_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique recipe identifier."
+    },
+    "operator_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator this recipe belongs to."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable recipe name (e.g. 'Morning Brief', 'Research View')."
+    },
+    "surface": {
+      "type": "string",
+      "enum": ["agora_main", "agora_research", "agora_trading", "agora_workshop"],
+      "description": "UI surface this recipe applies to."
+    },
+    "is_default": {
+      "type": "boolean",
+      "description": "Whether this is the default recipe for its surface.",
+      "default": false
+    },
+    "widgets": {
+      "type": "array",
+      "description": "Ordered list of widget specifications in this layout.",
+      "items": {
+        "type": "object",
+        "required": ["widget_id", "position"],
+        "properties": {
+          "widget_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Reference to a WidgetSpec ID."
+          },
+          "position": {
+            "type": "object",
+            "required": ["row", "col"],
+            "properties": {
+              "row": { "type": "integer", "minimum": 0 },
+              "col": { "type": "integer", "minimum": 0 },
+              "row_span": { "type": "integer", "minimum": 1, "default": 1 },
+              "col_span": { "type": "integer", "minimum": 1, "default": 1 }
+            },
+            "additionalProperties": false
+          },
+          "override_config": {
+            "type": "object",
+            "description": "Recipe-level overrides to the widget's default config.",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optimistic-concurrency version.",
+      "default": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -786,6 +786,113 @@ def build_approval_race_results(
     }
 
 
+def build_two_man_race_results(
+    *,
+    args: argparse.Namespace,
+    base_url: str,
+    token: str,
+    timeout: float,
+    idempotency_prefix: str,
+) -> dict[str, Any]:
+    target_id = args.two_man_race_id.strip()
+    if not target_id:
+        raise SystemExit("--include-two-man-race requires --two-man-race-id for an expendable staging intervention")
+
+    token_a, token_b, token_source = approval_race_tokens(args, token)
+    path = f"/bff/v5/interventions/{urllib.parse.quote(target_id, safe='')}/two-man-sign"
+    barrier = threading.Barrier(2)
+    results: list[dict[str, Any] | None] = [None, None]
+    stamp = int(time.time())
+
+    def run_one(index: int, bearer: str, actor_label: str) -> None:
+        barrier.wait(timeout=timeout)
+        result = request_json(
+            base_url=base_url,
+            probe=Probe(
+                "POST",
+                path,
+                "two-man-race",
+                body={
+                    "twoManSignatureId": f"tms-live-{target_id}-{actor_label}-{stamp}",
+                    "command": "RemediateSentinelIntervention",
+                    "target": {"type": "SentinelIntervention", "id": target_id},
+                    "signerOperatorIds": ["live-two-man-primary", "live-two-man-secondary"],
+                    "reason": f"two-man race probe {actor_label}",
+                },
+                expect_status=set(range(200, 600)),
+                required_paths=(),
+                extract_paths=(
+                    ("data", "command_id"),
+                    ("data", "commandId"),
+                    ("meta", "idempotency", "replayed"),
+                ),
+            ),
+            token=bearer,
+            timeout=timeout,
+            idempotency_prefix=f"{idempotency_prefix}-two-man-race",
+        )
+        result["actor_label"] = actor_label
+        results[index] = result
+
+    threads = [
+        threading.Thread(target=run_one, args=(0, token_a, "a"), daemon=True),
+        threading.Thread(target=run_one, args=(1, token_b, "b"), daemon=True),
+    ]
+    started = time.time()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=timeout + 2.0)
+    if any(thread.is_alive() for thread in threads):
+        raise RuntimeError("two-man race probe threads did not finish before timeout")
+
+    race_results = [result for result in results if result is not None]
+    accepted = [
+        result
+        for result in race_results
+        if int(result.get("status") or 0) in APPROVAL_RACE_ACCEPTED_STATUSES
+    ]
+    replayed = [
+        result
+        for result in race_results
+        if _extracted_value(result, ("meta", "idempotency", "replayed")) is True
+    ]
+    command_ids = []
+    for result in accepted:
+        command_id = (
+            _extracted_value(result, ("data", "command_id"))
+            or _extracted_value(result, ("data", "commandId"))
+        )
+        if command_id:
+            command_ids.append(str(command_id))
+    distinct_command_ids = len(set(command_ids)) == len(command_ids) == len(accepted) == 2
+    transport_failures = [result for result in race_results if int(result.get("status") or 0) == 0]
+    operator_scoped = (
+        len(race_results) == 2
+        and not transport_failures
+        and len(accepted) == 2
+        and not replayed
+        and distinct_command_ids
+    )
+    return {
+        "family": "two-man-race",
+        "method": "POST",
+        "path": path,
+        "status": "/".join(str(result.get("status") or 0) for result in race_results),
+        "target_id": target_id,
+        "duration_ms": round((time.time() - started) * 1000),
+        "ok": operator_scoped,
+        "operator_scoped": operator_scoped,
+        "accepted_count": len(accepted),
+        "replayed_count": len(replayed),
+        "distinct_command_ids": distinct_command_ids,
+        "command_id_count": len(set(command_ids)),
+        "token_source": token_source,
+        "expectation": "two distinct operators share one idempotency key and both create independent two-man signatures without replay",
+        "results": race_results,
+    }
+
+
 def build_rbac_matrix_results(
     *,
     args: argparse.Namespace,
@@ -954,6 +1061,7 @@ def apply_strict_live_evidence(args: argparse.Namespace) -> None:
     args.include_rbac_matrix = True
     args.include_dry_run = True
     args.include_approval_race = True
+    args.include_two_man_race = True
     args.require_provided_rbac_tokens = True
     args.require_provided_approval_race_tokens = True
 
@@ -964,6 +1072,8 @@ def apply_strict_live_evidence(args: argparse.Namespace) -> None:
         )
     if not args.approval_race_id.strip():
         raise SystemExit("--strict-live-evidence requires --approval-race-id for an expendable staging approval")
+    if not args.two_man_race_id.strip():
+        raise SystemExit("--strict-live-evidence requires --two-man-race-id for an expendable staging intervention")
     race_token_a = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "").removeprefix("Bearer ").strip()
     race_token_b = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "").removeprefix("Bearer ").strip()
     if not (race_token_a and race_token_b):
@@ -987,8 +1097,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-rbac-matrix", action="store_true")
     parser.add_argument("--include-dry-run", action="store_true")
     parser.add_argument("--include-approval-race", action="store_true")
+    parser.add_argument("--include-two-man-race", action="store_true")
     parser.add_argument("--strict-live-evidence", action="store_true")
     parser.add_argument("--approval-race-id", default="")
+    parser.add_argument("--two-man-race-id", default="")
     parser.add_argument("--approval-race-decision", default="approve")
     parser.add_argument("--require-provided-rbac-tokens", action="store_true")
     parser.add_argument("--require-provided-approval-race-tokens", action="store_true")
@@ -1088,6 +1200,16 @@ def main() -> int:
             idempotency_prefix=idempotency_prefix,
         )
 
+    two_man_race_result: dict[str, Any] | None = None
+    if args.include_two_man_race:
+        two_man_race_result = build_two_man_race_results(
+            args=args,
+            base_url=args.base_url,
+            token=token,
+            timeout=args.timeout,
+            idempotency_prefix=idempotency_prefix,
+        )
+
     all_results = [
         health,
         openapi,
@@ -1095,6 +1217,7 @@ def main() -> int:
         *rbac_results,
         *dry_run_results,
         *([approval_race_result] if approval_race_result else []),
+        *([two_man_race_result] if two_man_race_result else []),
     ]
     failed = [item for item in all_results if not item.get("ok")]
     evidence = {
@@ -1107,9 +1230,10 @@ def main() -> int:
         "include_rbac_matrix": args.include_rbac_matrix,
         "include_dry_run": args.include_dry_run,
         "include_approval_race": args.include_approval_race,
+        "include_two_man_race": args.include_two_man_race,
         "strict_live_evidence": args.strict_live_evidence,
         "commands": [
-            "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> PANTHEON_BFF_RBAC_TOKENS_JSON=<redacted> PANTHEON_BFF_APPROVAL_RACE_TOKEN_A=<redacted> PANTHEON_BFF_APPROVAL_RACE_TOKEN_B=<redacted> scripts/probe_bff_authenticated_live.py --strict-live-evidence --include-writes --approval-race-id=<expendable-staging-approval-id>",
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> PANTHEON_BFF_RBAC_TOKENS_JSON=<redacted> PANTHEON_BFF_APPROVAL_RACE_TOKEN_A=<redacted> PANTHEON_BFF_APPROVAL_RACE_TOKEN_B=<redacted> scripts/probe_bff_authenticated_live.py --strict-live-evidence --include-writes --approval-race-id=<expendable-staging-approval-id> --two-man-race-id=<expendable-staging-intervention-id>",
         ],
         "summary": {
             "total": len(all_results),
@@ -1121,6 +1245,8 @@ def main() -> int:
             "dry_run_probes": len(dry_run_results),
             "approval_race_probes": 1 if approval_race_result else 0,
             "approval_race_bounded": bool(approval_race_result and approval_race_result.get("bounded")),
+            "two_man_race_probes": 1 if two_man_race_result else 0,
+            "two_man_race_operator_scoped": bool(two_man_race_result and two_man_race_result.get("operator_scoped")),
             "VITE_BFF_MODE_live_allowed": len(failed) == 0,
             "VITE_BFF_REAL_WRITES_true_allowed": args.include_writes and len(failed) == 0,
             "live_capital_side_effects": False,
@@ -1131,6 +1257,7 @@ def main() -> int:
         "rbac_matrix": rbac_results,
         "dry_run": dry_run_results,
         "approval_race": approval_race_result,
+        "two_man_race": two_man_race_result,
         "failed_routes": [
             {
                 "family": item.get("family"),
