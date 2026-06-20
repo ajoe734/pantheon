@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-BE-SW-001 BFF and frontend handoff packet
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Auto-reassigned ownership from Antigravity to Codex after repeated Antigravity terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.
+- Next: Review approved by Codex2: support-only packet is scoped correctly; C1-C8 and frontend guardrails are sufficient. Owner Codex should finalize after PR #1896 merge record.
 
 ## Summary
 平行支援 AG-BE-SW-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
