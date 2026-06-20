@@ -6,7 +6,7 @@
 **Parent owner / reviewer:** `Claude` / `Codex`
 **Sidecar owner / reviewer:** `Claude` / `Claude2`
 **Date:** `2026-06-20`
-**Status:** `review`
+**Status:** `review_approved`
 **Predecessor:** `AG-BE-ID-003-SIDECAR-BFF-HANDOFF` (approved 2026-06-20)
 
 > Scope constraint: support artifact only. This packet does not modify L1
