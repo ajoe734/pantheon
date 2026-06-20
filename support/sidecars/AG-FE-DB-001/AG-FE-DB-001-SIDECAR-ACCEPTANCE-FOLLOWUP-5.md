@@ -10,7 +10,7 @@
 | Reviewer | `Codex2` |
 | Date | `2026-06-20` |
 | Mutates canonical truth | `false` |
-| Status | Ready for review |
+| Status | Review approved; owner closeout in progress |
 
 ## Purpose
 
@@ -27,9 +27,9 @@ governance logic, or status files by hand.
 
 | Surface | Observed state | Acceptance consequence |
 |---|---|---|
-| `AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5` | `in_progress`, owner `Codex`, reviewer `Codex2`, artifact scoped to this file. | This sidecar may prepare acceptance material and hand off to Codex2 only. |
+| `AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5` | `review_approved`, owner `Codex`, reviewer `Codex2`, artifact scoped to this file plus the task-scoped review note. | Owner closeout may proceed after PR #1857 is refreshed and merged. |
 | Parent `AG-FE-DB-001` | `review_approved`, owner `Codex`, reviewer `Claude2`. Review notes approve registry/renderer acceptance and return to owner for closeout. | Parent implementation has passed review, but the owner must still perform formal closeout before the task is `done`. |
-| Parent code delivery | PR #1854 merged into `dev` at merge commit `34ec8a6a44dbfca43a3af3b0d15df4e065705fd4`; implementation commit `6062cb2cc850f032de9b890a47db55a60a6033cf`; current `origin/dev` is `0fafe7f87cb913d4592c936a9449a89d090840b5` and contains the merge. | The code is visible on `dev`; the remaining gap is status/archive closeout, not code merge. |
+| Parent code delivery | PR #1854 merged into `dev` at merge commit `34ec8a6a44dbfca43a3af3b0d15df4e065705fd4`; implementation commit `6062cb2cc850f032de9b890a47db55a60a6033cf`; current `origin/dev` is `0176f9a4b70d7def6f8ab78f1d232323a11365c6` and contains the merge. | The code is visible on `dev`; the remaining gap is status/archive closeout, not code merge. |
 | Backend sibling `AG-BE-DB-001` | Archived `done`; PR #1847 merged, implementation enforced 11 dashboard routes, ETag/If-Match concurrency, and A3 safety rules. | FE renderer acceptance no longer needs to treat backend persistence as an active blocker, but downstream live wiring must still honor the merged BFF contract. |
 | Contract predecessor `AG-XR-DASH-001` | Archived `done`; delivered `agora_v1_1.openapi.yaml`, v2 schemas, and `agora.dashboard.v2`. | The v1.1 contract remains the schema/BFF authority for the renderer task. |
 | Review artifact | `ai-status` names `.orchestrator/task-reviews/ag_fe_db_001_review_claude2.md`, but that file is not present in the current `dev` tree. | Parent closeout should rely on the `ai-status` review notes unless a task-scoped review file is separately published. |
@@ -61,6 +61,19 @@ observations:
 
 These observations should not block parent closeout, but they should remain
 visible if a hardening follow-up is opened.
+
+## Sidecar Review Result
+
+Codex2 approved this support packet in
+`support/sidecars/AG-FE-DB-001/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5-REVIEW.md`.
+The review recorded no blocking findings and confirmed that the packet stays
+support-only, reflects parent `AG-FE-DB-001` review-approved / PR #1854 merged
+state, preserves the parent reviewer caveats, and leaves parent owner closeout
+as the remaining action.
+
+The review also noted PR #1857 was open with auto-merge enabled but behind
+`dev`; owner closeout therefore requires refreshing this task branch before
+marking the sidecar `done`.
 
 ## Dependency Map
 
@@ -128,35 +141,37 @@ jq '{file_count:(.files|length), files:.files}' services/control-plane/specs/ago
 sha256sum docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/widget_registry.v1.json services/control-plane/specs/agora/v2/widget_spec_v2.schema.json services/control-plane/specs/agora/v2/chart_spec_v1.schema.json services/control-plane/specs/agora/v2/dashboard_recipe_v2.schema.json
 git diff --check -- support/sidecars/AG-FE-DB-001/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5.md .orchestrator/task-briefs/ag_fe_db_001_sidecar_acceptance_followup_5.md
 python3 scripts/agora_schema_bundle.py --verify
+AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5
+AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-001
+gh pr view 1857 --json number,state,mergeStateStatus,isDraft,autoMergeRequest,headRefName,baseRefName,mergeCommit,commits,files,url
+git diff --check -- support/sidecars/AG-FE-DB-001/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5.md support/sidecars/AG-FE-DB-001/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5-REVIEW.md .orchestrator/task-briefs/ag_fe_db_001_sidecar_acceptance_followup_5.md
 ```
 
 Observed results:
 
 - The current branch is `task/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5`.
-- The branch was fast-forwarded to current `origin/dev`.
+- The branch was initially fast-forwarded to the then-current `origin/dev`;
+  closeout later found PR #1857 behind the newer `origin/dev` at
+  `0176f9a4b70d7def6f8ab78f1d232323a11365c6`.
 - The only task-owned dirty file before this packet was the generated
   follow-up 5 task brief.
 - The parent is `review_approved`; parent code is merged to `dev`.
+- Codex2 review artifact approves this packet with no blocking findings.
 - `AG-BE-DB-001`, `AG-XR-DASH-001`, and Follow-up 4 are archived `done`.
 - A3 registry still has 42 active entries: 41 `chart_spec`, 1 `builtin`.
 - v1.1 schema hashes match the expected values used by the renderer tests.
-- `git diff --check` passed for this packet and task brief.
+- `git diff --check` passed for this packet, the Codex2 review note, and task
+  brief.
 - `python3 scripts/agora_schema_bundle.py --verify` passed for the frozen v1
   bundle (15/15 OK).
 
-## Reviewer Handoff
+## Completed Reviewer Handoff
 
-Codex2 should review only this sidecar support scope:
+Codex2 reviewed only this sidecar support scope:
 
 | Review question | Expected answer |
 |---|---|
-| Does this packet stay support-only? | Yes; it adds only this follow-up artifact and the generated task-brief mirror if committed. |
+| Does this packet stay support-only? | Yes; it adds only this follow-up artifact, the task-scoped review note, and the generated task-brief mirror if committed. |
 | Does it avoid canonical/runtime/frontend changes? | Yes; it records facts from merged code and status only. |
 | Does it reflect the current parent state? | Yes; parent implementation is merged and review-approved, but parent `done` closeout remains pending. |
 | Does it preserve reviewer caveats? | Yes; it records both non-blocking Claude2 observations for closeout or future hardening. |
-
-Suggested reviewer command:
-
-```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh approve AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-5 "Review approved: follow-up 5 is support-only, reflects AG-FE-DB-001 review-approved/merged state, records acceptance evidence from merged renderer files, preserves non-blocking reviewer caveats, and identifies parent owner closeout as the remaining action."
-```

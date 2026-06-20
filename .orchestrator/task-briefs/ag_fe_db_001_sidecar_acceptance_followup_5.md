@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-DB-001 acceptance packet and dependency map
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.
+- Next: Review approved: follow-up 5 is support-only, reflects AG-FE-DB-001 review-approved/merged state, records acceptance evidence from merged renderer files, preserves non-blocking reviewer caveats, and identifies parent owner closeout as the remaining action. PR #1857 is open with auto-merge but currently behind dev; refresh before merge/closeout.
 
 ## Summary
 平行支援 AG-FE-DB-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
