@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-20` |
-| Status | `ready for reviewer handoff` |
+| Status | `review approved; pending owner closeout` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this is support material only. It does not change L1 canonical
@@ -62,6 +62,7 @@ servant provisioning or session operation as live.
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF.md` | First FE handoff packet |
 | `support/sidecars/AG-BE-ID-002/AG-BE-ID-002-SIDECAR-BFF-HANDOFF.md` | Backend servant ensure gap packet |
 | `support/sidecars/AG-BE-ID-002/AG-BE-ID-002-SIDECAR-ACCEPTANCE.md` | Backend acceptance/blocker packet |
+| `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-REVIEW.md` | Reviewer approval record rechecked during owner closeout |
 
 ## 4. BFF Query Gap Summary
 
@@ -242,26 +243,48 @@ rg -n -P '/bff/agora/servant/ensure(?=[:"\s]|$)' services/control-plane/openapi/
 Focused route tests were re-run during final verification and should be recorded
 in the task handoff status message.
 
-## 11. Reviewer Handoff
+Closeout verification re-run after reviewer approval:
+
+```bash
+python3 -m pytest services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py -q
+rg -n -P '/bff/agora/me(?=[:"\s]|$)' services/control-plane/openapi/agora_v1.openapi.yaml services/control-plane/specs/agora/capability_manifest.json execute-plans/src/lib/bff-v1/agora/types.ts execute-plans/src/lib/bff-v1/paths.ts services/control-plane/bff/agora/router.py
+rg -n -P '/bff/agora/capabilities(?=[:"\s]|$)' services/control-plane/openapi/agora_v1.openapi.yaml services/control-plane/specs/agora/capability_manifest.json execute-plans/src/lib/bff-v1/agora/types.ts execute-plans/src/lib/bff-v1/paths.ts services/control-plane/bff/agora/router.py
+rg -n -P '/bff/agora/servant/ensure(?=[:"\s]|$)' services/control-plane/openapi/agora_v1.openapi.yaml services/control-plane/specs/agora/capability_manifest.json execute-plans/src/lib/bff-v1/agora/types.ts execute-plans/src/lib/bff-v1/paths.ts services/control-plane/bff/agora/servant/router.py services/control-plane/bff/tests/test_agora_router.py
+test -f execute-plans/src/agora/AgoraApp.tsx && echo EXISTS || echo MISSING
+test -f execute-plans/src/lib/bff-v1/agora/identity.ts && echo EXISTS || echo MISSING
+test -f execute-plans/src/lib/bff-v1/agora/servant.ts && echo EXISTS || echo MISSING
+```
+
+Closeout results:
+
+- `22 passed in 9.24s`.
+- `/me` and `/capabilities` still appear only in `services/control-plane/bff/agora/router.py`.
+- `/servant/ensure` still appears only in the BFF servant stub and focused tests.
+- `AgoraApp.tsx`, `identity.ts`, and `servant.ts` are still missing, as expected for parent absorption.
+
+## 11. Reviewer Approval
 
 Reviewer: `Claude`
 
-Please review this sidecar for:
+Verdict: `approved`
 
-1. support-only scope compliance
-2. correct distinction between runtime BFF routes and generated frontend route truth
-3. correct treatment of blocked `AG-BE-ID-002` and downstream `AG-BE-ID-003`
-4. actionable frontend client handoff for `identity.ts`, `servant.ts`, and `AgoraApp.tsx`
-5. no accidental expansion into canonical architecture, route, or implementation changes
+Review file:
+`support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2-REVIEW.md`
 
-Suggested approval command:
+Approval summary:
 
-```bash
-AI_NAME=Claude ./scripts/ai-status.sh approve AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2 "Followup-2 support packet approved: accurately distinguishes runtime-only /me and /capabilities, 501 /servant/ensure, generated route gaps, and AG-FE-ID-001 frontend absorption gates."
-```
+- support-only scope compliance confirmed
+- runtime-only `/me` and `/capabilities` vs generated route gaps confirmed
+- `/servant/ensure` 501 backend-not-ready interpretation confirmed
+- `AG-BE-ID-002` blocked / `AG-BE-ID-003` todo dependency honesty confirmed
+- frontend absorption gates for `identity.ts`, `servant.ts`, and `AgoraApp.tsx` confirmed actionable
 
-Suggested reopen command:
+## 12. Owner Closeout Notes
 
-```bash
-AI_NAME=Claude ./scripts/ai-status.sh reopen AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2 "Describe the exact packet correction needed."
-```
+Closeout owner: `Codex`
+
+Closeout keeps this sidecar support-only. It does not change canonical truth,
+OpenAPI, BFF runtime code, generated contracts, registry code, governance code,
+or execute-plans source. The closeout commit includes only task-scoped support
+records for the approved packet, the reviewer approval artifact, and the
+generated task brief used to resume this closeout.
