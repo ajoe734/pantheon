@@ -1,6 +1,35 @@
 export { paths } from "./paths";
 export type { ListEnvelope } from "./lists";
 export { normalizeLiveListResponse } from "./lists";
+export {
+  AGORA_V1_CAPABILITIES,
+  AGORA_V1_CONTRACT_SNAPSHOT,
+  AGORA_V1_OPERATIONS,
+} from "./agora/types";
+export type {
+  AgoraCapability,
+  AgoraCapabilityName,
+  AgoraHttpMethod,
+  AgoraOperationId,
+  AgoraRoute,
+  AgoraSchema,
+  AgoraSchemaMap,
+  AgoraSchemaName,
+  AgoraV1ContractFile,
+  AgoraUserScope,
+  CandidatePool,
+  DashboardRecipe,
+  PersonalizationEvent,
+  ResearchPlan,
+  ResearchRunSummary,
+  ServantProfile,
+  ShadowDecision,
+  StrategyCompleteness,
+  StrategyWorkshop,
+  TradingEvent,
+  TradingIntent,
+  WidgetSpec,
+} from "./agora/types";
 
 export interface LiveStatus {
   effective: "mock" | "live";
