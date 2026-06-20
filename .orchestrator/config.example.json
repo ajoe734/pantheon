@@ -206,9 +206,9 @@
     }
   },
   "underutilization_dispatch": {
-    "enabled": false,
+    "enabled": true,
     "threshold_ratio": 0.5,
-    "continuous_window_seconds": 900,
+    "continuous_window_seconds": 0,
     "cooldown_seconds": 900,
     "max_new_sidecars_per_wave": 2,
     "max_active_sidecars_per_agent": 1,
@@ -595,7 +595,8 @@
         "todo"
       ],
       "require_owner_higher_priority_load": true,
-      "claim_idle_work": true
+      "claim_idle_work": true,
+      "claim_sidecars_when_idle": true
     },
     "worker_self_claim": {
       "enabled": true,
