@@ -51273,6 +51273,18 @@ app.include_router(_create_alpha_factory_router(
 ))
 
 
+# AG-BE-000: Agora BFF package router (must stay last to avoid route conflicts)
+from agora.router import create_agora_router as _create_agora_router  # noqa: E402
+app.include_router(
+    _create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+    )
+)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
