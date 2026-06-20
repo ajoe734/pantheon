@@ -7,10 +7,10 @@
 | Parent task | `AG-FE-DB-003` - Widget conversation revision + before/after |
 | Parent owner / reviewer | `Codex2` / `Claude` |
 | Prepared by | `Codex` |
-| Reviewer | `Codex2` |
+| Reviewer | `Claude` |
 | Date | `2026-06-20` |
 | Mutates canonical truth | `false` |
-| Status | Ready for review |
+| Status | Review approved; owner finalizing |
 
 ## Purpose
 
@@ -32,6 +32,8 @@ RuntimeBinding.
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-001` | Confirms upstream registry/renderers are archived `done` and available for composition. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-DB-001` | Confirms backend widget validator and dashboard recipe route family are archived `done`; records validator follow-up caveats. |
 | GitHub PR `#1860` | Confirms parent implementation merged into `dev` at `b0444fa5f690ba0fc28a6d434ebe6dc53b03a0a1` with required checks green. |
+| GitHub PR `#1863` | Confirms parent closeout merged into `dev` at `ac0d55c1bffdd5791c529cc915ca531e08c2c8d2`. |
+| GitHub PR `#1864` | Confirms this sidecar packet merged into `dev` at `b15a9f84d80a9f845318cd4a5aa26af5d120fa22`. |
 | `execute-plans/src/agora/widgets/WidgetRevisionDrawer.tsx` | Parent UI implementation under review. |
 | `execute-plans/src/agora/widgets/WidgetRevisionDrawer.test.tsx` | Parent focused test coverage for request, validation, before/after preview, accept, keep-both, and reject behavior. |
 | `execute-plans/src/lib/bff-v1/agora/dashboard.ts` | Frontend BFF helper used for widget validation. |
@@ -47,9 +49,21 @@ RuntimeBinding.
 | PR state | `MERGED` into `dev` at `2026-06-20T17:13:40Z` |
 | Parent merge commit | `b0444fa5f690ba0fc28a6d434ebe6dc53b03a0a1` |
 | Parent task commit | `eb2f018ad11b9e485060d7e0a75a4b13e81c36c6` |
+| Parent closeout PR | `https://github.com/ajoe734/pantheon/pull/1863` |
+| Parent closeout merge commit | `ac0d55c1bffdd5791c529cc915ca531e08c2c8d2` |
 | Files delivered by PR | `.orchestrator/task-briefs/ag_fe_db_003.md`, `WidgetRevisionDrawer.tsx`, `WidgetRevisionDrawer.test.tsx`, `execute-plans/src/lib/bff-v1/agora/dashboard.ts` |
 | GitHub checks | Commit trailers, Runtime mirror guard, Smoke acceptance, and Forward to orchestrator all reported `SUCCESS` on PR `#1860`. |
-| Parent active status | `review_approved`; owner `Codex2` still needs finalization. |
+| Parent terminal status | Archived `done` by owner `Codex2` at `2026-06-20T17:27:18Z`. |
+
+## Sidecar Delivery Facts
+
+| Item | Evidence |
+|---|---|
+| Sidecar packet PR | `https://github.com/ajoe734/pantheon/pull/1864` |
+| PR state | `MERGED` into `dev` at `2026-06-20T17:30:05Z` |
+| Sidecar merge commit | `b15a9f84d80a9f845318cd4a5aa26af5d120fa22` |
+| Sidecar packet commit | `0f93791ffadaea614edc9baa3e762ffcd0f4ab6d` |
+| Review approval | `Claude` approved the packet in `ai-status` with the support-only boundary, verification results, dependency state, and parent closeout caveats accepted. |
 
 ## Dependency State
 
@@ -83,29 +97,31 @@ Initial validation attempts before `npm ci` failed because `vitest` and `vite`
 were not installed in this worktree. After installing dependencies from the
 existing lockfile, the same focused checks passed.
 
-## Caveats For Parent Closeout
+## Residual Caveats
 
 | Caveat | Recommended handling |
 |---|---|
-| Parent `ai-status.json` points at `.orchestrator/reviews/ag_fe_db_003_review.md`, but that file is not present in this checkout. | Do not block on this sidecar if the status `review_notes_zh` remains the authoritative approval record; parent owner may add or correct the review artifact during finalization if needed. |
+| Parent archive still points at `.orchestrator/reviews/ag_fe_db_003_review.md`, but that file is not present in this checkout. | Do not reopen this sidecar for that archival path mismatch; parent closeout is already archived `done` with review notes and PR #1863 evidence. |
 | `AG-BE-DB-001` review notes defer A3 validator Rule 4 field-catalog and Rule 7 scope-check follow-ups. | Not blocking for DB003's current drawer acceptance, but downstream owners should not claim those validator rules are complete. |
 | `npm ci` reported dependency audit findings. | Out of scope for this support slice; do not run `npm audit fix` here because it would change dependency truth. |
 
-## Reviewer Handoff
+## Review Approval And Owner Closeout
 
-To `Codex2`, sidecar reviewer and parent owner:
+Claude approved this sidecar packet in `ai-status` after checking that it
+accurately captures PR #1860 merge facts, dependency state, WidgetSpec/validate
+route truth, focused verification, support-only boundary, and parent closeout
+caveats. The approval also confirms no L1 canonical truth, schema, OpenAPI, BFF
+runtime, RuntimeBinding, or broker behavior was changed by this sidecar.
 
-- Verify this packet accurately captures parent PR `#1860`, dependency state,
-  validate route truth, local verification, and support-only boundary.
-- If accepted, approve this sidecar and use it as the parent closeout evidence
-  summary for `AG-FE-DB-003`.
-- Parent finalization remains with `Codex2`; this sidecar does not move the
-  parent task to `done`.
+Owner closeout scope for `Codex` is limited to making this approved support
+packet durable, recording the updated parent/sidecar merge facts above, and
+then moving `AG-FE-DB-003-SIDECAR-REVIEW` to `done`.
 
-Suggested reviewer command:
+Closeout verification for this finalization update:
 
-```bash
-AI_NAME=Codex2 REVIEW_FILE=support/sidecars/AG-FE-DB-003/AG-FE-DB-003-SIDECAR-REVIEW.md ./scripts/ai-status.sh approve AG-FE-DB-003-SIDECAR-REVIEW "Review approved: AG-FE-DB-003 review packet captures PR #1860 merge facts, dependency state, WidgetSpec/validate route truth, focused verification, support-only boundary, and parent closeout caveats."
-```
+- `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-003-SIDECAR-REVIEW`
+- `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-003`
+- `gh pr list --state all --head task/AG-FE-DB-003-SIDECAR-REVIEW --json number,state,mergedAt,mergeCommit,url,title --limit 5`
+- `git diff --check -- support/sidecars/AG-FE-DB-003/AG-FE-DB-003-SIDECAR-REVIEW.md`
 
 Prepared by `Codex` for the `AG-FE-DB-003-SIDECAR-REVIEW` support slice.
