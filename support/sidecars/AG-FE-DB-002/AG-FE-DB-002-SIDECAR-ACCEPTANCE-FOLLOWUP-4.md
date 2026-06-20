@@ -10,13 +10,14 @@
 | Reviewer | `Codex` |
 | Date | `2026-06-20` |
 | Mutates canonical truth | `false` |
-| Status | Ready for review |
+| Status | Review approved; owner closeout |
 
 ## Purpose
 
 This is a support-only packet for `AG-FE-DB-002`. It refreshes the acceptance
 checklist and dependency map after the original sidecar, follow-up 2, and
-follow-up 3 were all archived `done`.
+follow-up 3 were all archived `done`, and records the approved closeout state
+for parent-owner handoff.
 
 This packet is not a parent implementation and is not a parent unblock by
 itself. The parent task remains active `blocked`, owned by `Codex`, reviewed by
@@ -150,6 +151,21 @@ python3 scripts/agora_schema_bundle.py --verify
 If full TypeScript or lint remains blocked by unrelated baseline failures, the
 parent owner should record the exact focused passing commands and the unrelated
 failure signature.
+
+## Owner Closeout
+
+Reviewer `Codex` approved this packet with the message:
+
+> Review approved: DB002 follow-up 4 preserves parent blocked status, routes reviewed waiver evidence, refreshes current-dev compose/dependency map, and keeps support-only boundaries without canonical/runtime changes.
+
+Owner closeout keeps the reviewed scope unchanged:
+
+- `AG-FE-DB-002` remains an active parent task and is not unblocked by this
+  support packet alone.
+- No L1 canonical truth, schema, runtime, registry, governance, broker, or
+  RuntimeBinding implementation is changed here.
+- The handoff remains a support artifact for `Codex`/`Claude` to absorb when
+  the parent is intentionally resumed.
 
 ## Sidecar Verification Performed
 
