@@ -9,6 +9,7 @@
 - Generated: `2026-06-20`
 - Mutates canonical truth: `no`
 - Baseline inspected: `pantheon@dev` `e28e6e49`
+- Closeout dev refresh: `origin/dev` `8df64009`
 
 This is a support packet only. It does not implement
 `docs/contracts/agora/dev-compatibility-manifest.json`,
@@ -25,8 +26,9 @@ acceptance packet for the parent owner.
 
 The important distinction is that the closure pack is now available as design
 input, and `AG-XR-001A` has since landed the additive v1.1 bundle index plus
-v2 schema files. Remaining AG-XR-003 acceptance still depends on the parent
-task implementing the manifest generator/validator and on the frontend
+v2 schema files. The closeout dev refresh also shows v1.1 OpenAPI and widget
+registry evidence on `dev`. Remaining AG-XR-003 acceptance still depends on the
+parent task implementing the manifest generator/validator and on the frontend
 generated-type evidence being aligned.
 
 ## Source Evidence
@@ -41,6 +43,8 @@ generated-type evidence being aligned.
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/06_compatibility_manifest_and_hash_rules.md` | Defines the proposed manifest path, commit semantics, byte-level hash rules, generated types hash algorithm, deploy check, and generated-manifest ownership. |
 | `services/control-plane/specs/agora/v2/compatibility_manifest.schema.json` | Provides the canonical JSON schema shape for `agora.v1.1` compatibility manifests after `AG-XR-001A`. |
 | `services/control-plane/specs/agora/bundle_index.v1_1.json` | Provides the additive v1.1 extension bundle index and records the base bundle hash it extends. |
+| `services/control-plane/openapi/agora_v1_1.openapi.yaml` | Present after closeout dev refresh; provides the backend v1.1 OpenAPI hash input for the parent manifest. |
+| `services/control-plane/specs/agora/widget_registry.v1.json` | Present after closeout dev refresh; provides current dashboard/widget registry evidence that the parent manifest must compare. |
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/07_dispatch_unblock_matrix_v2.md` | Names AG-XR-003's current blocker and the predecessor evidence required before implementation is unblocked. |
 
 ## Delta From Follow-up 2
@@ -66,25 +70,27 @@ generated-type evidence being aligned.
 | Dev deployment gate fails closed | Validator exits non-zero when any required commit, hash, capability, or compatibility status is missing, placeholder, mismatched, or incompatible. | Parent implementation work. |
 | Generated manifest is not hand-edited | Manifest marked `generated=true` is emitted by CI/tooling; hand edits are rejected or regenerated. | Parent implementation work. |
 | Frozen v1 bundle remains intact | `python3 scripts/agora_schema_bundle.py --verify` remains green and no AG-XR-001 frozen file is replaced in place. | Parent and reviewer guardrail. |
-| Extension bundle is explicit | `bundle_index.v1_1.json`, v2 schemas, and the v1.1 capability manifest are present; parent still must not claim compatibility until remaining OpenAPI/generated-type evidence is aligned. | Dependency gate. |
+| Extension bundle is explicit | `bundle_index.v1_1.json`, v2 schemas, v1.1 OpenAPI, widget registry evidence, and the v1.1 capability manifest are present; parent still must not claim compatibility until generated-type evidence and the deploy validator are aligned. | Dependency gate. |
 | Dev deployment docs cite the gate | The chosen deployment runbook names the validator command and states mismatch blocks deploy. | Parent implementation work. |
 
 ## Current Observable Repo Facts
 
 | Fact | Current value |
 |---|---|
+| Closeout dev refresh | `8df64009ab2f0ec2b983c884ae328163fd6cafe0` for `origin/dev` after merging latest dev into this task branch. |
 | Base bundle index hash | `286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b` for `services/control-plane/specs/agora/bundle_index.json`. |
 | Extension bundle index hash | `5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee` for `services/control-plane/specs/agora/bundle_index.v1_1.json`. |
 | Base OpenAPI hash | `4da5ea91923e40c13a9118ee4f784a5d6627e6cb91e4d4712d8fac244912118f` for `services/control-plane/openapi/agora_v1.openapi.yaml`. |
+| v1.1 OpenAPI hash | `16aa660db15a32aaccd63a7f0594abb4339e9ae95afae18353fbee532c2c0749` for `services/control-plane/openapi/agora_v1_1.openapi.yaml`. |
 | Canonical compatibility schema hash | `84c3607195484d09710708c08e7c29821b75d83199376cd5374a2ce0c3ca7827` for `services/control-plane/specs/agora/v2/compatibility_manifest.schema.json`. |
 | Canonical v1.1 capability manifest hash | `6a729d1284ca8f88058a4c301dc67a4c17fd76097190bf020310f4f2cab3db41` for `services/control-plane/specs/agora/v2/capability_manifest_v1_1.json`. |
+| Widget registry hash | `add7f379f4ff1f3c0c0930a566a269897cd497fb22ef53bbdfecb2b1d85c34d4` for `services/control-plane/specs/agora/widget_registry.v1.json`. |
 | Compatibility example seed hash | `479bb05be19fbef93124a5e85e65dbe60e02025444f9bba751c1295cd151ebb6` for the closure-pack example seed. |
-| v1.1 OpenAPI file | `services/control-plane/openapi/agora_v1_1.openapi.yaml` is not present in this repo baseline. |
 | Manifest implementation files | No `docs/contracts/agora/dev-compatibility-manifest.json`, `compatibility-manifest.yaml`, or `scripts/agora_compat_manifest.py` currently exists in this repo. |
 
 These values are evidence for reviewer orientation. This sidecar does not
 promote closure-pack seed files or implement the manifest gate; it records the
-current state after `AG-XR-001A` merged.
+current state after `AG-XR-001A` and later closeout dev-refresh evidence merged.
 
 ## Dependency Map
 
@@ -117,9 +123,10 @@ Durable interpretation:
   complete the deployment validator.
 - `AG-XR-001A` has produced the canonical extension bundle and
   `bundle_index.v1_1.json`; AG-XR-003 still must not mark a manifest
-  `compatible` without remaining OpenAPI/generated-type/deploy evidence.
-- `AG-XR-OPENAPI-001` and `AG-XR-DASH-001` feed the capability/OpenAPI and
-  dashboard-schema facts that the manifest must compare.
+  `compatible` without generated-type and deploy-validator evidence.
+- `AG-XR-OPENAPI-001` and `AG-XR-DASH-001` outputs are now visible on the
+  closeout dev refresh for OpenAPI and widget registry facts; the manifest
+  must still compare them against generated frontend evidence.
 - `AG-XR-002` remains the generated-types predecessor. The manifest should not
   pass when `execute-plans` generated types were built from a different backend
   contract commit.
@@ -150,9 +157,8 @@ Approved downstream stance:
 1. Accept this sidecar if it accurately maps the closure-pack evidence without
    changing canonical/runtime files.
 2. Feed the updated checklist to the parent `AG-XR-003` owner.
-3. Keep the parent task blocked or partially blocked until the remaining
-   predecessor evidence is available, especially v1.1 OpenAPI/generated types
-   and deploy-validator implementation.
+3. Keep the parent task blocked or partially blocked until generated-type
+   evidence and deploy-validator implementation are available.
 4. When parent implementation starts, prefer the closure-pack JSON manifest
    path and hash policy over the older dispatch text unless the parent
    owner/reviewer explicitly records a different decision.
@@ -166,8 +172,8 @@ It maps the new contract-closure compatibility manifest rules to parent
 acceptance checks, without editing canonical schema/OpenAPI/runtime files.
 Parent AG-XR-003 should now treat the canonical v2 compatibility schema,
 closure-pack JSON manifest path, v1.1 hash semantics, exact commit pins, and
-fail-closed deployment gate as the review input, while waiting for remaining
-OpenAPI/generated-type evidence before claiming compatibility.
+fail-closed deployment gate as the review input, while waiting for generated
+type evidence and validator implementation before claiming compatibility.
 ```
 
 ## Verification
@@ -186,7 +192,7 @@ sed -n '1,260p' docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/06
 sed -n '1,240p' docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/compatibility_manifest.schema.json
 sed -n '1,220p' docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/compatibility_manifest.example.json
 sed -n '1,220p' docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/07_dispatch_unblock_matrix_v2.md
-sha256sum services/control-plane/specs/agora/bundle_index.json services/control-plane/specs/agora/bundle_index.v1_1.json services/control-plane/specs/agora/v2/compatibility_manifest.schema.json services/control-plane/specs/agora/v2/capability_manifest_v1_1.json services/control-plane/openapi/agora_v1.openapi.yaml
+sha256sum services/control-plane/specs/agora/bundle_index.json services/control-plane/specs/agora/bundle_index.v1_1.json services/control-plane/specs/agora/v2/compatibility_manifest.schema.json services/control-plane/specs/agora/v2/capability_manifest_v1_1.json services/control-plane/openapi/agora_v1.openapi.yaml services/control-plane/openapi/agora_v1_1.openapi.yaml services/control-plane/specs/agora/widget_registry.v1.json
 find . -path '*dev-compatibility-manifest.json' -o -path '*compatibility-manifest.yaml' -o -path '*agora_compat_manifest.py'
 ```
 
@@ -211,6 +217,11 @@ Results:
   additive v1.1 extension files verified.
 - `test "$(sha256sum ... bundle_index.json)" = "$(jq ... bundle_index.v1_1.json)"`:
   pass; extension index records the current base bundle hash.
+- `sha256sum ... agora_v1_1.openapi.yaml ... widget_registry.v1.json`: pass;
+  refreshed hash values are captured in Current Observable Repo Facts.
+- `find . -path '*dev-compatibility-manifest.json' -o -path
+  '*compatibility-manifest.yaml' -o -path '*agora_compat_manifest.py'`: pass;
+  no manifest implementation file exists in this repo baseline.
 - `git status --short`: task-owned closeout diffs are limited to this support
   packet and the generated task brief.
 - `rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" ...`: pass; no matches.
