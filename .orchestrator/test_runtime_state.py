@@ -99,3 +99,26 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertEqual(state["watchdog"]["safe_mode_until"], "2026-05-18T14:30:00Z")
         self.assertEqual(state["watchdog"]["safe_mode_reason"], "stale_heartbeat")
         self.assertIn("last_safe_mode_observed_until", state["watchdog"])
+
+    def test_load_runtime_state_preserves_worker_worktree_cleanup_summary(self) -> None:
+        last_run = {
+            "at": "2026-06-20T06:59:40Z",
+            "source": "worker_lifecycle",
+            "checked": 25,
+            "removed": 25,
+            "archived": 4,
+            "failed": 0,
+        }
+        self._write_json(
+            self.root / "state.json",
+            {
+                "workers": {},
+                "queue": {"events": {}},
+                "worker_worktree_cleanup": {"last_run": last_run},
+            },
+        )
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+
+        state = runtime_state.load_runtime_state(self.config)
+
+        self.assertEqual(state["worker_worktree_cleanup"]["last_run"], last_run)
