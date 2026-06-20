@@ -8,7 +8,7 @@
 | Parent owner / reviewer | `Codex2` / `Claude` |
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-20` |
-| Status | `ready_for_review` |
+| Status | `review_approved_owner_closeout_ready` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -41,6 +41,7 @@ This packet does not approve, reopen, or implement the parent task.
 |---|---|
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003` | Parent remains blocked waiting for a reviewer decision on `session_type`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-002` | Upstream servant ensure/provision/reconcile is archived done and merged. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | Confirms this sidecar is `review_approved` and returned to Codex for owner finalization. |
 | `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md` | Immediate predecessor packet and current blocker framing. |
 | `services/control-plane/openapi/agora_v1_1.openapi.yaml` | Defines servant session route family and incomplete create schema. |
 | `services/control-plane/specs/agora/capability_manifest.json` | Still lists legacy session prefixes, not `/bff/agora/servant/sessions`. |
@@ -294,21 +295,24 @@ Results:
 - The intended support packet artifact is this file:
   `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md`.
 
-## 13. Reviewer Handoff
+## 13. Reviewer Approval And Owner Closeout
 
 Reviewer: `Codex2`
 
-Please review this support packet for:
+Reviewer approval is recorded in task status:
 
-1. support-only scope compliance
-2. accuracy of the current parent blocker and AG-BE-ID-002 dependency state
-3. correctness of the contract decision matrix
-4. usefulness of the frontend gates for execute-plans
-5. whether the parent absorption gates are specific enough for Codex2/Claude to
-   make the AG-BE-ID-003 implementation decision
-
-Suggested approval command:
-
-```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh approve AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4 "Followup 4 support packet approved; contract decision matrix, frontend gates, and parent absorption gates are accurate and support-only."
+```text
+Followup 4 support packet approved; contract decision matrix, frontend gates,
+and parent absorption gates are accurate and support-only.
 ```
+
+Owner closeout confirmation:
+
+1. Scope remains support-only.
+2. Parent `AG-BE-ID-003` remains blocked on the servant session type contract
+   decision and is not changed by this packet.
+3. Upstream `AG-BE-ID-002` remains archived done and merged.
+4. No canonical truth, OpenAPI, capability manifest, BFF runtime, registry,
+   governance, migration, schema, or execute-plans source file is changed.
+5. This artifact is ready for owner `done` transition after the closeout commit
+   is published through the task PR flow.
