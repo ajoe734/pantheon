@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -115,6 +116,10 @@ function readJson(filePath) {
   } catch {
     return null;
   }
+}
+
+function sha256_12(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 12);
 }
 
 function listFiles(dir) {
@@ -623,14 +628,26 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && item?.side_effect_check?.durable === false
     && item?.side_effect_check?.liveCapitalSideEffects === false
   );
-  const readbackNoPersistence = readbackDryRuns.length >= 2 && readbackDryRuns.every((item) =>
-    item?.error_envelope === true
-    && item?.side_effect_check?.ok === true
-    && item?.side_effect_check?.kind === "readback_not_persisted"
-    && notFoundErrorCodes.has(String(item?.side_effect_check?.error_code || ""))
-    && typeof item?.side_effect_check?.target_id_sha256_12 === "string"
-    && item.side_effect_check.target_id_sha256_12.length > 0
-  );
+  const successDryRunByFamily = new Map(successDryRuns.map((item) => [String(item?.family || ""), item]));
+  const readbackExpectedFamilies = new Map([
+    ["dry-run-strategy-create-readback-not-persisted", "dry-run-strategy-create"],
+    ["dry-run-ranking-formula-create-readback-not-persisted", "dry-run-ranking-formula-create"],
+  ]);
+  const readbackNoPersistence = readbackDryRuns.length >= 2 && readbackDryRuns.every((item) => {
+    const family = String(item?.family || "");
+    const expectedTargetFamily = readbackExpectedFamilies.get(family) || "";
+    const target = successDryRunByFamily.get(expectedTargetFamily);
+    const targetId = target?.extracted?.["data.id"];
+    const targetHash = typeof targetId === "string" && targetId.length > 0 ? sha256_12(targetId) : "";
+    return item?.error_envelope === true
+      && item?.side_effect_check?.ok === true
+      && item?.side_effect_check?.kind === "readback_not_persisted"
+      && item?.side_effect_check?.target_family === expectedTargetFamily
+      && notFoundErrorCodes.has(String(item?.side_effect_check?.error_code || ""))
+      && typeof item?.side_effect_check?.target_id_sha256_12 === "string"
+      && item.side_effect_check.target_id_sha256_12.length > 0
+      && item.side_effect_check.target_id_sha256_12 === targetHash;
+  });
   const dryRunProbeCountMatches = dryRunProbeCount === dryRun.length;
   const dryRunSideEffectProofCount = dryRunSideEffectProofs.length;
   const allDryRunSideEffectProofs = dryRun.length >= 7 && dryRunSideEffectProofCount === dryRun.length;
@@ -717,7 +734,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManTokenPairDistinct,
     note: {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length}`,
-      dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
+      dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
     },
