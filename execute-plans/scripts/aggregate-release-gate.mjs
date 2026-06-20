@@ -458,6 +458,8 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const summaryPassed = total > 0 && failed === 0 && passed === total;
   const baseOk = strict && providedBearer && includesRequired && summaryPassed;
   const rbacProbeCount = Number(summary.rbac_matrix_probes ?? 0);
+  const rbacWriteProbeCount = Number(summary.rbac_write_probes ?? 0);
+  const rbacWriteSummarySideEffectProofCount = Number(summary.rbac_write_side_effect_proofs ?? -1);
   const dryRunProbeCount = Number(summary.dry_run_probes ?? 0);
   const approvalRaceProbeCount = Number(summary.approval_race_probes ?? 0);
   const twoManRaceProbeCount = Number(summary.two_man_race_probes ?? 0);
@@ -472,6 +474,25 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   });
   const dryRunSideEffectProofs = dryRun.filter((item) => item?.side_effect_check?.ok === true);
   const allRbacOk = rbacMatrix.length > 0 && rbacMatrix.every((item) => item?.ok === true);
+  const rbacWrite = rbacMatrix.filter((item) => String(item?.family || "").startsWith("rbac-write-"));
+  const rbacWriteSideEffectProofs = rbacWrite.filter((item) => item?.side_effect_check?.ok === true);
+  const rbacWriteDryRunMetaProofs = rbacWrite.filter((item) =>
+    item?.side_effect_check?.ok === true
+    && item?.side_effect_check?.kind === "rbac_dry_run_write_meta"
+    && item?.side_effect_check?.dryRun === true
+    && item?.side_effect_check?.durable === false
+    && item?.side_effect_check?.liveCapitalSideEffects === false
+    && typeof item?.side_effect_check?.target_marker_sha256_12 === "string"
+    && item.side_effect_check.target_marker_sha256_12.length > 0
+  );
+  const rbacWriteDeniedNoPersistence = rbacWrite.filter((item) =>
+    item?.error_envelope === true
+    && item?.side_effect_check?.ok === true
+    && item?.side_effect_check?.kind === "authorization_rejected_before_persistence"
+    && ["AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"].includes(String(item?.side_effect_check?.error_code || ""))
+    && typeof item?.side_effect_check?.target_marker_sha256_12 === "string"
+    && item.side_effect_check.target_marker_sha256_12.length > 0
+  );
   const allDryRunOk = dryRun.length > 0 && dryRun.every((item) => item?.ok === true);
   const invalidDryRunsEnvelope = invalidDryRuns.length >= 2 && invalidDryRuns.every((item) => item?.error_envelope === true);
   const invalidDryRunsNoPersistence = invalidDryRuns.length >= 2 && invalidDryRuns.every((item) =>
@@ -497,6 +518,13 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const dryRunProbeCountMatches = dryRunProbeCount === dryRun.length;
   const dryRunSideEffectProofCount = dryRunSideEffectProofs.length;
   const allDryRunSideEffectProofs = dryRun.length >= 7 && dryRunSideEffectProofCount === dryRun.length;
+  const rbacWriteSideEffectProofCount = rbacWriteSideEffectProofs.length;
+  const rbacWriteSideEffectProofsOk = rbacWrite.length >= 32
+    && rbacWriteProbeCount === rbacWrite.length
+    && rbacWriteSummarySideEffectProofCount === rbacWrite.length
+    && rbacWriteSideEffectProofCount === rbacWrite.length
+    && rbacWriteDryRunMetaProofs.length >= 16
+    && rbacWriteDeniedNoPersistence.length >= 16;
   const fullRbacMatrix = rbacProbeCount >= 56 && expectedProvidedCases >= 7;
   const distinctProvidedRbacCaseHashCount = new Set(providedRbacCaseHashes).size;
   const distinctProvidedRbac = providedRbacCaseHashes.length === expectedProvidedCases
@@ -526,7 +554,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     providedBearer,
     includesRequired,
     summaryPassed,
-    rbacOk: baseOk && providedRbac && rbacProbeCount > 0 && allRbacOk,
+    rbacOk: baseOk && providedRbac && rbacProbeCount > 0 && allRbacOk && rbacWriteSideEffectProofsOk,
     dryRunOk: baseOk
       && dryRunProbeCount >= 7
       && dryRunProbeCountMatches
@@ -553,7 +581,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManOperatorScoped
       && twoManTokenPair,
     note: {
-      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases}`,
+      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 tokenPair:${twoManTokenPair}`,
