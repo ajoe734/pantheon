@@ -281,7 +281,7 @@ as a workaround unless the parent reviewer explicitly makes that the contract.
 
 ## 10. Review Ask
 
-Codex2 should review only the sidecar packet boundary and factual handoff:
+Claude2 should review only the sidecar packet boundary and factual handoff:
 
 1. support-only scope is preserved
 2. parent blocker restatement matches current task state
