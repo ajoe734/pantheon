@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Support packet ready for Codex review. Scope remains support-only; no canonical/runtime/OpenAPI/frontend implementation changed. FOLLOWUP-13 is archived done, AG-BE-ID-003 followup-3 is archived done, parent AG-FE-ID-001 remains todo, AG-BE-ID-003 remains blocked on the servant session_type contract decision, and AgoraApp.tsx/identity.ts/servant.ts are still missing.
+- Next: Refreshed support packet ready for Codex review. Task branch merged current origin/dev at 95f085da; AG-BE-ID-003 followup-4 is archived done via closeout PR #1897 / merge e51bc8fd, followup-5 is the latest review-pending session-gate packet via PR #1901 / merge 4a6a593d, and AG-XR-003 followup-7 is archived done via PR #1902 / merge 81b17d67 while parent AG-XR-003 remains blocked. Focused validation passed with 35 BFF/OpenClaw tests plus schema bundle, OpenAPI YAML parse, generated types, and scoped diff checks.
 
 ## Summary
 平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
