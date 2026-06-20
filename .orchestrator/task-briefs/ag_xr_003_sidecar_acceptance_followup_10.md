@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-XR-003 acceptance packet and dependency map
-- Status: review
+- Status: review_approved
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Follow-up 10 packet ready: support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-10.md. PR #1915 open with auto-merge. Current origin/dev f13a5b6c. No AG-XR/Agora scope changes since follow-up 9 (4178f919). PR #63 still open/unstable, same CI failure run 27877483718, no new run. verify --allow-pending fails (hash mismatch), deployment-gate fails 6 errors, pytest 1 stale failure 3 pass, contract:drift passes. Parent AG-XR-003 remains blocked pending Claude2 disposition.
+- Next: Follow-up 10 acceptance packet approved. Packet is accurate and complete: PR #63 open/unstable, manifest stale, verify --allow-pending fails hash mismatch, deployment-gate fails 6 errors, 1 stale pytest failure. Scope boundary preserved. Parent AG-XR-003 must remain blocked until PR #63 merges and manifest sanity is resolved. Claude2 explicit disposition: keep parent blocked; no unblock criteria met.
 
 ## Summary
 平行支援 AG-XR-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
