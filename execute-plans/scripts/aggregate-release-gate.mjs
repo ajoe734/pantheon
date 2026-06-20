@@ -260,6 +260,21 @@ function providedBearerPairDistinct(source) {
 
 function approvalRaceDetailProof(race) {
   const results = Array.isArray(race?.results) ? race.results : [];
+  const targetId = String(race?.target_id || "");
+  const targetHash = targetId ? sha256_12(targetId) : "";
+  const expectedPath = targetId ? `/bff/approvals/${encodeURIComponent(targetId)}/decide` : "";
+  const raceTargetLinked = Boolean(
+    targetId
+    && targetHash
+    && race?.target_id_sha256_12 === targetHash
+    && race?.path === expectedPath
+  );
+  const targetLinked = results.filter((result) =>
+    raceTargetLinked
+    && result?.method === "POST"
+    && result?.path === expectedPath
+    && result?.target_id_sha256_12 === targetHash
+  );
   const accepted = results.filter((result) => APPROVAL_RACE_ACCEPTED_STATUSES.has(Number(result?.status ?? 0)));
   const safeErrors = results.filter((result) =>
     Number(result?.status ?? 0) >= 400
@@ -272,10 +287,12 @@ function approvalRaceDetailProof(race) {
     acceptedCount: accepted.length,
     safeErrorCount: safeErrors.length,
     transportFailureCount: transportFailures.length,
+    targetLinkedCount: targetLinked.length,
     ok: results.length === 2
       && transportFailures.length === 0
       && accepted.length === 1
-      && safeErrors.length === 1,
+      && safeErrors.length === 1
+      && targetLinked.length === 2,
   };
 }
 
@@ -286,6 +303,28 @@ function extractedResultValue(result, key) {
 
 function twoManRaceDetailProof(race) {
   const results = Array.isArray(race?.results) ? race.results : [];
+  const targetId = String(race?.target_id || "");
+  const targetHash = targetId ? sha256_12(targetId) : "";
+  const expectedPath = targetId ? `/bff/v5/interventions/${encodeURIComponent(targetId)}/two-man-sign` : "";
+  const raceTargetLinked = Boolean(
+    targetId
+    && targetHash
+    && race?.target_id_sha256_12 === targetHash
+    && race?.path === expectedPath
+  );
+  const targetLinked = results.filter((result) =>
+    raceTargetLinked
+    && result?.method === "POST"
+    && result?.path === expectedPath
+    && result?.target_id_sha256_12 === targetHash
+  );
+  const signatureHashes = targetLinked
+    .map((result) => String(result?.request_signature_id_sha256_12 || ""))
+    .filter(Boolean);
+  const signatureHashCount = new Set(signatureHashes).size;
+  const signaturesLinked = signatureHashes.length === targetLinked.length
+    && signatureHashCount === signatureHashes.length
+    && signatureHashes.length === 2;
   const accepted = results.filter((result) => APPROVAL_RACE_ACCEPTED_STATUSES.has(Number(result?.status ?? 0)));
   const replayed = results.filter((result) => extractedResultValue(result, "meta.idempotency.replayed") === true);
   const commandIds = accepted
@@ -303,12 +342,16 @@ function twoManRaceDetailProof(race) {
     replayedCount: replayed.length,
     commandIdCount: distinctCommandIdCount,
     transportFailureCount: transportFailures.length,
+    targetLinkedCount: targetLinked.length,
+    signatureLinkedCount: signatureHashCount,
     distinctCommandIds,
     ok: results.length === 2
       && transportFailures.length === 0
       && accepted.length === 2
       && replayed.length === 0
-      && distinctCommandIds,
+      && distinctCommandIds
+      && targetLinked.length === 2
+      && signaturesLinked,
   };
 }
 
@@ -739,8 +782,8 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     note: {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
-      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
-      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
+      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 targetLinks:${approvalDetailProof.targetLinkedCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
+      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 targetLinks:${twoManDetailProof.targetLinkedCount}/2 signatureLinks:${twoManDetailProof.signatureLinkedCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
     },
     missingStatus: missingEvidenceStatus(step.status),
     missingNote: step.outcome
@@ -800,17 +843,49 @@ function analyzeSseSmoke(stepOutcomes) {
   const reconnectExpectedEventIds = Array.isArray(bearerReconnect?.expected_event_ids)
     ? bearerReconnect.expected_event_ids.map((eventId) => String(eventId)).filter(Boolean)
     : [];
+  const reconnectCursorEventIds = Array.isArray(bearerReconnect?.cursor_event_ids)
+    ? bearerReconnect.cursor_event_ids.map((eventId) => String(eventId)).filter(Boolean)
+    : [];
   const reconnectObservedUniqueCount = new Set(reconnectObservedEventIds).size;
   const reconnectObservedSequenceOk = reconnectObservedEventIds.length >= minReconnectAttempts
     && reconnectObservedUniqueCount === reconnectObservedEventIds.length
     && reconnectExpectedEventIds.length >= minReconnectAttempts
     && reconnectExpectedEventIds.slice(0, reconnectObservedEventIds.length).join("\n") === reconnectObservedEventIds.join("\n");
+  const sseChannel = typeof json?.channel === "string" ? json.channel : "";
+  const reconnectAttemptLineageOk = reconnectAttemptDetails.length >= minReconnectAttempts
+    && reconnectCursorEventIds.length >= minReconnectAttempts
+    && reconnectAttemptDetails.every((attempt, index) => {
+      const cursor = reconnectCursorEventIds[index] || "";
+      const expected = reconnectExpectedEventIds[index] || "";
+      const observed = reconnectObservedEventIds[index] || "";
+      const requestHeaders = attempt?.request_headers && typeof attempt.request_headers === "object" ? attempt.request_headers : {};
+      const responseHeaders = attempt?.response_headers && typeof attempt.response_headers === "object" ? attempt.response_headers : {};
+      const firstEvent = attempt?.first_event && typeof attempt.first_event === "object" ? attempt.first_event : {};
+      const firstEventData = firstEvent?.data && typeof firstEvent.data === "object" ? firstEvent.data : {};
+      const shapeChecks = firstEvent?.shape_checks && typeof firstEvent.shape_checks === "object" ? firstEvent.shape_checks : {};
+      return Number(attempt?.attempt) === index + 1
+        && typeof attempt?.cursor_event_id === "string"
+        && attempt.cursor_event_id === cursor
+        && (index === 0 || cursor === reconnectExpectedEventIds[index - 1])
+        && requestHeaders["Last-Event-ID"] === cursor
+        && responseHeaders["X-SSE-Channel"] === sseChannel
+        && responseHeaders["X-SSE-Replay-Supported"] === "true"
+        && attempt?.expected_replayed_event_id === expected
+        && attempt?.observed_replayed_event_id === observed
+        && observed === expected
+        && firstEvent?.id === observed
+        && firstEventData?.id === observed
+        && shapeChecks?.id_line_matches_data_id === true
+        && shapeChecks?.event_line_matches_data_type === true
+        && shapeChecks?.data_json_parse_ok === true;
+    });
   const reconnectOk = bearerReconnect?.ok === true
     && reconnectAttempts >= minReconnectAttempts
     && bearerReconnect?.cursors_advanced === true
     && reconnectDuplicateEventIds.length === 0
     && reconnectMissingExpected.length === 0
     && reconnectAttemptDetailsOk
+    && reconnectAttemptLineageOk
     && reconnectObservedSequenceOk;
   const strict = json?.strict_live_evidence === true;
   const summaryPassed = json?.summary?.passed === true;
@@ -839,6 +914,7 @@ function analyzeSseSmoke(stepOutcomes) {
     reconnectDuplicateEventIds,
     reconnectMissingExpected,
     reconnectAttemptDetailsOk,
+    reconnectAttemptLineageOk,
     reconnectObservedEventIds,
     reconnectObservedSequenceOk,
     missingStatus: missingEvidenceStatus(step.status),
@@ -907,7 +983,7 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth) {
   const sseStrictOk = sseSmoke.exists && sseSmoke.strict && sseSmoke.summaryPassed && sseSmoke.soakOk;
   const sseStatus = sseSmoke.exists ? sseStrictOk ? "pass" : "fail" : sseSmoke.missingStatus;
   const sseNote = sseSmoke.exists
-    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} attemptDetails:${sseSmoke.reconnectAttemptDetailsOk} observed:${sseSmoke.reconnectObservedEventIds.length}/${sseSmoke.minReconnectAttempts} observedSequence:${sseSmoke.reconnectObservedSequenceOk} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
+    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} attemptDetails:${sseSmoke.reconnectAttemptDetailsOk} attemptLineage:${sseSmoke.reconnectAttemptLineageOk} observed:${sseSmoke.reconnectObservedEventIds.length}/${sseSmoke.minReconnectAttempts} observedSequence:${sseSmoke.reconnectObservedSequenceOk} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
     : sseSmoke.missingNote;
   const strictAuthStatus = (condition) => strictAuth.exists ? condition ? "pass" : "fail" : strictAuth.missingStatus;
   const strictAuthOwner = (condition) => strictAuth.exists && condition ? "" : GATE_OWNERS[3];

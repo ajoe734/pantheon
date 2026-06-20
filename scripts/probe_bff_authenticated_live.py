@@ -800,6 +800,9 @@ def build_approval_race_results(
         raise RuntimeError("approval race probe threads did not finish before timeout")
 
     race_results = [result for result in results if result is not None]
+    target_hash = sha256_12(target_id)
+    for result in race_results:
+        result["target_id_sha256_12"] = target_hash
     accepted = [
         result
         for result in race_results
@@ -827,6 +830,7 @@ def build_approval_race_results(
         "path": path,
         "status": "/".join(str(result.get("status") or 0) for result in race_results),
         "target_id": target_id,
+        "target_id_sha256_12": target_hash,
         "duration_ms": round((time.time() - started) * 1000),
         "ok": bounded,
         "bounded": bounded,
@@ -853,12 +857,14 @@ def build_two_man_race_results(
 
     token_a, token_b, token_source = approval_race_tokens(args, token)
     path = f"/bff/v5/interventions/{urllib.parse.quote(target_id, safe='')}/two-man-sign"
+    target_hash = sha256_12(target_id)
     barrier = threading.Barrier(2)
     results: list[dict[str, Any] | None] = [None, None]
     stamp = int(time.time())
 
     def run_one(index: int, bearer: str, actor_label: str) -> None:
         barrier.wait(timeout=timeout)
+        signature_id = f"tms-live-{target_id}-{actor_label}-{stamp}"
         result = request_json(
             base_url=base_url,
             probe=Probe(
@@ -866,7 +872,7 @@ def build_two_man_race_results(
                 path,
                 "two-man-race",
                 body={
-                    "twoManSignatureId": f"tms-live-{target_id}-{actor_label}-{stamp}",
+                    "twoManSignatureId": signature_id,
                     "command": "RemediateSentinelIntervention",
                     "target": {"type": "SentinelIntervention", "id": target_id},
                     "signerOperatorIds": ["live-two-man-primary", "live-two-man-secondary"],
@@ -885,6 +891,8 @@ def build_two_man_race_results(
             idempotency_prefix=f"{idempotency_prefix}-two-man-race",
         )
         result["actor_label"] = actor_label
+        result["target_id_sha256_12"] = target_hash
+        result["request_signature_id_sha256_12"] = sha256_12(signature_id)
         results[index] = result
 
     threads = [
@@ -933,6 +941,7 @@ def build_two_man_race_results(
         "path": path,
         "status": "/".join(str(result.get("status") or 0) for result in race_results),
         "target_id": target_id,
+        "target_id_sha256_12": target_hash,
         "duration_ms": round((time.time() - started) * 1000),
         "ok": operator_scoped,
         "operator_scoped": operator_scoped,
