@@ -14,7 +14,12 @@
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
   "coordination": {
-    "enabled": true
+    "enabled": true,
+    "repositories": {
+      "execute_plans": {
+        "local_path": "./execute-plans"
+      }
+    }
   },
   "permission_broker": {
     "allowed_workspace_roots": [
