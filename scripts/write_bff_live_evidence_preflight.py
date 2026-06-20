@@ -90,7 +90,19 @@ def empty_rbac_matrix() -> dict[str, Any]:
         "missing_labels": list(RBAC_REQUIRED_LABELS),
         "provided_cases": 0,
         "expected_cases": len(RBAC_REQUIRED_LABELS),
+        "distinct_bearers": False,
+        "distinct_bearer_count": 0,
+        "duplicate_label_groups": [],
     }
+
+
+def duplicate_bearer_label_groups(tokens_by_label: dict[str, str]) -> list[list[str]]:
+    labels_by_token: dict[str, list[str]] = {}
+    for label in RBAC_REQUIRED_LABELS:
+        token = tokens_by_label.get(label, "")
+        if token:
+            labels_by_token.setdefault(token, []).append(label)
+    return [labels for labels in labels_by_token.values() if len(labels) > 1]
 
 
 def inspect_rbac_tokens_json(raw: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -107,12 +119,14 @@ def inspect_rbac_tokens_json(raw: str) -> tuple[dict[str, Any], list[dict[str, s
             {"name": "PANTHEON_BFF_RBAC_TOKENS_JSON", "reason": "must be an object keyed by role label"}
         ]
 
-    present_labels = [
-        label
+    tokens_by_label = {
+        label: rbac_token_value(parsed.get(label))
         for label in RBAC_REQUIRED_LABELS
-        if rbac_token_value(parsed.get(label))
-    ]
+    }
+    present_labels = [label for label in RBAC_REQUIRED_LABELS if tokens_by_label[label]]
     missing_labels = [label for label in RBAC_REQUIRED_LABELS if label not in present_labels]
+    duplicate_groups = duplicate_bearer_label_groups(tokens_by_label)
+    distinct_count = len({tokens_by_label[label] for label in present_labels})
     invalid = []
     if missing_labels:
         invalid.append(
@@ -121,12 +135,23 @@ def inspect_rbac_tokens_json(raw: str) -> tuple[dict[str, Any], list[dict[str, s
                 "reason": "missing bearer tokens for labels: " + ", ".join(missing_labels),
             }
         )
+    if duplicate_groups:
+        invalid.append(
+            {
+                "name": "PANTHEON_BFF_RBAC_TOKENS_JSON",
+                "reason": "bearer tokens must be distinct per RBAC label: "
+                + "; ".join("/".join(group) for group in duplicate_groups),
+            }
+        )
     return {
         "required_labels": list(RBAC_REQUIRED_LABELS),
         "present_labels": present_labels,
         "missing_labels": missing_labels,
         "provided_cases": len(present_labels),
         "expected_cases": len(RBAC_REQUIRED_LABELS),
+        "distinct_bearers": not duplicate_groups and len(present_labels) == len(RBAC_REQUIRED_LABELS),
+        "distinct_bearer_count": distinct_count,
+        "duplicate_label_groups": duplicate_groups,
     }, invalid
 
 

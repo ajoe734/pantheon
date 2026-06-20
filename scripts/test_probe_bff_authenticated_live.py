@@ -187,6 +187,64 @@ def test_build_dry_run_results_attaches_per_probe_side_effect_proofs(monkeypatch
     assert all("target_id" not in check for check in readback_checks)
 
 
+def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch) -> None:
+    probe = _load_probe_module()
+    labels = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
+    monkeypatch.setenv(
+        "PANTHEON_BFF_RBAC_TOKENS_JSON",
+        json.dumps({label: f"{label}-provided-secret" for label in labels}),
+    )
+
+    def fake_request_json(*, base_url: str, probe: Any, token: str | None, timeout: float, idempotency_prefix: str):
+        assert base_url == "https://bff.example.test"
+        assert timeout == 4.0
+        assert idempotency_prefix == "idem-rbac"
+        result = {
+            "family": probe.family,
+            "method": probe.method,
+            "path": probe.path,
+            "status": 403 if probe.expect_error_envelope else 200,
+            "ok": True,
+            "error_envelope": probe.expect_error_envelope,
+        }
+        if probe.method == "POST" and probe.expect_error_envelope:
+            result["error_code"] = "FORBIDDEN"
+        elif probe.method == "POST":
+            result["extracted"] = {
+                "meta.dryRun": True,
+                "meta.durable": False,
+                "meta.liveCapitalSideEffects": False,
+            }
+        return result
+
+    monkeypatch.setattr(probe, "request_json", fake_request_json)
+    args = argparse.Namespace(
+        subject="op-live-smoke",
+        issuer="pantheon-dev",
+        audience="bff-operators",
+        ttl_seconds=3600,
+        require_provided_rbac_tokens=True,
+    )
+
+    results, _source = probe.build_rbac_matrix_results(
+        args=args,
+        base_url="https://bff.example.test",
+        timeout=4.0,
+        idempotency_prefix="idem-rbac",
+    )
+
+    write_results = [result for result in results if result["family"].startswith("rbac-write-")]
+    assert len(results) == 56
+    assert len(write_results) == 32
+    assert all(result["side_effect_check"]["ok"] is True for result in write_results)
+    assert [result["side_effect_check"]["kind"] for result in write_results].count("rbac_dry_run_write_meta") == 16
+    assert [result["side_effect_check"]["kind"] for result in write_results].count(
+        "authorization_rejected_before_persistence"
+    ) == 16
+    assert all("target_marker_sha256_12" in result["side_effect_check"] for result in write_results)
+    assert "live-rbac-" not in json.dumps([result["side_effect_check"] for result in write_results])
+
+
 def test_make_rbac_tokens_mints_full_matrix_without_leaking_tokens(monkeypatch) -> None:
     probe = _load_probe_module()
     monkeypatch.delenv("PANTHEON_BFF_RBAC_TOKENS_JSON", raising=False)
@@ -208,6 +266,53 @@ def test_make_rbac_tokens_mints_full_matrix_without_leaking_tokens(monkeypatch) 
     assert source["cases"]["empty"]["roles"] == []
     assert source["cases"]["unknown"]["roles"] == ["auditor"]
     assert all(str(token) not in json.dumps(source) for token in tokens.values() if token)
+
+
+def test_make_rbac_tokens_accepts_distinct_provided_bearer_matrix_without_leaking_tokens(monkeypatch) -> None:
+    probe = _load_probe_module()
+    labels = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
+    rbac_tokens = {label: f"{label}-provided-secret" for label in labels}
+    monkeypatch.setenv("PANTHEON_BFF_RBAC_TOKENS_JSON", json.dumps(rbac_tokens))
+    args = argparse.Namespace(
+        subject="op-live-smoke",
+        issuer="pantheon-dev",
+        audience="bff-operators",
+        ttl_seconds=3600,
+        require_provided_rbac_tokens=True,
+    )
+
+    tokens, source = probe.make_rbac_tokens(args)
+
+    assert tokens["anonymous"] is None
+    assert source["provided_bearer_count"] == len(labels)
+    assert source["distinct_provided_bearer_count"] == len(labels)
+    assert source["distinct_provided_bearers"] is True
+    assert source["duplicate_bearer_label_groups"] == []
+    assert len({source["cases"][label]["sha256_12"] for label in labels}) == len(labels)
+    assert all(str(token) not in json.dumps(source) for token in rbac_tokens.values())
+
+
+def test_make_rbac_tokens_rejects_duplicate_provided_bearers_for_strict_matrix(monkeypatch) -> None:
+    probe = _load_probe_module()
+    labels = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
+    rbac_tokens = {label: f"{label}-provided-secret" for label in labels}
+    rbac_tokens["operator"] = rbac_tokens["viewer"]
+    monkeypatch.setenv("PANTHEON_BFF_RBAC_TOKENS_JSON", json.dumps(rbac_tokens))
+    args = argparse.Namespace(
+        subject="op-live-smoke",
+        issuer="pantheon-dev",
+        audience="bff-operators",
+        ttl_seconds=3600,
+        require_provided_rbac_tokens=True,
+    )
+
+    try:
+        probe.make_rbac_tokens(args)
+    except SystemExit as exc:
+        assert "distinct bearer tokens per RBAC label" in str(exc)
+        assert "viewer/operator" in str(exc)
+    else:
+        raise AssertionError("strict RBAC matrix must reject reused bearer tokens")
 
 
 def test_strict_live_evidence_forces_real_bearer_matrix_and_race_tokens(monkeypatch) -> None:

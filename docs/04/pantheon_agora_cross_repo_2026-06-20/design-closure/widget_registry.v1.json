@@ -1,0 +1,1888 @@
+{
+  "registry_version": "widget_registry.v1",
+  "schema_version": "1.0.0",
+  "created_at": "2026-06-20T00:00:00Z",
+  "entries": [
+    {
+      "widget_type": "strategy_status_summary",
+      "display_name": "策略狀態摘要",
+      "description": "版本、完整度、研究、操盤狀態",
+      "category": "generic",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "metric"
+      ],
+      "allowed_data_sources": [
+        "agora.strategy.summary"
+      ],
+      "required_fields": [
+        "strategy_id",
+        "strategy_version_id",
+        "status"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_strategy",
+        "open_evidence",
+        "filter_workspace",
+        "cross_highlight",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "strategy_completeness_map",
+      "display_name": "策略完整度",
+      "description": "已確認、推定、缺漏、衝突",
+      "category": "generic",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.strategy.completeness"
+      ],
+      "required_fields": [
+        "category",
+        "state"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_strategy",
+        "request_more_research",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "research_progress",
+      "display_name": "研究進度",
+      "description": "研究、諮詢、回測任務進度",
+      "category": "research",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "timeline",
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.research.run_summary"
+      ],
+      "required_fields": [
+        "run_id",
+        "status",
+        "purpose"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_research_run",
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "candidate_funnel",
+      "display_name": "候選漏斗",
+      "description": "候選生命週期分布",
+      "category": "generic",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "sankey",
+        "bar"
+      ],
+      "allowed_data_sources": [
+        "agora.candidate.members"
+      ],
+      "required_fields": [
+        "status",
+        "count"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "filter_workspace",
+        "open_candidate",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "candidate_review",
+      "status": "active"
+    },
+    {
+      "widget_type": "candidate_ranking_table",
+      "display_name": "候選排名",
+      "description": "候選分數、信賴值、驅動與懲罰",
+      "category": "generic",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.candidate.members",
+        "agora.candidate.score_components"
+      ],
+      "required_fields": [
+        "candidate_id",
+        "instrument",
+        "effective_score"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "add_to_monitoring",
+        "park_candidate",
+        "request_more_research",
+        "send_to_shadow",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "candidate_review",
+      "status": "active"
+    },
+    {
+      "widget_type": "signal_decision_queue",
+      "display_name": "交易裁示隊列",
+      "description": "接近進場、加碼、減碼、出場事件",
+      "category": "generic",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.trading.events"
+      ],
+      "required_fields": [
+        "event_id",
+        "event_type",
+        "instrument",
+        "status"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_strategy",
+        "open_position",
+        "send_to_shadow",
+        "request_more_research",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "monitoring",
+      "status": "active"
+    },
+    {
+      "widget_type": "position_action_queue",
+      "display_name": "部位動作隊列",
+      "description": "持倉待裁示與風險事件",
+      "category": "generic",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.positions.summary",
+        "agora.trading.events"
+      ],
+      "required_fields": [
+        "position_id",
+        "instrument",
+        "action_type"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_position",
+        "send_to_shadow",
+        "create_journal_note",
+        "request_widget_revision"
+      ],
+      "sensitivity": "broker_sensitive",
+      "phase": "position_monitoring",
+      "status": "active"
+    },
+    {
+      "widget_type": "risk_invalidation_panel",
+      "display_name": "風險與失效條件",
+      "description": "策略失效、風險條件與觸發",
+      "category": "generic",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table",
+        "gauge"
+      ],
+      "allowed_data_sources": [
+        "agora.strategy.summary",
+        "agora.trading.events"
+      ],
+      "required_fields": [
+        "rule_id",
+        "status",
+        "severity"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_strategy",
+        "open_evidence",
+        "request_more_research",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "servant_assessment",
+      "display_name": "交易僕人評斷",
+      "description": "僕人評斷、信賴值、下一步",
+      "category": "generic",
+      "renderer": "builtin",
+      "allowed_chart_kinds": [
+        "metric",
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.strategy.summary",
+        "agora.research.evidence_refs"
+      ],
+      "required_fields": [
+        "assessment",
+        "confidence"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "request_more_research",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "evidence_trace",
+      "display_name": "證據追蹤",
+      "description": "來源、coverage、限制與引用",
+      "category": "generic",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.research.evidence_refs"
+      ],
+      "required_fields": [
+        "evidence_id",
+        "evidence_type",
+        "status"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "backtest_summary",
+      "display_name": "回測摘要",
+      "description": "回測與OOS核心指標",
+      "category": "performance",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "metric",
+        "bar"
+      ],
+      "allowed_data_sources": [
+        "agora.research.run_summary"
+      ],
+      "required_fields": [
+        "metric",
+        "value"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_research_run",
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "version_comparison",
+      "display_name": "版本比較",
+      "description": "策略版本前後差異",
+      "category": "performance",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table",
+        "bar"
+      ],
+      "allowed_data_sources": [
+        "agora.strategy.summary",
+        "agora.research.run_summary"
+      ],
+      "required_fields": [
+        "version_id",
+        "metric",
+        "value"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_strategy",
+        "open_research_run",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "shadow_scoreboard",
+      "display_name": "影子對照",
+      "description": "人類、基礎策略、僕人、committee對照",
+      "category": "performance",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table",
+        "bar"
+      ],
+      "allowed_data_sources": [
+        "agora.shadow.outcomes"
+      ],
+      "required_fields": [
+        "arm",
+        "metric",
+        "value"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_shadow_record",
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "post_trade_review",
+      "status": "active"
+    },
+    {
+      "widget_type": "performance_attribution",
+      "display_name": "績效歸因",
+      "description": "Alpha、配置、執行、人工干預歸因",
+      "category": "performance",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "stacked_bar",
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.shadow.outcomes",
+        "agora.interventions.history"
+      ],
+      "required_fields": [
+        "source",
+        "contribution"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_shadow_record",
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "post_trade_review",
+      "status": "active"
+    },
+    {
+      "widget_type": "winner_branch_scoreboard",
+      "display_name": "贏家分點排名",
+      "description": "分點綜合排名與樣本",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.branch_profitability",
+        "winner_branch.score_breakdown"
+      ],
+      "required_fields": [
+        "branch_id",
+        "effective_score",
+        "sample_count"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "branch_profitability_table",
+      "display_name": "分點歷史績效",
+      "description": "分點 round-trip 獲利與穩定性",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.branch_profitability"
+      ],
+      "required_fields": [
+        "branch_id",
+        "net_return",
+        "win_rate"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "filter_workspace",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "branch_accumulation_heatmap",
+      "display_name": "分點吸貨熱圖",
+      "description": "分點×日期買賣強度",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "heatmap"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.branch_flow_daily"
+      ],
+      "required_fields": [
+        "branch_id",
+        "trade_date",
+        "net_value"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "filter_workspace",
+        "open_candidate",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "branch_flow_price_overlay",
+      "display_name": "價格與分點流量",
+      "description": "價格與累積分點流量",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "line",
+        "area"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.branch_flow_daily",
+        "market.ohlcv"
+      ],
+      "required_fields": [
+        "trade_date",
+        "close",
+        "cumulative_net_value"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "cross_highlight",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "related_branch_network",
+      "display_name": "關聯分點網路",
+      "description": "關聯分點反向流與同券商群組",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "network"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.related_branch_flow"
+      ],
+      "required_fields": [
+        "source_branch",
+        "target_branch",
+        "net_value"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "filter_workspace",
+        "request_widget_revision"
+      ],
+      "sensitivity": "restricted",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "branch_migration_sankey",
+      "display_name": "分點遷移",
+      "description": "資金在分點間遷移",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "sankey"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.related_branch_flow"
+      ],
+      "required_fields": [
+        "source_branch",
+        "target_branch",
+        "flow_value"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "filter_workspace",
+        "request_widget_revision"
+      ],
+      "sensitivity": "restricted",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "insider_branch_probability_graph",
+      "display_name": "關係人—分點概率圖",
+      "description": "公開資料統計關聯概率映射",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "network"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.identity_probability"
+      ],
+      "required_fields": [
+        "party_id",
+        "branch_id",
+        "probability"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "filter_workspace",
+        "request_widget_revision"
+      ],
+      "sensitivity": "restricted",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "event_lead_timeline",
+      "display_name": "事件領先時間軸",
+      "description": "異常交易與公開事件時間關係",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "timeline"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.event_lead",
+        "market.corporate_events"
+      ],
+      "required_fields": [
+        "event_date",
+        "abnormal_activity_date",
+        "lead_days"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "filter_workspace",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "event_lead_distribution",
+      "display_name": "事件領先分布",
+      "description": "lead days與後續表現分布",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "bar",
+        "scatter"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.event_lead"
+      ],
+      "required_fields": [
+        "lead_days",
+        "forward_return"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "filter_workspace",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "winner_branch_score_breakdown",
+      "display_name": "分點分數拆解",
+      "description": "分數 components 與 penalties",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "bar",
+        "table"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.score_breakdown"
+      ],
+      "required_fields": [
+        "component",
+        "contribution"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "expected_value_distribution",
+      "display_name": "機率與EV",
+      "description": "機率、payoff、EV與信賴值",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "scatter",
+        "table"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.score_breakdown"
+      ],
+      "required_fields": [
+        "probability",
+        "expected_value",
+        "confidence"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "send_to_shadow",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "position_pyramid_plan",
+      "display_name": "部位與加碼方案",
+      "description": "初始部位、加碼、減碼與風險",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.strategy.summary"
+      ],
+      "required_fields": [
+        "stage",
+        "weight",
+        "condition"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_strategy",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "position_monitoring",
+      "status": "active"
+    },
+    {
+      "widget_type": "confidence_decomposition",
+      "display_name": "信賴值拆解",
+      "description": "identity/data/event/model confidence",
+      "category": "winner_branch",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "gauge",
+        "bar"
+      ],
+      "allowed_data_sources": [
+        "winner_branch.score_breakdown"
+      ],
+      "required_fields": [
+        "confidence_type",
+        "value"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "supply_chain_graph",
+      "display_name": "供應鏈位置圖",
+      "description": "公司與產業角色關係",
+      "category": "industry",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "network"
+      ],
+      "allowed_data_sources": [
+        "industry.supply_chain"
+      ],
+      "required_fields": [
+        "source",
+        "target",
+        "relation"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "filter_workspace",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "peer_laggard_scatter",
+      "display_name": "同業落後散點",
+      "description": "相似度×漲幅落後×流動性",
+      "category": "industry",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "scatter"
+      ],
+      "allowed_data_sources": [
+        "industry.peer_metrics"
+      ],
+      "required_fields": [
+        "similarity_score",
+        "price_lag_score",
+        "liquidity_score"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "add_to_monitoring",
+        "send_to_shadow",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "relative_return_matrix",
+      "display_name": "相對報酬矩陣",
+      "description": "同族群多期相對報酬",
+      "category": "industry",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "heatmap",
+        "table"
+      ],
+      "allowed_data_sources": [
+        "market.relative_returns"
+      ],
+      "required_fields": [
+        "instrument",
+        "window",
+        "relative_return"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "filter_workspace",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "catalyst_timeline",
+      "display_name": "催化事件時間軸",
+      "description": "財報、法說、產品與產業事件",
+      "category": "industry",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "timeline"
+      ],
+      "allowed_data_sources": [
+        "market.news_catalysts",
+        "market.corporate_events"
+      ],
+      "required_fields": [
+        "event_date",
+        "event_type",
+        "instrument"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "create_journal_note",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "candlestick_setup",
+      "display_name": "技術型態",
+      "description": "K線、量能、入出場與失效",
+      "category": "technical",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "candlestick"
+      ],
+      "allowed_data_sources": [
+        "market.ohlcv"
+      ],
+      "required_fields": [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "send_to_shadow",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "breakout_candidate_queue",
+      "display_name": "突破候選",
+      "description": "接近突破、確認與失敗隊列",
+      "category": "technical",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "table"
+      ],
+      "allowed_data_sources": [
+        "agora.candidate.members",
+        "market.ohlcv"
+      ],
+      "required_fields": [
+        "instrument",
+        "distance_to_trigger",
+        "status"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "add_to_monitoring",
+        "send_to_shadow",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "volatility_regime",
+      "display_name": "波動 regime",
+      "description": "波動與市場狀態",
+      "category": "technical",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "line",
+        "area",
+        "heatmap"
+      ],
+      "allowed_data_sources": [
+        "stats.regime",
+        "market.ohlcv"
+      ],
+      "required_fields": [
+        "time",
+        "regime_probability"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "filter_workspace",
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "spread_zscore",
+      "display_name": "價差Z-score",
+      "description": "配對價差、z-score與 bands",
+      "category": "stat_arb",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "line"
+      ],
+      "allowed_data_sources": [
+        "stats.cointegration"
+      ],
+      "required_fields": [
+        "time",
+        "spread",
+        "zscore"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_strategy",
+        "send_to_shadow",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "cointegration_stability",
+      "display_name": "共整合穩定性",
+      "description": "rolling p-value、half-life與breaks",
+      "category": "stat_arb",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "line",
+        "heatmap"
+      ],
+      "allowed_data_sources": [
+        "stats.cointegration"
+      ],
+      "required_fields": [
+        "time",
+        "p_value",
+        "half_life"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "request_more_research",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "regime_probability",
+      "display_name": "Regime機率",
+      "description": "市場狀態機率",
+      "category": "stat_arb",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "area",
+        "line"
+      ],
+      "allowed_data_sources": [
+        "stats.regime"
+      ],
+      "required_fields": [
+        "time",
+        "probability"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "filter_workspace",
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "volatility_surface",
+      "display_name": "波動率曲面",
+      "description": "strike×maturity implied vol",
+      "category": "options",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "heatmap"
+      ],
+      "allowed_data_sources": [
+        "options.vol_surface"
+      ],
+      "required_fields": [
+        "strike",
+        "maturity",
+        "implied_vol"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_evidence",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "greeks_risk_grid",
+      "display_name": "Greeks風險",
+      "description": "Delta/Gamma/Vega/Theta/Rho",
+      "category": "options",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "heatmap",
+        "table"
+      ],
+      "allowed_data_sources": [
+        "options.greeks"
+      ],
+      "required_fields": [
+        "instrument",
+        "greek",
+        "value"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_position",
+        "request_widget_revision"
+      ],
+      "sensitivity": "broker_sensitive",
+      "phase": "position_monitoring",
+      "status": "active"
+    },
+    {
+      "widget_type": "liquidity_capacity",
+      "display_name": "流動性與容量",
+      "description": "容量、成交占比、承接量",
+      "category": "execution",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "bar",
+        "table"
+      ],
+      "allowed_data_sources": [
+        "market.liquidity",
+        "execution.slippage_capacity"
+      ],
+      "required_fields": [
+        "instrument",
+        "capacity",
+        "participation"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_candidate",
+        "open_position",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "slippage_impact",
+      "display_name": "滑價與市場衝擊",
+      "description": "部位大小與滑價／衝擊",
+      "category": "execution",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "line",
+        "scatter"
+      ],
+      "allowed_data_sources": [
+        "execution.slippage_capacity"
+      ],
+      "required_fields": [
+        "size",
+        "slippage",
+        "impact"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_strategy",
+        "open_position",
+        "request_widget_revision"
+      ],
+      "sensitivity": "user_private",
+      "phase": "any",
+      "status": "active"
+    },
+    {
+      "widget_type": "execution_schedule",
+      "display_name": "執行排程",
+      "description": "分批執行與預估成本",
+      "category": "execution",
+      "renderer": "chart_spec",
+      "allowed_chart_kinds": [
+        "timeline",
+        "table"
+      ],
+      "allowed_data_sources": [
+        "execution.slippage_capacity"
+      ],
+      "required_fields": [
+        "time_bucket",
+        "target_qty",
+        "estimated_cost"
+      ],
+      "optional_fields": [],
+      "allowed_transforms": [
+        "filter",
+        "sort",
+        "top_k",
+        "aggregate",
+        "window",
+        "rolling_mean",
+        "percent_change",
+        "rank",
+        "percentile",
+        "normalize",
+        "winsorize",
+        "zscore",
+        "bucket",
+        "time_bucket",
+        "join_by_key"
+      ],
+      "allowed_interactions": [
+        "open_position",
+        "request_widget_revision"
+      ],
+      "sensitivity": "broker_sensitive",
+      "phase": "position_monitoring",
+      "status": "active"
+    }
+  ]
+}

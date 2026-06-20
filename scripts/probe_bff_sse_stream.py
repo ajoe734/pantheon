@@ -38,7 +38,7 @@ DEFAULT_CHANNEL = "approval"
 DEFAULT_COOKIE_NAME = "pantheon_session"
 STRICT_LIVE_SOAK_MIN_SECONDS = 75.0
 STRICT_LIVE_SOAK_MIN_HEARTBEATS = 1
-STRICT_LIVE_MIN_RECONNECT_ATTEMPTS = 2
+STRICT_LIVE_MIN_RECONNECT_ATTEMPTS = 5
 SSE_HEADER_KEYS = (
     "Content-Type",
     "Cache-Control",
@@ -757,6 +757,11 @@ def apply_strict_live_evidence(args: argparse.Namespace) -> None:
             "--strict-live-evidence requires "
             f"--soak-min-heartbeats >= {STRICT_LIVE_SOAK_MIN_HEARTBEATS}"
         )
+    if args.reconnect_attempts < STRICT_LIVE_MIN_RECONNECT_ATTEMPTS:
+        raise SystemExit(
+            "--strict-live-evidence requires "
+            f"--reconnect-attempts >= {STRICT_LIVE_MIN_RECONNECT_ATTEMPTS}"
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -778,12 +783,20 @@ def parse_args() -> argparse.Namespace:
         help="Optional long-running SSE soak duration. Use >=35s to observe server heartbeat.",
     )
     parser.add_argument("--soak-min-heartbeats", type=int, default=1)
+    parser.add_argument(
+        "--reconnect-attempts",
+        type=int,
+        default=STRICT_LIVE_MIN_RECONNECT_ATTEMPTS,
+        help="Number of consecutive Last-Event-ID reconnect replay attempts to prove.",
+    )
     parser.add_argument("--strict-live-evidence", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.reconnect_attempts < 1:
+        raise SystemExit("--reconnect-attempts must be >= 1")
     apply_strict_live_evidence(args)
     base_url = args.base_url.rstrip("/")
     token, auth_source = make_token(args)
@@ -791,35 +804,24 @@ def main() -> int:
     run_id = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     missing_event_id = f"evt-{TASK_ID.lower()}-missing-{run_id}"
 
-    first_publish = publish_event(
-        base_url=base_url,
-        token=token,
-        timeout=args.timeout,
-        channel=args.channel,
-        event_type="approval.created",
-        run_id=run_id,
-        label="first",
-    )
-    second_publish = publish_event(
-        base_url=base_url,
-        token=token,
-        timeout=args.timeout,
-        channel=args.channel,
-        event_type="approval.decided",
-        run_id=run_id,
-        label="second",
-    )
-    third_publish = publish_event(
-        base_url=base_url,
-        token=token,
-        timeout=args.timeout,
-        channel=args.channel,
-        event_type="approval.updated",
-        run_id=run_id,
-        label="third",
-    )
+    seed_event_types = ("approval.created", "approval.decided", "approval.updated")
+    seed_labels = ("first", "second", "third")
+    seed_event_count = max(3, args.reconnect_attempts + 1)
+    published_events = [
+        publish_event(
+            base_url=base_url,
+            token=token,
+            timeout=args.timeout,
+            channel=args.channel,
+            event_type=seed_event_types[index % len(seed_event_types)],
+            run_id=run_id,
+            label=seed_labels[index] if index < len(seed_labels) else f"reconnect-{index + 1}",
+        )
+        for index in range(seed_event_count)
+    ]
+    first_publish, second_publish, third_publish = published_events[:3]
 
-    publish_ok = first_publish["ok"] and second_publish["ok"] and third_publish["ok"]
+    publish_ok = all(event["ok"] for event in published_events)
     cookie_open = stream_first_event(
         base_url=base_url,
         mode=COOKIE_MODE,
@@ -870,22 +872,13 @@ def main() -> int:
         replay["ok"] = bool(replay.get("ok")) and observed_id == expected_replay_event_id
 
     published_event_ids = [
-        str(event_id)
-        for event_id in (
-            first_publish.get("event_id"),
-            second_publish.get("event_id"),
-            third_publish.get("event_id"),
-        )
-        if event_id
+        str(event.get("event_id"))
+        for event in published_events
+        if event.get("event_id")
     ]
-    reconnect_expected_replays = (
-        [
-            (published_event_ids[0], published_event_ids[1]),
-            (published_event_ids[1], published_event_ids[2]),
-        ]
-        if len(published_event_ids) >= 3
-        else []
-    )
+    reconnect_expected_replays = list(
+        zip(published_event_ids, published_event_ids[1:])
+    )[: args.reconnect_attempts]
     reconnect_sequence = {
         COOKIE_MODE.name: stream_reconnect_sequence(
             base_url=base_url,
@@ -919,11 +912,7 @@ def main() -> int:
 
     soak_results: dict[str, Any] = {"enabled": False}
     if args.soak_seconds > 0:
-        expected_replay_ids = {
-            str(event_id)
-            for event_id in (second_publish.get("event_id"), third_publish.get("event_id"))
-            if event_id
-        }
+        expected_replay_ids = set(published_event_ids[1:])
         soak_results = {
             "enabled": True,
             "seconds": args.soak_seconds,
@@ -966,12 +955,12 @@ def main() -> int:
         "cookie_reconnect_sequence_advances_cursor_without_duplicate_replay": bool(
             reconnect_sequence.get(COOKIE_MODE.name, {}).get("ok")
             and reconnect_sequence.get(COOKIE_MODE.name, {}).get("attempt_count", 0)
-            >= STRICT_LIVE_MIN_RECONNECT_ATTEMPTS
+            >= args.reconnect_attempts
         ),
         "bearer_reconnect_sequence_advances_cursor_without_duplicate_replay": bool(
             reconnect_sequence.get(BEARER_MODE.name, {}).get("ok")
             and reconnect_sequence.get(BEARER_MODE.name, {}).get("attempt_count", 0)
-            >= STRICT_LIVE_MIN_RECONNECT_ATTEMPTS
+            >= args.reconnect_attempts
         ),
         "missing_last_event_id_returns_409": bool(unavailable.get("ok")),
         "missing_replay_409_has_resync_routes_header": bool(
@@ -991,7 +980,7 @@ def main() -> int:
             and soak_results.get(BEARER_MODE.name, {}).get("ok")
             and reconnect_sequence.get(BEARER_MODE.name, {}).get("ok")
             and reconnect_sequence.get(BEARER_MODE.name, {}).get("attempt_count", 0)
-            >= STRICT_LIVE_MIN_RECONNECT_ATTEMPTS
+            >= args.reconnect_attempts
         )
     failed_assertions = [name for name, ok in assertions.items() if not ok]
 
@@ -1007,6 +996,7 @@ def main() -> int:
             "min_soak_seconds": STRICT_LIVE_SOAK_MIN_SECONDS,
             "min_heartbeats": STRICT_LIVE_SOAK_MIN_HEARTBEATS,
             "min_reconnect_attempts": STRICT_LIVE_MIN_RECONNECT_ATTEMPTS,
+            "requested_reconnect_attempts": args.reconnect_attempts,
         },
         "client_modes": {
             COOKIE_MODE.name: {
@@ -1024,9 +1014,10 @@ def main() -> int:
         "commands": [
             "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> "
             "scripts/probe_bff_sse_stream.py --base-url <bff-url> "
-            "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 1"
+            "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 1 "
+            "--reconnect-attempts 5"
         ],
-        "publish": [first_publish, second_publish, third_publish],
+        "publish": published_events,
         "open_transcripts": {
             COOKIE_MODE.name: cookie_open,
             BEARER_MODE.name: bearer_open,

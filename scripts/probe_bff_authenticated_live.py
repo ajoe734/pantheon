@@ -419,6 +419,29 @@ def invalid_dry_run_side_effect_check(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def rbac_write_side_effect_check(
+    result: dict[str, Any],
+    *,
+    can_write: bool,
+    marker: str,
+) -> dict[str, Any]:
+    if can_write:
+        check = dry_run_meta_side_effect_check(result, kind="rbac_dry_run_write_meta")
+    else:
+        error_code = str(result.get("error_code") or "")
+        check = {
+            "kind": "authorization_rejected_before_persistence",
+            "ok": (
+                result.get("ok") is True
+                and result.get("error_envelope") is True
+                and error_code in DENIED_ERROR_CODES
+            ),
+            "error_code": error_code or None,
+        }
+    check["target_marker_sha256_12"] = sha256_12(marker)
+    return check
+
+
 def probe_path_from_href(href: str) -> str:
     parsed = urllib.parse.urlparse(str(href or ""))
     if parsed.scheme and parsed.netloc:
@@ -457,6 +480,19 @@ def rbac_tokens_from_json() -> dict[str, str]:
         if token:
             tokens[str(label)] = token
     return tokens
+
+
+def rbac_provided_labels() -> list[str]:
+    return [str(case["label"]) for case in RBAC_ROLE_CASES if case["roles"] is not None]
+
+
+def duplicate_rbac_bearer_label_groups(tokens_by_label: dict[str, str]) -> list[list[str]]:
+    labels_by_token: dict[str, list[str]] = {}
+    for label in rbac_provided_labels():
+        token = tokens_by_label.get(label, "")
+        if token:
+            labels_by_token.setdefault(token, []).append(label)
+    return [labels for labels in labels_by_token.values() if len(labels) > 1]
 
 
 def make_rbac_tokens(args: argparse.Namespace) -> tuple[dict[str, str | None], dict[str, Any]]:
@@ -515,6 +551,23 @@ def make_rbac_tokens(args: argparse.Namespace) -> tuple[dict[str, str | None], d
             f"{', '.join(missing)}. Set PANTHEON_BFF_RBAC_TOKENS_JSON, "
             "PANTHEON_BFF_RBAC_<LABEL>_TOKEN, or a JWT secret for dev/staging minting."
         )
+    if args.require_provided_rbac_tokens:
+        provided_values = {
+            label: str(tokens.get(label) or "")
+            for label in rbac_provided_labels()
+            if tokens.get(label)
+        }
+        duplicate_groups = duplicate_rbac_bearer_label_groups(provided_values)
+        source["provided_bearer_count"] = len(provided_values)
+        source["distinct_provided_bearer_count"] = len(set(provided_values.values()))
+        source["distinct_provided_bearers"] = not duplicate_groups and len(provided_values) == len(rbac_provided_labels())
+        source["duplicate_bearer_label_groups"] = duplicate_groups
+        if duplicate_groups:
+            duplicate_text = "; ".join("/".join(group) for group in duplicate_groups)
+            raise SystemExit(
+                "PANTHEON_BFF_RBAC_TOKENS_JSON must provide distinct bearer tokens per RBAC label: "
+                f"{duplicate_text}"
+            )
     if secret and not args.require_provided_rbac_tokens:
         source["secret_sha256_12"] = sha256_12(secret)
     return tokens, source
@@ -941,15 +994,19 @@ def build_rbac_matrix_results(
                 expect_error_envelope=not can_write,
                 allowed_error_codes=() if can_write else DENIED_ERROR_CODES,
             )
-            results.append(
-                request_json(
-                    base_url=base_url,
-                    probe=probe,
-                    token=token,
-                    timeout=timeout,
-                    idempotency_prefix=idempotency_prefix,
-                )
+            result = request_json(
+                base_url=base_url,
+                probe=probe,
+                token=token,
+                timeout=timeout,
+                idempotency_prefix=idempotency_prefix,
             )
+            result["side_effect_check"] = rbac_write_side_effect_check(
+                result,
+                can_write=can_write,
+                marker=marker,
+            )
+            results.append(result)
     return results, source
 
 
@@ -1242,6 +1299,14 @@ def main() -> int:
             "read_probes": len(READ_PROBES),
             "write_probes": len(WRITE_PROBES) if args.include_writes else 0,
             "rbac_matrix_probes": len(rbac_results),
+            "rbac_write_probes": len([item for item in rbac_results if str(item.get("family") or "").startswith("rbac-write-")]),
+            "rbac_write_side_effect_proofs": len([
+                item
+                for item in rbac_results
+                if str(item.get("family") or "").startswith("rbac-write-")
+                and isinstance(item.get("side_effect_check"), dict)
+                and item["side_effect_check"].get("ok") is True
+            ]),
             "dry_run_probes": len(dry_run_results),
             "approval_race_probes": 1 if approval_race_result else 0,
             "approval_race_bounded": bool(approval_race_result and approval_race_result.get("bounded")),
