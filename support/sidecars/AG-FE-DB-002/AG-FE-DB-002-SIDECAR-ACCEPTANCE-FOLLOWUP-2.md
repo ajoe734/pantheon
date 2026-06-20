@@ -10,7 +10,7 @@
 | Reviewer | `Codex` |
 | Date | `2026-06-20` |
 | Mutates canonical truth | `false` |
-| Status | Ready for review |
+| Status | Review approved |
 
 ## Purpose
 
@@ -114,6 +114,24 @@ Dependency notes:
   reviewed sidecar waivers, not a missing schema or runtime dependency.
 - Downstream `AG-E2E-TR-001` should not treat the Trading Room dashboard path as
   complete until DB002 itself is implemented, reviewed, merged, and closed.
+
+## Review Approval And Closeout Boundary
+
+`AI_NAME=Codex2 ./scripts/ai-status.sh show
+AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2` reports this task as
+`review_approved` with reviewer `Codex`.
+
+Reviewer note:
+
+> follow-up packet correctly distinguishes the archived sidecar waiver from
+> parent `AG-FE-DB-002` still being `blocked`/`waiting_for Claude`; the
+> DB001/BE/XR/DB003/DB004 dependency map matches archived state; the
+> `DashboardGridEditor` composition gates preserve the support-only boundary
+> without canonical/runtime edits.
+
+Owner closeout keeps that boundary unchanged. This task closes only the support
+packet and task brief; it does not resolve the parent blocker or start the
+parent implementation.
 
 ## Suggested Parent Verification
 
