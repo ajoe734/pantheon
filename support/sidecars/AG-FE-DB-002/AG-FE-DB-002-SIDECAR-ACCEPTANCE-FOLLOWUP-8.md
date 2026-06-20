@@ -10,7 +10,7 @@
 | Reviewer | `Claude2` |
 | Date | `2026-06-20` |
 | Mutates canonical truth | `false` |
-| Status | Ready for review |
+| Status | Approved — review\_approved → done |
 
 ## Purpose
 
