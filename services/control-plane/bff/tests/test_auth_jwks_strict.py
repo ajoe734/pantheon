@@ -67,6 +67,39 @@ def test_default_lovable_cors_origins_include_preview_dev_and_prod(monkeypatch) 
     assert "https://pantheon-ai-system-front-staging-live.lovable.app" in origins
 
 
+def test_dev_loopback_cors_origins_present_with_explicit_override(monkeypatch) -> None:
+    # The deploy-time override never lists the CI/local vite origins; non-strict
+    # mode must still accept them so the FE-BFF integration gate's browser
+    # EventSource handshake is not blocked by CORS.
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-dev.lovable.app")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    origins = bff_main._cors_origins_from_env()
+
+    assert "http://127.0.0.1:4173" in origins
+    assert "http://localhost:4173" in origins
+    assert bff_main._cors_origin_allowed("http://127.0.0.1:4173")
+
+    allowed = _cors_preflight("http://127.0.0.1:4173")
+    assert allowed.status_code == 204
+    assert allowed.headers["access-control-allow-origin"] == "http://127.0.0.1:4173"
+
+
+def test_production_strict_mode_excludes_dev_loopback_origins(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "PANTHEON_BFF_CORS_ORIGINS",
+        "https://pantheon-ai-system-front-staging-live.lovable.app",
+    )
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_ENV", "production")
+
+    origins = bff_main._cors_origins_from_env()
+
+    assert "http://127.0.0.1:4173" not in origins
+    assert not bff_main._cors_origin_allowed("http://127.0.0.1:4173")
+
+
 def test_strict_cors_rejects_unlisted_origin(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-dev.lovable.app")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
