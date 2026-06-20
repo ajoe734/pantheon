@@ -10,7 +10,7 @@
 | Reviewer | `Codex` |
 | Date | `2026-06-20` |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff |
+| Status | Review approved; owner closeout addendum recorded |
 
 ## Purpose
 
@@ -187,8 +187,24 @@ Suggested reviewer command:
 AI_NAME=Codex ./scripts/ai-status.sh approve AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3 "Review approved: follow-up 3 is support-only, preserves the AG-FE-DB-001 blocker, reconciles chart dependency evidence across execute-plans checkouts, and maps FE acceptance to A3/BE schema and BFF contract dependencies without changing canonical truth."
 ```
 
-After review approval, owner closeout should publish only this support artifact,
-confirm the PR merge into `dev`, and then run:
+## Owner Closeout Addendum
+
+Codex approved this packet and PR #1823 merged commit `fddea8a9` into `dev`.
+The owner closeout scope remains this support artifact only. The parent
+`AG-FE-DB-001` remains blocked on `Claude2`; no canonical truth, schema/BFF
+contract, frontend implementation, runtime, registry, routing, or governance
+surface is changed by this addendum.
+
+Owner closeout verification rerun by Codex2:
+
+```bash
+python3 scripts/agora_schema_bundle.py --verify
+git diff --check -- support/sidecars/AG-FE-DB-001/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-001
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-DB-001
+```
+
+After this closeout addendum is merged, owner closeout should run:
 
 ```bash
 AI_NAME=Codex2 ./scripts/ai-status.sh done AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-3 "Closeout complete: support packet merged; AG-FE-DB-001 remains blocked on Claude2 pending schema/route/chart dependency clarification."
