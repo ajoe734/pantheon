@@ -4,8 +4,7 @@ import {
   assistantCatalogRouteFromHandlerRef,
   getAssistantOrchestratorStatus,
   invokeAssistantCatalogRoute,
-  type ManagementAssistantAskRequest,
-} from "@/lib/bff/managementAssistant";
+} from "@/lib/bff/assistantCatalog";
 import {
   assistantUiContextMetadata,
   buildAssistantUiContext,
@@ -19,9 +18,26 @@ import AssistantModeBadge, {
 } from "@/platform/components/AssistantModeBadge";
 
 type JsonRecord = Record<string, unknown>;
-type ManagementAskControlMode = NonNullable<ManagementAssistantAskRequest["controlMode"]>;
-type ManagementAskOpenClaw = NonNullable<ManagementAssistantAskRequest["openclaw"]>;
-type ManagementAskRepair = NonNullable<ManagementAskOpenClaw["repair"]>;
+
+interface AskControlMode {
+  mode?: "user" | "kernel_observe" | "kernel_debug" | "kernel_repair";
+  reason?: string;
+  ttlSeconds?: number;
+  idleTtlSeconds?: number;
+}
+interface AskOpenClaw {
+  repair?: {
+    taskId?: string;
+    taskWorktree?: string;
+    declaredScope?: string[];
+    expectedBranch?: string;
+    remote?: string;
+    mergeTarget?: string;
+    requireClean?: boolean;
+    requirePr?: boolean;
+  };
+}
+type AskRepair = NonNullable<AskOpenClaw["repair"]>;
 type CatalogRenderSurface = "button" | "command" | "card_action";
 
 interface SourceCitation {
@@ -445,15 +461,15 @@ function catalogSkillInputBody(
     sessionId: string | null;
     uiContext: AssistantUiContextV1;
     openClawMode: AssistantMode;
-    controlMode?: ManagementAskControlMode;
-    openclaw?: ManagementAskOpenClaw;
+    controlMode?: AskControlMode;
+    openclaw?: AskOpenClaw;
     recentTurns?: Array<Record<string, unknown>>;
   },
 ): JsonRecord {
   const properties = assistantSkillInputProperties(skill);
   const body: JsonRecord = {};
   const featureSummary = options.prompt.trim() || (options.sessionId ? `Assistant follow-up for ${options.sessionId}` : "");
-  const affectedModules = ["execute-plans", "assistant", "management_ai"];
+  const affectedModules = ["execute-plans", "assistant", "agora"];
   const contextPackRequest = {
     mode: options.openClawMode,
     include: [
@@ -465,7 +481,7 @@ function catalogSkillInputBody(
       "recent_sse",
       "persona_health",
       "strategy_health",
-      "management_nl",
+      "agora_nl",
       "docs_rag",
       "repo_status",
     ],
@@ -494,7 +510,7 @@ function catalogSkillInputBody(
   setDescriptorInput(body, properties, "conversation", conversation);
   setDescriptorInput(body, properties, "metadata", metadata);
   setDescriptorInput(body, properties, "provider", "codex");
-  setDescriptorInput(body, properties, "reason", "management_ai_frontend_catalog_skill");
+  setDescriptorInput(body, properties, "reason", "agora_frontend_catalog_skill");
   setDescriptorInput(body, properties, "conversationId", options.sessionId);
   setDescriptorInput(body, properties, "conversation_id", options.sessionId);
   setDescriptorInput(body, properties, "featureSummary", featureSummary);
@@ -721,7 +737,7 @@ export default function AskPersonas(): JSX.Element {
       visibleSurface: {
         workbench: "Platform Admin / Agora",
         screenId: "screen-agora-ask-personas",
-        componentId: "surface-management-assistant-panel",
+        componentId: "surface-agora-ask-personas",
         heading: "Ask Personas",
       },
       formRegistry: {
@@ -729,7 +745,7 @@ export default function AskPersonas(): JSX.Element {
         action: {
           kind: "bff_route",
           method: "POST",
-          href: "/bff/management/nl/ask",
+          href: "/bff/agora/ask",
           idempotencyRequired: true,
           submitAuthority: "bff",
         },
@@ -807,9 +823,9 @@ export default function AskPersonas(): JSX.Element {
       .map((item) => item.trim())
       .filter(Boolean);
 
-  const openClawRepairPayload = (): ManagementAskOpenClaw | undefined => {
+  const openClawRepairPayload = (): AskOpenClaw | undefined => {
     if (openClawMode !== "kernel_repair") return undefined;
-    const repair: ManagementAskRepair = {};
+    const repair: AskRepair = {};
     if (repairTaskId.trim()) {
       repair.taskId = repairTaskId.trim();
       repair.expectedBranch = `task/${repairTaskId.trim()}`;
@@ -822,11 +838,11 @@ export default function AskPersonas(): JSX.Element {
     return Object.keys(repair).length > 0 ? { repair } : undefined;
   };
 
-  const controlModePayload = (): ManagementAskControlMode | undefined => {
+  const controlModePayload = (): AskControlMode | undefined => {
     if (!openClawMode || openClawMode === "user") return undefined;
     return {
       mode: openClawMode,
-      reason: "management_ai_frontend_openclaw_mode",
+      reason: "agora_frontend_openclaw_mode",
       ttlSeconds: 1800,
     };
   };
@@ -979,24 +995,6 @@ export default function AskPersonas(): JSX.Element {
     try {
       const res = await invokeAssistantCatalogRoute(handlerRef, body);
       const resultSurface = firstString(skill.result_surface, skill.resultSurface);
-      if (resultSurface === "assistant_management_answer") {
-        const data = recordFrom(res.data ?? res);
-        const id = firstString(data.sessionId, data.session_id, data.session);
-        if (id) setSessionId(id);
-        const answer = firstString(data.answer);
-        if (answer) {
-          setMessages([{ role: "operator", content: prompt }, { role: "assistant", content: answer }]);
-        }
-        const signals = normalizeAssistantSignals(res, id);
-        setAssistantSignals(signals);
-        setMode(normalizeMode(signals.mode));
-        setStatus(
-          firstString(recordFrom(data.providerStatus ?? data.provider_status).status, data.status) ?? "completed",
-        );
-        const citations = normalizeSourceCitations(res);
-        if (citations.length > 0) setSourceCitations(citations);
-        return;
-      }
       if (resultSurface === "assistant_orchestrator_status") {
         setSystemStatus(res);
         setStatus("system_status_loaded");
