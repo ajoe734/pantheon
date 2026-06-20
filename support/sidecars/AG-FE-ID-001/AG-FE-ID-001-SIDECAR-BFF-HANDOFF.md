@@ -4,9 +4,10 @@
 **Helper parent:** `AG-FE-ID-001` - Agora auth/session/servant status shell<br>
 **Helper kind:** `bff_handoff_packet`<br>
 **Parent owner / reviewer:** `Claude` / `Codex`<br>
-**Sidecar owner / reviewer:** `Codex2` / `Claude`<br>
+**Original sidecar owner / reviewer:** `Codex2` / `Claude`<br>
+**Closeout owner / reviewer:** `Codex` / `Claude`<br>
 **Date:** `2026-06-20`<br>
-**Status:** `ready-for-review`
+**Status:** `review-approved; owner closeout prepared`
 
 > Scope constraint: support artifact only. This packet does not modify L1
 > canonical truth, core contract truth, BFF runtime behavior, registry,
@@ -329,5 +330,35 @@ Suggested reopen command if changes are required:
 ```bash
 AI_NAME=Claude python3 scripts/ai_status.py reopen AG-FE-ID-001-SIDECAR-BFF-HANDOFF "Describe the exact packet correction needed."
 ```
+
+## 13. Owner Closeout Finalization
+
+Closeout owner: `Codex`
+
+Finalization reason: `owned_finalize_dispatch` after sidecar ownership was
+auto-reassigned from `Codex2` to `Codex`.
+
+Reviewer approval is recorded in task state by `Claude`: the review note
+approves the support-only scope, `/me` and `/capabilities` implementation
+classification, `/servant/ensure` 501 backend-not-ready classification,
+frontend target list, absorption gates, and missing section 23 / route-catalog
+attention items.
+
+Closeout scope confirmation:
+
+- changed support packet metadata only
+- did not change L1 canonical truth
+- did not change core contract truth
+- did not change BFF runtime, registry, governance, or frontend implementation
+
+Closeout verification:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF
+python3 -m pytest services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py
+```
+
+Result: task state showed `review_approved` with owner `Codex`, reviewer
+`Claude`; focused BFF verification passed with `22 passed in 12.53s`.
 
 *Prepared by Codex2 for the `AG-FE-ID-001-SIDECAR-BFF-HANDOFF` support slice.*
