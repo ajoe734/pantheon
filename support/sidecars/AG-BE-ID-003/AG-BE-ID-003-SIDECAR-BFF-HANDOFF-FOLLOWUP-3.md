@@ -8,7 +8,7 @@
 | Parent owner / reviewer | `Codex2` / `Claude` |
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-20` |
-| Status | `ready_for_review` |
+| Status | `review_approved - owner closeout prepared` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -266,31 +266,34 @@ Results:
 - No L1 canonical policy or architecture document was edited.
 - No OpenAPI, capability manifest, BFF runtime, router, registry, governance,
   migration, schema, or frontend implementation was changed.
-- The only intended authored artifact is this file:
+- The only intended support packet artifact is this file:
   `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md`.
+- Owner closeout also records task-scoped metadata in
+  `.orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_3.md`.
 
-## 12. Reviewer Handoff
+## 12. Review Approval And Owner Closeout
 
 Reviewer: `Codex2`
+Outcome: `approved`
 
-Please review this followup packet for:
+Codex accepted Codex2's review approval for this support-only packet. The
+reviewed packet commit `bb2db57f2ef6a46c3656848fa6b01d455c5625ba` was merged
+through PR #1886 into `dev` at merge commit
+`0295310683c92601e5b880e8166e7b1f71fc2875`.
 
-1. whether the `ServantSessionCreateRequest` blocker is accurately described
-2. whether `/bff/agora/servant/sessions` is correctly separated from the legacy
-   `/bff/agora/sessions` and `/bff/agora/ask/sessions` surfaces
-3. whether the `research_task` mapping caveat is fair given the strategy-dialogue
-   skill allows only `interactive` and `trainer`
-4. whether the frontend gate update is actionable for `AG-FE-ID-001`
-5. support-only scope compliance
+This closeout does not add canonical, OpenAPI, runtime, manifest, governance,
+or frontend implementation claims. It records owner finalization metadata for
+the already-reviewed support material.
 
-Suggested approval command after review:
-
-```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh approve AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 "Followup-3 sidecar packet approved; servant-session contract blocker and frontend gates are accurate; support-only scope confirmed."
-```
-
-Suggested reopen command if changes are required:
+Closeout verification:
 
 ```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh reopen AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 "Describe the exact correction needed."
+git diff --check -- \
+  .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_3.md \
+  support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md
+python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q
 ```
+
+After the closeout commit is merged, the owner should finalize the active task
+with `AI_NAME=Codex ./scripts/ai-status.sh done` and cite the merged handoff
+packet, this closeout checkpoint, and the validation commands above.
