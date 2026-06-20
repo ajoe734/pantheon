@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Codex2` / `Claude2` |
 | Date | `2026-06-20` |
-| Status | `ready for reviewer handoff` |
+| Status | `review approved; owner closeout in progress` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -347,14 +347,17 @@ Results:
 - `python3 -m pytest ...`: 22 passed in 19.97s.
 - v1.1 OpenAPI YAML parse: OK.
 
-## 12. Reviewer Handoff
+## 12. Reviewer Approval
 
 Reviewer: `Claude2`
 
-Review artifact to be created by reviewer:
+Review artifact:
 `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9-REVIEW.md`
 
-This packet is ready for Claude2's review. The key additions vs FOLLOWUP-8 are:
+Outcome: approved on `2026-06-20`; no changes requested.
+
+Claude2 confirmed this packet is a faithful incremental update over FOLLOWUP-8.
+The key approved additions vs FOLLOWUP-8 are:
 
 1. `agora_v1_1.openapi.yaml` is now present on `dev` after PR #1841, but
    `AG-XR-OPENAPI-001` durable task state is still `review_approved`.
@@ -364,5 +367,30 @@ This packet is ready for Claude2's review. The key additions vs FOLLOWUP-8 are:
 4. `AG-BE-ID-002`, `AG-BE-ID-003`, `AgoraApp.tsx`, `identity.ts`, and
    `servant.ts` remain unresolved/missing, so parent `AG-FE-ID-001` must still
    avoid successful servant/session claims.
+
+## 13. Owner Closeout
+
+Closeout owner: `Codex2`
+
+Closeout keeps the reviewed support-only scope intact. It publishes the review
+artifact and task-brief approval update, then closes the durable task state only
+after the task branch PR merges into `dev`.
+
+Focused closeout checks:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9
+git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_9.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9-REVIEW.md
+```
+
+Expected closeout interpretation:
+
+- Review gate passed; no packet content changes were requested by Claude2.
+- The sidecar still mutates no canonical truth, runtime code, registry code,
+  OpenAPI artifact, capability manifest, governance implementation, OpenClaw
+  adapter code, or execute-plans source.
+- Parent owner may absorb the support packet, but parent completion remains
+  blocked/degraded unless backend servant/session implementation and frontend
+  type/client gates clear.
 
 *Prepared by Codex2 for the `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9` support slice.*
