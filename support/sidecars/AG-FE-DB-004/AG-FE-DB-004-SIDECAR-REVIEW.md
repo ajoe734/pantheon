@@ -7,10 +7,10 @@
 | Parent task | `AG-FE-DB-004` - Recipe proposal/change log/version rollback |
 | Parent owner / reviewer | `Codex` / `Claude` |
 | Prepared by | `Codex2` |
-| Reviewer | `Codex` |
+| Reviewer | `Claude2` (chair reassignment, standing in for `Codex`) |
 | Date | `2026-06-20` |
 | Mutates canonical truth | `false` |
-| Status | Ready for sidecar review |
+| Status | Review approved; owner closeout ready |
 
 ## Purpose
 
@@ -20,16 +20,17 @@ slice. It is support-only. It does not change L1 canonical truth, schema truth,
 OpenAPI truth, BFF runtime code, frontend runtime code, registry behavior, or
 governance implementation.
 
-The parent task is already `review_approved` by `Claude` according to
+The parent task is already archived `done` according to
 `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-004`. This sidecar does
-not replace that parent review; it packages the evidence and caveats for
-`Codex` to review as the sidecar reviewer.
+not replace that parent review; it packages the evidence and caveats that
+`Claude2` independently reviewed for this support slice.
 
 ## Sources Inspected
 
 | Source | Evidence used |
 |---|---|
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-004` | Parent status is `review_approved`; review notes say the two dashboard components are complete, OpenAPI envelopes are correct, 6/6 dashboard tests passed, and `build` passed. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-004` | Parent task is archived `done`; closeout records PR #1862 merge commit `515214cc48541fbe335553c2595976f144b9bb36`, 6 dashboard tests passed, and `build:agora` passed. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-004-SIDECAR-REVIEW` | Sidecar is `review_approved`; `Claude2` approved after independently verifying schema, rg guards, source envelopes, conflict displays, parent commit/merge evidence, 6 tests, and non-blocking caveats. |
 | `support/sidecars/AG-FE-DB-004/AG-FE-DB-004-SIDECAR-ACCEPTANCE.md` | Prior acceptance guardrails for v1.1 route/type truth, `previous_version`, conflict handling, append-only rollback, and support-only boundaries. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-004-SIDECAR-ACCEPTANCE` | Acceptance packet is archived `done`; PR #1861 merged, task commit `4284db3f04d9dd330439868349973f5b18cc8253`. |
 | `git show --format=fuller --no-patch 5a8728a3` | Parent implementation commit and trailers. |
@@ -110,23 +111,22 @@ Parent commit trailers state:
 | `rg -n "previousVersionId\|previousVersion" execute-plans/src/agora execute-plans/src/lib/bff-v1/agora services/control-plane/specs/agora/v2/dashboard_recipe_v2.schema.json` | PASS; no matches. |
 | `rg -n "fetch\\(" execute-plans/src/agora/dashboard` | PASS; no matches. |
 
-## Reviewer Handoff
+## Review Approval And Closeout
 
-To `Codex`, sidecar reviewer:
+`Claude2` approved this sidecar review packet after independently checking the
+review gates recorded in status:
 
-- Verify that this packet accurately reflects parent PR #1862 and commit
-  `5a8728a3531c4751322b7febdd2edad3ceff8446`.
-- Confirm the component-layer review boundaries are acceptable: the sidecar
-  checks data rendering, envelopes, conflict display, and rollback selection,
-  but it does not claim live route wiring beyond emitted action contracts.
-- Confirm the caveat about missing parent `review_file` is acceptable for this
-  support-only packet or ask the parent owner to make that review record
-  durable during `AG-FE-DB-004` closeout.
+- schema jq guard confirms `previous_version` and no `previousVersionId`
+- rg guards confirm no camelCase alias and no raw dashboard component `fetch()`
+- source review confirms accept and rollback envelopes, four-field conflict
+  display, read-only changelog rendering, and historical-version rollback guard
+- parent commit `5a8728a3531c4751322b7febdd2edad3ceff8446` and merge commit
+  `515214cc48541fbe335553c2595976f144b9bb36` exist with expected evidence
+- 6 focused dashboard tests and the 4 caveats in this packet are accepted as
+  non-blocking for the parent owner
 
-Suggested reviewer command:
-
-```bash
-AI_NAME=Codex REVIEW_FILE=support/sidecars/AG-FE-DB-004/AG-FE-DB-004-SIDECAR-REVIEW.md ./scripts/ai-status.sh approve AG-FE-DB-004-SIDECAR-REVIEW "Review approved: AG-FE-DB-004 sidecar review packet accurately summarizes parent PR #1862 evidence, dashboard component envelopes, conflict handling, rollback behavior, validation commands, support-only boundary, and non-blocking caveats."
-```
+Owner closeout keeps this packet as support-only evidence. It does not promote
+any sidecar text into canonical truth and does not change runtime, schema,
+OpenAPI, registry, governance, or frontend implementation files.
 
 Prepared by `Codex2` for the `AG-FE-DB-004-SIDECAR-REVIEW` support slice.
