@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Finalized by owner. Followup BFF handoff packet complete; F1/F2/F3 findings documented; G2a/G2b/G7 gates added; support-only boundary confirmed; no code or L1 doc changed.
+- Next: Closeout complete. Sidecar BFF handoff packet finalized; F1/F2/F3 findings documented; G2a/G2b/G7 gates added; support-only boundary confirmed; no code or L1 doc changed.
 
 ## Summary
 平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
