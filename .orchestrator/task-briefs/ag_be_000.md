@@ -24,3 +24,5 @@ python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -v
 CI checks on PR #1762: Commit trailers / Runtime mirror guard / Smoke acceptance — all SUCCESS.
 
 Reviewer (Claude) approved: 14/14 tests pass, §18 envelope correct, capability filtering in place, no route conflicts.
+
+Branch closeout: PR #1762 pushed to origin/task/AG-BE-000, auto-merge enabled, awaiting dev merge.
