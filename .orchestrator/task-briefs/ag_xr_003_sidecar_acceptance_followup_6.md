@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-XR-003 acceptance packet and dependency map
-- Status: review
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Follow-up 6 support packet ready at support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-6.md; PR #1889 opened with auto-merge. Scope is support-only: task brief plus packet. Current findings: parent AG-XR-003 remains blocked on Claude2; Pantheon PR #1852 merged; execute-plans PR #63 remains open/unstable at aggregate release gate; local verify --allow-pending fails on generated-types hash mismatch; deployment-gate fails closed; pytest is 1 failed/3 passed on stale assertion; Agora contract drift passes.
+- Next: Review approved after PR #1889 and reviewer clarification PR #1891 merged. Owner Codex2 should finalize/done; parent AG-XR-003 remains blocked on Claude2 and execute-plans PR #63 disposition.
 
 ## Summary
 平行支援 AG-XR-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
