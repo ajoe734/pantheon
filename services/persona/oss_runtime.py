@@ -427,7 +427,12 @@ def _run_openclaw(request: PersonaOSSRequest) -> PersonaOSSResult:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 
-    class FakeOpenClawUpstream:
+    class _LocalSessionUpstream:
+        """Local session-lifecycle record (bookkeeping ONLY) — NOT the model and
+        does NOT fabricate a persona decision. The real OODA turn runs separately
+        below against the persona's OpenClaw agent via /v1/responses.
+        """
+
         def create_session(self, req: Any) -> dict[str, Any]:
             return {
                 "session_id": f"upstream-{request.session_id}",
@@ -438,21 +443,55 @@ def _run_openclaw(request: PersonaOSSRequest) -> PersonaOSSResult:
     store_path = Path(tempfile.mkdtemp(prefix="pantheon-openclaw-persona-")) / "sessions.json"
     store = module.SessionLifecycleStore(
         storage_path=store_path,
-        upstream_factory=lambda: FakeOpenClawUpstream(),
+        upstream_factory=lambda: _LocalSessionUpstream(),
         id_factory=lambda: request.session_id,
     )
+    context_bundle = {
+        "persona_id": request.persona_id,
+        "intent": request.intent,
+        "requested_component": "openclaw",
+        **_payload_mapping(request, "context_bundle"),
+    }
     record, replayed = store.create_session(
         agent_id=request.persona_id,
         session_type=_payload_str(request, "session_type", "research_task"),
         operator_id=_payload_str(request, "operator_id", request.persona_id),
         idempotency_key=request.request_id,
-        context_bundle={
-            "persona_id": request.persona_id,
-            "intent": request.intent,
-            "requested_component": "openclaw",
-            **_payload_mapping(request, "context_bundle"),
-        },
+        context_bundle=context_bundle,
     )
+
+    # REAL persona OODA turn through the persona's own OpenClaw agent
+    # (model=openclaw/<persona_id> on /v1/responses). When a gateway is reachable
+    # this is a genuine decision; without one (e.g. CI) it is HONESTLY marked
+    # structural_only — never presented as a real execution.
+    execution_mode = "structural_only"
+    real_decision = ""
+    decision_status = "skipped_no_gateway"
+    real_turn_meta: dict[str, Any] = {}
+    if os.getenv("OPENCLAW_GATEWAY_URL") or os.getenv("PANTHEON_PERSONA_OODA_LIVE"):
+        try:
+            from integrations.openclaw.persona_ooda_runtime import (  # noqa: PLC0415
+                build_ooda_prompt,
+                run_persona_ooda_turn,
+            )
+
+            persona_meta = {
+                "persona_id": request.persona_id,
+                "name": context_bundle.get("persona_name") or request.persona_id,
+            }
+            turn = run_persona_ooda_turn(
+                request.persona_id,
+                build_ooda_prompt(persona_meta, context_bundle),
+            )
+            real_turn_meta = turn.to_dict()
+            decision_status = turn.status
+            if turn.status == "completed":
+                execution_mode = "real_openclaw"
+                real_decision = turn.decision
+        except Exception as exc:  # noqa: BLE001
+            decision_status = "error"
+            real_turn_meta = {"error": str(exc)[:300]}
+
     return _completed(
         request,
         artifact_family="openclaw_session",
@@ -465,6 +504,10 @@ def _run_openclaw(request: PersonaOSSRequest) -> PersonaOSSResult:
             "session_type": record.session_type,
             "operator_id": record.operator_id,
             "context_bundle": record.context_bundle,
+            "execution_mode": execution_mode,
+            "decision_status": decision_status,
+            "ooda_decision": real_decision,
+            "ooda_turn": real_turn_meta,
         },
         refs={"store_path": str(store_path)},
     )
