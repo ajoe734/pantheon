@@ -10,7 +10,7 @@
 | Reviewer | `Codex` |
 | Date | `2026-06-20` |
 | Mutates canonical truth | `false` |
-| Status | Review approved; owner closeout in progress |
+| Status | Review approved; branch refreshed for owner closeout |
 
 ## Purpose
 
@@ -43,6 +43,12 @@ is still support-only:
 Closeout note: PR #1894 had passing checks but was reported `BEHIND` at review
 approval time, so owner finalization must refresh the task branch against
 current `origin/dev` before waiting for auto-merge and running `done`.
+
+Owner closeout refreshed the task branch against `origin/dev` at `bf3c92d5`
+using a non-destructive merge, leaving the branch with no commits behind
+`origin/dev` before the final task-scoped closeout note. The refresh does not
+change the parent status: `AG-FE-DB-002` remains active `blocked`,
+`waiting_for` `Claude`.
 
 ## Current State Snapshot
 
@@ -207,6 +213,26 @@ Observed results:
   present in `execute-plans/package.json`.
 - No canonical truth, schema, OpenAPI, runtime, registry, governance, broker, or
   RuntimeBinding implementation was changed by this sidecar.
+
+Owner closeout refresh verification:
+
+```bash
+git fetch origin dev
+git merge --no-edit origin/dev
+git rev-list --left-right --count origin/dev...HEAD
+git diff --check
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-3
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-002
+```
+
+Observed closeout results:
+
+- The branch was refreshed to include `origin/dev` `bf3c92d5`; before this
+  final note, `git rev-list --left-right --count origin/dev...HEAD` reported
+  `0 3`.
+- `git diff --check` passed.
+- The sidecar task was `review_approved` with reviewer notes from `Codex`.
+- Parent `AG-FE-DB-002` remained active `blocked` and `waiting_for` `Claude`.
 
 ## Reviewer Approval And Parent Handoff
 
