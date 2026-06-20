@@ -444,6 +444,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const rbacAuthSource = json?.rbac_auth_source && typeof json.rbac_auth_source === "object" ? json.rbac_auth_source : {};
   const rbacCases = rbacAuthSource?.cases && typeof rbacAuthSource.cases === "object" ? Object.entries(rbacAuthSource.cases) : [];
   const providedRbacCases = rbacCases.filter(([label, info]) => label !== "anonymous" && info?.kind === "provided_bearer");
+  const providedRbacCaseHashes = providedRbacCases.map(([, info]) => String(info?.sha256_12 || "")).filter(Boolean);
   const expectedProvidedCases = rbacCases.filter(([label]) => label !== "anonymous").length;
   const total = Number(summary.total ?? 0);
   const passed = Number(summary.passed ?? 0);
@@ -497,7 +498,14 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const dryRunSideEffectProofCount = dryRunSideEffectProofs.length;
   const allDryRunSideEffectProofs = dryRun.length >= 7 && dryRunSideEffectProofCount === dryRun.length;
   const fullRbacMatrix = rbacProbeCount >= 56 && expectedProvidedCases >= 7;
-  const providedRbac = fullRbacMatrix && providedRbacCases.length === expectedProvidedCases;
+  const distinctProvidedRbacCaseHashCount = new Set(providedRbacCaseHashes).size;
+  const distinctProvidedRbac = providedRbacCaseHashes.length === expectedProvidedCases
+    && distinctProvidedRbacCaseHashCount === expectedProvidedCases
+    && rbacAuthSource?.distinct_provided_bearers === true
+    && Number(rbacAuthSource?.distinct_provided_bearer_count ?? -1) === expectedProvidedCases;
+  const providedRbac = fullRbacMatrix
+    && providedRbacCases.length === expectedProvidedCases
+    && distinctProvidedRbac;
   const approvalTokenPair = approvalRace?.token_source?.kind === "provided_bearer_pair";
   const approvalAcceptedCount = Number(approvalRace?.accepted_count ?? -1);
   const approvalSafeErrorCount = Number(approvalRace?.safe_error_count ?? -1);
@@ -545,7 +553,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManOperatorScoped
       && twoManTokenPair,
     note: {
-      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} providedCases:${providedRbacCases.length}/${expectedProvidedCases}`,
+      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 tokenPair:${twoManTokenPair}`,
