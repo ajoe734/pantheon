@@ -34,6 +34,11 @@ on:
         required: false
         default: ""
         type: string
+      two_man_race_id:
+        description: "Expendable intervention id for the two-operator two-man-sign race proof"
+        required: false
+        default: ""
+        type: string
       soak_seconds:
         description: "SSE reconnect soak duration; strict evidence requires at least 75"
         required: true
@@ -216,10 +221,12 @@ jobs:
       - name: Validate strict live inputs
         env:
           APPROVAL_RACE_ID: ${{ inputs.approval_race_id }}
+          TWO_MAN_RACE_ID: ${{ inputs.two_man_race_id }}
         run: |
           python3 scripts/write_bff_live_evidence_preflight.py \
             --base-url "$PANTHEON_BFF_BASE_URL" \
             --approval-race-id "$APPROVAL_RACE_ID" \
+            --two-man-race-id "$TWO_MAN_RACE_ID" \
             --soak-seconds "${{ inputs.soak_seconds }}" \
             --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-LIVE-EVIDENCE-PREFLIGHT.json"
 
@@ -230,6 +237,7 @@ jobs:
             --strict-live-evidence \
             --include-writes \
             --approval-race-id "${{ inputs.approval_race_id }}" \
+            --two-man-race-id "${{ inputs.two_man_race_id }}" \
             --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
 
       - name: Strict SSE live soak
