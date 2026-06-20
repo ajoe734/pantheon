@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "manifest_version": "1.0",
+  "frozen_at": "2026-06-20",
+  "frozen_by": "AG-XR-001",
+  "description": "Agora v1 BFF capability manifest. Lists the 7 agora.*.v1 capabilities and the schemas they are associated with. Frozen as of AG-XR-001; downstream tasks must not rename or remove entries.",
+  "capabilities": [
+    {
+      "name": "agora.identity.v1",
+      "description": "Operator identity, access scope, and servant (persona) profile surfaces.",
+      "schemas": [
+        "agora_user_scope.schema.json",
+        "servant_profile.schema.json"
+      ],
+      "bff_route_families": ["agora-core"],
+      "bff_path_prefixes": [
+        "/bff/agora/sessions",
+        "/bff/agora/ask"
+      ],
+      "auth_level": "operator"
+    },
+    {
+      "name": "agora.session.v1",
+      "description": "Ask-persona sessions, messages, handoffs, inbox, and SSE channels.",
+      "schemas": [],
+      "bff_route_families": ["agora-core", "agora-extended"],
+      "bff_path_prefixes": [
+        "/bff/agora/ask/sessions",
+        "/bff/agora/sessions",
+        "/bff/agora/inbox",
+        "/bff/agora/incoming",
+        "/bff/agora/messages",
+        "/bff/agora/handoffs",
+        "/bff/channels"
+      ],
+      "auth_level": "operator"
+    },
+    {
+      "name": "agora.workshop.v1",
+      "description": "Strategy workshop sessions, completeness assessments, committee sessions, evaluation runs, training examples, and persona-lab runs.",
+      "schemas": [
+        "strategy_workshop.schema.json",
+        "strategy_completeness.schema.json"
+      ],
+      "bff_route_families": ["agora-core", "agora-extended"],
+      "bff_path_prefixes": [
+        "/bff/agora/evaluation-runs",
+        "/bff/agora/evaluation-suites",
+        "/bff/agora/training-examples",
+        "/bff/agora/skill-coaching",
+        "/bff/agora/committee",
+        "/bff/agora/committee-sessions",
+        "/bff/agora/persona-lab"
+      ],
+      "auth_level": "operator"
+    },
+    {
+      "name": "agora.research.v1",
+      "description": "Research plans, research run summaries, and candidate artifact pools.",
+      "schemas": [
+        "research_plan.schema.json",
+        "research_run_summary.schema.json",
+        "candidate_pool.schema.json"
+      ],
+      "bff_route_families": ["agora-core"],
+      "bff_path_prefixes": [
+        "/bff/agora/research-tasks",
+        "/bff/research/tasks"
+      ],
+      "auth_level": "operator"
+    },
+    {
+      "name": "agora.trading.v1",
+      "description": "Trading events (observation-only), trading intents, signal observations, signal feedback, and shadow decisions.",
+      "schemas": [
+        "trading_event.schema.json",
+        "trading_intent.schema.json",
+        "shadow_decision.schema.json"
+      ],
+      "bff_route_families": ["agora-core"],
+      "bff_path_prefixes": [
+        "/bff/agora/signals",
+        "/bff/agora/feedback"
+      ],
+      "auth_level": "operator",
+      "safety_notes": [
+        "No route in this capability may route live orders.",
+        "TradingEvent.no_order_route_proof must be present on all persisted events.",
+        "ShadowDecision.no_order_route_proof must be 'shadow_learn_only'."
+      ]
+    },
+    {
+      "name": "agora.dashboard.v1",
+      "description": "Dashboard layout recipes, widget specifications, daily briefing, market notes, watchlist, postmortems, decision journal, alerts triage, journal entries, and notes.",
+      "schemas": [
+        "dashboard_recipe.schema.json",
+        "widget_spec.schema.json"
+      ],
+      "bff_route_families": ["agora-core"],
+      "bff_path_prefixes": [
+        "/bff/agora/daily",
+        "/bff/agora/markets",
+        "/bff/agora/market-notes",
+        "/bff/agora/watchlist",
+        "/bff/agora/postmortems",
+        "/bff/agora/alerts",
+        "/bff/agora/journal",
+        "/bff/agora/notes",
+        "/bff/agora/decision-journal"
+      ],
+      "auth_level": "operator"
+    },
+    {
+      "name": "agora.personalization.v1",
+      "description": "Operator personalization events, persona memory, insights, and preference management.",
+      "schemas": [
+        "personalization_event.schema.json"
+      ],
+      "bff_route_families": ["agora-core"],
+      "bff_path_prefixes": [
+        "/bff/agora/memory",
+        "/bff/agora/insights",
+        "/bff/insights",
+        "/bff/memory"
+      ],
+      "auth_level": "operator",
+      "writeback_note": "PersonalizationEvent.memory_writeback_eligible=true events may trigger operator memory writeback in the persona memory service."
+    }
+  ],
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1.openapi.yaml"
+}
