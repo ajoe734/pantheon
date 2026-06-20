@@ -247,6 +247,7 @@ jobs:
             --strict-live-evidence \
             --soak-seconds "${{ inputs.soak_seconds }}" \
             --soak-min-heartbeats 1 \
+            --reconnect-attempts 5 \
             --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json"
 
       - name: Aggregate current-run release evidence

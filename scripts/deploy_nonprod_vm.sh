@@ -402,9 +402,19 @@ preserve_known_deploy_runtime_state() {
   local stash_label
 
   for path in "${known_paths[@]}"; do
-    if [[ -e "$path" ]]; then
-      present_paths+=("$path")
+    if [[ ! -e "$path" ]]; then
+      continue
     fi
+    # Skip gitignored runtime paths (e.g. .orchestrator/metrics,
+    # .orchestrator/watchdog-state.json). `git checkout` never touches ignored
+    # files, so they survive the detach untouched and do not need stashing; and
+    # `git stash push -- <ignored-pathspec>` hard-errors ("paths are ignored by
+    # .gitignore"), which under `set -e` aborts the whole deploy. Only tracked
+    # paths can be clobbered by checkout, so only those need preserving.
+    if git check-ignore -q -- "$path"; then
+      continue
+    fi
+    present_paths+=("$path")
   done
 
   if [[ "${#present_paths[@]}" -eq 0 ]]; then
