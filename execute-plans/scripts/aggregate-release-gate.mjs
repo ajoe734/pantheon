@@ -265,6 +265,39 @@ function approvalRaceDetailProof(race) {
   };
 }
 
+function extractedResultValue(result, key) {
+  const extracted = result?.extracted && typeof result.extracted === "object" ? result.extracted : {};
+  return extracted[key];
+}
+
+function twoManRaceDetailProof(race) {
+  const results = Array.isArray(race?.results) ? race.results : [];
+  const accepted = results.filter((result) => APPROVAL_RACE_ACCEPTED_STATUSES.has(Number(result?.status ?? 0)));
+  const replayed = results.filter((result) => extractedResultValue(result, "meta.idempotency.replayed") === true);
+  const commandIds = accepted
+    .map((result) => extractedResultValue(result, "data.command_id") || extractedResultValue(result, "data.commandId"))
+    .filter((commandId) => commandId)
+    .map((commandId) => String(commandId));
+  const distinctCommandIdCount = new Set(commandIds).size;
+  const distinctCommandIds = distinctCommandIdCount === commandIds.length
+    && commandIds.length === accepted.length
+    && accepted.length === 2;
+  const transportFailures = results.filter((result) => Number(result?.status ?? 0) === 0);
+  return {
+    resultCount: results.length,
+    acceptedCount: accepted.length,
+    replayedCount: replayed.length,
+    commandIdCount: distinctCommandIdCount,
+    transportFailureCount: transportFailures.length,
+    distinctCommandIds,
+    ok: results.length === 2
+      && transportFailures.length === 0
+      && accepted.length === 2
+      && replayed.length === 0
+      && distinctCommandIds,
+  };
+}
+
 function parseTables(text) {
   const rows = [];
   for (const line of text.split(/\r?\n/)) {
@@ -615,13 +648,18 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && approvalDetailProof.safeErrorCount === approvalSafeErrorCount;
   const twoManTokenPair = twoManRace?.token_source?.kind === "provided_bearer_pair";
   const twoManTokenPairDistinct = providedBearerPairDistinct(twoManRace?.token_source);
+  const twoManDetailProof = twoManRaceDetailProof(twoManRace);
   const twoManAcceptedCount = Number(twoManRace?.accepted_count ?? -1);
   const twoManReplayedCount = Number(twoManRace?.replayed_count ?? -1);
   const twoManCommandIdCount = Number(twoManRace?.command_id_count ?? -1);
   const twoManOperatorScoped = twoManAcceptedCount === 2
     && twoManReplayedCount === 0
     && twoManRace?.distinct_command_ids === true
-    && twoManCommandIdCount === 2;
+    && twoManCommandIdCount === 2
+    && twoManDetailProof.ok
+    && twoManDetailProof.acceptedCount === twoManAcceptedCount
+    && twoManDetailProof.replayedCount === twoManReplayedCount
+    && twoManDetailProof.commandIdCount === twoManCommandIdCount;
 
   return {
     exists: Boolean(json),
@@ -662,7 +700,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
-      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
+      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
     },
     missingStatus: missingEvidenceStatus(step.status),
     missingNote: step.outcome
