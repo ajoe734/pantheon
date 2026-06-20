@@ -1,5 +1,6 @@
 {
   "files.watcherExclude": {
+    "**/.artifacts/**": true,
     "**/.git/modules/**": true,
     "**/.git/objects/**": true,
     "**/.git/refs/codex/**": true,
@@ -22,7 +23,9 @@
     "**/dist/**": true,
     "**/node_modules/**": true
   },
+  "git.autoRepositoryDetection": "openEditors",
   "git.repositoryScanIgnoredFolders": [
+    ".artifacts",
     ".git",
     ".fe-worktrees",
     ".lake",
@@ -40,7 +43,9 @@
     "dist",
     "node_modules"
   ],
+  "git.repositoryScanMaxDepth": 1,
   "search.exclude": {
+    "**/.artifacts/**": true,
     "**/.git/modules/**": true,
     "**/.git/objects/**": true,
     "**/.git/refs/codex/**": true,
