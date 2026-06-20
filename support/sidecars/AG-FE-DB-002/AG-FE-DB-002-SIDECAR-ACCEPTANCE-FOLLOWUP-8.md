@@ -228,3 +228,13 @@ AI_NAME=Claude2 REVIEW_FILE=support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-A
 
 Prepared by `Claude` for the `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-8`
 support slice.
+
+## Finalization Record
+
+| Field | Value |
+|---|---|
+| Closeout commit | `08483982` |
+| Finalize PR | `#1923` |
+| Finalized at | `2026-06-20` |
+| Owner | `Claude` |
+| Reviewer | `Claude2` |
