@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-20` |
-| Status | `ready for sidecar review` |
+| Status | `review approved for parent handoff` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -36,7 +36,7 @@ safe to absorb later.
 
 | Source | Why it matters |
 |---|---|
-| `.orchestrator/task-briefs/ag_be_sw_001_sidecar_bff_handoff_followup_2.md` | Sidecar assignment and support-only boundary. |
+| `.orchestrator/task-briefs/ag_be_sw_001_sidecar_bff_handoff_followup_2.md` | Sidecar assignment, review-approved closeout dispatch, and support-only boundary. |
 | `ai-status.json` through `AI_NAME=Codex ./scripts/ai-status.sh show ...` | Active sidecar state and blocked parent state. |
 | `support/sidecars/AG-BE-SW-001/AG-BE-SW-001-SIDECAR-BFF-HANDOFF.md` | First sidecar packet to avoid duplicating or broadening claims. |
 | `services/control-plane/specs/agora/capability_manifest.json` | Frozen `agora.workshop.v1` capability and route prefixes. |
@@ -233,8 +233,13 @@ Expected scope check:
 
 ## 10. Handoff
 
-This packet is ready for `Codex2` review. The parent owner should treat it as
-decision support for alias, DTO, upload, persona-lab, idempotency, and frontend
-strict-adapter planning. It should not be absorbed as canonical route truth
-unless a later parent task promotes the relevant decisions through the normal
-contract path.
+`Codex2` review approved this packet as support-only decision material for the
+parent `AG-BE-SW-001` lane. The parent owner should treat it as decision support
+for alias, DTO, upload, persona-lab, idempotency, and frontend strict-adapter
+planning. It should not be absorbed as canonical route truth unless a later
+parent task promotes the relevant decisions through the normal contract path.
+
+Closeout boundary: this sidecar remains a packet artifact only. The closeout
+commit records the review-approved handoff state; it does not change any
+canonical contract, runtime route, governance registry, migration, or frontend
+implementation surface.
