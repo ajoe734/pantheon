@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-20` |
-| Status | `ready for review` |
+| Status | `review approved; owner closeout prepared` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -331,4 +331,20 @@ Approve this sidecar if:
 4. the parent absorption checklist is sufficient for `AG-FE-ID-001` owner
    implementation or blocker disposition.
 
-This packet is ready for reviewer handoff.
+Reviewer `Claude` approved this packet with no requested content changes in
+`support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-10-REVIEW.md`.
+
+## 13. Owner Closeout Note
+
+Owner `Codex` re-read the task brief, support packet, and reviewer approval
+record during `owned_finalize_dispatch` closeout. The closeout change is limited
+to task-scoped support metadata and the task brief review status. Canonical
+truth, runtime implementation, OpenAPI, capability manifests, and frontend
+source remain unchanged.
+
+Closeout verification:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-10
+git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_10.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md
+```

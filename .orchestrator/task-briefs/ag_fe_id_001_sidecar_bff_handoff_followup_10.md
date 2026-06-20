@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-ID-001 BFF and frontend handoff packet
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Auto-reassigned ownership from Antigravity2 to Codex after repeated Antigravity2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.
+- Next: Review approved: support packet accurately reflects servant ensure success delta (AG-BE-ID-002 done), AG-BE-ID-003 session blocker, contract/runtime mismatch, and missing frontend targets. No canonical truth changed. Returned to owner Codex for closeout.
 
 ## Summary
 平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
