@@ -439,6 +439,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const rbacMatrix = Array.isArray(json?.rbac_matrix) ? json.rbac_matrix : [];
   const dryRun = Array.isArray(json?.dry_run) ? json.dry_run : [];
   const approvalRace = json?.approval_race && typeof json.approval_race === "object" ? json.approval_race : null;
+  const twoManRace = json?.two_man_race && typeof json.two_man_race === "object" ? json.two_man_race : null;
   const authSource = json?.auth_source && typeof json.auth_source === "object" ? json.auth_source : {};
   const rbacAuthSource = json?.rbac_auth_source && typeof json.rbac_auth_source === "object" ? json.rbac_auth_source : {};
   const rbacCases = rbacAuthSource?.cases && typeof rbacAuthSource.cases === "object" ? Object.entries(rbacAuthSource.cases) : [];
@@ -451,12 +452,14 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const providedBearer = authSource?.kind === "provided_bearer";
   const includesRequired = json?.include_rbac_matrix === true
     && json?.include_dry_run === true
-    && json?.include_approval_race === true;
+    && json?.include_approval_race === true
+    && json?.include_two_man_race === true;
   const summaryPassed = total > 0 && failed === 0 && passed === total;
   const baseOk = strict && providedBearer && includesRequired && summaryPassed;
   const rbacProbeCount = Number(summary.rbac_matrix_probes ?? 0);
   const dryRunProbeCount = Number(summary.dry_run_probes ?? 0);
   const approvalRaceProbeCount = Number(summary.approval_race_probes ?? 0);
+  const twoManRaceProbeCount = Number(summary.two_man_race_probes ?? 0);
   const invalidDryRuns = dryRun.filter((item) => String(item?.family || "").startsWith("dry-run-invalid-"));
   const readbackDryRuns = dryRun.filter((item) => String(item?.family || "").endsWith("-readback-not-persisted"));
   const notFoundErrorCodes = new Set(["RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND"]);
@@ -499,6 +502,14 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const approvalAcceptedCount = Number(approvalRace?.accepted_count ?? -1);
   const approvalSafeErrorCount = Number(approvalRace?.safe_error_count ?? -1);
   const approvalOneWinnerOneLoser = approvalAcceptedCount === 1 && approvalSafeErrorCount === 1;
+  const twoManTokenPair = twoManRace?.token_source?.kind === "provided_bearer_pair";
+  const twoManAcceptedCount = Number(twoManRace?.accepted_count ?? -1);
+  const twoManReplayedCount = Number(twoManRace?.replayed_count ?? -1);
+  const twoManCommandIdCount = Number(twoManRace?.command_id_count ?? -1);
+  const twoManOperatorScoped = twoManAcceptedCount === 2
+    && twoManReplayedCount === 0
+    && twoManRace?.distinct_command_ids === true
+    && twoManCommandIdCount === 2;
 
   return {
     exists: Boolean(json),
@@ -526,10 +537,18 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && approvalRace?.duplicate_winners === false
       && approvalOneWinnerOneLoser
       && approvalTokenPair,
+    twoManRaceOk: baseOk
+      && twoManRaceProbeCount === 1
+      && summary.two_man_race_operator_scoped === true
+      && twoManRace?.ok === true
+      && twoManRace?.operator_scoped === true
+      && twoManOperatorScoped
+      && twoManTokenPair,
     note: {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} providedCases:${providedRbacCases.length}/${expectedProvidedCases}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair}`,
+      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 tokenPair:${twoManTokenPair}`,
     },
     missingStatus: missingEvidenceStatus(step.status),
     missingNote: step.outcome
@@ -723,6 +742,11 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth) {
       owner: strictAuthOwner(strictAuth.approvalRaceOk),
       evidence: strictAuthEvidence,
       note: strictAuthNote("approvalRace"),
+    }),
+    makeCheck("Authenticated: strict two-man-sign race evidence is operator-scoped.", strictAuthStatus(strictAuth.twoManRaceOk), {
+      owner: strictAuthOwner(strictAuth.twoManRaceOk),
+      evidence: strictAuthEvidence,
+      note: strictAuthNote("twoManRace"),
     }),
     makeCheck("Anonymous: canonical protected routes return 401/403, not 404.", routeStatus(protectedValid), {
       owner: routeOwner(protectedValid),
