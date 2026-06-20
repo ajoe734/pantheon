@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -9,11 +10,17 @@ from pathlib import Path
 import pytest
 
 
-def _strict_dry_run_items(*, with_side_effect_checks: bool = True):
+def _sha256_12(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _strict_dry_run_items(*, with_side_effect_checks: bool = True, mismatched_readback_target: bool = False):
+    strategy_id = "strategy-dry-run-001"
+    ranking_formula_id = "ranking-formula-dry-run-001"
     items = [
-        {"family": "dry-run-strategy-create", "ok": True},
+        {"family": "dry-run-strategy-create", "ok": True, "extracted": {"data.id": strategy_id}},
         {"family": "dry-run-strategy-create-readback-not-persisted", "ok": True, "error_envelope": True},
-        {"family": "dry-run-ranking-formula-create", "ok": True},
+        {"family": "dry-run-ranking-formula-create", "ok": True, "extracted": {"data.id": ranking_formula_id}},
         {"family": "dry-run-ranking-formula-create-readback-not-persisted", "ok": True, "error_envelope": True},
         {"family": "dry-run-v5-intervention-claim", "ok": True},
         {"family": "dry-run-invalid-strategy", "ok": True, "error_envelope": True},
@@ -30,7 +37,13 @@ def _strict_dry_run_items(*, with_side_effect_checks: bool = True):
             "durable": False,
             "liveCapitalSideEffects": False,
         },
-        {"kind": "readback_not_persisted", "ok": True, "error_code": "RESOURCE_NOT_FOUND", "target_id_sha256_12": "abc123"},
+        {
+            "kind": "readback_not_persisted",
+            "ok": True,
+            "error_code": "RESOURCE_NOT_FOUND",
+            "target_family": "dry-run-strategy-create",
+            "target_id_sha256_12": _sha256_12("other-strategy-id" if mismatched_readback_target else strategy_id),
+        },
         {
             "kind": "dry_run_preview_meta",
             "ok": True,
@@ -38,7 +51,13 @@ def _strict_dry_run_items(*, with_side_effect_checks: bool = True):
             "durable": False,
             "liveCapitalSideEffects": False,
         },
-        {"kind": "readback_not_persisted", "ok": True, "error_code": "RESOURCE_NOT_FOUND", "target_id_sha256_12": "abc123"},
+        {
+            "kind": "readback_not_persisted",
+            "ok": True,
+            "error_code": "RESOURCE_NOT_FOUND",
+            "target_family": "dry-run-ranking-formula-create",
+            "target_id_sha256_12": _sha256_12("other-ranking-formula-id" if mismatched_readback_target else ranking_formula_id),
+        },
         {
             "kind": "dry_run_command_meta",
             "ok": True,
@@ -1011,7 +1030,7 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     assert rbac_check["status"] == "pass"
     assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 matrixCoverage:56/56 providedCases:7/7 distinctBearers:7/7 writeSideEffectProofs:32/32"
     assert dry_run_check["status"] == "pass"
-    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true sideEffectProofs:7/7 sideEffects:none"
+    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true readbackLinked:true sideEffectProofs:7/7 sideEffects:none"
     assert race_check["status"] == "pass"
     assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
     assert two_man_check["status"] == "pass"
@@ -1703,6 +1722,7 @@ def test_release_gate_rejects_strict_dry_run_without_required_family_coverage(tm
     for item in dry_run:
         if item["family"] == "dry-run-v5-intervention-claim":
             item["family"] = "dry-run-strategy-create"
+            item["extracted"] = {"data.id": "strategy-dry-run-001"}
             break
 
     (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
@@ -1783,7 +1803,101 @@ def test_release_gate_rejects_strict_dry_run_without_required_family_coverage(tm
         if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
     )
     assert dry_run_check["status"] == "fail"
-    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:6/7 invalidEnvelope:true sideEffectProofs:7/7 sideEffects:none"
+    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:6/7 invalidEnvelope:true readbackLinked:true sideEffectProofs:7/7 sideEffects:none"
+
+
+def test_release_gate_rejects_strict_dry_run_with_unlinked_readback_target(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": _strict_rbac_matrix_items(),
+                "dry_run": _strict_dry_run_items(mismatched_readback_target=True),
+                "approval_race": _strict_approval_race_item(),
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    dry_run_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
+    )
+    assert dry_run_check["status"] == "fail"
+    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true readbackLinked:false sideEffectProofs:7/7 sideEffects:none"
 
 
 def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proofs(tmp_path: Path) -> None:
@@ -1876,7 +1990,7 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
         if check["label"] == "Authenticated: strict live dry-run evidence has BffErrorEnvelope and no side effects."
     )
     assert dry_run_check["status"] == "fail"
-    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true sideEffectProofs:0/7 sideEffects:none"
+    assert dry_run_check["note"] == "strict:true dryRun:7/7 familyCoverage:7/7 invalidEnvelope:true readbackLinked:false sideEffectProofs:0/7 sideEffects:none"
 
 
 def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path) -> None:
