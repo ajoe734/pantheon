@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-XR-003 acceptance packet and dependency map
-- Status: todo
+- Status: review_approved
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Auto-reassigned ownership from Antigravity2 to Claude after repeated Antigravity2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Claude starts a fresh run.
+- Next: Sidecar acceptance packet reviewed and approved. PR #63 cross-repo mirror deferred to follow-up task. Verify/write hash discrepancy must be investigated by parent owner. Unit test assertion needs update to v1.1 two-reason expectation. Deployment gate must remain fail-closed until frontend commit pins are non-placeholder.
 
 ## Summary
 平行支援 AG-XR-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
