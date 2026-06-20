@@ -1789,10 +1789,10 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
             lines.append(
                 "| `{id}` | {phase} | {title} | {owner} | {status} | {depends} | {summary} |".format(
                     id=cell(task["id"]),
-                    phase=cell(task["phase"]),
+                    phase=cell(task.get("phase") or "-"),
                     title=cell(display_task_title(task)),
-                    owner=cell(task["owner"]),
-                    status=cell(task["status"]),
+                    owner=cell(task.get("owner") or "-"),
+                    status=cell(task.get("status") or "-"),
                     depends=cell(depends),
                     summary=cell(task.get("summary_zh") or "-"),
                 )
@@ -1924,12 +1924,12 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         lines.append(
             "| `{id}` | {phase} | {title} | {summary} | {owner} | {reviewer} | {status} | {depends} | {last_update} | {next} |".format(
                 id=cell(task["id"]),
-                phase=cell(task["phase"]),
+                phase=cell(task.get("phase") or "-"),
                 title=cell(display_task_title(task)),
                 summary=cell(task.get("summary_zh") or "-"),
-                owner=cell(task["owner"]),
-                reviewer=cell(task["reviewer"]),
-                status=cell(task["status"]),
+                owner=cell(task.get("owner") or "-"),
+                reviewer=cell(task.get("reviewer") or "-"),
+                status=cell(task.get("status") or "-"),
                 depends=cell(depends),
                 last_update=cell(format_display_timestamp(task.get("last_update"))),
                 next=cell(localize_embedded_timestamps(task.get("next") or "-")),
