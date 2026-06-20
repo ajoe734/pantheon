@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-20` |
 | Status | `review_approved` |
-| Current dev base | `95f085da0ffaef2e45bdad331880f23538cc45a7` |
+| Current dev base | `a39d0c830f17211f0a22785fac445ec2cc4bb46d` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -21,7 +21,7 @@ files.
 
 Followup 4 is now archived done through closeout PR #1897 at merge
 `e51bc8fdcdce119bd66596367c468364d18bf835`. Current `origin/dev` for closeout
-is `95f085da0ffaef2e45bdad331880f23538cc45a7`; after the original packet base,
+is `a39d0c830f17211f0a22785fac445ec2cc4bb46d`; after the original packet base,
 only unrelated sidecar support/acceptance artifacts advanced dev before
 closeout.
 
@@ -323,9 +323,10 @@ Results:
 - PR #1901 is merged into `dev` at merge commit
   `4a6a593d0edd33e6ac4d3b17e533ff047dd38530`.
 - `origin/dev` advanced from the reviewer freshness base to
-  `95f085da0ffaef2e45bdad331880f23538cc45a7`.
-- The only files changed in that range are the unrelated
-  `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4` task brief and support packet.
+  `a39d0c830f17211f0a22785fac445ec2cc4bb46d`.
+- The only files changed in that range are unrelated sidecar task briefs and
+  support packets for `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4` and
+  `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14`.
 - No AG-BE-ID-003 support packet, servant-session OpenAPI, BFF runtime,
   capability manifest, Agora design-closure, or dispatch script surface changed
   after review.
