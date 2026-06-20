@@ -82,6 +82,16 @@ KNOWN_AGENTS = {
         "default_branch": "feat/claude2-execution-control",
         "target_workload": 5,
     },
+    "Antigravity": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity-research-runtime",
+        "target_workload": 5,
+    },
+    "Antigravity2": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity2-research-runtime",
+        "target_workload": 5,
+    },
     "Gemini": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini-research-runtime",
@@ -119,12 +129,10 @@ AGENT_ALIASES = {
     "claude 2": "Claude2",
     "gemini2": "Gemini2",
     "gemini 2": "Gemini2",
-    # Antigravity is the runtime worker rename for Gemini (OPS-ANTIGRAVITY-CLI-MIGRATION).
-    # The collaboration layer still uses Gemini/Gemini2 as canonical names.
-    "antigravity": "Gemini",
-    "antigravity2": "Gemini2",
-    "agy": "Gemini",
-    "agy2": "Gemini2",
+    "antigravity": "Antigravity",
+    "antigravity2": "Antigravity2",
+    "agy": "Antigravity",
+    "agy2": "Antigravity2",
     "codex2": "Codex2",
     "codex (2)": "Codex2",
     "codex3": "Codex",

@@ -638,6 +638,14 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertEqual(task["auto_created_by"], "supervisor-underutilization")
         self.assertEqual(task["depends_on"], ["PER-001"])
 
+    def test_assign_preserves_antigravity_runtime_agent_names(self) -> None:
+        ai_status.command_assign(self.state, ["APP-002-SIDECAR-REVIEW", "Antigravity2", "Claude"])
+
+        task = ai_status.get_task(self.state, "APP-002-SIDECAR-REVIEW")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["owner"], "Antigravity2")
+        self.assertEqual(task["reviewer"], "Claude")
+
     def test_display_task_title_marks_sidecar_parent(self) -> None:
         title = ai_status.display_task_title(
             {
