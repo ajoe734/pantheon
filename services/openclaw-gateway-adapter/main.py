@@ -656,6 +656,23 @@ def get_capabilities() -> Dict[str, Any]:
             "capabilities": upstream_capabilities,
         }
     except UpstreamClientError as exc:
+        if exc.error_code == "UPSTREAM_NOT_FOUND":
+            probe = _probe_upstream()
+            if probe.get("reachable"):
+                payload["activation_state"] = "upstream_client_ready"
+                payload["upstream"] = {
+                    "status": "ok",
+                    "capabilities": {},
+                    "capabilities_status": "not_exposed",
+                    "capabilities_available": False,
+                    "warning_code": "UPSTREAM_CAPABILITIES_NOT_EXPOSED",
+                    "message": (
+                        "OpenClaw upstream is reachable, but it does not expose "
+                        "the optional /api/capabilities endpoint."
+                    ),
+                    "details": probe,
+                }
+                return payload
         payload["activation_state"] = "upstream_client_degraded"
         payload["upstream"] = {**exc.to_payload(), "status": "degraded"}
     return payload

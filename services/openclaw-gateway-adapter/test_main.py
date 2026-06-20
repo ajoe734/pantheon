@@ -291,6 +291,34 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(body["upstream"]["status"], "ok")
         self.assertEqual(body["upstream"]["capabilities"]["tools"], ["shell"])
 
+    def test_capabilities_not_exposed_does_not_degrade_reachable_upstream(self):
+        error = adapter_main.UpstreamClientError(
+            status_code=404,
+            error_code="UPSTREAM_NOT_FOUND",
+            message="OpenClaw upstream returned HTTP 404.",
+            retryable=False,
+            upstream_status=404,
+        )
+        mock_client = MagicMock()
+        mock_client.get_capabilities.side_effect = error
+        with (
+            patch.object(adapter_main, "_client", return_value=mock_client),
+            patch.object(
+                adapter_main,
+                "_probe_upstream",
+                return_value={"reachable": True, "http_status": 200, "probe": "/readyz"},
+            ),
+        ):
+            resp = client.get("/api/openclaw-adapter/capabilities")
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["activation_state"], "upstream_client_ready")
+        self.assertEqual(body["upstream"]["status"], "ok")
+        self.assertEqual(body["upstream"]["capabilities_status"], "not_exposed")
+        self.assertFalse(body["upstream"]["capabilities_available"])
+        self.assertEqual(body["upstream"]["warning_code"], "UPSTREAM_CAPABILITIES_NOT_EXPOSED")
+
     def test_capabilities_not_live_execution(self):
         resp = client.get("/api/openclaw-adapter/capabilities")
         body = resp.json()
