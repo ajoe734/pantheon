@@ -225,6 +225,13 @@ function parseBoolAfter(text, label) {
   return match[1].toLowerCase() === "true";
 }
 
+function providedBearerPairDistinct(source) {
+  if (source?.kind !== "provided_bearer_pair") return false;
+  const tokenA = String(source?.token_a_sha256_12 || "");
+  const tokenB = String(source?.token_b_sha256_12 || "");
+  return Boolean(tokenA && tokenB && tokenA !== tokenB);
+}
+
 function parseTables(text) {
   const rows = [];
   for (const line of text.split(/\r?\n/)) {
@@ -564,10 +571,12 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && providedRbacCases.length === expectedProvidedCases
     && distinctProvidedRbac;
   const approvalTokenPair = approvalRace?.token_source?.kind === "provided_bearer_pair";
+  const approvalTokenPairDistinct = providedBearerPairDistinct(approvalRace?.token_source);
   const approvalAcceptedCount = Number(approvalRace?.accepted_count ?? -1);
   const approvalSafeErrorCount = Number(approvalRace?.safe_error_count ?? -1);
   const approvalOneWinnerOneLoser = approvalAcceptedCount === 1 && approvalSafeErrorCount === 1;
   const twoManTokenPair = twoManRace?.token_source?.kind === "provided_bearer_pair";
+  const twoManTokenPairDistinct = providedBearerPairDistinct(twoManRace?.token_source);
   const twoManAcceptedCount = Number(twoManRace?.accepted_count ?? -1);
   const twoManReplayedCount = Number(twoManRace?.replayed_count ?? -1);
   const twoManCommandIdCount = Number(twoManRace?.command_id_count ?? -1);
@@ -601,19 +610,21 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && approvalRace?.bounded === true
       && approvalRace?.duplicate_winners === false
       && approvalOneWinnerOneLoser
-      && approvalTokenPair,
+      && approvalTokenPair
+      && approvalTokenPairDistinct,
     twoManRaceOk: baseOk
       && twoManRaceProbeCount === 1
       && summary.two_man_race_operator_scoped === true
       && twoManRace?.ok === true
       && twoManRace?.operator_scoped === true
       && twoManOperatorScoped
-      && twoManTokenPair,
+      && twoManTokenPair
+      && twoManTokenPairDistinct,
     note: {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
-      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair}`,
-      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 tokenPair:${twoManTokenPair}`,
+      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
+      twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
     },
     missingStatus: missingEvidenceStatus(step.status),
     missingNote: step.outcome
