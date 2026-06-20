@@ -800,6 +800,9 @@ def build_approval_race_results(
         raise RuntimeError("approval race probe threads did not finish before timeout")
 
     race_results = [result for result in results if result is not None]
+    target_hash = sha256_12(target_id)
+    for result in race_results:
+        result["target_id_sha256_12"] = target_hash
     accepted = [
         result
         for result in race_results
@@ -827,6 +830,7 @@ def build_approval_race_results(
         "path": path,
         "status": "/".join(str(result.get("status") or 0) for result in race_results),
         "target_id": target_id,
+        "target_id_sha256_12": target_hash,
         "duration_ms": round((time.time() - started) * 1000),
         "ok": bounded,
         "bounded": bounded,
