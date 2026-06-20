@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/chart_spec/v1",
+  "title": "ChartSpecV1",
+  "type": "object",
+  "required": ["spec_version", "kind", "encodings"],
+  "properties": {
+    "spec_version": {"type": "string", "const": "1.0"},
+    "kind": {
+      "type": "string",
+      "enum": ["metric", "table", "line", "area", "bar", "stacked_bar", "heatmap", "scatter", "network", "timeline", "sankey", "candlestick", "gauge"]
+    },
+    "encodings": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["x", "y", "color", "size", "shape", "opacity", "row", "column", "label", "source", "target", "value", "open", "high", "low", "close", "volume", "time"]
+      },
+      "additionalProperties": {"$ref": "#/definitions/field_encoding"}
+    },
+    "transforms": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/transform"},
+      "default": []
+    },
+    "tooltip_fields": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "default": []
+    },
+    "thresholds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "operator", "value"],
+        "properties": {
+          "field": {"type": "string", "minLength": 1},
+          "operator": {"enum": ["lt", "lte", "eq", "gte", "gt", "between"]},
+          "value": {},
+          "severity": {"enum": ["info", "watch", "warning", "high", "critical"]},
+          "label": {"type": "string"}
+        },
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "click_action": {"$ref": "#/definitions/interaction"},
+    "options": {
+      "type": "object",
+      "description": "Renderer-safe options only. Validators reject executable callbacks, formatter code, HTML and remote script references.",
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "field_encoding": {
+      "type": "object",
+      "required": ["field", "type"],
+      "properties": {
+        "field": {"type": "string", "minLength": 1},
+        "type": {"enum": ["quantitative", "temporal", "nominal", "ordinal"]},
+        "aggregate": {"enum": ["sum", "mean", "median", "min", "max", "count", "distinct_count"]},
+        "scale": {"enum": ["linear", "log", "symlog", "time", "band"]},
+        "format": {"type": "string"},
+        "title": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "transform": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"enum": ["filter", "sort", "top_k", "aggregate", "window", "rolling_mean", "rolling_sum", "percent_change", "rank", "percentile", "normalize", "winsorize", "zscore", "bucket", "time_bucket", "join_by_key"]},
+        "params": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    },
+    "interaction": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["open_candidate", "open_strategy", "open_position", "open_evidence", "open_research_run", "open_shadow_record", "filter_workspace", "cross_highlight", "add_to_monitoring", "remove_from_monitoring", "park_candidate", "request_more_research", "send_to_shadow", "request_widget_revision", "create_journal_note"]},
+        "params": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
