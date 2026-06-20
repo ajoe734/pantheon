@@ -19,7 +19,7 @@ migrations, or execute-plans source.
 
 This fourteenth followup refreshes the `AG-FE-ID-001` BFF/frontend handoff
 after this task branch merged current `origin/dev` at merge commit
-`81b17d678b4c029522a32eb26d9eb218a2350279` (PR #1902).
+`95f085da0ffaef2e45bdad331880f23538cc45a7` (PR #1903).
 
 The relevant session-gate freshness update is
 `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` closeout PR #1897 at merge
@@ -117,7 +117,7 @@ readiness.
 
 | Change | What changed | Parent implication |
 |---|---|---|
-| Branch currentness | This task branch merged current `origin/dev` at `81b17d678b4c029522a32eb26d9eb218a2350279`. | FOLLOWUP-14 now starts from the current dev tip and includes followup-4 closeout PR #1897, review-pending followup-5 PR #1901, AG-XR followup-7 closeout PR #1902, and earlier unrelated support merges PR #1899/#1900. |
+| Branch currentness | This task branch merged current `origin/dev` at `95f085da0ffaef2e45bdad331880f23538cc45a7`. | FOLLOWUP-14 now starts from the current dev tip and includes followup-4 closeout PR #1897, review-pending followup-5 PR #1901, AG-XR followup-7 closeout PR #1902, AG-FE-DB followup-4 closeout PR #1903, and earlier unrelated support merges PR #1899/#1900. |
 | Older baseline correction | The previous branch-currentness merges at `c9f6c2e5c4d340d97d1cbcaeacf8f82545eaa7a5` and `2eae7afbb9323063a9369ae31dfd3f90acd0eba4` are historical. | Do not use the previously recorded invalid full SHA or treat `2eae7afb`/`c9f6c2e5` as the latest dev baseline. |
 | FOLLOWUP-13 closed | Archived `done`; delivery records packet PR #1884 and closeout PR #1885. | Treat FOLLOWUP-13 as accepted support evidence unless superseded by this packet. |
 | AG-BE-ID-003 followup-3 closed | Archived `done`; it records packet PR #1886 and closeout PR #1890. | Treat it as predecessor evidence for the `servant/sessions` blocker, not the latest frontend gate reference. |
@@ -340,7 +340,7 @@ Expected current interpretation:
 
 Commands run from branch
 `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` after merging current
-`origin/dev` at `81b17d678b4c029522a32eb26d9eb218a2350279`:
+`origin/dev` at `95f085da0ffaef2e45bdad331880f23538cc45a7`:
 
 ```bash
 git status -sb
@@ -353,6 +353,7 @@ git merge --no-edit origin/dev
 git show --oneline --stat --decorate e51bc8fd
 git show --oneline --stat --decorate 4a6a593d
 git show --oneline --stat --decorate 81b17d67
+git show --oneline --stat --decorate 95f085da
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001
@@ -385,7 +386,7 @@ git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_f
 Results:
 
 - Branch was correct and merged current `origin/dev` at
-  `81b17d678b4c029522a32eb26d9eb218a2350279`.
+  `95f085da0ffaef2e45bdad331880f23538cc45a7`.
 - The older `c9f6c2e5` and `2eae7afb` baselines are historical; the invalid
   previous full SHA for `2eae7afb` is no longer used.
 - Parent `AG-FE-ID-001` remains `todo`.
@@ -402,7 +403,7 @@ Results:
 - `AG-XR-003` remains blocked; its followup-6 and followup-7 support packets
   are archived `done` but do not unblock parent FE readiness.
 - `AgoraApp.tsx`, `identity.ts`, and `servant.ts` are still missing.
-- Focused BFF/OpenClaw pytest passed: `35 passed in 13.86s`.
+- Focused BFF/OpenClaw pytest passed: `35 passed in 16.13s`.
 - Agora schema bundle verify passed.
 - v1.1 OpenAPI YAML parse passed.
 - Generated Agora types are current: `17` schemas and `96` operations.
