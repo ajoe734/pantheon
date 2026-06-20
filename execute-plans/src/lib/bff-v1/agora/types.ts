@@ -12,14 +12,14 @@ export const AGORA_V1_CONTRACT_SNAPSHOT = {
   "contract_version": "1.0",
   "files": {
     "openapi/agora_v1.openapi.yaml": "4da5ea91923e40c13a9118ee4f784a5d6627e6cb91e4d4712d8fac244912118f",
-    "specs/agora/agora_user_scope.schema.json": "022e147c94cf2b11cde6dc3af49d04ba8a776c50eed857931b12f12aabd02f80",
+    "specs/agora/agora_user_scope.schema.json": "ae660aa7719ded37ca8b41bfc6ac287d1eae0bb85a8389b08d069c528a934dee",
     "specs/agora/candidate_pool.schema.json": "679077c2f567502883f0b7735332645df30cccd6752a978379c5eeecd058e3b9",
     "specs/agora/capability_manifest.json": "5988cac6d8ca38fc0c51922086c1cc2564b1bb31b2b36ee276e6d363249e9e3e",
     "specs/agora/dashboard_recipe.schema.json": "5b9c33653eb8c85b001b5f6f6a802e83e58276a25f6c00e0a030a7094c78a8f6",
     "specs/agora/personalization_event.schema.json": "df7991d19943650a61d58a065182fe4bda20f967b4098a36f36b1ab4b33bcb21",
     "specs/agora/research_plan.schema.json": "55010d81198a4eef6934cde9392e19d79d014bf3f7ef6d31901b37627bd040d4",
     "specs/agora/research_run_summary.schema.json": "669530ad2aed09133e84344aec7768e375c9cc505728b136d76041366184328b",
-    "specs/agora/servant_profile.schema.json": "004c5ebddf25622602f175f9ee10bbba714adf7c24050ecc6101c1bb6cffa0b9",
+    "specs/agora/servant_profile.schema.json": "71b114fa03fe0d54f72c785855760482d5c1ea5500a039a7c0593c490d58f930",
     "specs/agora/shadow_decision.schema.json": "1414c77ddebb5102b81a10fb57db32520c607daba76cb3736f7eb20eb751b0b2",
     "specs/agora/strategy_completeness.schema.json": "13a8c0e28a6434b93b221a4d33f8022f87ee6ca4df99627728800117474ce2fa",
     "specs/agora/strategy_workshop.schema.json": "d8d1662790f35d61fdaff0580ca488011dd90f4b4007d78e9fb77a5065396aec",
@@ -663,13 +663,24 @@ export type AgoraOperationId = typeof AGORA_V1_OPERATIONS[number]["operationId"]
 export interface AgoraUserScope {
   spec_version: "1.0";
   scope_id: string;
+  tenant_id: string;
+  user_id: string;
   operator_id: string;
-  granted_capabilities: Array<string>;
+  granted_capabilities: Array<unknown>;
+  capabilities?: Array<unknown>;
+  roles?: Array<string>;
   denied_capabilities?: Array<string>;
-  surfaces?: Array<"management" | "agora" | "developer">;
+  surfaces?: Array<"agora">;
   persona_ids?: Array<string>;
+  read_predicate: {
+    tenant_id: string;
+    user_id: string;
+    required_fields: Array<"tenant_id" | "user_id">;
+    fail_closed: true;
+  };
+  servant_policy: unknown;
   created_at: string;
-  expires_at?: string;
+  expires_at?: string | null;
   policy_refs?: Array<string>;
   metadata?: Record<string, unknown>;
 }
@@ -679,6 +690,12 @@ export interface ServantProfile {
   persona_id: string;
   display_name: string;
   status: "active" | "suspended" | "paper_only" | "shadow_only" | "retired";
+  tenant_id: string;
+  agora_user_id: string;
+  persona_class: "agora_servant";
+  owner_scope: "user_private";
+  visibility_scope: "private" | "redacted_management";
+  memory_scope: "private_user";
   capability_summary: {
     can_ask: boolean;
     can_research: boolean;
@@ -686,7 +703,9 @@ export interface ServantProfile {
     can_shadow?: boolean;
     asset_classes?: Array<string>;
     strategy_families?: Array<string>;
+    allowed_agora_capabilities?: Array<unknown>;
   };
+  policy: unknown;
   description?: string;
   avatar_ref?: string;
   last_active_at?: string;
