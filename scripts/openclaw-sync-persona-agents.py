@@ -37,15 +37,42 @@ def resolve_model(p: Mapping[str, Any]) -> str:
     return pref if pref in KNOWN_MODELS else DEFAULT_PERSONA_MODEL
 
 
+TRAIT_FIELDS = ("instruments", "risk_appetite", "decision_style", "time_horizon", "hard_rules", "persona_voice")
+TRAIT_LABELS = {
+    "instruments": "Instruments / universe", "risk_appetite": "Risk appetite",
+    "decision_style": "Decision style", "time_horizon": "Time horizon",
+    "hard_rules": "Hard rules", "persona_voice": "Voice / temperament",
+}
+
+
+def trait_value(p: Mapping[str, Any], key: str) -> str:
+    raw = None
+    for container in (p.get("traits"), (p.get("metadata") or {}).get("traits")):
+        if isinstance(container, dict) and container.get(key) not in (None, ""):
+            raw = container.get(key)
+            break
+    if raw in (None, ""):
+        raw = p.get(key)
+    if raw in (None, ""):
+        return ""
+    if isinstance(raw, (list, tuple)):
+        return ", ".join(str(x).strip() for x in raw if str(x).strip())
+    return str(raw).strip()
+
+
 def build_soul(p: Mapping[str, Any]) -> str:
     pid = persona_id(p)
     name = str(p.get("name") or pid or "Persona").strip()
     mandate = str(p.get("mandate") or "").strip()
-    strategy = str(p.get("strategy_family") or "").strip()
+    strategy = str(p.get("strategy_family") or p.get("strategyFamily") or "").strip()
     state = str(p.get("lifecycle_state") or p.get("state") or "").strip()
-    mandate_line = f"- Mandate: **{mandate}**" if mandate else "- Mandate: (not yet set in the registry)"
+    mandate_line = f"- Mandate: **{mandate}**" if mandate else "- Mandate: (not yet set — ask the operator to define it)"
     strategy_line = f"- Strategy family: **{strategy}**" if strategy else "- Strategy family: (unset)"
     state_line = f"\n- Current lifecycle state: `{state}`" if state else ""
+    trait_lines = [f"- {TRAIT_LABELS[k]}: {trait_value(p, k)}" for k in TRAIT_FIELDS if trait_value(p, k)]
+    traits_block = ("\n## Your trading character\n" + "\n".join(trait_lines) + "\n") if trait_lines else (
+        "\n## Your trading character\n_(No detailed traits set yet — instruments / risk / style / rules / voice "
+        "are unset. Operate on mandate + strategy only and tell the operator what to define before sized decisions.)_\n")
     return f"""# SOUL.md — {name} (`{pid}`)
 
 You are **{name}** — a Pantheon trading persona with your own mandate. You are NOT
@@ -55,7 +82,7 @@ defer out-of-scope asks to the right persona.
 ## Who you are
 {mandate_line}
 {strategy_line}{state_line}
-
+{traits_block}
 ## Every turn (OODA)
 Answer AS this persona, concretely: **Observe** (cite the numbers you were given),
 **Orient** (what it means for your strategy family), **Decide** (a concrete stance —

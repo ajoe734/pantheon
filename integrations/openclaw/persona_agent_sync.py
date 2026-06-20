@@ -75,24 +75,71 @@ def _resolve_model(persona: Mapping[str, Any]) -> str:
     return pref if pref in _KNOWN_MODELS else DEFAULT_PERSONA_MODEL
 
 
-def build_persona_soul(persona: Mapping[str, Any]) -> str:
-    """Render a persona-specific SOUL.md from its registry record.
+# Trait fields (beyond mandate/strategy_family) that shape a persona's identity.
+# Read from a `traits` dict on the persona record (preferred) or top-level keys.
+TRAIT_FIELDS = ("instruments", "risk_appetite", "decision_style", "time_horizon", "hard_rules", "persona_voice")
+_TRAIT_LABELS = {
+    "instruments": "Instruments / universe",
+    "risk_appetite": "Risk appetite",
+    "decision_style": "Decision style",
+    "time_horizon": "Time horizon",
+    "hard_rules": "Hard rules",
+    "persona_voice": "Voice / temperament",
+}
 
-    The SOUL makes the agent answer AS this trading persona (its mandate /
-    strategy / domain), explicitly NOT as the Management AI or a generic
-    assistant, and keeps the paper/live capital guardrails.
+
+def _trait_value(persona: Mapping[str, Any], key: str) -> str:
+    raw = None
+    # Preferred: a `traits` dict (top-level or nested under metadata, where the
+    # BFF persists it). Fall back to a top-level key of the same name.
+    for container in (persona.get("traits"), (persona.get("metadata") or {}).get("traits")):
+        if isinstance(container, Mapping) and container.get(key) not in (None, ""):
+            raw = container.get(key)
+            break
+    if raw in (None, "") and key in persona:
+        raw = persona.get(key)
+    if raw in (None, ""):
+        return ""
+    if isinstance(raw, (list, tuple)):
+        return ", ".join(str(x).strip() for x in raw if str(x).strip())
+    return str(raw).strip()
+
+
+def build_persona_soul(persona: Mapping[str, Any]) -> str:
+    """Render a persona-specific SOUL.md from its registry record + traits.
+
+    The SOUL makes the agent answer AS this trading persona — its mandate,
+    strategy, instruments, risk appetite, decision style, hard rules and voice —
+    explicitly NOT as the Management AI or a generic assistant, with the
+    paper/live capital guardrails. Sparse fields are honestly marked so the
+    persona asks for them rather than faking depth it doesn't have.
     """
     pid = _persona_id(persona)
     name = str(persona.get("name") or pid or "Persona").strip()
     mandate = str(persona.get("mandate") or "").strip()
-    strategy = str(persona.get("strategy_family") or "").strip()
+    strategy = str(persona.get("strategy_family") or persona.get("strategyFamily") or "").strip()
     state = str(persona.get("lifecycle_state") or persona.get("state") or "").strip()
     archetype = str(persona.get("archetype") or "").strip()
 
-    mandate_line = f"- Mandate: **{mandate}**" if mandate else "- Mandate: (not yet set in the registry)"
+    mandate_line = f"- Mandate: **{mandate}**" if mandate else "- Mandate: (not yet set in the registry — ask the operator to define it)"
     strategy_line = f"- Strategy family: **{strategy}**" if strategy else "- Strategy family: (unset)"
     archetype_line = f"\n- Archetype: {archetype}" if archetype else ""
     state_line = f"\n- Current lifecycle state: `{state}`" if state else ""
+
+    trait_lines = []
+    for key in TRAIT_FIELDS:
+        val = _trait_value(persona, key)
+        if val:
+            trait_lines.append(f"- {_TRAIT_LABELS[key]}: {val}")
+    if trait_lines:
+        traits_block = "\n## Your trading character\n" + "\n".join(trait_lines) + "\n"
+    else:
+        traits_block = (
+            "\n## Your trading character\n"
+            "_(No detailed traits set yet — instruments / risk appetite / decision style / "
+            "rules / voice are unset in the registry. Operate on mandate + strategy only, "
+            "and tell the operator which of these to define before making sized decisions.)_\n"
+        )
 
     return f"""# SOUL.md — {name} (`{pid}`)
 
@@ -104,7 +151,7 @@ to the right persona.
 ## Who you are
 {mandate_line}
 {strategy_line}{archetype_line}{state_line}
-
+{traits_block}
 ## How you work every turn (OODA)
 When asked to assess or decide, answer **as this persona**, concretely:
 - **Observe** — what the signals / market / regime you were given actually show (cite the numbers).

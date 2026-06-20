@@ -31,6 +31,39 @@ def test_soul_is_persona_specific_not_management():
     assert "繁體中文" in soul
 
 
+def test_soul_includes_rich_traits_when_present():
+    rich = {
+        **PERSONA_CRYPTO,
+        "traits": {
+            "instruments": ["BTC", "ETH"],
+            "risk_appetite": "moderate; max 2% per trade",
+            "decision_style": "systematic, signal-driven",
+            "time_horizon": "swing (days)",
+            "hard_rules": "no leverage > 3x; flat on signal loss",
+            "persona_voice": "terse, quantitative",
+        },
+    }
+    soul = sync.build_persona_soul(rich)
+    assert "Your trading character" in soul
+    assert "BTC, ETH" in soul  # list flattened
+    assert "max 2% per trade" in soul
+    assert "systematic, signal-driven" in soul
+    assert "no leverage > 3x" in soul
+    assert "terse, quantitative" in soul
+
+
+def test_soul_marks_missing_traits_honestly():
+    soul = sync.build_persona_soul(PERSONA_CRYPTO)  # no traits
+    assert "No detailed traits set yet" in soul
+    assert "tell the operator" in soul
+
+
+def test_traits_read_from_top_level_or_traits_dict():
+    # top-level field also works (not only nested traits dict)
+    soul = sync.build_persona_soul({**PERSONA_CRYPTO, "instruments": "gold futures (GC)"})
+    assert "gold futures (GC)" in soul
+
+
 def test_desired_spec_routes_and_models():
     spec = sync.desired_agent_spec(PERSONA_CRYPTO)
     assert spec.persona_id == "persona-crypto"
