@@ -4895,6 +4895,92 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         self.assertIn("sidecar_task_created", activity_types)
         self.assertIn("sidecar_wave_started", activity_types)
 
+    def test_archived_sidecar_id_gets_followup_id(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "underutilization": {
+                "below_threshold_since": "2026-04-10T00:00:00Z",
+                "last_sidecar_wave_at": None,
+                "last_sidecar_wave_reason": None,
+            },
+        }
+        parent_task = {
+            "id": "APP-001",
+            "phase": "Phase 5: Persona and Application Surfaces",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "title": "Define BFF query surfaces",
+            "summary_zh": "整理 operator console 與 workbench 的 BFF query contract。",
+            "artifacts": ["services/control-plane/bff/"],
+            "last_update": "2026-04-10T00:05:00Z",
+        }
+        base_id = "APP-001-SIDECAR-BFF-HANDOFF"
+        followup_id = f"{base_id}-FOLLOWUP-2"
+        archive_dir = self.root / "ai-task-archive" / "tasks"
+        archive_dir.mkdir(parents=True)
+        (archive_dir / f"{base_id}.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task_id": base_id,
+                    "archived_at": "2026-04-10T00:10:00Z",
+                    "terminal_status": "done",
+                    "terminal_outcome": "completed",
+                    "task": {
+                        "id": base_id,
+                        "status": "done",
+                        "task_class": "sidecar",
+                        "helper_parent": "APP-001",
+                        "helper_kind": "bff_handoff_packet",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        created_sidecar = {
+            "id": followup_id,
+            "phase": "Phase 5: Persona and Application Surfaces",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "title": "Prepare APP-001 BFF and frontend handoff packet",
+            "summary_zh": "平行支援 APP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+            "artifacts": [f"support/sidecars/APP-001/{followup_id}.md"],
+            "task_class": "sidecar",
+            "auto_generated": True,
+            "helper_parent": "APP-001",
+            "helper_kind": "bff_handoff_packet",
+            "mutates_canonical": False,
+            "auto_created_by": "supervisor-underutilization",
+            "last_update": "2026-04-10T00:16:05Z",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[{"tasks": [parent_task]}, {"tasks": [parent_task, created_sidecar]}]),
+            mock.patch.object(supervisor, "load_sidecar_catalog", return_value=[]),
+            mock.patch.object(supervisor, "create_sidecar_task", return_value=(True, "")) as create_sidecar_task,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-10T00:16:05Z"),
+        ):
+            changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertTrue(changed)
+        create_sidecar_task.assert_called_once()
+        kwargs = create_sidecar_task.call_args.kwargs
+        self.assertEqual(kwargs["sidecar_id"], followup_id)
+        self.assertEqual(kwargs["artifacts"], [f"support/sidecars/APP-001/{followup_id}.md"])
+        self.assertEqual(kwargs["helper_parent"], "APP-001")
+        self.assertEqual(kwargs["helper_kind"], "bff_handoff_packet")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], followup_id)
+        self.assertIn(followup_id, state.get("tasks", {}))
+
     def test_creates_all_assignable_sidecars_when_wave_limit_is_unset(self) -> None:
         self.config["underutilization_dispatch"]["require_recent_chair_signal"] = True
         state = {

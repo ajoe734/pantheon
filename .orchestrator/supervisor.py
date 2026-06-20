@@ -8159,6 +8159,31 @@ def sidecar_task_id(parent_task_id: str, kind: str) -> str:
     return f"{parent_task_id}-SIDECAR-{slug.replace('_', '-').upper()}"
 
 
+def sidecar_task_id_taken(
+    task_map: dict[str, dict[str, Any]],
+    resolver: TaskResolver,
+    task_id: str,
+) -> bool:
+    return task_id in task_map or resolver.snapshot(task_id) is not None
+
+
+def unique_sidecar_task_id(
+    parent_task_id: str,
+    kind: str,
+    task_map: dict[str, dict[str, Any]],
+    resolver: TaskResolver,
+) -> str:
+    base_id = sidecar_task_id(parent_task_id, kind)
+    if not sidecar_task_id_taken(task_map, resolver, base_id):
+        return base_id
+    suffix = 2
+    while True:
+        candidate = f"{base_id}-FOLLOWUP-{suffix}"
+        if not sidecar_task_id_taken(task_map, resolver, candidate):
+            return candidate
+        suffix += 1
+
+
 def render_sidecar_template(value: str, variables: dict[str, str]) -> str:
     rendered = str(value)
     for key, item in variables.items():
@@ -8487,7 +8512,7 @@ def build_catalog_sidecar_candidates(
             reviewer = str(parent.get("owner") or "").strip()
             if not reviewer:
                 continue
-            sidecar_id = sidecar_task_id(parent_id, kind)
+            sidecar_id = unique_sidecar_task_id(parent_id, kind, task_map, resolver)
             variables = {
                 "parent_task_id": parent_id,
                 "parent_title": str(parent.get("title") or ""),
@@ -8556,7 +8581,7 @@ def build_dynamic_sidecar_candidates(
         reviewer = str(parent.get("owner") or "").strip()
         if not reviewer:
             continue
-        sidecar_id = sidecar_task_id(parent_id, kind)
+        sidecar_id = unique_sidecar_task_id(parent_id, kind, task_map, resolver)
         title_by_kind = {
             "review_packet": f"Prepare {parent_id} review packet and evidence summary",
             "acceptance_packet": f"Prepare {parent_id} acceptance packet and dependency map",
