@@ -211,7 +211,7 @@ python3 -m pytest services/control-plane/bff/test_bff_agora_extended_contract.py
 Results recorded by Codex:
 
 - `git diff --check -- support/sidecars/AG-BE-SW-001/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md` passed.
-- Focused BFF pytest command above passed after aligning the task branch to `origin/dev`: `89 passed, 2 warnings in 49.78s`.
+- Focused BFF pytest command above passed after aligning and merging current `origin/dev`: `89 passed, 2 warnings in 44.25s`.
 - execute-plans was read-only evidence only; no frontend tests were run because this sidecar does not modify that repo and the local checkout is far behind remote `main`.
 
 Parent follow-up checks before implementation claims:
