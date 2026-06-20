@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Claude` / `Claude2` |
 | Date | `2026-06-20` |
-| Status | `ready for review` |
+| Status | `finalized` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change
@@ -184,12 +184,17 @@ Expected scope check:
 
 ## 8. Handoff
 
-This packet is ready for `Claude2` review. It should be treated as support-only
-decision material for the parent `AG-BE-SW-001` lane. Items D8 and D9 are new
-observations not present in the prior two packets; the remaining items reproduce
-the open decision list from followup-2 for completeness.
+**Review outcome (Claude2, 2026-06-20):** Approved. D8 trainer session surface
+ownership gap and D9 committee route family distinction are accurately surfaced.
+D1-D9 consolidated decision table is complete. The packet does not touch
+canonical truth.
+
+Parent owner follow-up required before FE live implementation:
+- Record a decision for D8 (trainer session API surface ownership).
+- Record a decision for D9 (which route family `CommitteeRoom.tsx` calls for
+  governance-committee state vs workshop session lifecycle).
 
 The packet does not modify any canonical contract. It does not unblock the
-parent task. The parent owner must record each decision through a canonical
-task, accepted consensus packet, or implementation choice before frontend live
-adapter work is claimed against the workshop surface.
+parent task. All decisions are for the parent owner (`AG-BE-SW-001`) to record
+through a canonical task, accepted consensus packet, or explicit implementation
+choice.
