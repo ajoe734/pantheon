@@ -152,7 +152,8 @@ function evidenceLink(filePath, label = "") {
 function evidencePath(filePath) {
   if (!filePath) return "";
   if (/^https?:\/\//i.test(filePath)) return filePath;
-  return path.resolve(ROOT, filePath);
+  const resolved = path.resolve(ROOT, filePath);
+  return isInsideDir(resolved, AUDIT_DIR) ? resolved : "";
 }
 
 function escapeMd(value) {
