@@ -17,7 +17,8 @@
     "enabled": true,
     "repositories": {
       "execute_plans": {
-        "local_path": "./execute-plans"
+        "local_path": "./execute-plans",
+        "default_branch": "dev"
       }
     }
   },
