@@ -13,7 +13,8 @@
     },
     "search.exclude": {
       "**/.orchestrator/backups": true,
-      "**/__pycache__": true
+      "**/__pycache__": true,
+      "**/.artifacts/**": true
     },
     "claudeCode.initialPermissionMode": "acceptEdits",
     "claudeCode.allowDangerouslySkipPermissions": false,
@@ -22,6 +23,14 @@
     "github.copilot.chat.claudeAgent.enabled": false,
     "github.copilot.chat.reviewAgent.enabled": false,
     "geminicodeassist.enable": true,
-    "geminicodeassist.agentYoloMode": false
+    "geminicodeassist.agentYoloMode": false,
+    "files.watcherExclude": {
+      "**/.artifacts/**": true
+    },
+    "git.repositoryScanIgnoredFolders": [
+      ".artifacts"
+    ],
+    "git.autoRepositoryDetection": "openEditors",
+    "git.repositoryScanMaxDepth": 1
   }
 }
