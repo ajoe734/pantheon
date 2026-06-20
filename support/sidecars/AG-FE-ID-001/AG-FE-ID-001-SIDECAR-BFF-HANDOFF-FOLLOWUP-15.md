@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Claude2` / `Claude` |
 | Date | `2026-06-20` |
-| Status | `review` |
+| Status | `done` |
 | Current dev base | `a21c72c33befdc7761f8bec6afd8b1983fd1d587` |
 | Mutates canonical truth | `false` |
 
