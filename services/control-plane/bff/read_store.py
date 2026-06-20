@@ -10438,6 +10438,9 @@ class ReadSurfaceStore:
         archetype: str = "generalist",
         lifecycle_state: str = "draft",
         risk_level: str = "low",
+        mandate: Optional[str] = None,
+        strategy_family: Optional[str] = None,
+        traits: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         timestamp = created_at or _utc_now_rfc3339()
@@ -10447,12 +10450,18 @@ class ReadSurfaceStore:
             "archetype": archetype,
             "risk_level": risk_level,
         })
+        # Real persona identity (previously aliased to archetype). Traits carry the
+        # persona's trading character so its OpenClaw SOUL is meaningful, not thin.
+        clean_mandate = (str(mandate).strip() if mandate else "") or archetype
+        clean_strategy = (str(strategy_family).strip() if strategy_family else "") or archetype
+        if traits:
+            clean_metadata["traits"] = json.loads(json.dumps(traits))
         record = {
             "id": persona_id,
             "persona_id": persona_id,
             "name": name,
-            "mandate": archetype,
-            "strategy_family": archetype,
+            "mandate": clean_mandate,
+            "strategy_family": clean_strategy,
             "lifecycle_state": lifecycle_state,
             "status": lifecycle_state,
             "created_at": timestamp,

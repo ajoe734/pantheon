@@ -24030,6 +24030,11 @@ def _project_persona_dto(
         "governanceRequired": bool(metadata.get("governance_required", True)),
         "recommendedGovernanceAction": metadata.get("recommended_governance_action"),
         "riskFlags": list(metadata.get("risk_flags") or []),
+        # Real persona identity + trading-character traits (drive the OpenClaw SOUL
+        # and let the FE display/edit them).
+        "mandate": raw.get("mandate") or "",
+        "strategyFamily": raw.get("strategy_family") or "",
+        "traits": metadata.get("traits") if isinstance(metadata.get("traits"), dict) else {},
     }
     for source_key, dto_key in (
         ("data_source_status", "dataSourceStatus"),
@@ -36377,6 +36382,16 @@ async def bff_create_persona(
     lifecycle_state = _normalize_lifecycle_state(
         payload.get("state") or payload.get("lifecycleStatus") or "draft"
     )
+    # Real persona identity + trading-character traits — these flow to the
+    # persona's OpenClaw agent SOUL (integrations/openclaw/persona_agent_sync).
+    mandate = str(payload.get("mandate") or "").strip() or None
+    strategy_family = str(payload.get("strategy_family") or payload.get("strategyFamily") or "").strip() or None
+    raw_traits = payload.get("traits")
+    traits = {
+        k: raw_traits[k]
+        for k in ("instruments", "risk_appetite", "decision_style", "time_horizon", "hard_rules", "persona_voice")
+        if isinstance(raw_traits, dict) and raw_traits.get(k) not in (None, "")
+    } or None
     persona_metadata = {
         "description": payload.get("description"),
         "memo": payload.get("memo"),
@@ -36389,6 +36404,8 @@ async def bff_create_persona(
             "id": persona_id,
             "persona_id": persona_id,
             "name": name,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
             "lifecycle_state": lifecycle_state,
             "created_at": snapshot_at,
             "updated_at": snapshot_at,
@@ -36398,6 +36415,7 @@ async def bff_create_persona(
                 "owner": owner,
                 "archetype": archetype,
                 "risk_level": risk,
+                **({"traits": traits} if traits else {}),
             },
         }
     else:
@@ -36409,6 +36427,9 @@ async def bff_create_persona(
             archetype=archetype,
             lifecycle_state=lifecycle_state,
             risk_level=risk,
+            mandate=mandate,
+            strategy_family=strategy_family,
+            traits=traits,
             metadata=persona_metadata,
         )
     overlay = _project_persona_dto(
