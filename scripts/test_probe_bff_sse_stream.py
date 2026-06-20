@@ -66,8 +66,19 @@ def test_stream_reconnect_sequence_advances_cursor_without_duplicates(monkeypatc
         event_id = replay_by_cursor.get(cursor)
         return {
             "ok": True,
+            "request_headers": {"Last-Event-ID": cursor},
+            "response_headers": {
+                "X-SSE-Channel": "approval",
+                "X-SSE-Replay-Supported": "true",
+            },
             "first_event": {
+                "id": event_id,
                 "data": {"id": event_id},
+                "shape_checks": {
+                    "id_line_matches_data_id": True,
+                    "event_line_matches_data_type": True,
+                    "data_json_parse_ok": True,
+                },
             },
         }
 
@@ -86,11 +97,51 @@ def test_stream_reconnect_sequence_advances_cursor_without_duplicates(monkeypatc
     assert observed_cursors == [f"evt-{index}" for index in range(1, 6)]
     assert result["ok"] is True
     assert result["attempt_count"] == 5
+    assert result["cursor_event_ids"] == [f"evt-{index}" for index in range(1, 6)]
     assert result["observed_event_ids"] == [f"evt-{index}" for index in range(2, 7)]
     assert result["duplicate_event_ids"] == []
     assert result["missing_expected_event_ids"] == []
     assert result["cursors_advanced"] is True
 
+
+def test_stream_reconnect_sequence_rejects_missing_last_event_id_lineage(monkeypatch) -> None:
+    probe = _load_probe_module()
+
+    def fake_stream_first_event(**kwargs):
+        cursor = kwargs.get("last_event_id")
+        event_id = f"{cursor}-next"
+        return {
+            "ok": True,
+            "request_headers": {"Last-Event-ID": "wrong-cursor"},
+            "response_headers": {
+                "X-SSE-Channel": "approval",
+                "X-SSE-Replay-Supported": "true",
+            },
+            "first_event": {
+                "id": event_id,
+                "data": {"id": event_id},
+                "shape_checks": {
+                    "id_line_matches_data_id": True,
+                    "event_line_matches_data_type": True,
+                    "data_json_parse_ok": True,
+                },
+            },
+        }
+
+    monkeypatch.setattr(probe, "stream_first_event", fake_stream_first_event)
+
+    result = probe.stream_reconnect_sequence(
+        base_url="https://bff.example.test",
+        mode=probe.BEARER_MODE,
+        token="token",
+        timeout=1.0,
+        channel="approval",
+        cookie_name="pantheon_session",
+        expected_replays=[("evt-1", "evt-1-next")],
+    )
+
+    assert result["ok"] is False
+    assert result["attempts"][0]["lineage_checks"]["last_event_id_sent"] is False
 
 def test_stream_soak_counts_heartbeat_and_expected_replay_event(monkeypatch) -> None:
     probe = _load_probe_module()
