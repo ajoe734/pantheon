@@ -132,6 +132,20 @@
       "chair_review:*"
     ]
   },
+  "worker_worktree_cleanup": {
+    "enabled": true,
+    "cleanup_inactive_leases": true,
+    "archive_dirty_worktrees": true,
+    "force_remove_archived_dirty": true,
+    "archive_root": "/tmp/pantheon-worker-worktree-archive",
+    "archive_max_file_bytes": 20971520,
+    "max_removals_per_tick": 25,
+    "base_branches": [
+      "dev",
+      "master",
+      "main"
+    ]
+  },
   "worker_retry": {
     "enabled": true,
     "max_attempts": 5,
