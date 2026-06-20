@@ -602,8 +602,10 @@ def stream_reconnect_sequence(
     expected_replays: list[tuple[str, str]],
 ) -> dict[str, Any]:
     attempts: list[dict[str, Any]] = []
+    cursor_event_ids: list[str] = []
     observed_event_ids: list[str] = []
     for index, (cursor_event_id, expected_event_id) in enumerate(expected_replays, start=1):
+        cursor_event_ids.append(cursor_event_id)
         attempt = stream_first_event(
             base_url=base_url,
             mode=mode,
@@ -620,6 +622,23 @@ def stream_reconnect_sequence(
             if isinstance(attempt.get("first_event"), dict)
             else None
         )
+        first_event = attempt.get("first_event") if isinstance(attempt.get("first_event"), dict) else {}
+        shape_checks = first_event.get("shape_checks") if isinstance(first_event.get("shape_checks"), dict) else {}
+        response_headers = attempt.get("response_headers") if isinstance(attempt.get("response_headers"), dict) else {}
+        request_headers = attempt.get("request_headers") if isinstance(attempt.get("request_headers"), dict) else {}
+        lineage_checks = {
+            "last_event_id_sent": request_headers.get("Last-Event-ID") == cursor_event_id,
+            "response_channel_ok": response_headers.get("X-SSE-Channel") == channel,
+            "response_replay_supported": response_headers.get("X-SSE-Replay-Supported") == "true",
+            "sse_id_line_matches_observed": first_event.get("id") == observed_id,
+            "data_id_matches_observed": (
+                isinstance(first_event.get("data"), dict)
+                and first_event["data"].get("id") == observed_id
+            ),
+            "shape_id_matches_data": shape_checks.get("id_line_matches_data_id") is True,
+            "shape_event_matches_type": shape_checks.get("event_line_matches_data_type") is True,
+            "data_json_parse_ok": shape_checks.get("data_json_parse_ok") is True,
+        }
         if observed_id:
             observed_event_ids.append(str(observed_id))
         attempt["attempt"] = index
@@ -627,7 +646,12 @@ def stream_reconnect_sequence(
         attempt["expected_replayed_event_id"] = expected_event_id
         attempt["observed_replayed_event_id"] = observed_id
         attempt["replayed_expected_event"] = observed_id == expected_event_id
-        attempt["ok"] = bool(attempt.get("ok")) and observed_id == expected_event_id
+        attempt["lineage_checks"] = lineage_checks
+        attempt["ok"] = (
+            bool(attempt.get("ok"))
+            and observed_id == expected_event_id
+            and all(lineage_checks.values())
+        )
         attempts.append(attempt)
 
     expected_ids = [expected_id for _cursor, expected_id in expected_replays if expected_id]
@@ -649,6 +673,7 @@ def stream_reconnect_sequence(
             and cursors_advanced
         ),
         "attempt_count": len(attempts),
+        "cursor_event_ids": cursor_event_ids,
         "expected_event_ids": expected_ids,
         "observed_event_ids": observed_event_ids,
         "missing_expected_event_ids": missing_expected,
