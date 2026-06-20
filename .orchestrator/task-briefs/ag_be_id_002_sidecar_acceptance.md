@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-BE-ID-002 acceptance packet and dependency map
-- Status: in_progress
-- Owner: Antigravity
-- Reviewer: Codex2
-- Next: Operator dispatch: Antigravity is taking this sidecar support slice; keep canonical truth untouched.
+- Status: review_approved
+- Owner: Codex2
+- Reviewer: Codex
+- Next: Owner closeout packet refreshed; merge task PR, then run `AI_NAME=Codex2 ./scripts/ai-status.sh done`.
 
 ## Summary
 平行支援 AG-BE-ID-002，整理 acceptance checklist、dependency map 與阻塞釐清，不改 canonical truth。

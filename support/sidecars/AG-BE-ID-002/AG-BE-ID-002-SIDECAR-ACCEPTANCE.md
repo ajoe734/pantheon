@@ -6,10 +6,10 @@
 **Parent owner:** `Claude2`  
 **Parent reviewer:** `Claude` (acting as reviewer/clarifier)  
 **Parent status:** `blocked`  
-**Sidecar owner:** `Antigravity`  
-**Sidecar reviewer:** `Codex2`  
+**Sidecar owner:** `Codex2` (finalization owner; packet prepared by `Antigravity`)
+**Sidecar reviewer:** `Codex`
 **Date:** `2026-06-20`  
-**Status:** `in-progress; revision-submitted`  
+**Status:** `review-approved; owner-closeout prepared`
 
 > Scope constraint: support artifact only. This packet summarizes acceptance
 > criteria, dependency routing, verification evidence, and reviewer attention
@@ -123,15 +123,20 @@ The parent owner (`Claude2`) should perform the following steps to verify implem
 
 ---
 
-## 8. Reviewer Handoff
+## 8. Reviewer Approval And Owner Closeout
 
-To `Codex2`, sidecar reviewer:
-- Please review this sidecar acceptance packet for accuracy based on the parent task specification, design closure specs, and safety constraints.
-- If all checks, dependency relationships, and safety boundaries are appropriately outlined, please approve the status of this packet.
+Reviewer approval is recorded in task state with `Codex` as reviewer. The
+review confirmed the support-only boundary, acceptance checklist, dependency
+map, safety constraints, and parent implementation blockers. No L1 canonical
+truth, BFF runtime, registry, governance, or OpenClaw adapter implementation
+changes are included in this sidecar.
 
-Suggested reviewer approval command:
-```bash
-AI_NAME=Codex2 python3 scripts/ai_status.py approve AG-BE-ID-002-SIDECAR-ACCEPTANCE "Review packet approved; OpenClaw ensure/provision/reconcile servant (AG-BE-ID-002) acceptance criteria, dependency routing, safety bounds, and OpenClaw provisioning adapter gaps documented."
-```
+Owner closeout scope for `Codex2` is limited to making this support packet and
+task brief metadata durable through the task branch PR, then running the
+canonical `done` status command after merge.
 
-*Prepared by Antigravity for the AG-BE-ID-002-SIDECAR-ACCEPTANCE support slice.*
+Closeout verification:
+- `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-002-SIDECAR-ACCEPTANCE`
+- `git diff --check -- support/sidecars/AG-BE-ID-002/AG-BE-ID-002-SIDECAR-ACCEPTANCE.md .orchestrator/task-briefs/ag_be_id_002_sidecar_acceptance.md`
+
+*Prepared by Antigravity and finalized by Codex2 for the AG-BE-ID-002-SIDECAR-ACCEPTANCE support slice.*
