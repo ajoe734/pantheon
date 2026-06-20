@@ -1220,6 +1220,29 @@ def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def worktree_cleanup_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("worker_worktree_cleanup")
+    settings = raw if isinstance(raw, dict) else {}
+    legacy_raw = config.get("worker_worktree_housekeeping")
+    legacy = legacy_raw if isinstance(legacy_raw, dict) else {}
+    return {
+        "enabled": bool(settings.get("enabled", True)),
+        "cleanup_inactive_leases": bool(settings.get("cleanup_inactive_leases", True)),
+        "archive_dirty_worktrees": bool(settings.get("archive_dirty_worktrees", True)),
+        "force_remove_archived_dirty": bool(settings.get("force_remove_archived_dirty", True)),
+        "archive_root": str(settings.get("archive_root") or "/tmp/pantheon-worker-worktree-archive"),
+        "archive_max_file_bytes": int(settings.get("archive_max_file_bytes", 20 * 1024 * 1024) or 0),
+        "max_removals_per_tick": int(
+            settings.get("max_removals_per_tick", legacy.get("max_removals_per_tick", 25)) or 0
+        ),
+        "base_branches": [
+            str(b).strip()
+            for b in (settings.get("base_branches") or legacy.get("base_branches") or ["dev", "master", "main"])
+            if str(b).strip()
+        ],
+    }
+
+
 def _task_id_slug(task_id: str | None) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", str(task_id or "").lower()).strip("-")
     return slug or "unknown-task"
@@ -7049,6 +7072,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
             changed = True
+    changed = cleanup_inactive_worker_worktrees(config, state) or changed
     record_worker_runtime_measurement(
         config,
         state,
@@ -7074,6 +7098,360 @@ def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, A
         "chair_review_max_age_seconds": int(settings.get("chair_review_max_age_seconds", 7200)),
         "chair_review_max_removals_per_tick": int(settings.get("chair_review_max_removals_per_tick", 30)),
     }
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    try:
+        left_resolved = left.resolve()
+        right_resolved = right.resolve()
+    except OSError:
+        return False
+    return _path_is_within(left_resolved, right_resolved) or _path_is_within(right_resolved, left_resolved)
+
+
+def active_worker_workspace_roots(config: dict[str, Any], state: dict[str, Any]) -> set[Path]:
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses.update(
+        {"running", "started", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled", "fallback"}
+    )
+    roots: set[Path] = set()
+    for worker in state.get("workers", {}).values():
+        if not isinstance(worker, dict):
+            continue
+        workspace_path = worker.get("workspace_path")
+        if not workspace_path:
+            continue
+        status = str(worker.get("status") or "")
+        if status not in active_statuses and not pid_is_alive(worker.get("pid")):
+            continue
+        try:
+            roots.add(Path(str(workspace_path)).expanduser().resolve())
+        except OSError:
+            continue
+    return roots
+
+
+def _status_changed_paths(porcelain_status: str) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for line in porcelain_status.splitlines():
+        if not line.strip():
+            continue
+        body = line[3:] if len(line) > 3 else line.strip()
+        path = body.split(" -> ")[-1].strip().strip('"')
+        if path and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _archive_dirty_worktree(
+    worktree_path: Path,
+    archive_root: Path,
+    *,
+    reason: str,
+    max_file_bytes: int,
+) -> Path | None:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", worktree_path.name).strip("-") or "worktree"
+    archive_dir = archive_root / f"{slug}-{timestamp}-{os.getpid()}"
+    suffix = 1
+    while archive_dir.exists():
+        suffix += 1
+        archive_dir = archive_root / f"{slug}-{timestamp}-{os.getpid()}-{suffix}"
+    try:
+        archive_dir.mkdir(parents=True)
+    except OSError:
+        return None
+
+    def run_git(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(worktree_path), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    status_proc = run_git(["status", "--porcelain", "--untracked-files=all"])
+    diff_proc = run_git(["diff", "--binary"])
+    staged_diff_proc = run_git(["diff", "--cached", "--binary"])
+    untracked_proc = run_git(["ls-files", "--others", "--exclude-standard"])
+
+    (archive_dir / "status.txt").write_text(status_proc.stdout or status_proc.stderr or "", encoding="utf-8")
+    (archive_dir / "diff.patch").write_text(diff_proc.stdout or diff_proc.stderr or "", encoding="utf-8")
+    (archive_dir / "diff-staged.patch").write_text(
+        staged_diff_proc.stdout or staged_diff_proc.stderr or "",
+        encoding="utf-8",
+    )
+    (archive_dir / "untracked-files.txt").write_text(
+        untracked_proc.stdout or untracked_proc.stderr or "",
+        encoding="utf-8",
+    )
+
+    copied: list[str] = []
+    skipped: list[str] = []
+    files_root = archive_dir / "files"
+    for rel_path in _status_changed_paths(status_proc.stdout):
+        source = worktree_path / rel_path
+        if not source.exists() or not source.is_file():
+            skipped.append(rel_path)
+            continue
+        try:
+            size = source.stat().st_size
+        except OSError:
+            skipped.append(rel_path)
+            continue
+        if max_file_bytes > 0 and size > max_file_bytes:
+            skipped.append(f"{rel_path}\ttoo_large:{size}")
+            continue
+        destination = files_root / rel_path
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            copied.append(rel_path)
+        except OSError:
+            skipped.append(rel_path)
+
+    (archive_dir / "copied-files.txt").write_text("\n".join(copied) + ("\n" if copied else ""), encoding="utf-8")
+    (archive_dir / "skipped-files.txt").write_text("\n".join(skipped) + ("\n" if skipped else ""), encoding="utf-8")
+    manifest = {
+        "archived_at": utc_now(),
+        "worktree_path": str(worktree_path),
+        "reason": reason,
+        "status_returncode": status_proc.returncode,
+        "copied_files": copied,
+        "skipped_files": skipped,
+    }
+    (archive_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return archive_dir
+
+
+def _merged_task_branches(repo_root: Path, base_branches: list[str]) -> set[str]:
+    merged_branches: set[str] = set()
+    for ref in base_branches:
+        for candidate in (f"origin/{ref}", ref):
+            if not _git_ref_exists(repo_root, candidate):
+                continue
+            proc = subprocess.run(
+                ["git", "branch", "--merged", candidate, "--list", "task/*"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                continue
+            for line in proc.stdout.splitlines():
+                name = line.strip().lstrip("*").strip()
+                if name:
+                    merged_branches.add(name)
+    return merged_branches
+
+
+def _remove_worker_worktree(
+    repo_root: Path,
+    worktree_path: Path,
+    *,
+    force: bool,
+) -> subprocess.CompletedProcess[str]:
+    command = ["git", "-C", str(repo_root), "worktree", "remove"]
+    if force:
+        command.append("--force")
+    command.append(str(worktree_path))
+    return subprocess.run(command, capture_output=True, text=True, check=False)
+
+
+def _cleanup_registered_worker_worktrees(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    source: str,
+    require_merged: bool,
+    include_unregistered: bool = False,
+    only_workspace_paths: set[Path] | None = None,
+) -> bool:
+    settings = worktree_cleanup_settings(config)
+    if not settings["enabled"]:
+        return False
+    worktree_settings = worker_worktree_settings(config)
+    if not worktree_settings.get("enabled", False):
+        return False
+    base_root = _worker_worktree_base_root(config, worktree_settings)
+    if not base_root.exists():
+        return False
+    repo_root = config_path(config, "status_file").parents[0]
+    active_roots = active_worker_workspace_roots(config, state)
+    live_paths = _scan_process_paths_in_root(base_root)
+    max_removals = max(0, int(settings["max_removals_per_tick"]))
+    archive_root = Path(os.path.expanduser(str(settings["archive_root"])))
+    if not archive_root.is_absolute():
+        archive_root = repo_root / archive_root
+    merged_branches = _merged_task_branches(repo_root, list(settings["base_branches"])) if require_merged else set()
+    if require_merged and not merged_branches:
+        return False
+
+    leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
+    if not isinstance(leases, dict):
+        return False
+
+    records_by_path: dict[Path, dict[str, str]] = {}
+    for record in _git_worktree_records(repo_root):
+        wt_value = record.get("worktree")
+        if not wt_value:
+            continue
+        try:
+            wt_path = Path(wt_value).expanduser().resolve()
+        except OSError:
+            continue
+        records_by_path[wt_path] = record
+
+    candidates: list[tuple[str | None, dict[str, Any], Path, str | None]] = []
+    candidate_paths: set[Path] = set()
+    normalized_only = {path.resolve() for path in only_workspace_paths} if only_workspace_paths else None
+    for workspace_id, lease in list(leases.items()):
+        if not isinstance(lease, dict):
+            continue
+        path_value = lease.get("path")
+        if not path_value:
+            continue
+        try:
+            wt_path = Path(str(path_value)).expanduser().resolve()
+        except OSError:
+            continue
+        if not _path_is_within(wt_path, base_root):
+            continue
+        if normalized_only is not None and wt_path not in normalized_only:
+            continue
+        record = records_by_path.get(wt_path)
+        branch = str(lease.get("branch") or _worktree_record_branch(record or {}) or "")
+        candidates.append((str(workspace_id), lease, wt_path, branch))
+        candidate_paths.add(wt_path)
+
+    if include_unregistered:
+        for wt_path, record in records_by_path.items():
+            if wt_path in candidate_paths or not _path_is_within(wt_path, base_root):
+                continue
+            if normalized_only is not None and wt_path not in normalized_only:
+                continue
+            candidates.append((None, {}, wt_path, _worktree_record_branch(record)))
+
+    summary: dict[str, Any] = {
+        "at": utc_now(),
+        "source": source,
+        "checked": 0,
+        "removed": 0,
+        "skipped": 0,
+        "active": 0,
+        "archived": 0,
+        "failed": 0,
+        "missing_leases": 0,
+        "details": [],
+    }
+    changed = False
+    removed_paths: list[str] = []
+    for workspace_id, _lease, wt_path, branch in candidates:
+        if summary["removed"] >= max_removals and wt_path.exists():
+            break
+        summary["checked"] += 1
+        if any(_paths_overlap(wt_path, active) for active in active_roots) or any(
+            _paths_overlap(wt_path, live) for live in live_paths
+        ):
+            summary["active"] += 1
+            continue
+        if require_merged and (not branch or branch not in merged_branches):
+            summary["skipped"] += 1
+            continue
+        if not wt_path.exists():
+            if workspace_id is not None:
+                leases.pop(workspace_id, None)
+                summary["missing_leases"] += 1
+                changed = True
+            continue
+
+        status_proc = subprocess.run(
+            ["git", "-C", str(wt_path), "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if status_proc.returncode != 0:
+            summary["failed"] += 1
+            summary["details"].append({"path": str(wt_path), "error": (status_proc.stderr or status_proc.stdout or "").strip()})
+            continue
+
+        force_remove = False
+        if status_proc.stdout.strip():
+            if not settings["archive_dirty_worktrees"]:
+                summary["skipped"] += 1
+                continue
+            archive_dir = _archive_dirty_worktree(
+                wt_path,
+                archive_root,
+                reason=source,
+                max_file_bytes=int(settings["archive_max_file_bytes"]),
+            )
+            if archive_dir is None:
+                summary["failed"] += 1
+                summary["details"].append({"path": str(wt_path), "error": "archive_failed"})
+                continue
+            force_remove = bool(settings["force_remove_archived_dirty"])
+            summary["archived"] += 1
+            summary["details"].append({"path": str(wt_path), "archive": str(archive_dir)})
+            if not force_remove:
+                summary["skipped"] += 1
+                continue
+
+        remove_proc = _remove_worker_worktree(repo_root, wt_path, force=force_remove)
+        if remove_proc.returncode != 0:
+            summary["failed"] += 1
+            summary["details"].append(
+                {"path": str(wt_path), "error": (remove_proc.stderr or remove_proc.stdout or "").strip()}
+            )
+            continue
+        if workspace_id is not None:
+            leases.pop(workspace_id, None)
+        summary["removed"] += 1
+        removed_paths.append(str(wt_path))
+        changed = True
+
+    if changed or summary["checked"]:
+        bucket = state.setdefault("worker_worktree_cleanup", {})
+        bucket["last_run"] = summary
+    if removed_paths:
+        write_activity_log(
+            config,
+            {
+                "type": "worktree_pruned",
+                "message": f"Pruned {len(removed_paths)} worker worktree(s): {', '.join(removed_paths)}",
+                "source": source,
+                "archived": summary["archived"],
+                "failed": summary["failed"],
+            },
+        )
+    return changed
+
+
+def cleanup_inactive_worker_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    settings = worktree_cleanup_settings(config)
+    if not settings["cleanup_inactive_leases"]:
+        return False
+    return _cleanup_registered_worker_worktrees(
+        config,
+        state,
+        source="worker_lifecycle",
+        require_merged=False,
+        include_unregistered=False,
+    )
 
 
 def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
@@ -7110,7 +7488,7 @@ def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
 
 
 def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:
-    """Remove finished worker worktrees whose branches are merged and tree is clean."""
+    """Remove finished worker worktrees whose branches are merged."""
     settings = worker_worktree_housekeeping_settings(config)
     if not settings["enabled"]:
         return False
@@ -7124,95 +7502,13 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
         if last_dt is not None and (now - last_dt).total_seconds() < interval:
             return False
     bucket["last_run_at"] = utc_now()
-
-    worktree_settings = worker_worktree_settings(config)
-    if not worktree_settings.get("enabled", False):
-        return False
-    base_root = _worker_worktree_base_root(config, worktree_settings)
-    if not base_root.exists():
-        return False
-    repo_root = config_path(config, "status_file").parents[0]
-
-    claimed_paths: set[Path] = set()
-    for worker in state.get("workers", {}).values():
-        wp = worker.get("workspace_path")
-        if not wp:
-            continue
-        try:
-            claimed_paths.add(Path(str(wp)).resolve())
-        except OSError:
-            continue
-
-    live_paths = _scan_process_paths_in_root(base_root)
-
-    merged_branches: set[str] = set()
-    for ref in settings["base_branches"]:
-        for candidate in (f"origin/{ref}", ref):
-            if not _git_ref_exists(repo_root, candidate):
-                continue
-            proc = subprocess.run(
-                ["git", "branch", "--merged", candidate, "--list", "task/*"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if proc.returncode != 0:
-                continue
-            for line in proc.stdout.splitlines():
-                name = line.strip().lstrip("*").strip()
-                if name:
-                    merged_branches.add(name)
-    if not merged_branches:
-        return False
-
-    max_removals = max(0, settings["max_removals_per_tick"])
-    base_root_str = str(base_root)
-    removed: list[str] = []
-    for record in _git_worktree_records(repo_root):
-        if len(removed) >= max_removals:
-            break
-        wt_value = record.get("worktree")
-        if not wt_value or not wt_value.startswith(base_root_str):
-            continue
-        try:
-            wt_path = Path(wt_value).resolve()
-        except OSError:
-            continue
-        if wt_path in claimed_paths:
-            continue
-        if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
-            continue
-        branch = _worktree_record_branch(record)
-        if not branch or branch not in merged_branches:
-            continue
-        status_proc = subprocess.run(
-            ["git", "-C", str(wt_path), "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if status_proc.returncode != 0 or status_proc.stdout.strip():
-            continue
-        remove_proc = subprocess.run(
-            ["git", "-C", str(repo_root), "worktree", "remove", str(wt_path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if remove_proc.returncode == 0:
-            removed.append(str(wt_path))
-
-    if removed:
-        write_activity_log(
-            config,
-            {
-                "type": "worktree_pruned",
-                "message": f"Pruned {len(removed)} orphan worker worktree(s): {', '.join(removed)}",
-            },
-        )
-        return True
-    return False
+    return _cleanup_registered_worker_worktrees(
+        config,
+        state,
+        source="worker_worktree_housekeeping",
+        require_merged=True,
+        include_unregistered=True,
+    )
 
 
 def prune_chair_review_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:

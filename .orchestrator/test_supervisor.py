@@ -6267,6 +6267,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
                 mock.patch.object(supervisor, "pid_is_alive", return_value=False),
                 mock.patch.object(supervisor, "detect_worker_failure", side_effect=AssertionError("should not scan successful chair log")),
                 mock.patch.object(supervisor, "mark_provider_dispatch_paused") as mark_provider_dispatch_paused,
+                mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=True) as cleanup_worktrees,
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
                 changed = supervisor.poll_workers(config, state)
@@ -6275,6 +6276,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             self.assertEqual(state["workers"]["chair-run"]["status"], "completed")
             self.assertEqual(state["queue"]["events"]["evt-chair"]["status"], "completed")
             mark_provider_dispatch_paused.assert_not_called()
+            cleanup_worktrees.assert_called_once_with(config, state)
             self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
 
     def test_lower_priority_worker_is_superseded_when_finalize_backlog_exists(self) -> None:
@@ -8502,7 +8504,7 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertTrue(result)
 
-    def test_skips_dirty_worktree(self) -> None:
+    def test_skips_dirty_worktree_when_dirty_archive_disabled(self) -> None:
         base = Path("/tmp/wt").resolve()
         record_path = str(base / "task-x")
         records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
@@ -8512,7 +8514,10 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             ("git", "branch", "--merged"): merged_proc,
             ("git", "-C", record_path, "status", "--porcelain"): dirty_status,
         }
-        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        config = {
+            "worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0},
+            "worker_worktree_cleanup": {"archive_dirty_worktrees": False},
+        }
         state: dict = {}
         with (
             mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
@@ -8527,6 +8532,93 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertFalse(result)
 
+    def test_archives_and_force_removes_dirty_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = (Path(tmpdir) / "wt").resolve()
+            wt_path = base / "task-x"
+            wt_path.mkdir(parents=True)
+            record_path = str(wt_path)
+            records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
+            merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="task/X\n", stderr="")
+            dirty_status = subprocess.CompletedProcess(args=[], returncode=0, stdout=" M foo.py\n", stderr="")
+            remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            runs = {
+                ("git", "branch", "--merged"): merged_proc,
+                ("git", "-C", record_path, "status", "--porcelain"): dirty_status,
+                ("git", "-C", "/repo", "worktree", "remove", "--force", record_path): remove_ok,
+            }
+            config = {
+                "worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0},
+                "worker_worktree_cleanup": {
+                    "archive_dirty_worktrees": True,
+                    "force_remove_archived_dirty": True,
+                },
+            }
+            state = {
+                "worker_worktrees": {
+                    "leases": {
+                        "task-x": {
+                            "path": record_path,
+                            "branch": "task/X",
+                        }
+                    }
+                }
+            }
+            with (
+                mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+                mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+                mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+                mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+                mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+                mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+                mock.patch.object(supervisor, "_archive_dirty_worktree", return_value=Path("/archive/task-x")) as archive,
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+            ):
+                result = supervisor.prune_orphan_worktrees(config, state)
+            self.assertTrue(result)
+            archive.assert_called_once()
+            self.assertNotIn("task-x", state["worker_worktrees"]["leases"])
+            self.assertEqual(state["worker_worktree_cleanup"]["last_run"]["archived"], 1)
+
+    def test_lifecycle_cleanup_removes_inactive_registered_worktree_without_merge_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = (Path(tmpdir) / "wt").resolve()
+            wt_path = base / "task-x"
+            wt_path.mkdir(parents=True)
+            record_path = str(wt_path)
+            clean_status = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            runs = {
+                ("git", "-C", record_path, "status", "--porcelain"): clean_status,
+                ("git", "-C", "/repo", "worktree", "remove", record_path): remove_ok,
+            }
+            config = {"worker_worktree_cleanup": {"enabled": True, "cleanup_inactive_leases": True}}
+            state = {
+                "worker_worktrees": {
+                    "leases": {
+                        "task-x": {
+                            "path": record_path,
+                            "branch": "task/X",
+                        }
+                    }
+                },
+                "workers": {},
+            }
+            with (
+                mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+                mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+                mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+                mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+                mock.patch.object(supervisor, "_git_worktree_records", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+            ):
+                result = supervisor.cleanup_inactive_worker_worktrees(config, state)
+            self.assertTrue(result)
+            self.assertEqual(state["worker_worktrees"]["leases"], {})
+            self.assertEqual(state["worker_worktree_cleanup"]["last_run"]["removed"], 1)
+
     def test_skips_worktree_claimed_by_active_worker(self) -> None:
         base = Path("/tmp/wt").resolve()
         record_path = str(base / "task-x")
@@ -8536,7 +8628,7 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             ("git", "branch", "--merged"): merged_proc,
         }
         config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
-        state = {"workers": {"r-1": {"workspace_path": record_path}}}
+        state = {"workers": {"r-1": {"workspace_path": record_path, "status": "running"}}}
         with (
             mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
