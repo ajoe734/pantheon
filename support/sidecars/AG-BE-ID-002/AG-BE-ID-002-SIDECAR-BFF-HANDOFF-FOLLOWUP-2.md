@@ -10,7 +10,7 @@
 | Reviewer | Codex |
 | Date | 2026-06-20 |
 | Mutates canonical truth | false |
-| Status | Support packet ready for review |
+| Status | Review approved; merged through PR #1814 |
 
 ## Purpose
 
@@ -34,7 +34,7 @@ Status commands used `AI_NAME=Codex2`.
 
 | Task | Observed status | Handoff implication |
 |---|---|---|
-| `AG-BE-ID-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` | active `in_progress`; owner `Codex2`, reviewer `Codex` | This packet is the only intended deliverable. |
+| `AG-BE-ID-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` | `review_approved`; owner `Codex2`, reviewer `Codex` | This packet is the only intended deliverable; owner closeout records the approved merge. |
 | `AG-BE-ID-002` | active `blocked`; owner `Codex2`, reviewer `Codex`, waiting for `Codex` | Parent implementation must not proceed until route/schema/capability/adapter questions are answered. |
 | `AG-BE-ID-002-SIDECAR-BFF-HANDOFF` | archived `done` | Earlier BFF/frontend gap packet is available as the base handoff. |
 | `AG-BE-ID-002-SIDECAR-ACCEPTANCE` | archived `done` | Acceptance and dependency checklist is available as a companion packet. |
@@ -43,6 +43,25 @@ The parent blocker is still material: the active parent note says the requested
 implementation cites design and adapter surfaces that do not line up with the
 current checkout. This follow-up narrows what can be safely consumed without
 inventing contract truth.
+
+## Closeout Record
+
+Reviewer Codex approved this support-only packet with no canonical or runtime
+change request. The delivery PR was
+`https://github.com/ajoe734/pantheon/pull/1814`, merged to `dev` at
+`1d76ba262d32a253a7be894921b7b6657b65a7f3`.
+
+GitHub reported the required PR checks successful before merge:
+
+- `Commit trailers`
+- `Runtime mirror guard`
+- `Smoke acceptance`
+- `Forward to orchestrator`
+
+Owner closeout revalidated that the support artifact remains the only authored
+deliverable for this sidecar. The parent task `AG-BE-ID-002` remains blocked on
+the route, schema, capability, registry, and OpenClaw facade decisions listed
+below; this packet does not resolve those decisions or authorize implementation.
 
 ## Sources Rechecked
 
