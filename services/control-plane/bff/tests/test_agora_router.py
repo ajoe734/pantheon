@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+from read_store import ReadSurfaceStore
 
 _OPERATOR_AUTH = "Bearer agora-test-user:operator"
 _NO_AUTH = None
@@ -193,19 +194,108 @@ def test_agora_capabilities_unauthenticated_returns_401(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# POST /bff/agora/servant/ensure — genuinely new stub (not in main.py)
+# POST /bff/agora/servant/ensure — private servant provisioning
 # --------------------------------------------------------------------------- #
 
-def test_agora_servant_ensure_returns_501(monkeypatch):
-    """New route — should return 501 NOT_IMPLEMENTED (canonical BFF code)."""
+def test_agora_servant_ensure_provisions_profile(monkeypatch, tmp_path):
+    """New route — creates the user-private Persona Registry object and syncs OpenClaw."""
+    store = ReadSurfaceStore(str(tmp_path / "read_surfaces.json"), allow_local_snapshot_fallback=True)
+    calls = []
+
+    def fake_sync(persona):
+        calls.append(persona)
+        persona_id = persona["persona_id"]
+        return {
+            "status": "created",
+            "agent_id": persona_id,
+            "model_id": f"openclaw/{persona_id}",
+            "model": "anthropic/claude-opus-4-8",
+            "workspace_ref": f"/home/node/.openclaw/workspaces/{persona_id}",
+        }
+
+    monkeypatch.setattr(bff_main, "read_store", store)
+    monkeypatch.setattr(bff_main, "_ensure_agora_servant_openclaw_agent", fake_sync)
+    client = _client(monkeypatch)
+    resp = client.post(
+        "/bff/agora/servant/ensure",
+        headers={
+            "Authorization": _OPERATOR_AUTH,
+            "Idempotency-Key": "agora-servant-ensure-001",
+            "X-Request-Id": "req-agora-servant-ensure-001",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["meta"]["capability"] == "agora.servant.v1"
+    data = body["data"]
+    assert data["persona_class"] == "agora_servant"
+    assert data["owner_scope"] == "user_private"
+    assert data["tenant_id"] == "pantheon-dev"
+    assert data["agora_user_id"] == "agora-test-user"
+    assert data["policy"]["execution_authority"] == "none"
+    assert set(data["policy"]["prohibited_authority"]) == {
+        "runtime_binding",
+        "broker_order",
+        "capital_binding",
+    }
+    assert "runtime_binding" not in " ".join(data["capability_summary"]["allowed_agora_capabilities"])
+    stored = store.get_persona(data["persona_id"])
+    assert stored is not None
+    assert stored["metadata"]["persona_class"] == "agora_servant"
+    assert stored["metadata"]["openclaw_agent"]["agent_id"] == data["persona_id"]
+    assert calls and calls[0]["metadata"]["persona_class"] == "agora_servant"
+
+
+def test_agora_servant_ensure_reconciles_existing_profile(monkeypatch, tmp_path):
+    store = ReadSurfaceStore(str(tmp_path / "read_surfaces.json"), allow_local_snapshot_fallback=True)
+    monkeypatch.setattr(bff_main, "read_store", store)
+
+    calls = []
+
+    def fake_sync(persona):
+        calls.append(persona)
+        persona_id = persona["persona_id"]
+        return {
+            "status": "updated",
+            "agent_id": persona_id,
+            "model_id": f"openclaw/{persona_id}",
+            "workspace_ref": f"/home/node/.openclaw/workspaces/{persona_id}",
+        }
+
+    monkeypatch.setattr(bff_main, "_ensure_agora_servant_openclaw_agent", fake_sync)
+    client = _client(monkeypatch)
+    headers = {
+        "Authorization": _OPERATOR_AUTH,
+        "Idempotency-Key": "agora-servant-ensure-replay",
+        "X-Request-Id": "req-agora-servant-replay-001",
+    }
+    first = client.post("/bff/agora/servant/ensure", headers=headers)
+    second = client.post(
+        "/bff/agora/servant/ensure",
+        headers={**headers, "X-Request-Id": "req-agora-servant-replay-002"},
+    )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["data"]["persona_id"] == second.json()["data"]["persona_id"]
+    servants = [
+        persona for persona in store.list_personas()
+        if (persona.get("metadata") or {}).get("persona_class") == "agora_servant"
+    ]
+    assert len(servants) == 1
+    assert len(calls) == 2
+
+
+def test_agora_servant_ensure_requires_idempotency_headers(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        bff_main,
+        "read_store",
+        ReadSurfaceStore(str(tmp_path / "read_surfaces.json"), allow_local_snapshot_fallback=True),
+    )
+    monkeypatch.setattr(bff_main, "_ensure_agora_servant_openclaw_agent", lambda persona: {})
     client = _client(monkeypatch)
     resp = client.post("/bff/agora/servant/ensure", headers={"Authorization": _OPERATOR_AUTH})
-    assert resp.status_code == 501, f"Expected 501, got {resp.status_code}: {resp.text}"
-    body = resp.json()
-    # BFF exception handler normalises to {error: {...}, meta: {...}} shape
-    assert "error" in body, f"missing 'error' in {body}"
-    assert body["error"].get("code") == "NOT_IMPLEMENTED"
-    assert "not yet implemented" in body["error"].get("message", "").lower()
+    assert resp.status_code == 422
+    assert resp.json()["error"]["details"]["precondition_failed"] == "Idempotency-Key"
 
 
 def test_agora_servant_ensure_unauthenticated_returns_401(monkeypatch):
