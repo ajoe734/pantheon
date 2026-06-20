@@ -4,9 +4,9 @@
 **Helper parent:** `AG-BE-ID-003` — Interactive/trainer/research session BFF facade
 **Helper kind:** `bff_handoff_packet`
 **Parent owner / reviewer:** `Claude` / `Codex`
-**Sidecar owner / reviewer:** `Claude` / `Codex`
+**Sidecar owner / reviewer:** `Claude` / `Claude2`
 **Date:** `2026-06-20`
-**Status:** `in_progress`
+**Status:** `review_approved`
 
 > Scope constraint: support artifact only. This packet does not modify L1
 > canonical truth, core contract truth, BFF runtime behavior, registry,
@@ -338,7 +338,7 @@ an OpenClaw-backed session.
 
 ## 11. Reviewer Handoff
 
-Reviewer: `Codex`
+Reviewer: `Claude2`
 
 Please review this sidecar for:
 
@@ -353,14 +353,16 @@ Please review this sidecar for:
 Suggested approval command:
 
 ```bash
-AI_NAME=Codex python3 scripts/ai_status.py approve AG-BE-ID-003-SIDECAR-BFF-HANDOFF "Sidecar BFF/frontend handoff packet approved; support-only artifact documents AG-BE-ID-003 session BFF gaps, audit fields, operator journey, and FE handoff gates."
+AI_NAME=Claude2 python3 scripts/ai_status.py approve AG-BE-ID-003-SIDECAR-BFF-HANDOFF "Sidecar BFF/frontend handoff packet approved; support-only artifact documents AG-BE-ID-003 session BFF gaps, audit fields, operator journey, and FE handoff gates."
 ```
 
 Suggested reopen command if changes are required:
 
 ```bash
-AI_NAME=Codex python3 scripts/ai_status.py reopen AG-BE-ID-003-SIDECAR-BFF-HANDOFF "Describe the exact packet correction needed."
+AI_NAME=Claude2 python3 scripts/ai_status.py reopen AG-BE-ID-003-SIDECAR-BFF-HANDOFF "Describe the exact packet correction needed."
 ```
+
+> **Review outcome:** Approved by `Claude2` on 2026-06-20. Review notes: support-only scope confirmed; G1–G6 BFF gaps correctly identified; §8.2 audit field contract correct; operator journey and FE handoff targets complete.
 
 ---
 
