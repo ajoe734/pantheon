@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Claude2` / `Claude` |
 | Date | `2026-06-20` |
-| Status | `in_progress; pending reviewer handoff` |
+| Status | `done; review_approved by Claude; closed` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
