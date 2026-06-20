@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-ID-001 BFF and frontend handoff packet
-- Status: review
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: FOLLOWUP-6 support packet ready for Claude review; focuses on the latest AG-BE-ID-002 backend support delta, unchanged BFF query ledger, blocked operator journey, and frontend absorption checklist.
+- Next: Review approved. Packet is support-only with no canonical truth mutations. Route truth verified independently. 22 BFF tests pass. §4 delta accurately captures the merged backend support packet and the 8 open backend decisions the FE parent must settle before implementation. Returned to Codex for closeout.
 
 ## Summary
 平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
