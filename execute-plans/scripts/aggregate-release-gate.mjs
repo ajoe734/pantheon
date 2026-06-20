@@ -597,22 +597,25 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const rbacMatrixCoverageOk = missingRbacMatrixFamilies.length === 0 && duplicateRbacMatrixFamilies.length === 0;
   const rbacWrite = rbacMatrix.filter((item) => String(item?.family || "").startsWith("rbac-write-"));
   const rbacWriteSideEffectProofs = rbacWrite.filter((item) => item?.side_effect_check?.ok === true);
+  const rbacWriteMarkerLinkedProofs = rbacWrite.filter((item) =>
+    typeof item?.request_marker_sha256_12 === "string"
+    && item.request_marker_sha256_12.length > 0
+    && item?.side_effect_check?.target_marker_sha256_12 === item.request_marker_sha256_12
+  );
   const rbacWriteDryRunMetaProofs = rbacWrite.filter((item) =>
     item?.side_effect_check?.ok === true
     && item?.side_effect_check?.kind === "rbac_dry_run_write_meta"
     && item?.side_effect_check?.dryRun === true
     && item?.side_effect_check?.durable === false
     && item?.side_effect_check?.liveCapitalSideEffects === false
-    && typeof item?.side_effect_check?.target_marker_sha256_12 === "string"
-    && item.side_effect_check.target_marker_sha256_12.length > 0
+    && rbacWriteMarkerLinkedProofs.includes(item)
   );
   const rbacWriteDeniedNoPersistence = rbacWrite.filter((item) =>
     item?.error_envelope === true
     && item?.side_effect_check?.ok === true
     && item?.side_effect_check?.kind === "authorization_rejected_before_persistence"
     && ["AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"].includes(String(item?.side_effect_check?.error_code || ""))
-    && typeof item?.side_effect_check?.target_marker_sha256_12 === "string"
-    && item.side_effect_check.target_marker_sha256_12.length > 0
+    && rbacWriteMarkerLinkedProofs.includes(item)
   );
   const allDryRunOk = dryRun.length > 0 && dryRun.every((item) => item?.ok === true);
   const invalidDryRunsEnvelope = invalidDryRuns.length >= 2 && invalidDryRuns.every((item) => item?.error_envelope === true);
@@ -656,6 +659,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && rbacWriteProbeCount === rbacWrite.length
     && rbacWriteSummarySideEffectProofCount === rbacWrite.length
     && rbacWriteSideEffectProofCount === rbacWrite.length
+    && rbacWriteMarkerLinkedProofs.length === rbacWrite.length
     && rbacWriteDryRunMetaProofs.length >= 16
     && rbacWriteDeniedNoPersistence.length >= 16;
   const fullRbacMatrix = rbacProbeCount >= REQUIRED_RBAC_MATRIX_FAMILIES.length
@@ -733,7 +737,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManTokenPair
       && twoManTokenPairDistinct,
     note: {
-      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length}`,
+      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,

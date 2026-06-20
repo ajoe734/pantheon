@@ -983,6 +983,7 @@ def build_rbac_matrix_results(
 
         for name, path, base_body in RBAC_WRITE_PATHS:
             marker = f"live-rbac-{label}-{name}-{int(time.time())}"
+            marker_hash = sha256_12(marker)
             probe = Probe(
                 "POST",
                 path,
@@ -1001,6 +1002,7 @@ def build_rbac_matrix_results(
                 timeout=timeout,
                 idempotency_prefix=idempotency_prefix,
             )
+            result["request_marker_sha256_12"] = marker_hash
             result["side_effect_check"] = rbac_write_side_effect_check(
                 result,
                 can_write=can_write,
