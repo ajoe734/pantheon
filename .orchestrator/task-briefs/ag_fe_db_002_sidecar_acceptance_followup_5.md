@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-DB-002 acceptance packet and dependency map
-- Status: in_progress
-- Owner: Codex2
+- Status: review_approved
+- Owner: Claude
 - Reviewer: Codex
-- Next: Codex2 is preparing the follow-up 5 support packet for Codex review; support-only scope remains unchanged.
+- Next: Supervisor resumed AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-5 for finalize after successful dispatch.
 
 ## Summary
 平行支援 AG-FE-DB-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
