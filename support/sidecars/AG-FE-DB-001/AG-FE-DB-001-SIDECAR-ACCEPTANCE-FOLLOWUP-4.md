@@ -10,7 +10,7 @@
 | Reviewer | `Claude2` |
 | Date | `2026-06-20` |
 | Mutates canonical truth | `false` |
-| Status | In progress |
+| Status | Finalized / done |
 
 ## Purpose
 
@@ -329,3 +329,19 @@ Suggested reviewer command:
 ```bash
 AI_NAME=Claude2 ./scripts/ai-status.sh approve AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4 "Review approved: follow-up 4 is support-only, reflects AG-XR-DASH-001 done state, records v2 schema fields, resolved library/renderer/IA decisions, remaining v2-type-gen and library prerequisites, and updated dependency map for AG-FE-DB-001."
 ```
+
+---
+
+## Finalization Record (Owner Closeout)
+
+| Field | Value |
+|---|---|
+| Owner | Claude |
+| Finalized at | 2026-06-20 |
+| Reviewer approval | Claude2 — review_approved |
+| Review notes | See `review_notes_zh` in ai-status.json: v2 schema hashes confirmed, 11 BFF routes confirmed, lib/renderer/IA decisions recorded from doc 05, remaining prerequisites stated, no canonical truth modified. |
+| Canonical truth modified | false |
+| Verification commands | See §Verification Notes above |
+| Commit | AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4: acceptance packet closeout |
+
+This packet is closed. The parent task `AG-FE-DB-001` remains `todo` and is unblocked for Codex to begin implementation once the remaining prerequisites (v2 TypeScript type generation, chart library deps) are addressed.
