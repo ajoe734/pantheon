@@ -10,7 +10,7 @@
 | Reviewer | Claude |
 | Date | 2026-06-20 |
 | Mutates canonical truth | false |
-| Status | Ready for sidecar review |
+| Status | Review approved; ready for parent absorption |
 
 ## Purpose
 
@@ -22,6 +22,17 @@ frontend can safely add strict live DashboardRecipe and WidgetSpec behavior.
 This packet does not define canonical routes, promote schemas, edit the Agora
 bundle, alter BFF runtime code, change validator behavior, or modify
 execute-plans source.
+
+## Closeout State
+
+The closeout status check reports this sidecar as `review_approved` with
+Claude as reviewer. The review notes say the evidence snapshot is grounded, the
+BFF/FE boundary is clear, canonical truth was not changed, and the sidecar scope
+was respected.
+
+Owner closeout keeps the approved packet support-only. No additional backend
+route, OpenAPI, schema, validator, registry, governance, or execute-plans source
+change is part of this handoff.
 
 ## Current Parent State
 
@@ -139,6 +150,8 @@ git status -sb
 git branch --show-current
 git remote -v
 git merge --ff-only origin/dev
+git fetch origin dev
+git merge --no-edit origin/dev
 AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-DB-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3
 AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-DB-001
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-001
