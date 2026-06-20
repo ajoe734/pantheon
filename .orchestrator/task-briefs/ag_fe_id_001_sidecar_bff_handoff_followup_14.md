@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-ID-001 BFF and frontend handoff packet
-- Status: in_progress
+- Status: review
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Review changes requested: PR #1898 is stale after origin/dev advanced to e51bc8fd via AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4 closeout PR #1897. Refresh the task branch/packet to the new dev tip, change followup-4 from review_approved pending closeout to archived done, cite closeout PR #1897 / merge e51bc8fd, and rerun focused validation before re-handoff.
+- Next: Refreshed support packet ready for Codex review. Task branch merged current origin/dev at 63d87b3b; AG-BE-ID-003 followup-4 is archived done via closeout PR #1897 / merge e51bc8fd; focused validation passed with 35 BFF/OpenClaw tests plus schema bundle, OpenAPI YAML parse, generated types, and scoped diff checks.
 
 ## Summary
 平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
