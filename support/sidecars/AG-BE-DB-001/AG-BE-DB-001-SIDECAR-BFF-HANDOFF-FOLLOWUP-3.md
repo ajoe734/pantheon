@@ -32,7 +32,9 @@ was respected.
 
 Owner closeout keeps the approved packet support-only. No additional backend
 route, OpenAPI, schema, validator, registry, governance, or execute-plans source
-change is part of this handoff.
+change is part of this handoff. The task branch was refreshed with current
+`origin/dev` before PR auto-merge so parent absorption can happen from the
+latest dev context.
 
 ## Current Parent State
 
@@ -152,6 +154,7 @@ git remote -v
 git merge --ff-only origin/dev
 git fetch origin dev
 git merge --no-edit origin/dev
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
 AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-DB-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3
 AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-DB-001
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-001
