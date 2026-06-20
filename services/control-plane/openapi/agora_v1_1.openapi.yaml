@@ -1,0 +1,681 @@
+openapi: 3.1.0
+info:
+  title: Pantheon Agora API v1.1
+  version: 1.1.0
+  description: >-
+    Additive extension over the immutable AG-XR-001 Agora v1 bundle.
+    Adds WidgetSpec v2 / ChartSpec v1 / DashboardRecipe v2 CRUD with
+    ETag-based optimistic concurrency (AG-XR-DASH-001). Servant and
+    Strategy Workshop routes (AG-XR-OPENAPI-001) extend this file
+    separately under the same components/paths blocks.
+    Frozen baseline: services/control-plane/openapi/agora_v1.openapi.yaml
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    StrategyId:
+      name: strategy_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+    RecipeId:
+      name: recipe_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+    WidgetId:
+      name: widget_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: >-
+        ETag from the most recent GET on the target resource.
+        Format for dashboard recipes: "recipe:<id>:v<version>:<sha256-prefix>".
+        Required on all state-changing dashboard-recipe requests.
+      schema:
+        type: string
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-generated UUID for idempotent request deduplication.
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    # ── Dashboard Recipe request schemas ──────────────────────────────────────
+
+    DashboardProposalRequest:
+      type: object
+      required:
+        - strategy_version_id
+        - workspace
+        - phase
+      properties:
+        strategy_version_id:
+          type: string
+          minLength: 1
+        workspace:
+          enum:
+            - trading_room
+            - strategy_workshop
+            - strategy_performance
+        phase:
+          enum:
+            - candidate_review
+            - monitoring
+            - position_monitoring
+            - post_trade_review
+        instruction:
+          type: string
+          description: >-
+            Optional natural-language instruction forwarded to the servant
+            when generating the initial layout. Must not encode order-route
+            or broker-binding directives.
+      additionalProperties: false
+
+    DashboardMutationRequest:
+      type: object
+      description: >-
+        Batch of layout-patch operations. Each op is validated against
+        the WidgetRegistry, data scope and layout bounds before a new
+        version is created.
+      required:
+        - expected_version
+        - operations
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+          description: Current version the client snapshot was read from.
+        operations:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - op
+            properties:
+              op:
+                enum:
+                  - move_widget
+                  - resize_widget
+                  - remove_widget
+                  - add_registered_widget
+                  - replace_chart_spec
+                  - update_widget_query
+              widget_id:
+                type: string
+              payload:
+                type: object
+                additionalProperties: true
+            additionalProperties: false
+        reason:
+          type: string
+      additionalProperties: false
+
+    DashboardAcceptRequest:
+      type: object
+      description: >-
+        Atomically marks the proposal accepted, creates and activates the
+        next immutable version and moves the active pointer.
+      required:
+        - expected_version
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        note:
+          type: string
+      additionalProperties: false
+
+    DashboardRollbackRequest:
+      type: object
+      description: >-
+        Creates a new version whose content equals the selected historical
+        version. Never rewinds or deletes history.
+      required:
+        - expected_version
+        - target_version
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        target_version:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+      additionalProperties: false
+
+    DashboardFeedbackRequest:
+      type: object
+      description: >-
+        Append-only feedback on a dashboard recipe version. Does not mutate
+        the recipe; a subsequent accepted proposal is required for changes.
+      required:
+        - rating
+        - context
+      properties:
+        rating:
+          enum:
+            - helpful
+            - neutral
+            - not_helpful
+        comment:
+          type: string
+          maxLength: 2000
+        context:
+          enum:
+            - after_accept
+            - after_use
+            - periodic_review
+        source_version:
+          type: integer
+          minimum: 1
+          description: Recipe version the user viewed when submitting this feedback.
+      additionalProperties: false
+
+    WidgetFeedbackRequest:
+      type: object
+      description: >-
+        Append-only feedback on an individual widget within a dashboard recipe.
+        Does not mutate the widget or recipe.
+      required:
+        - rating
+        - context
+      properties:
+        rating:
+          enum:
+            - helpful
+            - neutral
+            - not_helpful
+        comment:
+          type: string
+          maxLength: 2000
+        context:
+          enum:
+            - after_use
+            - after_resize
+            - after_remove
+            - periodic_review
+        recipe_id:
+          type: string
+          description: Recipe that contained this widget at feedback time.
+        recipe_version:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+
+    WidgetPluginProposalRequest:
+      type: object
+      description: >-
+        Propose a new widget type for WidgetRegistry inclusion. Does not
+        create an active widget or mutate any recipe; the registry is
+        updated only after a separate governance review.
+      required:
+        - proposed_widget_type
+        - description
+        - data_source_requirements
+      properties:
+        proposed_widget_type:
+          type: string
+          minLength: 1
+          description: Identifier for the proposed widget type. Must be kebab-case.
+        description:
+          type: string
+          minLength: 1
+        data_source_requirements:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: >-
+            Allowlisted logical data-source IDs required by this widget type.
+        chart_type_preference:
+          type: string
+          description: Preferred ChartSpec chart_type for this widget type.
+        example_use_case:
+          type: string
+      additionalProperties: false
+
+    # ── Shared error schema ───────────────────────────────────────────────────
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              enum:
+                - AUTHZ_DENIED
+                - OBJECT_NOT_FOUND
+                - INVALID_REQUEST
+                - INVALID_STATE
+                - CONCURRENT_MODIFICATION
+                - INVALID_PARAMS
+                - CAPABILITY_UNAVAILABLE
+                - LEGACY_WIDGET_MAPPING_REQUIRED
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+          additionalProperties: false
+      additionalProperties: false
+
+paths:
+  # ── Dashboard Recipe CRUD (AG-XR-DASH-001) ───────────────────────────────
+  # Authority: docs/04/.../contract-closure/04_dashboard_crud_and_concurrency.md
+  # ETag format: "recipe:<recipe_id>:v<version>:<content_sha256-prefix>"
+  # State-changing routes require: If-Match + Idempotency-Key + expected_version
+
+  /bff/agora/strategies/{strategy_id}/dashboard-recipes:
+    get:
+      operationId: listDashboardRecipes
+      summary: List dashboard recipes for a strategy
+      tags:
+        - agora-dashboard-v2
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+        - name: workspace
+          in: query
+          schema:
+            type: string
+            enum:
+              - trading_room
+              - strategy_workshop
+              - strategy_performance
+        - name: phase
+          in: query
+          schema:
+            type: string
+            enum:
+              - candidate_review
+              - monitoring
+              - position_monitoring
+              - post_trade_review
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: User-scoped recipe list for the given strategy
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Not authorized for this strategy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bff/agora/strategies/{strategy_id}/dashboard-recipes/proposals:
+    post:
+      operationId: proposeDashboardRecipe
+      summary: Create a dashboard recipe proposal for a strategy
+      description: >-
+        Creates a proposal version; does not replace the active version.
+        The active version only advances when the proposal is accepted.
+      tags:
+        - agora-dashboard-v2
+      parameters:
+        - $ref: '#/components/parameters/StrategyId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardProposalRequest'
+      responses:
+        '201':
+          description: Proposal version created; recipe_id and version returned
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Capability agora.dashboard.v2 not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bff/agora/dashboard-recipes/{recipe_id}:
+    get:
+      operationId: getDashboardRecipe
+      summary: Get the active dashboard recipe version
+      tags:
+        - agora-dashboard-v2
+      parameters:
+        - $ref: '#/components/parameters/RecipeId'
+      responses:
+        '200':
+          description: Active recipe detail with ETag header
+          headers:
+            ETag:
+              description: >-
+                Opaque version tag for optimistic concurrency.
+                Format: "recipe:<recipe_id>:v<version>:<sha256-prefix>"
+              schema:
+                type: string
+        '404':
+          description: Recipe not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bff/agora/dashboard-recipes/{recipe_id}/accept:
+    post:
+      operationId: acceptDashboardRecipe
+      summary: Accept a proposal and activate a new immutable version
+      description: >-
+        Atomically marks the proposal accepted, creates and activates the
+        next immutable version and moves the active pointer. Requires
+        If-Match matching the proposal version ETag.
+      tags:
+        - agora-dashboard-v2
+      parameters:
+        - $ref: '#/components/parameters/RecipeId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardAcceptRequest'
+      responses:
+        '200':
+          description: New active immutable version created and activated
+          headers:
+            ETag:
+              schema:
+                type: string
+        '409':
+          description: Concurrent modification — ETag or expected_version mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bff/agora/dashboard-recipes/{recipe_id}/layout:
+    patch:
+      operationId: patchDashboardRecipeLayout
+      summary: Apply layout-patch operations and create a new version
+      description: >-
+        Accepts JSON Patch-like operations limited to move_widget,
+        resize_widget, remove_widget, add_registered_widget,
+        replace_chart_spec and update_widget_query. Each operation is
+        validated against WidgetRegistry, data scope and layout bounds.
+        Creates a new append-only version.
+      tags:
+        - agora-dashboard-v2
+      parameters:
+        - $ref: '#/components/parameters/RecipeId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardMutationRequest'
+      responses:
+        '200':
+          description: New recipe version created from layout patch
+          headers:
+            ETag:
+              schema:
+                type: string
+        '400':
+          description: Invalid operation or WidgetRegistry/bounds validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Concurrent modification — ETag or expected_version mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bff/agora/dashboard-recipes/{recipe_id}/rollback:
+    post:
+      operationId: rollbackDashboardRecipe
+      summary: Rollback by creating a new version from a historical target
+      description: >-
+        Creates a new version whose content equals the selected historical
+        version. Never rewinds or deletes history; rollback is itself a
+        new append-only version.
+      tags:
+        - agora-dashboard-v2
+      parameters:
+        - $ref: '#/components/parameters/RecipeId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardRollbackRequest'
+      responses:
+        '200':
+          description: New version created from historical target content
+          headers:
+            ETag:
+              schema:
+                type: string
+        '404':
+          description: Recipe or target_version not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Concurrent modification — ETag or expected_version mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bff/agora/dashboard-recipes/{recipe_id}/feedback:
+    post:
+      operationId: submitDashboardRecipeFeedback
+      summary: Submit append-only feedback on a dashboard recipe
+      description: >-
+        Feedback is append-only and does not mutate the recipe. No
+        If-Match or Idempotency-Key required since this route does not
+        advance the recipe version. A later accepted proposal is required
+        for the feedback to influence recipe content.
+      tags:
+        - agora-dashboard-v2
+      parameters:
+        - $ref: '#/components/parameters/RecipeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardFeedbackRequest'
+      responses:
+        '202':
+          description: Feedback recorded
+        '400':
+          description: Invalid feedback payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Recipe not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bff/agora/dashboard-recipes/{recipe_id}/versions:
+    get:
+      operationId: listDashboardRecipeVersions
+      summary: List the immutable version history for a recipe
+      description: >-
+        Returns append-only version history. No version is ever deleted
+        or overwritten. Rollback creates a new version entry.
+      tags:
+        - agora-dashboard-v2
+      parameters:
+        - $ref: '#/components/parameters/RecipeId'
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Immutable version history (oldest first)
+        '404':
+          description: Recipe not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── Widget utilities (AG-XR-DASH-001) ────────────────────────────────────
+
+  /bff/agora/widgets/validate:
+    post:
+      operationId: validateAgoraWidget
+      summary: Validate a WidgetSpec v2 payload before use in a recipe
+      description: >-
+        Validates a WidgetSpec v2 payload against the schema and the
+        WidgetRegistry without creating any persistent resource.
+      tags:
+        - agora-dashboard-v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../specs/agora/v2/widget_spec_v2.schema.json'
+      responses:
+        '200':
+          description: Validation passed; validation result returned
+        '422':
+          description: Invalid WidgetSpec — validation errors returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bff/agora/widgets/{widget_id}/feedback:
+    post:
+      operationId: submitWidgetFeedback
+      summary: Submit append-only feedback on an individual widget
+      description: >-
+        Append-only widget-level feedback. Does not mutate the widget or
+        any recipe. The widget_id is the stable registry identifier, not
+        a placement-specific ID.
+      tags:
+        - agora-dashboard-v2
+      parameters:
+        - $ref: '#/components/parameters/WidgetId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WidgetFeedbackRequest'
+      responses:
+        '202':
+          description: Feedback recorded
+        '400':
+          description: Invalid feedback payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Widget ID not found in registry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bff/agora/widgets/propose-plugin:
+    post:
+      operationId: proposeWidgetPlugin
+      summary: Propose a new widget type for WidgetRegistry inclusion
+      description: >-
+        Records a proposal for a new widget type. Does not create an
+        active widget or mutate any recipe. The WidgetRegistry is
+        updated only after a separate governance review outside this
+        API surface. Does not expand the capability allowlist.
+      tags:
+        - agora-dashboard-v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WidgetPluginProposalRequest'
+      responses:
+        '202':
+          description: Plugin proposal recorded; pending governance review
+        '400':
+          description: Invalid proposal payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
