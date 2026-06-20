@@ -1,0 +1,32 @@
+{
+  "manifest_version": "1.1",
+  "extends_manifest": "services/control-plane/specs/agora/capability_manifest.json",
+  "base_frozen_by": "AG-XR-001",
+  "capabilities": [
+    {
+      "name": "agora.servant.v1",
+      "version": "1.0",
+      "description": "User-private servant ensure, reconcile and session facade.",
+      "bff_path_prefixes": ["/bff/agora/servant"],
+      "internal_path_prefixes": ["/api/openclaw-adapter/agents"],
+      "auth_level": "agora_user",
+      "execution_authority": "none"
+    },
+    {
+      "name": "agora.workshop.v1",
+      "version": "1.1",
+      "description": "Canonical Strategy Workshop aggregate and streaming routes.",
+      "bff_path_prefixes": ["/bff/agora/workshops"],
+      "schemas": ["strategy_workshop.schema.json", "strategy_completeness.schema.json"],
+      "auth_level": "agora_user"
+    },
+    {
+      "name": "agora.dashboard.v2",
+      "version": "2.0",
+      "description": "Strategy-bound dynamic dashboard recipes, safe chart grammar and optimistic-concurrency mutations.",
+      "bff_path_prefixes": ["/bff/agora/dashboard-recipes", "/bff/agora/strategies", "/bff/agora/widgets"],
+      "schemas": ["v2/dashboard_recipe_v2.schema.json", "v2/widget_spec_v2.schema.json", "v2/chart_spec_v1.schema.json"],
+      "auth_level": "agora_user"
+    }
+  ]
+}

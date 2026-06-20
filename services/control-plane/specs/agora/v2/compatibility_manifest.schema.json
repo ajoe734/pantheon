@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/compatibility_manifest/v1",
+  "title": "AgoraCrossRepoCompatibilityManifest",
+  "type": "object",
+  "required": ["manifest_version", "contract_family", "environment", "generated", "backend", "frontend", "contract_bundle", "required_capabilities", "hash_policy", "compatibility_status", "generated_at"],
+  "properties": {
+    "manifest_version": {"const": "1.0"},
+    "contract_family": {"const": "agora.v1.1"},
+    "environment": {"enum": ["dev", "staging", "production"]},
+    "generated": {"const": true},
+    "backend": {
+      "type": "object",
+      "required": ["repo", "runtime_commit", "contract_commit", "base_bundle_index_sha256", "extension_bundle_index_sha256", "openapi_sha256"],
+      "properties": {
+        "repo": {"const": "ajoe734/pantheon"},
+        "runtime_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "contract_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "base_bundle_index_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "extension_bundle_index_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "openapi_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "frontend": {
+      "type": "object",
+      "required": ["repo", "runtime_commit", "generated_from_contract_commit", "base_bundle_index_sha256", "extension_bundle_index_sha256", "openapi_sha256", "generated_types_sha256"],
+      "properties": {
+        "repo": {"const": "ajoe734/execute-plans"},
+        "runtime_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "generated_from_contract_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "base_bundle_index_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "extension_bundle_index_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "openapi_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "generated_types_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "contract_bundle": {
+      "type": "object",
+      "required": ["base_path", "extension_path", "openapi_path"],
+      "properties": {
+        "base_path": {"const": "services/control-plane/specs/agora/bundle_index.json"},
+        "extension_path": {"const": "services/control-plane/specs/agora/bundle_index.v1_1.json"},
+        "openapi_path": {"const": "services/control-plane/openapi/agora_v1_1.openapi.yaml"}
+      },
+      "additionalProperties": false
+    },
+    "required_capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "version", "required"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "version": {"type": "string", "minLength": 1},
+          "required": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "hash_policy": {
+      "type": "object",
+      "required": ["file_hash", "generated_types_hash"],
+      "properties": {
+        "file_hash": {"const": "sha256-exact-git-bytes-v1"},
+        "generated_types_hash": {"const": "sha256-path-tab-filehash-lf-v1"}
+      },
+      "additionalProperties": false
+    },
+    "compatibility_status": {"enum": ["compatible", "incompatible", "pending"]},
+    "blocking_reasons": {"type": "array", "items": {"type": "string"}, "default": []},
+    "generated_at": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}
