@@ -476,7 +476,7 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
 
     rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
     rbac_cases = {"anonymous": {"kind": "anonymous"}}
-    rbac_cases.update({label: {"kind": "provided_bearer"} for label in rbac_labels})
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
     dry_run = _strict_dry_run_items()
     (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
         json.dumps(
@@ -484,7 +484,14 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
                 "task_id": "BFF-LUV-AUTHED-LIVE-001",
                 "strict_live_evidence": True,
                 "auth_source": {"kind": "provided_bearer"},
-                "rbac_auth_source": {"kind": "rbac_matrix", "cases": rbac_cases},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
                 "include_writes": True,
                 "include_rbac_matrix": True,
                 "include_dry_run": True,
@@ -572,13 +579,113 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     )
 
     assert rbac_check["status"] == "pass"
-    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7 distinctBearers:7/7"
     assert dry_run_check["status"] == "pass"
     assert dry_run_check["note"] == "strict:true dryRun:7/7 invalidEnvelope:true sideEffectProofs:7/7 sideEffects:none"
     assert race_check["status"] == "pass"
     assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 duplicateWinners:false tokenPair:true"
     assert two_man_check["status"] == "pass"
     assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 tokenPair:true"
+
+
+def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    rbac_cases["operator"]["sha256_12"] = rbac_cases["viewer"]["sha256_12"]
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 6,
+                    "distinct_provided_bearers": False,
+                    "duplicate_bearer_label_groups": [["viewer", "operator"]],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": [{"family": f"rbac-{index}", "ok": True} for index in range(56)],
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": {
+                    "family": "approval-race",
+                    "ok": True,
+                    "bounded": True,
+                    "accepted_count": 1,
+                    "safe_error_count": 1,
+                    "duplicate_winners": False,
+                    "token_source": {"kind": "provided_bearer_pair"},
+                },
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    rbac_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    assert rbac_check["status"] == "fail"
+    assert rbac_check["note"] == "strict:true bearer:true rbac:56/56 providedCases:7/7 distinctBearers:6/7"
 
 
 def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_path: Path) -> None:
@@ -592,14 +699,21 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
 
     rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
     rbac_cases = {"anonymous": {"kind": "anonymous"}}
-    rbac_cases.update({label: {"kind": "provided_bearer"} for label in rbac_labels})
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
     (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
         json.dumps(
             {
                 "task_id": "BFF-LUV-AUTHED-LIVE-001",
                 "strict_live_evidence": True,
                 "auth_source": {"kind": "provided_bearer"},
-                "rbac_auth_source": {"kind": "rbac_matrix", "cases": rbac_cases},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
                 "include_writes": True,
                 "include_rbac_matrix": True,
                 "include_dry_run": True,
@@ -684,14 +798,21 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
 
     rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
     rbac_cases = {"anonymous": {"kind": "anonymous"}}
-    rbac_cases.update({label: {"kind": "provided_bearer"} for label in rbac_labels})
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
     (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
         json.dumps(
             {
                 "task_id": "BFF-LUV-AUTHED-LIVE-001",
                 "strict_live_evidence": True,
                 "auth_source": {"kind": "provided_bearer"},
-                "rbac_auth_source": {"kind": "rbac_matrix", "cases": rbac_cases},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
                 "include_writes": True,
                 "include_rbac_matrix": True,
                 "include_dry_run": True,
@@ -776,7 +897,7 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
 
     rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
     rbac_cases = {"anonymous": {"kind": "anonymous"}}
-    rbac_cases.update({label: {"kind": "provided_bearer"} for label in rbac_labels})
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
     dry_run = _strict_dry_run_items()
     (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
         json.dumps(
@@ -784,7 +905,14 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
                 "task_id": "BFF-LUV-AUTHED-LIVE-001",
                 "strict_live_evidence": True,
                 "auth_source": {"kind": "provided_bearer"},
-                "rbac_auth_source": {"kind": "rbac_matrix", "cases": rbac_cases},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
                 "include_writes": True,
                 "include_rbac_matrix": True,
                 "include_dry_run": True,

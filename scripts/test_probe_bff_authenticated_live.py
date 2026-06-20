@@ -210,6 +210,53 @@ def test_make_rbac_tokens_mints_full_matrix_without_leaking_tokens(monkeypatch) 
     assert all(str(token) not in json.dumps(source) for token in tokens.values() if token)
 
 
+def test_make_rbac_tokens_accepts_distinct_provided_bearer_matrix_without_leaking_tokens(monkeypatch) -> None:
+    probe = _load_probe_module()
+    labels = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
+    rbac_tokens = {label: f"{label}-provided-secret" for label in labels}
+    monkeypatch.setenv("PANTHEON_BFF_RBAC_TOKENS_JSON", json.dumps(rbac_tokens))
+    args = argparse.Namespace(
+        subject="op-live-smoke",
+        issuer="pantheon-dev",
+        audience="bff-operators",
+        ttl_seconds=3600,
+        require_provided_rbac_tokens=True,
+    )
+
+    tokens, source = probe.make_rbac_tokens(args)
+
+    assert tokens["anonymous"] is None
+    assert source["provided_bearer_count"] == len(labels)
+    assert source["distinct_provided_bearer_count"] == len(labels)
+    assert source["distinct_provided_bearers"] is True
+    assert source["duplicate_bearer_label_groups"] == []
+    assert len({source["cases"][label]["sha256_12"] for label in labels}) == len(labels)
+    assert all(str(token) not in json.dumps(source) for token in rbac_tokens.values())
+
+
+def test_make_rbac_tokens_rejects_duplicate_provided_bearers_for_strict_matrix(monkeypatch) -> None:
+    probe = _load_probe_module()
+    labels = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
+    rbac_tokens = {label: f"{label}-provided-secret" for label in labels}
+    rbac_tokens["operator"] = rbac_tokens["viewer"]
+    monkeypatch.setenv("PANTHEON_BFF_RBAC_TOKENS_JSON", json.dumps(rbac_tokens))
+    args = argparse.Namespace(
+        subject="op-live-smoke",
+        issuer="pantheon-dev",
+        audience="bff-operators",
+        ttl_seconds=3600,
+        require_provided_rbac_tokens=True,
+    )
+
+    try:
+        probe.make_rbac_tokens(args)
+    except SystemExit as exc:
+        assert "distinct bearer tokens per RBAC label" in str(exc)
+        assert "viewer/operator" in str(exc)
+    else:
+        raise AssertionError("strict RBAC matrix must reject reused bearer tokens")
+
+
 def test_strict_live_evidence_forces_real_bearer_matrix_and_race_tokens(monkeypatch) -> None:
     probe = _load_probe_module()
     monkeypatch.setenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "live-primary-token")
