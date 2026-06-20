@@ -72,6 +72,18 @@ const REQUIRED_RBAC_MATRIX_FAMILIES = REQUIRED_RBAC_LABELS.flatMap((label) => [
   ...REQUIRED_RBAC_READ_FAMILIES.map((family) => `rbac-read-${label}-${family}`),
   ...REQUIRED_RBAC_WRITE_FAMILIES.map((family) => `rbac-write-${label}-${family}`),
 ]);
+const APPROVAL_RACE_ACCEPTED_STATUSES = new Set([200, 201, 202]);
+const APPROVAL_RACE_SAFE_ERROR_CODES = new Set([
+  "RESOURCE_NOT_FOUND",
+  "OBJECT_NOT_FOUND",
+  "NOT_FOUND",
+  "STATE_CONFLICT",
+  "VERSION_CONFLICT",
+  "CONFLICT",
+  "VALIDATION_FAILED",
+  "PRECONDITION_NOT_MET",
+  "APPROVAL_ALREADY_DECIDED",
+]);
 
 function exists(filePath) {
   try {
@@ -230,6 +242,27 @@ function providedBearerPairDistinct(source) {
   const tokenA = String(source?.token_a_sha256_12 || "");
   const tokenB = String(source?.token_b_sha256_12 || "");
   return Boolean(tokenA && tokenB && tokenA !== tokenB);
+}
+
+function approvalRaceDetailProof(race) {
+  const results = Array.isArray(race?.results) ? race.results : [];
+  const accepted = results.filter((result) => APPROVAL_RACE_ACCEPTED_STATUSES.has(Number(result?.status ?? 0)));
+  const safeErrors = results.filter((result) =>
+    Number(result?.status ?? 0) >= 400
+    && result?.error_envelope === true
+    && APPROVAL_RACE_SAFE_ERROR_CODES.has(String(result?.error_code || ""))
+  );
+  const transportFailures = results.filter((result) => Number(result?.status ?? 0) === 0);
+  return {
+    resultCount: results.length,
+    acceptedCount: accepted.length,
+    safeErrorCount: safeErrors.length,
+    transportFailureCount: transportFailures.length,
+    ok: results.length === 2
+      && transportFailures.length === 0
+      && accepted.length === 1
+      && safeErrors.length === 1,
+  };
 }
 
 function parseTables(text) {
@@ -572,9 +605,14 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && distinctProvidedRbac;
   const approvalTokenPair = approvalRace?.token_source?.kind === "provided_bearer_pair";
   const approvalTokenPairDistinct = providedBearerPairDistinct(approvalRace?.token_source);
+  const approvalDetailProof = approvalRaceDetailProof(approvalRace);
   const approvalAcceptedCount = Number(approvalRace?.accepted_count ?? -1);
   const approvalSafeErrorCount = Number(approvalRace?.safe_error_count ?? -1);
-  const approvalOneWinnerOneLoser = approvalAcceptedCount === 1 && approvalSafeErrorCount === 1;
+  const approvalOneWinnerOneLoser = approvalAcceptedCount === 1
+    && approvalSafeErrorCount === 1
+    && approvalDetailProof.ok
+    && approvalDetailProof.acceptedCount === approvalAcceptedCount
+    && approvalDetailProof.safeErrorCount === approvalSafeErrorCount;
   const twoManTokenPair = twoManRace?.token_source?.kind === "provided_bearer_pair";
   const twoManTokenPairDistinct = providedBearerPairDistinct(twoManRace?.token_source);
   const twoManAcceptedCount = Number(twoManRace?.accepted_count ?? -1);
@@ -623,7 +661,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     note: {
       rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
-      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
+      approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
     },
     missingStatus: missingEvidenceStatus(step.status),

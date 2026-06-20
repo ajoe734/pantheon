@@ -100,6 +100,47 @@ def _provided_bearer_pair_source(*, distinct: bool = True):
         "token_b_sha256_12": "race-token-b" if distinct else "same-race-token",
     }
 
+
+def _strict_approval_race_item(
+    *,
+    accepted_count: int = 1,
+    safe_error_count: int = 1,
+    bounded: bool = True,
+    distinct_token_pair: bool = True,
+    safe_error_envelope: bool = True,
+):
+    results = [
+        {
+            "family": f"approval-race-winner-{index}",
+            "status": 202,
+            "ok": True,
+            "error_envelope": False,
+            "error_code": None,
+        }
+        for index in range(accepted_count)
+    ]
+    results.extend(
+        {
+            "family": f"approval-race-loser-{index}",
+            "status": 409,
+            "ok": safe_error_envelope,
+            "error_envelope": safe_error_envelope,
+            "error_code": "STATE_CONFLICT" if safe_error_envelope else None,
+        }
+        for index in range(safe_error_count)
+    )
+    return {
+        "family": "approval-race",
+        "ok": bounded,
+        "bounded": bounded,
+        "accepted_count": accepted_count,
+        "safe_error_count": safe_error_count,
+        "duplicate_winners": accepted_count > 1,
+        "token_source": _provided_bearer_pair_source(distinct=distinct_token_pair),
+        "results": results,
+    }
+
+
 def _strict_two_man_race_item(*, operator_scoped: bool = True, distinct_token_pair: bool = True):
     return {
         "family": "two-man-race",
@@ -266,15 +307,7 @@ def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path
                 },
                 "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": _provided_bearer_pair_source(),
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -806,15 +839,7 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
                 },
                 "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": dry_run,
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": _provided_bearer_pair_source(),
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -878,7 +903,7 @@ def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: 
     assert dry_run_check["status"] == "pass"
     assert dry_run_check["note"] == "strict:true dryRun:7/7 invalidEnvelope:true sideEffectProofs:7/7 sideEffects:none"
     assert race_check["status"] == "pass"
-    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
+    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
     assert two_man_check["status"] == "pass"
     assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 tokenPair:true tokenPairDistinct:true"
 
@@ -930,15 +955,7 @@ def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_pa
                 },
                 "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": _provided_bearer_pair_source(distinct=False),
-                },
+                "approval_race": _strict_approval_race_item(distinct_token_pair=False),
                 "two_man_race": _strict_two_man_race_item(distinct_token_pair=False),
             }
         ),
@@ -987,9 +1004,102 @@ def test_release_gate_rejects_race_evidence_without_distinct_token_hashes(tmp_pa
     )
 
     assert race_check["status"] == "fail"
-    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 duplicateWinners:false tokenPair:true tokenPairDistinct:false"
+    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:1/1 results:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:false"
     assert two_man_check["status"] == "fail"
     assert two_man_check["note"] == "strict:true operatorScoped:true accepted:2 replayed:0 commandIds:2/2 tokenPair:true tokenPairDistinct:false"
+
+
+def test_release_gate_rejects_approval_race_without_safe_error_envelope(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+
+    rbac_labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    rbac_cases = {"anonymous": {"kind": "anonymous"}}
+    rbac_cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in rbac_labels})
+    (current_run / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LUV-AUTHED-LIVE-001",
+                "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": {
+                    "kind": "rbac_matrix",
+                    "cases": rbac_cases,
+                    "provided_bearer_count": 7,
+                    "distinct_provided_bearer_count": 7,
+                    "distinct_provided_bearers": True,
+                    "duplicate_bearer_label_groups": [],
+                },
+                "include_writes": True,
+                "include_rbac_matrix": True,
+                "include_dry_run": True,
+                "include_approval_race": True,
+                "include_two_man_race": True,
+                "summary": {
+                    "total": 65,
+                    "passed": 65,
+                    "failed": 0,
+                    "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
+                    "dry_run_probes": 7,
+                    "approval_race_probes": 1,
+                    "approval_race_bounded": True,
+                    "two_man_race_probes": 1,
+                    "two_man_race_operator_scoped": True,
+                    "live_capital_side_effects": False,
+                },
+                "rbac_matrix": _strict_rbac_matrix_items(),
+                "dry_run": _strict_dry_run_items(),
+                "approval_race": _strict_approval_race_item(safe_error_envelope=False),
+                "two_man_race": _strict_two_man_race_item(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    race_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict multi-operator approval race evidence is bounded."
+    )
+    assert race_check["status"] == "fail"
+    assert race_check["note"] == "strict:true bounded:true accepted:1 safeErrors:1 safeErrorEnvelope:0/1 results:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
 
 
 def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverage(tmp_path: Path) -> None:
@@ -1045,15 +1155,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_required_family_coverag
                 },
                 "rbac_matrix": rbac_matrix,
                 "dry_run": _strict_dry_run_items(),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": _provided_bearer_pair_source(),
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -1147,15 +1249,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_distinct_bearers(tmp_pa
                 },
                 "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": _provided_bearer_pair_source(),
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -1248,15 +1342,7 @@ def test_release_gate_rejects_strict_rbac_matrix_without_write_side_effect_proof
                 },
                 "rbac_matrix": _strict_rbac_matrix_items(with_write_side_effect_checks=False),
                 "dry_run": _strict_dry_run_items(),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": _provided_bearer_pair_source(),
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -1349,15 +1435,7 @@ def test_release_gate_rejects_strict_two_man_race_without_operator_scope(tmp_pat
                 },
                 "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": _provided_bearer_pair_source(),
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(operator_scoped=False),
             }
         ),
@@ -1450,15 +1528,7 @@ def test_release_gate_rejects_strict_dry_run_without_per_probe_side_effect_proof
                 },
                 "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": _strict_dry_run_items(with_side_effect_checks=False),
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 1,
-                    "safe_error_count": 1,
-                    "duplicate_winners": False,
-                    "token_source": _provided_bearer_pair_source(),
-                },
+                "approval_race": _strict_approval_race_item(),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -1552,15 +1622,7 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
                 },
                 "rbac_matrix": _strict_rbac_matrix_items(),
                 "dry_run": dry_run,
-                "approval_race": {
-                    "family": "approval-race",
-                    "ok": True,
-                    "bounded": True,
-                    "accepted_count": 0,
-                    "safe_error_count": 2,
-                    "duplicate_winners": False,
-                    "token_source": _provided_bearer_pair_source(),
-                },
+                "approval_race": _strict_approval_race_item(accepted_count=0, safe_error_count=2),
                 "two_man_race": _strict_two_man_race_item(),
             }
         ),
@@ -1603,4 +1665,4 @@ def test_release_gate_rejects_strict_approval_race_without_winner(tmp_path: Path
         if check["label"] == "Authenticated: strict multi-operator approval race evidence is bounded."
     )
     assert race_check["status"] == "fail"
-    assert race_check["note"] == "strict:true bounded:true accepted:0 safeErrors:2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
+    assert race_check["note"] == "strict:true bounded:true accepted:0 safeErrors:2 safeErrorEnvelope:2/1 results:2/2 duplicateWinners:false tokenPair:true tokenPairDistinct:true"
