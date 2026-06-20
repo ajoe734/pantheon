@@ -38,6 +38,7 @@ DEFAULT_CHANNEL = "approval"
 DEFAULT_COOKIE_NAME = "pantheon_session"
 STRICT_LIVE_SOAK_MIN_SECONDS = 75.0
 STRICT_LIVE_SOAK_MIN_HEARTBEATS = 1
+STRICT_LIVE_MIN_RECONNECT_ATTEMPTS = 2
 SSE_HEADER_KEYS = (
     "Content-Type",
     "Cache-Control",
@@ -590,6 +591,73 @@ def stream_soak(
         }
 
 
+def stream_reconnect_sequence(
+    *,
+    base_url: str,
+    mode: AuthMode,
+    token: str,
+    timeout: float,
+    channel: str,
+    cookie_name: str,
+    expected_replays: list[tuple[str, str]],
+) -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    observed_event_ids: list[str] = []
+    for index, (cursor_event_id, expected_event_id) in enumerate(expected_replays, start=1):
+        attempt = stream_first_event(
+            base_url=base_url,
+            mode=mode,
+            token=token,
+            timeout=timeout,
+            channel=channel,
+            cookie_name=cookie_name,
+            last_event_id=cursor_event_id,
+        )
+        observed_id = (
+            attempt.get("first_event", {})
+            .get("data", {})
+            .get("id")
+            if isinstance(attempt.get("first_event"), dict)
+            else None
+        )
+        if observed_id:
+            observed_event_ids.append(str(observed_id))
+        attempt["attempt"] = index
+        attempt["cursor_event_id"] = cursor_event_id
+        attempt["expected_replayed_event_id"] = expected_event_id
+        attempt["observed_replayed_event_id"] = observed_id
+        attempt["replayed_expected_event"] = observed_id == expected_event_id
+        attempt["ok"] = bool(attempt.get("ok")) and observed_id == expected_event_id
+        attempts.append(attempt)
+
+    expected_ids = [expected_id for _cursor, expected_id in expected_replays if expected_id]
+    duplicate_event_ids = sorted(
+        event_id for event_id in set(observed_event_ids) if observed_event_ids.count(event_id) > 1
+    )
+    missing_expected = sorted(set(expected_ids) - set(observed_event_ids))
+    cursors_advanced = (
+        observed_event_ids == expected_ids
+        and len(set(observed_event_ids)) == len(observed_event_ids)
+    )
+    return {
+        "mode": mode.name,
+        "ok": (
+            len(attempts) == len(expected_replays)
+            and all(attempt.get("ok") for attempt in attempts)
+            and not duplicate_event_ids
+            and not missing_expected
+            and cursors_advanced
+        ),
+        "attempt_count": len(attempts),
+        "expected_event_ids": expected_ids,
+        "observed_event_ids": observed_event_ids,
+        "missing_expected_event_ids": missing_expected,
+        "duplicate_event_ids": duplicate_event_ids,
+        "cursors_advanced": cursors_advanced,
+        "attempts": attempts,
+    }
+
+
 def replay_unavailable(
     *,
     base_url: str,
@@ -741,8 +809,17 @@ def main() -> int:
         run_id=run_id,
         label="second",
     )
+    third_publish = publish_event(
+        base_url=base_url,
+        token=token,
+        timeout=args.timeout,
+        channel=args.channel,
+        event_type="approval.updated",
+        run_id=run_id,
+        label="third",
+    )
 
-    publish_ok = first_publish["ok"] and second_publish["ok"]
+    publish_ok = first_publish["ok"] and second_publish["ok"] and third_publish["ok"]
     cookie_open = stream_first_event(
         base_url=base_url,
         mode=COOKIE_MODE,
@@ -792,6 +869,44 @@ def main() -> int:
         replay["replayed_expected_event"] = observed_id == expected_replay_event_id
         replay["ok"] = bool(replay.get("ok")) and observed_id == expected_replay_event_id
 
+    published_event_ids = [
+        str(event_id)
+        for event_id in (
+            first_publish.get("event_id"),
+            second_publish.get("event_id"),
+            third_publish.get("event_id"),
+        )
+        if event_id
+    ]
+    reconnect_expected_replays = (
+        [
+            (published_event_ids[0], published_event_ids[1]),
+            (published_event_ids[1], published_event_ids[2]),
+        ]
+        if len(published_event_ids) >= 3
+        else []
+    )
+    reconnect_sequence = {
+        COOKIE_MODE.name: stream_reconnect_sequence(
+            base_url=base_url,
+            mode=COOKIE_MODE,
+            token=token,
+            timeout=args.timeout,
+            channel=args.channel,
+            cookie_name=args.cookie_name,
+            expected_replays=reconnect_expected_replays,
+        ),
+        BEARER_MODE.name: stream_reconnect_sequence(
+            base_url=base_url,
+            mode=BEARER_MODE,
+            token=token,
+            timeout=args.timeout,
+            channel=args.channel,
+            cookie_name=args.cookie_name,
+            expected_replays=reconnect_expected_replays,
+        ),
+    }
+
     unavailable = replay_unavailable(
         base_url=base_url,
         mode=BEARER_MODE,
@@ -806,7 +921,7 @@ def main() -> int:
     if args.soak_seconds > 0:
         expected_replay_ids = {
             str(event_id)
-            for event_id in (second_publish.get("event_id"),)
+            for event_id in (second_publish.get("event_id"), third_publish.get("event_id"))
             if event_id
         }
         soak_results = {
@@ -848,6 +963,16 @@ def main() -> int:
         "first_event_has_id_type_timestamp": bool(cookie_open.get("ok") and bearer_open.get("ok")),
         "cookie_last_event_id_replay_returns_event_after_cursor": bool(cookie_replay.get("ok")),
         "bearer_last_event_id_replay_returns_event_after_cursor": bool(bearer_replay.get("ok")),
+        "cookie_reconnect_sequence_advances_cursor_without_duplicate_replay": bool(
+            reconnect_sequence.get(COOKIE_MODE.name, {}).get("ok")
+            and reconnect_sequence.get(COOKIE_MODE.name, {}).get("attempt_count", 0)
+            >= STRICT_LIVE_MIN_RECONNECT_ATTEMPTS
+        ),
+        "bearer_reconnect_sequence_advances_cursor_without_duplicate_replay": bool(
+            reconnect_sequence.get(BEARER_MODE.name, {}).get("ok")
+            and reconnect_sequence.get(BEARER_MODE.name, {}).get("attempt_count", 0)
+            >= STRICT_LIVE_MIN_RECONNECT_ATTEMPTS
+        ),
         "missing_last_event_id_returns_409": bool(unavailable.get("ok")),
         "missing_replay_409_has_resync_routes_header": bool(
             unavailable.get("response_headers", {}).get("X-SSE-Resync-Routes")
@@ -864,6 +989,9 @@ def main() -> int:
             and args.soak_seconds >= STRICT_LIVE_SOAK_MIN_SECONDS
             and args.soak_min_heartbeats >= STRICT_LIVE_SOAK_MIN_HEARTBEATS
             and soak_results.get(BEARER_MODE.name, {}).get("ok")
+            and reconnect_sequence.get(BEARER_MODE.name, {}).get("ok")
+            and reconnect_sequence.get(BEARER_MODE.name, {}).get("attempt_count", 0)
+            >= STRICT_LIVE_MIN_RECONNECT_ATTEMPTS
         )
     failed_assertions = [name for name, ok in assertions.items() if not ok]
 
@@ -878,6 +1006,7 @@ def main() -> int:
             "provided_bearer_env": "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
             "min_soak_seconds": STRICT_LIVE_SOAK_MIN_SECONDS,
             "min_heartbeats": STRICT_LIVE_SOAK_MIN_HEARTBEATS,
+            "min_reconnect_attempts": STRICT_LIVE_MIN_RECONNECT_ATTEMPTS,
         },
         "client_modes": {
             COOKIE_MODE.name: {
@@ -897,7 +1026,7 @@ def main() -> int:
             "scripts/probe_bff_sse_stream.py --base-url <bff-url> "
             "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 1"
         ],
-        "publish": [first_publish, second_publish],
+        "publish": [first_publish, second_publish, third_publish],
         "open_transcripts": {
             COOKIE_MODE.name: cookie_open,
             BEARER_MODE.name: bearer_open,
@@ -907,6 +1036,7 @@ def main() -> int:
             COOKIE_MODE.name: cookie_replay,
             BEARER_MODE.name: bearer_replay,
         },
+        "reconnect_sequence": reconnect_sequence,
         "replay_unavailable": unavailable,
         "soak": soak_results,
         "mock_generator_live_mode": mock_generator_check,
@@ -919,6 +1049,10 @@ def main() -> int:
                 "bearer_probe_opened": bool(bearer_open.get("ok")),
                 "first_event_contains_id_type_timestamp": assertions["first_event_has_id_type_timestamp"],
                 "last_event_id_replay": bool(cookie_replay.get("ok") and bearer_replay.get("ok")),
+                "last_event_id_reconnect_sequence": bool(
+                    reconnect_sequence.get(COOKIE_MODE.name, {}).get("ok")
+                    and reconnect_sequence.get(BEARER_MODE.name, {}).get("ok")
+                ),
                 "replay_unavailable_409_with_resync_routes": bool(unavailable.get("ok")),
                 "bearer_soak_heartbeat_duplicate_replay": bool(
                     not args.soak_seconds or soak_results.get(BEARER_MODE.name, {}).get("ok")
