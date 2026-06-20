@@ -1,5 +1,3 @@
-import { paths } from "@/lib/bff-v1/paths";
-
 export interface AskRequest {
   prompt: string;
   persona_ids?: string[];
@@ -28,7 +26,7 @@ function resolvedBase(baseUrl?: string): string {
 /** POST /bff/agora/ask — create an ask session. Returns the parsed JSON body. */
 export async function postAsk(body: AskRequest, baseUrl?: string): Promise<any> {
   const base = resolvedBase(baseUrl);
-  const url = `${base}${paths.agoraAsk()}`;
+  const url = `${base}/bff/agora/ask`;
   const res = await fetch(url, {
     method: "POST",
     credentials: "include",
@@ -48,7 +46,7 @@ export async function postAsk(body: AskRequest, baseUrl?: string): Promise<any> 
 /** GET /bff/agora/ask/sessions/{id} — fetch session detail/transcript */
 export async function getAskSession(sessionId: string, baseUrl?: string): Promise<AskSession> {
   const base = resolvedBase(baseUrl);
-  const url = `${base}${paths.agoraAskSession(sessionId)}`;
+  const url = `${base}/bff/agora/ask/sessions/${encodeURIComponent(sessionId)}`;
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",

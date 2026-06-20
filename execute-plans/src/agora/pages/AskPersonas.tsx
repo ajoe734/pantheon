@@ -995,24 +995,6 @@ export default function AskPersonas(): JSX.Element {
     try {
       const res = await invokeAssistantCatalogRoute(handlerRef, body);
       const resultSurface = firstString(skill.result_surface, skill.resultSurface);
-      if (resultSurface === "assistant_management_answer") {
-        const data = recordFrom(res.data ?? res);
-        const id = firstString(data.sessionId, data.session_id, data.session);
-        if (id) setSessionId(id);
-        const answer = firstString(data.answer);
-        if (answer) {
-          setMessages([{ role: "operator", content: prompt }, { role: "assistant", content: answer }]);
-        }
-        const signals = normalizeAssistantSignals(res, id);
-        setAssistantSignals(signals);
-        setMode(normalizeMode(signals.mode));
-        setStatus(
-          firstString(recordFrom(data.providerStatus ?? data.provider_status).status, data.status) ?? "completed",
-        );
-        const citations = normalizeSourceCitations(res);
-        if (citations.length > 0) setSourceCitations(citations);
-        return;
-      }
       if (resultSurface === "assistant_orchestrator_status") {
         setSystemStatus(res);
         setStatus("system_status_loaded");
