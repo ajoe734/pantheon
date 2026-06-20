@@ -7,7 +7,7 @@
 - Reviewer: `Codex`
 - Generated: `2026-06-20`
 - Mutates canonical truth: `no`
-- Baseline inspected: `pantheon@dev` `3efec287`
+- Baseline inspected: `pantheon@dev` `e28e6e49`
 
 This is a support packet only. It does not implement
 `docs/contracts/agora/dev-compatibility-manifest.json`,
@@ -23,9 +23,10 @@ order. Since then, the Agora contract-layer closure pack was merged onto
 acceptance packet for the parent owner.
 
 The important distinction is that the closure pack is now available as design
-input, but it still says the implementing `AG-XR-*` tasks must promote,
-hash-verify, and mirror the actual canonical artifacts. This sidecar records
-that boundary instead of treating the archive pack as runtime implementation.
+input, and `AG-XR-001A` has since landed the additive v1.1 bundle index plus
+v2 schema files. Remaining AG-XR-003 acceptance still depends on the parent
+task implementing the manifest generator/validator and on the frontend
+generated-type evidence being aligned.
 
 ## Source Evidence
 
@@ -37,7 +38,8 @@ that boundary instead of treating the archive pack as runtime implementation.
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/INDEX.md` | States the pack is a design decision proposal until canonical artifacts are merged and mirrored. |
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/ARCHIVE_NOTES.md` | Says the prose docs are authority, seed artifacts are not complete, and AG-XR-003 remains blocked until predecessor contract tasks are implemented. |
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/06_compatibility_manifest_and_hash_rules.md` | Defines the proposed manifest path, commit semantics, byte-level hash rules, generated types hash algorithm, deploy check, and generated-manifest ownership. |
-| `docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/compatibility_manifest.schema.json` | Provides the proposed JSON schema shape for `agora.v1.1` compatibility manifests. |
+| `services/control-plane/specs/agora/v2/compatibility_manifest.schema.json` | Provides the canonical JSON schema shape for `agora.v1.1` compatibility manifests after `AG-XR-001A`. |
+| `services/control-plane/specs/agora/bundle_index.v1_1.json` | Provides the additive v1.1 extension bundle index and records the base bundle hash it extends. |
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/07_dispatch_unblock_matrix_v2.md` | Names AG-XR-003's current blocker and the predecessor evidence required before implementation is unblocked. |
 
 ## Delta From Follow-up 2
@@ -46,7 +48,7 @@ that boundary instead of treating the archive pack as runtime implementation.
 |---|---|---|
 | `SD section 2.3` is missing. | The closure pack gives a replacement compatibility-manifest design in `06_*` and `07_*`. | Parent implementation should cite the closure-pack rules instead of relying on the stale `SD section 2.3` dispatch reference. |
 | Manifest path was unclear. | Both repos should store `docs/contracts/agora/dev-compatibility-manifest.json`. | Reviewer should reject a new old-shape `compatibility-manifest.yaml` unless the parent owner intentionally rejects the closure-pack path. |
-| Manifest schema was unclear. | Proposed schema is `services/control-plane/specs/agora/v2/compatibility_manifest.schema.json`; archive seed currently lives under the closure pack. | Parent must either land the schema at the proposed canonical path through the authorized contract task or depend on the predecessor that lands it. |
+| Manifest schema was unclear. | `AG-XR-001A` has now landed `services/control-plane/specs/agora/v2/compatibility_manifest.schema.json`. | Parent should validate manifests against this canonical schema instead of the older flat YAML shape. |
 | `schema_bundle_sha256` was undefined. | The closure pack splits this into `base_bundle_index_sha256` and `extension_bundle_index_sha256`, both raw-byte SHA-256 of exact bundle index files. | Reviewer should reject an ad hoc single `schema_bundle_sha256` unless parent explicitly documents a compatibility shim. |
 | Commit pins during PR timing were unclear. | Runtime and contract commits are exact 40-character SHAs. Frontend `generated_from_contract_commit` must equal backend `contract_commit`. | Placeholders may exist only with `compatibility_status=pending` or `incompatible`; they must fail deployment when marked compatible. |
 | Required capabilities were flat strings. | Proposed schema uses capability objects with `name`, `version`, and `required`. | Parent validator should normalize and verify names plus compatible versions, not only string presence. |
@@ -56,14 +58,14 @@ that boundary instead of treating the archive pack as runtime implementation.
 | Check | Expected parent evidence | Sidecar stance |
 |---|---|---|
 | Manifest path follows the closure rule | `docs/contracts/agora/dev-compatibility-manifest.json` exists in both repos or the parent PR records an approved deviation. | Parent implementation work. |
-| Manifest uses generated JSON schema | Manifest validates against `compatibility_manifest.schema.json` with `manifest_version=1.0`, `contract_family=agora.v1.1`, and `generated=true`. | Parent implementation work after schema authority is landed. |
+| Manifest uses generated JSON schema | Manifest validates against `services/control-plane/specs/agora/v2/compatibility_manifest.schema.json` with `manifest_version=1.0`, `contract_family=agora.v1.1`, and `generated=true`. | Parent implementation work. |
 | Backend half is immutable and explicit | `backend.repo`, `backend.runtime_commit`, `backend.contract_commit`, `backend.base_bundle_index_sha256`, `backend.extension_bundle_index_sha256`, and `backend.openapi_sha256` are populated with full hashes. | Checklist only. |
 | Frontend half proves contract derivation | `frontend.generated_from_contract_commit == backend.contract_commit`; frontend bundle hashes equal backend bundle hashes; generated type hash uses the recorded algorithm. | Checklist only. |
 | Hash policy is deterministic | `hash_policy.file_hash == sha256-exact-git-bytes-v1`; `hash_policy.generated_types_hash == sha256-path-tab-filehash-lf-v1`. | Checklist only. |
 | Dev deployment gate fails closed | Validator exits non-zero when any required commit, hash, capability, or compatibility status is missing, placeholder, mismatched, or incompatible. | Parent implementation work. |
 | Generated manifest is not hand-edited | Manifest marked `generated=true` is emitted by CI/tooling; hand edits are rejected or regenerated. | Parent implementation work. |
 | Frozen v1 bundle remains intact | `python3 scripts/agora_schema_bundle.py --verify` remains green and no AG-XR-001 frozen file is replaced in place. | Parent and reviewer guardrail. |
-| Extension bundle is explicit | `bundle_index.v1_1.json`, v2 schemas, v1.1 capability manifest, and `agora_v1_1.openapi.yaml` are landed by the authorized predecessor path before a compatible manifest is claimed. | Dependency gate. |
+| Extension bundle is explicit | `bundle_index.v1_1.json`, v2 schemas, and the v1.1 capability manifest are present; parent still must not claim compatibility until remaining OpenAPI/generated-type evidence is aligned. | Dependency gate. |
 | Dev deployment docs cite the gate | The chosen deployment runbook names the validator command and states mismatch blocks deploy. | Parent implementation work. |
 
 ## Current Observable Repo Facts
@@ -71,13 +73,17 @@ that boundary instead of treating the archive pack as runtime implementation.
 | Fact | Current value |
 |---|---|
 | Base bundle index hash | `286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b` for `services/control-plane/specs/agora/bundle_index.json`. |
+| Extension bundle index hash | `5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee` for `services/control-plane/specs/agora/bundle_index.v1_1.json`. |
 | Base OpenAPI hash | `4da5ea91923e40c13a9118ee4f784a5d6627e6cb91e4d4712d8fac244912118f` for `services/control-plane/openapi/agora_v1.openapi.yaml`. |
-| Compatibility schema seed hash | `84c3607195484d09710708c08e7c29821b75d83199376cd5374a2ce0c3ca7827` for the closure-pack schema seed. |
+| Canonical compatibility schema hash | `84c3607195484d09710708c08e7c29821b75d83199376cd5374a2ce0c3ca7827` for `services/control-plane/specs/agora/v2/compatibility_manifest.schema.json`. |
+| Canonical v1.1 capability manifest hash | `6a729d1284ca8f88058a4c301dc67a4c17fd76097190bf020310f4f2cab3db41` for `services/control-plane/specs/agora/v2/capability_manifest_v1_1.json`. |
 | Compatibility example seed hash | `479bb05be19fbef93124a5e85e65dbe60e02025444f9bba751c1295cd151ebb6` for the closure-pack example seed. |
+| v1.1 OpenAPI file | `services/control-plane/openapi/agora_v1_1.openapi.yaml` is not present in this repo baseline. |
 | Manifest implementation files | No `docs/contracts/agora/dev-compatibility-manifest.json`, `compatibility-manifest.yaml`, or `scripts/agora_compat_manifest.py` currently exists in this repo. |
 
 These values are evidence for reviewer orientation. This sidecar does not
-promote the closure-pack seed files into canonical service paths.
+promote closure-pack seed files or implement the manifest gate; it records the
+current state after `AG-XR-001A` merged.
 
 ## Dependency Map
 
@@ -107,10 +113,10 @@ Durable interpretation:
 - `AG-XR-001` remains the frozen v1 baseline. AG-XR-003 must not replace its
   files to get new hashes.
 - The closure pack narrows the parent implementation choices but does not
-  complete the implementation.
-- `AG-XR-001A` must produce the canonical extension bundle and
-  `bundle_index.v1_1.json` before AG-XR-003 can honestly mark a manifest
-  `compatible`.
+  complete the deployment validator.
+- `AG-XR-001A` has produced the canonical extension bundle and
+  `bundle_index.v1_1.json`; AG-XR-003 still must not mark a manifest
+  `compatible` without remaining OpenAPI/generated-type/deploy evidence.
 - `AG-XR-OPENAPI-001` and `AG-XR-DASH-001` feed the capability/OpenAPI and
   dashboard-schema facts that the manifest must compare.
 - `AG-XR-002` remains the generated-types predecessor. The manifest should not
@@ -138,9 +144,9 @@ Recommended reviewer stance:
 1. Accept this sidecar if it accurately maps the closure-pack evidence without
    changing canonical/runtime files.
 2. Feed the updated checklist to the parent `AG-XR-003` owner.
-3. Keep the parent task blocked or partially blocked until the authorized
-   predecessor tasks land the v1.1 extension bundle, canonical manifest schema,
-   and generated type evidence.
+3. Keep the parent task blocked or partially blocked until the remaining
+   predecessor evidence is available, especially v1.1 OpenAPI/generated types
+   and deploy-validator implementation.
 4. When parent implementation starts, prefer the closure-pack JSON manifest
    path and hash policy over the older dispatch text unless the parent
    owner/reviewer explicitly records a different decision.
@@ -152,10 +158,10 @@ Follow-up packet ready: support-only AG-XR-003 acceptance/dependency map is in
 support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md.
 It maps the new contract-closure compatibility manifest rules to parent
 acceptance checks, without editing canonical schema/OpenAPI/runtime files.
-Parent AG-XR-003 should now treat the closure-pack JSON manifest path, v1.1
-hash semantics, exact commit pins, and fail-closed deployment gate as the
-review input, while waiting for authorized v1.1 contract artifacts to be
-landed before claiming compatibility.
+Parent AG-XR-003 should now treat the canonical v2 compatibility schema,
+closure-pack JSON manifest path, v1.1 hash semantics, exact commit pins, and
+fail-closed deployment gate as the review input, while waiting for remaining
+OpenAPI/generated-type evidence before claiming compatibility.
 ```
 
 ## Verification
@@ -174,7 +180,7 @@ sed -n '1,260p' docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/06
 sed -n '1,240p' docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/compatibility_manifest.schema.json
 sed -n '1,220p' docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/compatibility_manifest.example.json
 sed -n '1,220p' docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/07_dispatch_unblock_matrix_v2.md
-sha256sum services/control-plane/specs/agora/bundle_index.json services/control-plane/openapi/agora_v1.openapi.yaml docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/compatibility_manifest.schema.json docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/compatibility_manifest.example.json docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/06_compatibility_manifest_and_hash_rules.md
+sha256sum services/control-plane/specs/agora/bundle_index.json services/control-plane/specs/agora/bundle_index.v1_1.json services/control-plane/specs/agora/v2/compatibility_manifest.schema.json services/control-plane/specs/agora/v2/capability_manifest_v1_1.json services/control-plane/openapi/agora_v1.openapi.yaml
 find . -path '*dev-compatibility-manifest.json' -o -path '*compatibility-manifest.yaml' -o -path '*agora_compat_manifest.py'
 ```
 
@@ -183,6 +189,8 @@ Focused validation after writing this file:
 ```bash
 git diff --check
 python3 scripts/agora_schema_bundle.py --verify
+jq -r '.files | to_entries[] | "\(.value)  services/control-plane/\(.key)"' services/control-plane/specs/agora/bundle_index.v1_1.json | sha256sum -c -
+test "$(sha256sum services/control-plane/specs/agora/bundle_index.json | cut -d ' ' -f1)" = "$(jq -r '.extends.bundle_index_sha256' services/control-plane/specs/agora/bundle_index.v1_1.json)"
 git status --short
 rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md .orchestrator/task-briefs/ag_xr_003_sidecar_acceptance_followup_3.md
 ```
@@ -192,7 +200,10 @@ Results:
 - `git diff --check`: pass.
 - `python3 scripts/agora_schema_bundle.py --verify`: pass; all 15 frozen
   Agora v1 schema/OpenAPI/capability files verified.
-- `git status --short`: only
-  `.orchestrator/task-briefs/ag_xr_003_sidecar_acceptance_followup_3.md` and
-  this support packet are dirty.
+- `jq -r ... bundle_index.v1_1.json | sha256sum -c -`: pass; all 5
+  additive v1.1 extension files verified.
+- `test "$(sha256sum ... bundle_index.json)" = "$(jq ... bundle_index.v1_1.json)"`:
+  pass; extension index records the current base bundle hash.
+- `git status --short`: only this support packet is dirty after the dev-refresh
+  update; the generated task brief is already fixed in the earlier task commit.
 - `rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" ...`: pass; no matches.
