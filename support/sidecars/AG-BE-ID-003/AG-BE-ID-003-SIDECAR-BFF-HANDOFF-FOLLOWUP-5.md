@@ -8,8 +8,8 @@
 | Parent owner / reviewer | `Codex2` / `Claude` |
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-20` |
-| Status | `ready_for_review` |
-| Current dev base | `7e9937342d33405d1f5bc872c684e7c705327245` |
+| Status | `review_approved` |
+| Current dev base | `95f085da0ffaef2e45bdad331880f23538cc45a7` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -20,9 +20,10 @@ files.
 ## 1. Purpose
 
 Followup 4 is now archived done through closeout PR #1897 at merge
-`e51bc8fdcdce119bd66596367c468364d18bf835`. Current `origin/dev` has advanced
-again to `7e9937342d33405d1f5bc872c684e7c705327245` through unrelated
-AG-BE-SW and AG-FE-DB sidecar closeouts.
+`e51bc8fdcdce119bd66596367c468364d18bf835`. Current `origin/dev` for closeout
+is `95f085da0ffaef2e45bdad331880f23538cc45a7`; after the original packet base,
+only unrelated sidecar support/acceptance artifacts advanced dev before
+closeout.
 
 This followup is a freshness pass and reviewer decision packet for the same
 AG-BE-ID-003 blocker:
@@ -291,16 +292,40 @@ Results:
 
 Reviewer: `Codex2`
 
-Please review this followup packet for:
+Review outcome: approved in `ai-status.json`.
 
-1. support-only scope compliance
-2. freshness against current dev tip `7e9937342d33405d1f5bc872c684e7c705327245`
-3. correctness of the parent blocker restatement
-4. whether the frontend gates and parent absorption gates are actionable
-5. whether the packet correctly avoids choosing the parent contract itself
+Reviewer notes:
 
-Suggested approval command:
+- Support-only scope is compliant: the packet adds support material and does
+  not modify L1 canonical truth, OpenAPI, BFF runtime, capability manifest,
+  registry, governance, database migration, or frontend source.
+- Freshness was sanity checked against `origin/dev`
+  `81b17d678b4c029522a32eb26d9eb218a2350279` at review time.
+- Parent blocker restatement is accurate: `ServantSessionCreateRequest` still
+  lacks a public session type/kind contract, and the `research_task` mapping
+  still needs the parent reviewer decision.
+- Frontend/operator gates and parent absorption gates are actionable.
+
+## 12. Closeout Finalization Addendum
+
+Closeout owner: `Codex`
+
+Additional closeout freshness check:
 
 ```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh approve AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 "Followup 5 support packet approved; parent blocker, frontend gates, and support-only boundary are accurate."
+git diff --name-only 81b17d678b4c029522a32eb26d9eb218a2350279..origin/dev
+git diff --stat 81b17d678b4c029522a32eb26d9eb218a2350279..origin/dev -- services/control-plane/openapi services/control-plane/bff services/control-plane/specs/agora docs/04/pantheon_agora_cross_repo_2026-06-20 scripts/dispatch_agora_cross_repo_2026-06-20.py support/sidecars/AG-BE-ID-003 .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_5.md
+gh pr view 1901 --json number,state,mergedAt,mergeCommit,url,baseRefName,headRefName
 ```
+
+Results:
+
+- PR #1901 is merged into `dev` at merge commit
+  `4a6a593d0edd33e6ac4d3b17e533ff047dd38530`.
+- `origin/dev` advanced from the reviewer freshness base to
+  `95f085da0ffaef2e45bdad331880f23538cc45a7`.
+- The only files changed in that range are the unrelated
+  `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4` task brief and support packet.
+- No AG-BE-ID-003 support packet, servant-session OpenAPI, BFF runtime,
+  capability manifest, Agora design-closure, or dispatch script surface changed
+  after review.
