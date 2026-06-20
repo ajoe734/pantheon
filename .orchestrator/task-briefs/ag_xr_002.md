@@ -7,6 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
+- Closeout PR: #1782
 - Next: Review approved: all three acceptance criteria met. types.ts is auto-generated with correct snapshot digests, drift check exits 1 on stale files, CI generated-files job is wired and green in PR #1770. Returning to Codex for finalization.
 
 ## Summary
