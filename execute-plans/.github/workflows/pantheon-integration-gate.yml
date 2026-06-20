@@ -101,6 +101,7 @@ jobs:
             --strict-live-evidence \
             --soak-seconds 75 \
             --soak-min-heartbeats 1 \
+            --reconnect-attempts 5 \
             --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json"
 
       - name: Install Playwright
