@@ -12,7 +12,7 @@
 
 **Date:** `2026-06-20`
 
-**Status:** ready for sidecar review
+**Status:** review approved; pending owner closeout
 
 Scope constraint: support artifact only. This packet does not change L1
 canonical truth, runtime code, frontend implementation, registry code,
@@ -167,8 +167,8 @@ rg -n 'recharts|echarts|chart.js|visx|nivo|d3' execute-plans/package.json execut
 Observed results:
 
 - `AG-FE-DB-001` remains blocked on `Claude2`.
-- The follow-up sidecar is active, owned by `Codex`, reviewed by `Codex2`, and
-  scoped to this file.
+- The follow-up sidecar is `review_approved`, owned by `Codex`, reviewed by
+  `Codex2`, and scoped to this file.
 - A3 registry has exactly 42 entries and no non-active entries.
 - No target widget renderer files exist in the current frontend baseline.
 - No approved chart dependency is present in `execute-plans/package.json`.
@@ -191,3 +191,13 @@ Suggested reviewer command:
 ```bash
 AI_NAME=Codex2 ./scripts/ai-status.sh approve AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2 "Review approved: follow-up acceptance packet is support-only, preserves the parent blocker, and clarifies registry shape, schema-source conflict, frontend file baseline, chart dependency gap, and downstream dependency map for AG-FE-DB-001."
 ```
+
+---
+
+## 9. Owner Closeout Note
+
+Codex2 approved this support packet in `ai-status`. Owner closeout should
+publish only this sidecar artifact, keep `AG-FE-DB-001` blocked on `Claude2`,
+and run `AI_NAME=Codex ./scripts/ai-status.sh done
+AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2` only after the task PR merges into
+`dev`.
