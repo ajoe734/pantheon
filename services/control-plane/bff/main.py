@@ -51280,6 +51280,12 @@ app.include_router(_create_alpha_factory_router(
 ))
 
 
+def _ensure_agora_servant_openclaw_agent(persona: Dict[str, Any]) -> Dict[str, Any]:
+    from integrations.openclaw.adapter.agora_servant import ensure_agora_servant_agent
+
+    return ensure_agora_servant_agent(persona)
+
+
 # AG-BE-000: Agora BFF package router (must stay last to avoid route conflicts)
 from agora.router import create_agora_router as _create_agora_router  # noqa: E402
 app.include_router(
@@ -51288,6 +51294,8 @@ app.include_router(
         require_read_role=_require_read_role,
         bff_error=_bff_error,
         utc_now=utc_now,
+        get_read_store=lambda: read_store,
+        sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
     )
 )
 
