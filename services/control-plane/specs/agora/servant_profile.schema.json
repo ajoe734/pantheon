@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/servant_profile/v1",
+  "title": "ServantProfile",
+  "description": "Public profile of a trading persona (servant) visible to Agora users. Read-only surface — never exposes internal policy, memory, or model weights.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "persona_id",
+    "display_name",
+    "status",
+    "capability_summary"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable persona registry ID."
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name shown in Agora UI."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "suspended", "paper_only", "shadow_only", "retired"],
+      "description": "Current operational status of the persona."
+    },
+    "capability_summary": {
+      "type": "object",
+      "description": "High-level capability flags visible to operators.",
+      "required": ["can_ask", "can_research", "can_workshop"],
+      "properties": {
+        "can_ask": {
+          "type": "boolean",
+          "description": "Persona accepts ask-persona queries."
+        },
+        "can_research": {
+          "type": "boolean",
+          "description": "Persona can emit research plans."
+        },
+        "can_workshop": {
+          "type": "boolean",
+          "description": "Persona participates in strategy workshops."
+        },
+        "can_shadow": {
+          "type": "boolean",
+          "description": "Persona emits shadow decisions."
+        },
+        "asset_classes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Asset classes this persona covers.",
+          "default": []
+        },
+        "strategy_families": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Strategy families this persona specialises in.",
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional operator-facing description of the persona's role."
+    },
+    "avatar_ref": {
+      "type": "string",
+      "description": "Optional UI avatar asset reference."
+    },
+    "last_active_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last time the persona processed a request."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

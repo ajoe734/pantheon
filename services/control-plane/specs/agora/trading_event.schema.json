@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/trading_event/v1",
+  "title": "TradingEvent",
+  "description": "Observed trading event captured from Agora user interaction or signal feed. Observation-only — never routes live orders.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "event_id",
+    "operator_id",
+    "event_type",
+    "observed_at",
+    "no_order_route_proof"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique trading event identifier."
+    },
+    "operator_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator who originated or observed this event."
+    },
+    "persona_id": {
+      "type": "string",
+      "description": "Persona context in which this event was observed."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Agora session this event occurred in."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "signal_observed",
+        "price_alert_triggered",
+        "position_threshold_crossed",
+        "market_condition_noted",
+        "news_event_captured",
+        "trader_decision_noted",
+        "pattern_flagged"
+      ],
+      "description": "Category of trading event."
+    },
+    "subject": {
+      "type": "object",
+      "description": "What the event is about.",
+      "properties": {
+        "symbol": { "type": "string", "minLength": 1 },
+        "asset_class": { "type": "string" },
+        "venue": { "type": "string" },
+        "strategy_ref": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "event_data": {
+      "type": "object",
+      "description": "Event-specific payload. Shape varies by event_type.",
+      "additionalProperties": true
+    },
+    "signal_ref": {
+      "type": "string",
+      "description": "Reference to a signal record when event_type is signal_observed."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Optional confidence score attached by the capturing persona."
+    },
+    "learning_eligible": {
+      "type": "boolean",
+      "description": "Whether this event may be used as a learning evidence item.",
+      "default": false
+    },
+    "no_order_route_proof": {
+      "type": "string",
+      "enum": ["agora_observation_only", "research_plane_only"],
+      "description": "Proof claim that this event never routes live orders."
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

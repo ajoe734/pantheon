@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/research_run_summary/v1",
+  "title": "ResearchRunSummary",
+  "description": "Summary of a completed research run surfaced in the Agora. Read-only projection — does not include raw experiment internals.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "run_id",
+    "plan_id",
+    "strategy_ref",
+    "status",
+    "outcome",
+    "completed_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique research run identifier."
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Parent ResearchPlan ID."
+    },
+    "strategy_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Strategy being researched."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["running", "completed", "failed", "cancelled"],
+      "description": "Run execution state."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["pass", "fail", "inconclusive", "pending"],
+      "description": "Whether the run met its evaluation criteria."
+    },
+    "metrics_summary": {
+      "type": "object",
+      "description": "Key metrics from the run (subset safe for Agora display).",
+      "properties": {
+        "sharpe": { "type": "number" },
+        "max_drawdown": { "type": "number" },
+        "total_return": { "type": "number" },
+        "win_rate": { "type": "number" },
+        "trade_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "candidate_artifact_ref": {
+      "type": "string",
+      "description": "Registry artifact ID produced if outcome is 'pass'."
+    },
+    "failure_reason": {
+      "type": "string",
+      "description": "Human-readable failure summary when outcome is 'fail'."
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["research", "paper"],
+      "description": "Execution environment. Never 'live' or 'canary' for research runs."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

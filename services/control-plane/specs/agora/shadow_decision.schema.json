@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/shadow_decision/v1",
+  "title": "ShadowDecision",
+  "description": "Shadow persona decision captured for imitation-learning ground truth. Records what a shadow persona would have decided given the same market context as the human trader. Never routes live orders; feeds Learn loop only.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "decision_id",
+    "shadow_persona_id",
+    "reference_operator_id",
+    "market_context_ref",
+    "decision",
+    "decided_at",
+    "no_order_route_proof"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "decision_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique shadow decision identifier."
+    },
+    "shadow_persona_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ID of the shadow persona that produced this decision."
+    },
+    "reference_operator_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human trader whose context is being shadowed."
+    },
+    "reference_intent_id": {
+      "type": "string",
+      "description": "TradingIntent ID from the human trader being compared against."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Agora session context."
+    },
+    "market_context_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Snapshot or ref of the market context at decision time."
+    },
+    "decision": {
+      "type": "object",
+      "required": ["action", "subject"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["buy", "sell", "hold", "reduce", "hedge", "exit", "no_action"],
+          "description": "Shadow persona's decision action."
+        },
+        "subject": {
+          "type": "object",
+          "required": ["symbol"],
+          "properties": {
+            "symbol": { "type": "string", "minLength": 1 },
+            "asset_class": { "type": "string" },
+            "venue": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["long", "short", "neutral", "reduce", "exit"]
+        },
+        "size_hint": {
+          "type": "string",
+          "enum": ["small", "medium", "large", "full_position"]
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Shadow persona's reasoning for this decision."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "agreement_with_human": {
+      "type": "string",
+      "enum": ["agree", "partial_agree", "disagree", "not_compared"],
+      "description": "Whether shadow decision aligns with the referenced human intent."
+    },
+    "divergence_rationale": {
+      "type": "string",
+      "description": "Explanation when the shadow diverges from the human."
+    },
+    "evaluation_context": {
+      "type": "string",
+      "enum": ["paper", "research"],
+      "description": "Execution context for this shadow run. Never 'live' or 'canary'."
+    },
+    "imitation_dataset_eligible": {
+      "type": "boolean",
+      "description": "Whether this decision may be added to the imitation dataset.",
+      "default": false
+    },
+    "no_order_route_proof": {
+      "type": "string",
+      "enum": ["shadow_learn_only"],
+      "description": "Proof claim: shadow decisions never route live orders; they feed Learn loop only."
+    },
+    "decided_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
