@@ -86,6 +86,9 @@ def test_preflight_writes_missing_inputs_without_secret_values(tmp_path: Path) -
         "missing_labels": list(RBAC_REQUIRED_LABELS),
         "provided_cases": 0,
         "expected_cases": len(RBAC_REQUIRED_LABELS),
+        "distinct_bearers": False,
+        "distinct_bearer_count": 0,
+        "duplicate_label_groups": [],
     }
     assert payload["approval_race_tokens"] == {
         "token_a_present": False,
@@ -127,6 +130,9 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
         "missing_labels": [],
         "provided_cases": len(RBAC_REQUIRED_LABELS),
         "expected_cases": len(RBAC_REQUIRED_LABELS),
+        "distinct_bearers": True,
+        "distinct_bearer_count": len(RBAC_REQUIRED_LABELS),
+        "duplicate_label_groups": [],
     }
     assert payload["approval_race_tokens"] == {
         "token_a_present": True,
@@ -208,6 +214,9 @@ def test_preflight_rejects_incomplete_rbac_matrix_before_live_probes(tmp_path: P
         "missing_labels": ["operator", "reviewer", "approver", "admin", "empty", "unknown"],
         "provided_cases": 1,
         "expected_cases": len(RBAC_REQUIRED_LABELS),
+        "distinct_bearers": False,
+        "distinct_bearer_count": 1,
+        "duplicate_label_groups": [],
     }
     assert payload["invalid"] == [
         {
@@ -248,6 +257,45 @@ def test_preflight_rejects_malformed_rbac_json_with_safe_artifact(tmp_path: Path
     assert payload["invalid"][0]["reason"].startswith("must be valid JSON")
     assert "race-secret-a" not in text
     assert "race-secret-b" not in text
+
+
+def test_preflight_rejects_duplicate_rbac_bearers_before_live_matrix(tmp_path: Path) -> None:
+    env = clean_env()
+    rbac_tokens = {label: f"{label}-secret" for label in RBAC_REQUIRED_LABELS}
+    rbac_tokens["operator"] = rbac_tokens["viewer"]
+    env.update(
+        {
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN": "smoke-secret",
+            "PANTHEON_BFF_RBAC_TOKENS_JSON": json.dumps(rbac_tokens),
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A": "race-secret-a",
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "race-secret-b",
+        }
+    )
+
+    result = run_preflight(
+        tmp_path,
+        env,
+        approval_race_id="appr-live-123",
+        two_man_race_id="int-live-123",
+    )
+    assert result.returncode == 1
+    assert "PANTHEON_BFF_RBAC_TOKENS_JSON" in result.stderr
+    assert "distinct per RBAC label" in result.stderr
+
+    output = tmp_path / ".lovable" / "audits" / "current-run" / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    text = output.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    assert payload["missing"] == []
+    assert payload["rbac_matrix"]["distinct_bearers"] is False
+    assert payload["rbac_matrix"]["distinct_bearer_count"] == len(RBAC_REQUIRED_LABELS) - 1
+    assert payload["rbac_matrix"]["duplicate_label_groups"] == [["viewer", "operator"]]
+    assert payload["invalid"] == [
+        {
+            "name": "PANTHEON_BFF_RBAC_TOKENS_JSON",
+            "reason": "bearer tokens must be distinct per RBAC label: viewer/operator",
+        }
+    ]
+    assert "viewer-secret" not in text
 
 
 def test_preflight_rejects_same_approval_race_bearer_before_live_race(tmp_path: Path) -> None:

@@ -459,6 +459,19 @@ def rbac_tokens_from_json() -> dict[str, str]:
     return tokens
 
 
+def rbac_provided_labels() -> list[str]:
+    return [str(case["label"]) for case in RBAC_ROLE_CASES if case["roles"] is not None]
+
+
+def duplicate_rbac_bearer_label_groups(tokens_by_label: dict[str, str]) -> list[list[str]]:
+    labels_by_token: dict[str, list[str]] = {}
+    for label in rbac_provided_labels():
+        token = tokens_by_label.get(label, "")
+        if token:
+            labels_by_token.setdefault(token, []).append(label)
+    return [labels for labels in labels_by_token.values() if len(labels) > 1]
+
+
 def make_rbac_tokens(args: argparse.Namespace) -> tuple[dict[str, str | None], dict[str, Any]]:
     provided = rbac_tokens_from_json()
     for case in RBAC_ROLE_CASES:
@@ -515,6 +528,23 @@ def make_rbac_tokens(args: argparse.Namespace) -> tuple[dict[str, str | None], d
             f"{', '.join(missing)}. Set PANTHEON_BFF_RBAC_TOKENS_JSON, "
             "PANTHEON_BFF_RBAC_<LABEL>_TOKEN, or a JWT secret for dev/staging minting."
         )
+    if args.require_provided_rbac_tokens:
+        provided_values = {
+            label: str(tokens.get(label) or "")
+            for label in rbac_provided_labels()
+            if tokens.get(label)
+        }
+        duplicate_groups = duplicate_rbac_bearer_label_groups(provided_values)
+        source["provided_bearer_count"] = len(provided_values)
+        source["distinct_provided_bearer_count"] = len(set(provided_values.values()))
+        source["distinct_provided_bearers"] = not duplicate_groups and len(provided_values) == len(rbac_provided_labels())
+        source["duplicate_bearer_label_groups"] = duplicate_groups
+        if duplicate_groups:
+            duplicate_text = "; ".join("/".join(group) for group in duplicate_groups)
+            raise SystemExit(
+                "PANTHEON_BFF_RBAC_TOKENS_JSON must provide distinct bearer tokens per RBAC label: "
+                f"{duplicate_text}"
+            )
     if secret and not args.require_provided_rbac_tokens:
         source["secret_sha256_12"] = sha256_12(secret)
     return tokens, source
