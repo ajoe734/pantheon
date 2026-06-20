@@ -110,17 +110,50 @@ Do not rely on Lovable origins to validate the Pantheon dev FE. A local or
 Pantheon-owned FE origin missing from `PANTHEON_BFF_CORS_ORIGINS` will fail in
 the browser even when curl to the BFF succeeds.
 
+## Agora Compatibility Gate
+
+Agora dev deployment is gated by the generated cross-repo manifest:
+
+```text
+docs/contracts/agora/dev-compatibility-manifest.json
+```
+
+For repo sanity checks, the Pantheon side may verify a pending manifest while
+the execute-plans generated type mirror is still catching up:
+
+```sh
+python3 scripts/agora_compat_manifest.py verify \
+  --allow-pending \
+  --manifest docs/contracts/agora/dev-compatibility-manifest.json
+```
+
+For an actual dev deployment, pending status is not enough. The deployment gate
+must pass against the immutable backend commit and, when available, the matching
+execute-plans manifest from the frontend repo:
+
+```sh
+python3 scripts/agora_compat_manifest.py deployment-gate \
+  --manifest docs/contracts/agora/dev-compatibility-manifest.json \
+  --frontend-manifest /home/lupin/code/execute-plans/docs/contracts/agora/dev-compatibility-manifest.json \
+  --backend-runtime-commit <pantheon-backend-commit>
+```
+
+The gate fails closed when either repo has placeholder commits, mismatched
+bundle/OpenAPI hashes, stale generated types, missing required Agora
+capabilities, or `compatibility_status != compatible`.
+
 ## Deployment Shape
 
 The dev deploy should:
 
 1. Build `execute-plans` from the recorded commit.
-2. Serve the build from the dev VM through Caddy or equivalent Pantheon-owned
+2. Run the Agora compatibility deployment gate for Agora frontend/BFF changes.
+3. Serve the build from the dev VM through Caddy or equivalent Pantheon-owned
    HTTPS routing.
-3. Point the build at the dev BFF URL.
-4. Add the FE origin to dev BFF CORS.
-5. Restart only the services needed for the FE/CORS change.
-6. Run browser smoke against the Pantheon-owned FE URL.
+4. Point the build at the dev BFF URL.
+5. Add the FE origin to dev BFF CORS.
+6. Restart only the services needed for the FE/CORS change.
+7. Run browser smoke against the Pantheon-owned FE URL.
 
 ## Acceptance Smoke
 
