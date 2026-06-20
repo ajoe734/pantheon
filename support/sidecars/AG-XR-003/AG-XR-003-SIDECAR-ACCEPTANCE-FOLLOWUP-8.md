@@ -7,10 +7,11 @@
 - Reviewer: `Codex`
 - Generated: `2026-06-20`
 - Mutates canonical truth: `no`
-- Baseline inspected: `origin/dev` `a39d0c8387031367eed4e89c628f9d2cef791913`
+- Baseline inspected: `origin/dev` `db2254d3984b5e719dfc0d433048e74176bfa068`
 - Previous reviewed support packet merged in Pantheon PR #1902 at
-  `81b17d67`; AG-XR/Agora scoped paths are unchanged from that merge through
-  the inspected baseline.
+  `81b17d67`; AG-XR/Agora implementation paths are unchanged from that merge
+  through the inspected baseline. The only AG-XR support-scope change on this
+  branch is this follow-up 8 packet.
 
 This is a support packet only. It does not edit
 `docs/contracts/agora/dev-compatibility-manifest.json`,
@@ -49,19 +50,19 @@ manifest verification path is still not green.
 |---|---|
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-8` | Sidecar is active, owner `Codex2`, reviewer `Codex`, artifact path is this packet. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003` | Parent is `blocked`, waiting for `Claude2`; note records PR #1852 merged and PR #63 blocked at integration gate. |
-| `git diff --name-only 81b17d67..HEAD -- <AG-XR/Agora scoped paths>` | Empty; current dev updates since follow-up 7 are outside AG-XR/Agora scope. |
+| `git diff --name-only 81b17d67..origin/dev -- <AG-XR/Agora scoped paths>` | Empty; current dev updates since follow-up 7 are outside AG-XR/Agora implementation scope. |
 | `gh pr view 1852 --repo ajoe734/pantheon ...` | PR #1852 is merged at `0765018...`; Branch CI and orchestrator sync checks succeeded. |
 | `gh pr view 63 --repo ajoe734/execute-plans ...` | PR #63 is still open, unstable, with `integration-gate` failure. |
 | `gh run view 27877483718 --repo ajoe734/execute-plans ...` | Job failed only at step 22, `Aggregate release gate`; earlier job steps completed successfully. |
 | `gh run view 27877483718 --repo ajoe734/execute-plans --log-failed` | Aggregate summary reports failing Gates 1, 2, 3, 5, 6, and 7; Gate 4 and F13 Agora pass. |
 | `docs/contracts/agora/dev-compatibility-manifest.json` | Committed manifest sha256 is `d5143fb...`; backend commit is still `7ab267...`; frontend commits are placeholders; committed generated-types hash is `a6a9296...`; blocking reasons include generated-types-not-v1.1 plus the two placeholder frontend commit blockers. |
-| `scripts/agora_compat_manifest.py write --stdout` | Fresh generator at inspected baseline emits backend commit `a39d0c83...`, frontend generated-types hash `0244eb11...`, and only the two placeholder frontend commit blockers. |
+| `scripts/agora_compat_manifest.py write --stdout` | Fresh generator on this support branch emits backend commit `a4dffe9b...`, frontend generated-types hash `0244eb11...`, and only the two placeholder frontend commit blockers. On pure `origin/dev`, only the backend commit-id field would differ (`db2254d3...`). |
 
 ## Manifest Delta To Resolve
 
-| Field | Committed manifest | Fresh generator output at inspected `origin/dev` `a39d0c83` |
+| Field | Committed manifest | Fresh generator output on support branch HEAD `a4dffe9b` after merging `origin/dev` `db2254d3` |
 |---|---|---|
-| `backend.runtime_commit` / `backend.contract_commit` | `7ab267adc9f88519149ae01a874764d8fd8c1108` | `a39d0c8387031367eed4e89c628f9d2cef791913` |
+| `backend.runtime_commit` / `backend.contract_commit` | `7ab267adc9f88519149ae01a874764d8fd8c1108` | `a4dffe9bf7c7fb4ee2ee4fd363a67104449c974d` |
 | `frontend.generated_types_sha256` | `a6a9296efed4c3d00a3bb4d5d20896fd17027bd2484c4ead7b560785772319be` | `0244eb11c43aabe56a4c00ca0244fff4dd3cac134cae8f704bf38335c72b1740` |
 | `blocking_reasons` | `frontend-generated-contract-commit-placeholder`, `frontend-generated-types-not-agora-v1.1`, `frontend-runtime-commit-placeholder` | `frontend-generated-contract-commit-placeholder`, `frontend-runtime-commit-placeholder` |
 | `compatibility_status` | `pending` | `pending` |
@@ -72,11 +73,13 @@ the verifier. Current `deployment-gate` fails closed on the same hash mismatch,
 pending status, placeholder frontend commits, frontend/backend contract commit
 mismatch, and non-empty blocking reasons.
 
-Reviewer re-run note: after this support packet is committed on the task
-branch, `write --stdout` records the task branch HEAD as the backend commit.
-That changes only the commit-id field in generated stdout; the generated-types
-hash, pending status, and two placeholder frontend blockers should remain the
-same unless another AG-XR/Agora branch change lands first.
+Reviewer re-run note: `write --stdout` records the current git HEAD as the
+backend commit. This support branch contains a support-only task commit and a
+merge from `origin/dev`, so its backend commit field is `a4dffe9b...`; a rerun
+on pure `origin/dev` would record `db2254d3...`. That changes only the
+commit-id field in generated stdout; the generated-types hash, pending status,
+and two placeholder frontend blockers should remain the same unless another
+AG-XR/Agora branch change lands first.
 
 ## Dependency Map
 
@@ -122,7 +125,7 @@ Durable interpretation:
 |---|---|---|
 | Pantheon manifest/gate implementation exists | PR #1852 merged; `scripts/agora_compat_manifest.py` and JSON manifest path exist on `dev`. | Satisfied for Pantheon-side existence. |
 | execute-plans mirror exists and can merge | PR #63 is open and unstable. | Not satisfied. |
-| Manifest is internally fresh | Committed manifest still records backend `7ab267...` and generated-types hash `a6a9296...`; fresh generator emits inspected baseline `a39d0c83` and hash `0244eb11...`. | Not satisfied. |
+| Manifest is internally fresh | Committed manifest still records backend `7ab267...` and generated-types hash `a6a9296...`; fresh generator on this support branch emits backend `a4dffe9b...` and hash `0244eb11...`. | Not satisfied. |
 | `verify --allow-pending` supports repo sanity | Fails on generated-types hash mismatch. | Not satisfied. |
 | `deployment-gate` fails closed until compatible | Fails closed on pending status, placeholders, mismatch, and non-empty blockers. | Satisfied as a guardrail, not as deployment readiness. |
 | Unit tests reflect current generator behavior | `scripts/test_agora_compat_manifest.py` has 1 stale assertion failure and 3 passes. | Not satisfied. |
@@ -167,15 +170,16 @@ cross-repo delivery complete.
 Follow-up 8 packet ready:
 support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-8.md
 
-Current origin/dev is a39d0c83. AG-XR/Agora scoped paths are unchanged since
-the follow-up 7 support packet merged in PR #1902. Parent AG-XR-003 remains
-blocked waiting for Claude2. Pantheon PR #1852 is merged at 0765018..., but
+Current origin/dev is db2254d3. AG-XR/Agora implementation paths are unchanged
+since the follow-up 7 support packet merged in PR #1902; this branch only adds
+the follow-up 8 support packet. Parent AG-XR-003 remains blocked waiting for
+Claude2. Pantheon PR #1852 is merged at 0765018..., but
 execute-plans PR #63 is still open/unstable with integration-gate failing at
 Aggregate release gate.
 
 Local validation shows the committed manifest is stale relative to the fresh
 generator: manifest has backend 7ab267... and generated_types_sha256 a6a9296...,
-while write at the inspected baseline emits backend a39d0c83 and hash
+while write on this support branch emits backend a4dffe9b and hash
 0244eb11.... verify --allow-pending fails; deployment-gate fails closed; pytest
 has 1 stale assertion failure and 3 passes; Agora contract drift passes locally.
 This sidecar changes only support material and should be used as
@@ -190,6 +194,7 @@ Commands run while preparing this packet:
 git status -sb
 git fetch origin dev
 git merge --ff-only origin/dev
+git merge --no-edit origin/dev
 git rev-parse HEAD
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-8
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003
@@ -208,10 +213,14 @@ sha256sum docs/contracts/agora/dev-compatibility-manifest.json execute-plans/src
 
 Results:
 
-- `git merge --ff-only origin/dev`: pass; branch moved to
-  `a39d0c8387031367eed4e89c628f9d2cef791913`.
-- `git diff --name-only 81b17d67..HEAD -- <AG-XR/Agora scoped paths>`:
-  no output; scoped support/contract/runtime paths are unchanged since
+- `git merge --ff-only origin/dev`: pass during initial refresh; branch moved
+  to `a39d0c8387031367eed4e89c628f9d2cef791913`.
+- `git merge --no-edit origin/dev`: pass after the support packet commit;
+  branch incorporated inspected `origin/dev`
+  `db2254d3984b5e719dfc0d433048e74176bfa068` and ended at support-branch HEAD
+  `a4dffe9bf7c7fb4ee2ee4fd363a67104449c974d`.
+- `git diff --name-only 81b17d67..origin/dev -- <AG-XR/Agora scoped paths>`:
+  no output; scoped implementation/contract/runtime paths are unchanged since
   follow-up 7 merged.
 - `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-8`:
   sidecar active, owner `Codex2`, reviewer `Codex`.
@@ -240,9 +249,10 @@ Results:
 - `npm --prefix execute-plans run contract:drift`: pass; 20 bundle digests, 17
   schemas, and 96 OpenAPI operations verified.
 - `python3 scripts/agora_compat_manifest.py write --stdout`: pass; fresh
-  output records backend commit `a39d0c83...`, generated-types hash
-  `0244eb11...`, pending compatibility, and only the two frontend commit
-  placeholder blockers.
+  output records support-branch backend commit `a4dffe9b...`, generated-types
+  hash `0244eb11...`, pending compatibility, and only the two frontend commit
+  placeholder blockers. A rerun on pure `origin/dev` would record backend
+  commit `db2254d3...` instead.
 - Manifest sha256: `d5143fb19314d761fb5bd82e23d98e15b2058104bd81c93376aec1b02fceb01b`.
 - Contract snapshot sha256: `fb750e29aa5099ad1afee69f0f4f794f5a70fe884aacb58e110bdecd896c6e28`.
 - Generated types file sha256: `ce03bdc116bd8d5972920a5da9bf952b5314ca1ad564c02a9b5e3953dae59fc4`.
@@ -252,4 +262,3 @@ Results:
   `5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee`.
 - Agora v1.1 OpenAPI sha256:
   `16aa660db15a32aaccd63a7f0594abb4339e9ae95afae18353fbee532c2c0749`.
-
