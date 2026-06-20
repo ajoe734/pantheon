@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Antigravity
 - Reviewer: Codex2
-- Next: Operator dispatch: Antigravity is taking this sidecar support slice; keep canonical truth untouched.
+- Next: Supervisor re-dispatched AG-BE-ID-002-SIDECAR-ACCEPTANCE; task remains in progress.
 
 ## Summary
 平行支援 AG-BE-ID-002，整理 acceptance checklist、dependency map 與阻塞釐清，不改 canonical truth。
