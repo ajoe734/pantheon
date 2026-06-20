@@ -1,8 +1,9 @@
 """Agora BFF router factory.
 
 create_agora_router() assembles all Agora sub-routers and is included by main.py
-via app.include_router(create_agora_router(...)).  Actual handlers are stubs that
-return HTTP 501 until downstream AG-BE-ID-* / AG-BE-SW-* tasks fill them.
+via app.include_router(create_agora_router(...)).  Some handlers are complete;
+remaining downstream AG-BE-ID-* / AG-BE-SW-* surfaces stay in their sub-router
+stubs until implemented.
 
 Route ownership per capability_manifest.json (frozen AG-XR-001):
   /bff/agora/me              → identity   (agora.identity.v1)
@@ -68,6 +69,8 @@ def create_agora_router(
     require_read_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
+    get_read_store: Callable[[], Any],
+    sync_servant_agent: Callable[[Dict[str, Any]], Dict[str, Any]],
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
@@ -161,7 +164,11 @@ def create_agora_router(
         utc_now=utc_now,
     )
     router.include_router(create_identity_router(**_kw))
-    router.include_router(create_servant_router(**_kw))
+    router.include_router(create_servant_router(
+        **_kw,
+        get_read_store=get_read_store,
+        sync_servant_agent=sync_servant_agent,
+    ))
     router.include_router(create_strategy_workshop_router(**_kw))
     router.include_router(create_research_router(**_kw))
     router.include_router(create_trading_room_router(**_kw))

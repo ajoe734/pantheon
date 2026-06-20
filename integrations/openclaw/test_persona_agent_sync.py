@@ -6,6 +6,10 @@ import subprocess
 from typing import Any, Dict, List
 
 import persona_agent_sync as sync
+from integrations.openclaw.adapter.agora_servant import (
+    AgoraServantAgentSyncError,
+    ensure_agora_servant_agent,
+)
 
 
 def _cp(stdout: str = "", returncode: int = 0, stderr: str = "") -> "subprocess.CompletedProcess[str]":
@@ -138,3 +142,29 @@ def test_human_list_fallback_parsing():
 
     report = sync.sync_persona_agents([PERSONA_CRYPTO], runner=runner, soul_writer=lambda ws, s: None)
     assert report.updated == ["persona-crypto"]  # parsed from human lines => treated as existing
+
+
+def test_agora_servant_adapter_returns_agent_projection():
+    def runner(args: List[str]):
+        if args[:3] == ["openclaw", "agents", "list"]:
+            return _cp(json.dumps({"agents": [{"id": "main"}]}))
+        return _cp("{}")
+
+    result = ensure_agora_servant_agent(PERSONA_CRYPTO, runner=runner, soul_writer=lambda ws, s: None)
+    assert result["status"] == "created"
+    assert result["agent_id"] == "persona-crypto"
+    assert result["model_id"] == "openclaw/persona-crypto"
+    assert result["workspace_ref"].endswith("/persona-crypto")
+
+
+def test_agora_servant_adapter_raises_on_failed_sync():
+    def runner(args: List[str]):
+        if args[:3] == ["openclaw", "agents", "list"]:
+            return _cp(json.dumps({"agents": [{"id": "main"}]}))
+        return _cp("", returncode=1, stderr="cannot add")
+
+    try:
+        ensure_agora_servant_agent(PERSONA_CRYPTO, runner=runner, soul_writer=lambda ws, s: None)
+        assert False, "expected servant sync failure"
+    except AgoraServantAgentSyncError as exc:
+        assert "cannot add" in str(exc)
