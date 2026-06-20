@@ -27,12 +27,16 @@ Claude approved the sidecar packet with these review findings:
 
 ## Parent Follow-Up
 
-The parent task `AG-XR-001A` still needs to produce the additive extension
-artifacts before downstream tasks are unblocked:
+The active review note recorded that the parent task `AG-XR-001A` needed to
+produce the additive extension artifacts before downstream tasks were
+unblocked:
 
 - `services/control-plane/specs/agora/v2/`
 - `services/control-plane/openapi/agora_v1_1.openapi.yaml`
 - `services/control-plane/specs/agora/bundle_index.v1_1.json`
 
-The parent must also preserve the frozen v1 digest baseline and pass the
+After this sidecar branch was merged forward to `origin/dev` for PR freshness,
+those paths are present on the branch from dev. This sidecar review record does
+not certify their implementation; the parent and downstream contract tasks keep
+the responsibility to preserve the frozen v1 digest baseline and pass the
 applicable Agora bundle verification.

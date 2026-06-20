@@ -56,18 +56,26 @@ The important acceptance distinction is:
 
 ## Current Repository Observation
 
-As of this sidecar packet, the repo still has the frozen v1 Agora bundle:
+At initial sidecar packet preparation, the repo still had the frozen v1 Agora
+bundle:
 
 - `services/control-plane/specs/agora/*.schema.json`
 - `services/control-plane/specs/agora/capability_manifest.json`
 - `services/control-plane/specs/agora/bundle_index.json`
 - `services/control-plane/openapi/agora_v1.openapi.yaml`
 
-The parent extension artifacts are not present yet under
-`services/control-plane/specs/agora/v2/`, and
-`services/control-plane/openapi/agora_v1_1.openapi.yaml` is not present yet.
-That is expected for this support slice; implementation belongs to the parent
-or follow-on contract tasks.
+During owner closeout, this task branch was merged forward to `origin/dev` for
+PR freshness. The branch now also contains extension artifacts from dev,
+including:
+
+- `services/control-plane/specs/agora/v2/`
+- `services/control-plane/specs/agora/bundle_index.v1_1.json`
+- `services/control-plane/openapi/agora_v1_1.openapi.yaml`
+- `services/control-plane/specs/agora/widget_registry.v1.json`
+
+Those artifacts were not created by this sidecar. This packet does not certify
+their implementation details; parent and downstream contract tasks retain
+ownership for validating them.
 
 ## Parent Acceptance Checklist
 
