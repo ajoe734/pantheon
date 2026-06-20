@@ -2,14 +2,18 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://pantheon/agora/agora_user_scope/v1",
   "title": "AgoraUserScope",
-  "description": "Operator-level access scope for Agora surfaces. Computed at session start and immutable for the session lifetime.",
+  "description": "Operator-level user-private access scope for Agora surfaces. BFF read paths must use tenant_id and user_id as mandatory backend predicates and fail closed when either value is absent.",
   "type": "object",
   "required": [
     "spec_version",
     "scope_id",
+    "tenant_id",
+    "user_id",
     "operator_id",
     "granted_capabilities",
-    "created_at"
+    "created_at",
+    "read_predicate",
+    "servant_policy"
   ],
   "properties": {
     "spec_version": {
@@ -19,27 +23,43 @@
     "scope_id": {
       "type": "string",
       "minLength": 1,
-      "description": "Unique identifier for this scope instance."
+      "description": "Stable identifier for this resolved scope."
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant predicate required on Agora user-private read model queries."
+    },
+    "user_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "User predicate required on Agora user-private read model queries."
     },
     "operator_id": {
       "type": "string",
       "minLength": 1,
-      "description": "Operator (user) this scope was computed for."
+      "description": "Authenticated operator that owns this scope."
     },
     "granted_capabilities": {
       "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^agora\\.[a-z]+\\.v[0-9]+$"
-      },
+      "items": { "$ref": "#/definitions/agora_capability" },
       "description": "Frozen list of agora.*.v1 capabilities granted to this operator.",
+      "default": []
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/agora_capability" },
+      "description": "Compatibility alias for granted_capabilities.",
+      "default": []
+    },
+    "roles": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
       "default": []
     },
     "denied_capabilities": {
       "type": "array",
-      "items": {
-        "type": "string"
-      },
+      "items": { "type": "string", "minLength": 1 },
       "description": "Capabilities explicitly denied with reason.",
       "default": []
     },
@@ -47,7 +67,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["management", "agora", "developer"]
+        "enum": ["agora"]
       },
       "description": "UI surfaces accessible in this scope.",
       "default": ["agora"]
@@ -58,13 +78,30 @@
       "description": "Persona IDs the operator may interact with via Agora.",
       "default": []
     },
+    "read_predicate": {
+      "type": "object",
+      "required": ["tenant_id", "user_id", "required_fields", "fail_closed"],
+      "properties": {
+        "tenant_id": { "type": "string", "minLength": 1 },
+        "user_id": { "type": "string", "minLength": 1 },
+        "required_fields": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["tenant_id", "user_id"] },
+          "minItems": 2,
+          "uniqueItems": true
+        },
+        "fail_closed": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": false
+    },
+    "servant_policy": { "$ref": "#/definitions/agora_servant_policy" },
     "created_at": {
       "type": "string",
       "format": "date-time",
       "description": "When the scope was computed (UTC ISO-8601)."
     },
     "expires_at": {
-      "type": "string",
+      "type": ["string", "null"],
       "format": "date-time",
       "description": "Optional expiry for session-scoped grants."
     },
@@ -77,6 +114,50 @@
     "metadata": {
       "type": "object",
       "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "agora_capability": {
+      "type": "string",
+      "enum": [
+        "agora.identity.v1",
+        "agora.session.v1",
+        "agora.workshop.v1",
+        "agora.research.v1",
+        "agora.trading.v1",
+        "agora.dashboard.v1",
+        "agora.personalization.v1"
+      ]
+    },
+    "agora_servant_policy": {
+      "type": "object",
+      "required": [
+        "persona_class",
+        "owner_scope",
+        "visibility_scope",
+        "memory_scope",
+        "persona_registry_backed",
+        "execution_authority",
+        "prohibited_authority"
+      ],
+      "properties": {
+        "persona_class": { "type": "string", "enum": ["agora_servant"] },
+        "owner_scope": { "type": "string", "enum": ["user_private"] },
+        "visibility_scope": { "type": "string", "enum": ["private", "redacted_management"] },
+        "memory_scope": { "type": "string", "enum": ["private_user"] },
+        "persona_registry_backed": { "type": "boolean", "const": true },
+        "execution_authority": { "type": "string", "enum": ["none"] },
+        "prohibited_authority": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["runtime_binding", "broker_order", "capital_binding"]
+          },
+          "minItems": 3,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

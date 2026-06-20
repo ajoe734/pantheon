@@ -36,6 +36,8 @@ def _client(monkeypatch) -> TestClient:
 
 def test_agora_models_importable():
     from agora.models import (
+        AgoraReadPredicate,
+        AgoraServantPolicy,
         AgoraCapabilityScope,
         AgoraEnvelope,
         AgoraListEnvelope,
@@ -46,6 +48,9 @@ def test_agora_models_importable():
         AGORA_CAPABILITIES,
         AGORA_REQUIRED_ROLES,
     )
+    assert AgoraReadPredicate(tenant_id="tenant-alpha", user_id="user-alpha").fail_closed is True
+    assert AgoraServantPolicy().execution_authority == "none"
+    assert AgoraCapabilityScope
     assert len(AGORA_CAPABILITIES) == 7
     assert "agora.identity.v1" in AGORA_CAPABILITIES
     assert "agora.session.v1" in AGORA_CAPABILITIES
@@ -114,6 +119,49 @@ def test_agora_me_data_has_7_capabilities(monkeypatch):
     assert isinstance(caps, list)
     assert len(caps) == 7, f"Expected 7 capabilities, got {len(caps)}: {caps}"
     assert "agora.identity.v1" in caps
+    assert data["tenant_id"] == "pantheon-dev"
+    assert data["user_id"] == "agora-test-user"
+    assert data["operator_id"] == "agora-test-user"
+    assert data["granted_capabilities"] == caps
+    assert data["read_predicate"] == {
+        "tenant_id": "pantheon-dev",
+        "user_id": "agora-test-user",
+        "required_fields": ["tenant_id", "user_id"],
+        "fail_closed": True,
+    }
+    assert data["servant_policy"]["persona_class"] == "agora_servant"
+    assert data["servant_policy"]["owner_scope"] == "user_private"
+    assert data["servant_policy"]["execution_authority"] == "none"
+    joined_caps = " ".join(caps)
+    assert "runtime_binding" not in joined_caps
+    assert "broker" not in joined_caps
+    assert "capital" not in joined_caps
+
+
+def test_agora_me_rejects_cross_tenant_scope(monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha")
+    client = _client(monkeypatch)
+    resp = client.get(
+        "/bff/agora/me",
+        headers={"Authorization": _OPERATOR_AUTH, "X-Tenant-Id": "tenant-beta"},
+    )
+    assert resp.status_code == 403
+
+
+def test_agora_capabilities_include_backend_scope(monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
+    client = _client(monkeypatch)
+    resp = client.get(
+        "/bff/agora/capabilities",
+        headers={"Authorization": _OPERATOR_AUTH, "X-Tenant-Id": "tenant-beta"},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["scope"]["tenant_id"] == "tenant-beta"
+    assert data["scope"]["user_id"] == "agora-test-user"
+    assert data["scope"]["read_predicate"]["fail_closed"] is True
 
 
 def test_agora_me_unauthenticated_returns_401(monkeypatch):
