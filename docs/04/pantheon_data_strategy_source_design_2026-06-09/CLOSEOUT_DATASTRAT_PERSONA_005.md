@@ -14,7 +14,7 @@ Date: 2026-06-20
   `services/control-plane/persona/review_datastrat_persona_005_claude2_approved_zh.md`
 - Finalization branch: `task/DATASTRAT-PERSONA-005`
 - Finalization PR: https://github.com/ajoe734/pantheon/pull/1772
-- Finalization branch refreshed against `origin/dev` at `87cc05d3` before the
+- Finalization branch refreshed against `origin/dev` at `4e289b0d` before the
   final owner commit because GitHub reported the PR branch as `BEHIND`.
 
 ## Approved Scope
