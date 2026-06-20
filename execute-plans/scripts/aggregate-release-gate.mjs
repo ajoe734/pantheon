@@ -761,11 +761,36 @@ function analyzeSseSmoke(stepOutcomes) {
   const reconnectMissingExpected = Array.isArray(bearerReconnect?.missing_expected_event_ids)
     ? bearerReconnect.missing_expected_event_ids
     : [];
+  const reconnectAttemptDetails = Array.isArray(bearerReconnect?.attempts) ? bearerReconnect.attempts : [];
+  const reconnectAttemptDetailsOk = reconnectAttemptDetails.length >= minReconnectAttempts
+    && reconnectAttemptDetails.every((attempt) =>
+      attempt?.ok === true
+      && attempt?.replayed_expected_event === true
+      && typeof attempt?.cursor_event_id === "string"
+      && attempt.cursor_event_id.length > 0
+      && typeof attempt?.expected_replayed_event_id === "string"
+      && attempt.expected_replayed_event_id.length > 0
+      && typeof attempt?.observed_replayed_event_id === "string"
+      && attempt.observed_replayed_event_id.length > 0
+    );
+  const reconnectObservedEventIds = Array.isArray(bearerReconnect?.observed_event_ids)
+    ? bearerReconnect.observed_event_ids.map((eventId) => String(eventId)).filter(Boolean)
+    : [];
+  const reconnectExpectedEventIds = Array.isArray(bearerReconnect?.expected_event_ids)
+    ? bearerReconnect.expected_event_ids.map((eventId) => String(eventId)).filter(Boolean)
+    : [];
+  const reconnectObservedUniqueCount = new Set(reconnectObservedEventIds).size;
+  const reconnectObservedSequenceOk = reconnectObservedEventIds.length >= minReconnectAttempts
+    && reconnectObservedUniqueCount === reconnectObservedEventIds.length
+    && reconnectExpectedEventIds.length >= minReconnectAttempts
+    && reconnectExpectedEventIds.slice(0, reconnectObservedEventIds.length).join("\n") === reconnectObservedEventIds.join("\n");
   const reconnectOk = bearerReconnect?.ok === true
     && reconnectAttempts >= minReconnectAttempts
     && bearerReconnect?.cursors_advanced === true
     && reconnectDuplicateEventIds.length === 0
-    && reconnectMissingExpected.length === 0;
+    && reconnectMissingExpected.length === 0
+    && reconnectAttemptDetailsOk
+    && reconnectObservedSequenceOk;
   const strict = json?.strict_live_evidence === true;
   const summaryPassed = json?.summary?.passed === true;
   const soakOk = soak?.enabled === true
@@ -792,6 +817,9 @@ function analyzeSseSmoke(stepOutcomes) {
     minReconnectAttempts,
     reconnectDuplicateEventIds,
     reconnectMissingExpected,
+    reconnectAttemptDetailsOk,
+    reconnectObservedEventIds,
+    reconnectObservedSequenceOk,
     missingStatus: missingEvidenceStatus(step.status),
     missingNote: step.outcome
       ? `sse smoke outcome: ${step.outcome}; JSON evidence missing`
@@ -858,7 +886,7 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth) {
   const sseStrictOk = sseSmoke.exists && sseSmoke.strict && sseSmoke.summaryPassed && sseSmoke.soakOk;
   const sseStatus = sseSmoke.exists ? sseStrictOk ? "pass" : "fail" : sseSmoke.missingStatus;
   const sseNote = sseSmoke.exists
-    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
+    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} attemptDetails:${sseSmoke.reconnectAttemptDetailsOk} observed:${sseSmoke.reconnectObservedEventIds.length}/${sseSmoke.minReconnectAttempts} observedSequence:${sseSmoke.reconnectObservedSequenceOk} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
     : sseSmoke.missingNote;
   const strictAuthStatus = (condition) => strictAuth.exists ? condition ? "pass" : "fail" : strictAuth.missingStatus;
   const strictAuthOwner = (condition) => strictAuth.exists && condition ? "" : GATE_OWNERS[3];
