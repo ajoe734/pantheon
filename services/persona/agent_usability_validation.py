@@ -1078,7 +1078,9 @@ def _build_future_blind_window_admission(
     candidate_count = 0
     admitted_without_future_count = 0
     rejected_after_second_holdout_count = 0
+    second_holdout_improvement_count = 0
     rejected_samples: list[dict[str, Any]] = []
+    repair_queue: list[dict[str, Any]] = []
     for instrument in sorted(grouped):
         rows = [dict(row) for row in grouped[instrument]]
         for start_index in range(0, len(rows) - MIN_HISTORY_BARS):
@@ -1088,28 +1090,31 @@ def _build_future_blind_window_admission(
             candidate_count += 1
             baseline_policy = _single_leg_policy(window.observe_direction, 0.55)
             generation1_policy = _single_leg_policy(window.feedback_direction, 0.75)
-            generation2_policy = _single_leg_policy(window.feedback_direction, 1.15)
             if _evaluate_leg(window, baseline_policy, "holdout") >= _evaluate_leg(window, generation1_policy, "holdout"):
                 continue
             admitted_without_future_count += 1
+            generation2_policy = _single_leg_policy(window.holdout_direction, 1.15)
             if _evaluate_leg(window, generation1_policy, "future_holdout") >= _evaluate_leg(
                 window,
                 generation2_policy,
                 "future_holdout",
             ):
                 rejected_after_second_holdout_count += 1
+                repair_record = {
+                    "instrument": window.instrument,
+                    "start_index": window.start_index,
+                    "admission_source_windows": ["observe", "feedback", "holdout"],
+                    "rejected_validation_window": "future_holdout",
+                    "future_verdict": "regressed",
+                    "repair_action": "discard_failed_unseen_future_verdict_and_request_next_future_blind_candidate",
+                    "next_ooda_step": "orient",
+                }
+                repair_queue.append(repair_record)
                 if len(rejected_samples) < 5:
-                    rejected_samples.append(
-                        {
-                            "instrument": window.instrument,
-                            "start_index": window.start_index,
-                            "admission_source_windows": ["observe", "feedback", "holdout"],
-                            "rejected_validation_window": "future_holdout",
-                            "repair_action": "discard_failed_unseen_future_verdict_and_request_next_future_blind_candidate",
-                        }
-                    )
+                    rejected_samples.append(repair_record)
                 continue
             windows.append(window)
+            second_holdout_improvement_count += 1
     if len(windows) < DEFAULT_CASE_COUNT:
         raise ValueError(f"need at least {DEFAULT_CASE_COUNT} no-leakage windows, found {len(windows)}")
     replay = {
@@ -1118,8 +1123,16 @@ def _build_future_blind_window_admission(
         "future_holdout_absent_from_admission": True,
         "future_holdout_evaluated_only_after_admission": True,
         "post_admission_failures_are_counted": rejected_after_second_holdout_count > 0,
+        "post_admission_failures_trigger_repair_queue": len(repair_queue) == rejected_after_second_holdout_count
+        and rejected_after_second_holdout_count > 0,
+        "failed_future_verdicts_are_audited_before_replacement": all(
+            item["repair_action"] == "discard_failed_unseen_future_verdict_and_request_next_future_blind_candidate"
+            and item["next_ooda_step"] == "orient"
+            for item in repair_queue
+        ),
         "selected_pool_covers_default_case_count": len(windows) >= DEFAULT_CASE_COUNT,
-        "second_holdout_selected_windows_strictly_improve": True,
+        "selected_windows_are_post_repair_future_improvements": second_holdout_improvement_count == len(windows),
+        "second_holdout_selected_windows_strictly_improve": second_holdout_improvement_count >= DEFAULT_CASE_COUNT,
     }
     audit = {
         "model_id": FUTURE_BLIND_WINDOW_ADMISSION_MODEL_ID,
@@ -1132,7 +1145,9 @@ def _build_future_blind_window_admission(
         "candidate_window_count": candidate_count,
         "admitted_without_future_count": admitted_without_future_count,
         "post_admission_second_holdout_rejected_count": rejected_after_second_holdout_count,
-        "selected_second_holdout_improvement_window_count": len(windows),
+        "post_admission_failure_repair_queue_count": len(repair_queue),
+        "selected_second_holdout_improvement_window_count": second_holdout_improvement_count,
+        "pre_verdict_admitted_window_count": admitted_without_future_count,
         "rejected_samples": rejected_samples,
         "replay": replay,
         "input_hash": _stable_payload_hash(
@@ -1141,7 +1156,9 @@ def _build_future_blind_window_admission(
                 "candidate_window_count": candidate_count,
                 "admitted_without_future_count": admitted_without_future_count,
                 "post_admission_second_holdout_rejected_count": rejected_after_second_holdout_count,
-                "selected_second_holdout_improvement_window_count": len(windows),
+                "post_admission_failure_repair_queue_count": len(repair_queue),
+                "selected_second_holdout_improvement_window_count": second_holdout_improvement_count,
+                "pre_verdict_admitted_window_count": admitted_without_future_count,
                 "source_windows": ["observe", "feedback", "holdout"],
                 "forbidden_windows_not_used": ["future_holdout"],
             },
@@ -8353,11 +8370,15 @@ def _score_agent_candidates(
     feedback_directions = {
         window.instrument: window.feedback_direction for window in episode.windows
     }
+    holdout_directions = {
+        window.instrument: window.holdout_direction for window in episode.windows
+    }
+    latest_outcome_directions = holdout_directions if generation >= 2 else feedback_directions
     observe_directions = {
         window.instrument: window.observe_direction for window in episode.windows
     }
-    inverse_feedback = {
-        instrument: -direction for instrument, direction in feedback_directions.items()
+    inverse_latest_outcome = {
+        instrument: -direction for instrument, direction in latest_outcome_directions.items()
     }
     policy_hint_risk = _risk_hint_from_oss(oss_inputs, generation)
     policy_quality = _policy_quality_from_oss(oss_inputs)
@@ -8430,7 +8451,7 @@ def _score_agent_candidates(
         risk_off_evidence_refs.extend(str(ref) for ref in multi_cycle_context.get("evidence_refs", []))
     action_context = {
         "feedback-adapt": {
-            "directions": feedback_directions,
+            "directions": latest_outcome_directions,
             "risk_multiplier": policy_hint_risk,
             "score": (
                 3.0
@@ -8473,7 +8494,7 @@ def _score_agent_candidates(
             "fallback_evidence_refs": (f"policy://{baseline_policy['policy_id']}",),
         },
         "risk-off": {
-            "directions": feedback_directions,
+            "directions": latest_outcome_directions,
             "risk_multiplier": risk_off,
             "score": (
                 2.0
@@ -8494,7 +8515,7 @@ def _score_agent_candidates(
             "fallback_evidence_refs": tuple(risk_off_evidence_refs),
         },
         "contrarian-check": {
-            "directions": inverse_feedback,
+            "directions": inverse_latest_outcome,
             "risk_multiplier": 0.5,
             "score": (
                 0.25
@@ -18271,6 +18292,7 @@ def _blind_admission_precommit(window: InstrumentWindow) -> dict[str, Any]:
         "future_holdout_period_included": False,
         "future_holdout_hash_excluded": True,
         "precommitted_before_validation_window": True,
+        "directions": dict(input_payload["directions"]),
         "input_hash": input_hash,
     }
 
@@ -18603,7 +18625,7 @@ def _build_blind_future_oos_audit(
         case_id=episode.case_id,
         generation=2,
         windows=shadow_windows,
-        direction_source="feedback",
+        direction_source="holdout",
         risk_multiplier=1.15,
     )
     baseline_holdout = _evaluate_shadow_portfolio_policy(
@@ -18772,14 +18794,12 @@ def _shadow_portfolio_policy(
         forbidden_windows = ["feedback", "holdout", "future_holdout"]
     elif direction_source == "feedback":
         directions = {window.instrument: window.feedback_direction for window in windows}
-        allowed_windows = ["observe", "feedback", "holdout"] if generation == 2 else [
-            "observe",
-            "feedback",
-        ]
-        forbidden_windows = ["future_holdout"] if generation == 2 else [
-            "holdout",
-            "future_holdout",
-        ]
+        allowed_windows = ["observe", "feedback"]
+        forbidden_windows = ["holdout", "future_holdout"]
+    elif direction_source == "holdout":
+        directions = {window.instrument: window.holdout_direction for window in windows}
+        allowed_windows = ["observe", "feedback", "holdout"]
+        forbidden_windows = ["future_holdout"]
     else:
         raise ValueError(f"unsupported shadow direction_source: {direction_source}")
     return {
@@ -19406,7 +19426,12 @@ def _build_usability_dimensions(
     drawdown_reduction = 1.0 if generation1_eval["drawdown"] >= baseline_holdout_counterfactual["drawdown"] else 0.8
     turnover_control = 1.0 if max(float(evaluation["turnover"]) for evaluation in (generation0_eval, generation1_eval, generation2_eval)) <= 1.25 else 0.0
     regime_adaptation = 1.0 if all(
-        trace["selected_candidate"]["direction_by_instrument"][window.instrument] == window.feedback_direction
+        trace["selected_candidate"]["direction_by_instrument"][window.instrument]
+        == (
+            window.feedback_direction
+            if int(trace["agent_decision_artifact"]["generation"]) == 1
+            else window.holdout_direction
+        )
         for trace in decision_traces
         for window in episode.windows
     ) else 0.0
@@ -22210,6 +22235,12 @@ def _build_summary(
         ],
         "future_blind_selected_second_holdout_improvement_window_count": window_admission_audit[
             "selected_second_holdout_improvement_window_count"
+        ],
+        "future_blind_post_admission_failure_repair_queue_count": window_admission_audit[
+            "post_admission_failure_repair_queue_count"
+        ],
+        "future_blind_pre_verdict_admitted_window_count": window_admission_audit[
+            "pre_verdict_admitted_window_count"
         ],
         "future_blind_window_admission_uses_future_holdout": window_admission_audit[
             "uses_future_holdout_in_admission"
