@@ -36,6 +36,9 @@ change is part of this handoff. The task branch was refreshed with current
 `origin/dev` before PR auto-merge so parent absorption can happen from the
 latest dev context.
 
+Final PR refresh during owner closeout included `origin/dev` through merge
+commit `04955193` before re-running the local trailer guard.
+
 ## Current Parent State
 
 | Task | Current state | Consequence |
