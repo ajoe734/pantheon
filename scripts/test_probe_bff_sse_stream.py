@@ -58,7 +58,7 @@ def _event_block(event_id: str, sequence_no: int = 1) -> str:
 def test_stream_reconnect_sequence_advances_cursor_without_duplicates(monkeypatch) -> None:
     probe = _load_probe_module()
     observed_cursors: list[str | None] = []
-    replay_by_cursor = {"evt-first": "evt-second", "evt-second": "evt-third"}
+    replay_by_cursor = {f"evt-{index}": f"evt-{index + 1}" for index in range(1, 6)}
 
     def fake_stream_first_event(**kwargs):
         cursor = kwargs.get("last_event_id")
@@ -80,13 +80,13 @@ def test_stream_reconnect_sequence_advances_cursor_without_duplicates(monkeypatc
         timeout=1.0,
         channel="approval",
         cookie_name="pantheon_session",
-        expected_replays=[("evt-first", "evt-second"), ("evt-second", "evt-third")],
+        expected_replays=[(f"evt-{index}", f"evt-{index + 1}") for index in range(1, 6)],
     )
 
-    assert observed_cursors == ["evt-first", "evt-second"]
+    assert observed_cursors == [f"evt-{index}" for index in range(1, 6)]
     assert result["ok"] is True
-    assert result["attempt_count"] == 2
-    assert result["observed_event_ids"] == ["evt-second", "evt-third"]
+    assert result["attempt_count"] == 5
+    assert result["observed_event_ids"] == [f"evt-{index}" for index in range(2, 7)]
     assert result["duplicate_event_ids"] == []
     assert result["missing_expected_event_ids"] == []
     assert result["cursors_advanced"] is True
@@ -158,6 +158,7 @@ def test_strict_live_evidence_accepts_real_bearer_long_soak(monkeypatch) -> None
         strict_live_evidence=True,
         soak_seconds=75.0,
         soak_min_heartbeats=1,
+        reconnect_attempts=5,
     )
 
     probe.apply_strict_live_evidence(args)
@@ -171,6 +172,7 @@ def test_strict_live_evidence_rejects_dev_jwt_only(monkeypatch) -> None:
         strict_live_evidence=True,
         soak_seconds=75.0,
         soak_min_heartbeats=1,
+        reconnect_attempts=5,
     )
 
     try:
@@ -188,6 +190,7 @@ def test_strict_live_evidence_rejects_short_soak(monkeypatch) -> None:
         strict_live_evidence=True,
         soak_seconds=30.0,
         soak_min_heartbeats=1,
+        reconnect_attempts=5,
     )
 
     try:
@@ -196,3 +199,21 @@ def test_strict_live_evidence_rejects_short_soak(monkeypatch) -> None:
         assert "--soak-seconds >= 75" in str(exc)
     else:
         raise AssertionError("strict SSE live evidence must reject short soak windows")
+
+
+def test_strict_live_evidence_rejects_short_reconnect_sequence(monkeypatch) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "live-sse-token")
+    args = argparse.Namespace(
+        strict_live_evidence=True,
+        soak_seconds=75.0,
+        soak_min_heartbeats=1,
+        reconnect_attempts=2,
+    )
+
+    try:
+        probe.apply_strict_live_evidence(args)
+    except SystemExit as exc:
+        assert "--reconnect-attempts >= 5" in str(exc)
+    else:
+        raise AssertionError("strict SSE live evidence must reject short reconnect sequences")

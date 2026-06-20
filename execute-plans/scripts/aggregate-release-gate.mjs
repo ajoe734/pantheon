@@ -65,6 +65,14 @@ const gateTitles = {
   7: "Release Decision",
 };
 
+const REQUIRED_RBAC_LABELS = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"];
+const REQUIRED_RBAC_READ_FAMILIES = ["bff-strategies", "bff-ranking-formulas", "bff-agora-signals"];
+const REQUIRED_RBAC_WRITE_FAMILIES = ["strategy", "ranking-formula", "agora-note", "intervention-claim"];
+const REQUIRED_RBAC_MATRIX_FAMILIES = REQUIRED_RBAC_LABELS.flatMap((label) => [
+  ...REQUIRED_RBAC_READ_FAMILIES.map((family) => `rbac-read-${label}-${family}`),
+  ...REQUIRED_RBAC_WRITE_FAMILIES.map((family) => `rbac-write-${label}-${family}`),
+]);
+
 function exists(filePath) {
   try {
     return fs.existsSync(filePath);
@@ -152,7 +160,8 @@ function evidenceLink(filePath, label = "") {
 function evidencePath(filePath) {
   if (!filePath) return "";
   if (/^https?:\/\//i.test(filePath)) return filePath;
-  return path.resolve(ROOT, filePath);
+  const resolved = path.resolve(ROOT, filePath);
+  return isInsideDir(resolved, AUDIT_DIR) ? resolved : "";
 }
 
 function escapeMd(value) {
@@ -443,9 +452,16 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const authSource = json?.auth_source && typeof json.auth_source === "object" ? json.auth_source : {};
   const rbacAuthSource = json?.rbac_auth_source && typeof json.rbac_auth_source === "object" ? json.rbac_auth_source : {};
   const rbacCases = rbacAuthSource?.cases && typeof rbacAuthSource.cases === "object" ? Object.entries(rbacAuthSource.cases) : [];
-  const providedRbacCases = rbacCases.filter(([label, info]) => label !== "anonymous" && info?.kind === "provided_bearer");
+  const rbacCaseInfoByLabel = new Map(rbacCases.map(([label, info]) => [String(label), info]));
+  const requiredProvidedRbacLabels = REQUIRED_RBAC_LABELS.filter((label) => label !== "anonymous");
+  const providedRbacCases = requiredProvidedRbacLabels
+    .map((label) => [label, rbacCaseInfoByLabel.get(label)])
+    .filter(([, info]) => info?.kind === "provided_bearer");
   const providedRbacCaseHashes = providedRbacCases.map(([, info]) => String(info?.sha256_12 || "")).filter(Boolean);
-  const expectedProvidedCases = rbacCases.filter(([label]) => label !== "anonymous").length;
+  const expectedProvidedCases = requiredProvidedRbacLabels.length;
+  const requiredRbacCaseCoverage = REQUIRED_RBAC_LABELS.every((label) => rbacCaseInfoByLabel.has(label));
+  const anonymousRbacCase = rbacCaseInfoByLabel.get("anonymous");
+  const anonymousRbacCaseOk = anonymousRbacCase?.kind === "anonymous";
   const total = Number(summary.total ?? 0);
   const passed = Number(summary.passed ?? 0);
   const failed = Number(summary.failed ?? 1);
@@ -474,6 +490,15 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   });
   const dryRunSideEffectProofs = dryRun.filter((item) => item?.side_effect_check?.ok === true);
   const allRbacOk = rbacMatrix.length > 0 && rbacMatrix.every((item) => item?.ok === true);
+  const rbacFamilyCounts = new Map();
+  for (const item of rbacMatrix) {
+    const family = String(item?.family || "");
+    if (family) rbacFamilyCounts.set(family, (rbacFamilyCounts.get(family) || 0) + 1);
+  }
+  const missingRbacMatrixFamilies = REQUIRED_RBAC_MATRIX_FAMILIES.filter((family) => !rbacFamilyCounts.has(family));
+  const duplicateRbacMatrixFamilies = REQUIRED_RBAC_MATRIX_FAMILIES.filter((family) => (rbacFamilyCounts.get(family) || 0) > 1);
+  const rbacMatrixCoveredFamilyCount = REQUIRED_RBAC_MATRIX_FAMILIES.length - missingRbacMatrixFamilies.length;
+  const rbacMatrixCoverageOk = missingRbacMatrixFamilies.length === 0 && duplicateRbacMatrixFamilies.length === 0;
   const rbacWrite = rbacMatrix.filter((item) => String(item?.family || "").startsWith("rbac-write-"));
   const rbacWriteSideEffectProofs = rbacWrite.filter((item) => item?.side_effect_check?.ok === true);
   const rbacWriteDryRunMetaProofs = rbacWrite.filter((item) =>
@@ -525,13 +550,17 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && rbacWriteSideEffectProofCount === rbacWrite.length
     && rbacWriteDryRunMetaProofs.length >= 16
     && rbacWriteDeniedNoPersistence.length >= 16;
-  const fullRbacMatrix = rbacProbeCount >= 56 && expectedProvidedCases >= 7;
+  const fullRbacMatrix = rbacProbeCount >= REQUIRED_RBAC_MATRIX_FAMILIES.length
+    && rbacMatrix.length >= REQUIRED_RBAC_MATRIX_FAMILIES.length
+    && rbacMatrixCoverageOk
+    && requiredRbacCaseCoverage;
   const distinctProvidedRbacCaseHashCount = new Set(providedRbacCaseHashes).size;
   const distinctProvidedRbac = providedRbacCaseHashes.length === expectedProvidedCases
     && distinctProvidedRbacCaseHashCount === expectedProvidedCases
     && rbacAuthSource?.distinct_provided_bearers === true
     && Number(rbacAuthSource?.distinct_provided_bearer_count ?? -1) === expectedProvidedCases;
   const providedRbac = fullRbacMatrix
+    && anonymousRbacCaseOk
     && providedRbacCases.length === expectedProvidedCases
     && distinctProvidedRbac;
   const approvalTokenPair = approvalRace?.token_source?.kind === "provided_bearer_pair";
@@ -581,7 +610,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManOperatorScoped
       && twoManTokenPair,
     note: {
-      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length}`,
+      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} invalidEnvelope:${invalidDryRunsEnvelope} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 tokenPair:${twoManTokenPair}`,
@@ -615,6 +644,11 @@ function analyzeSseSmoke(stepOutcomes) {
   const reconnectAttempts = Array.isArray(bearerReconnect?.attempts)
     ? bearerReconnect.attempts.length
     : Number(bearerReconnect?.attempt_count ?? 0);
+  const reconnectRequirementCandidates = [
+    Number(json?.strict_live_evidence_requirements?.min_reconnect_attempts ?? 5),
+    Number(json?.strict_live_evidence_requirements?.requested_reconnect_attempts ?? 0),
+  ].filter((value) => Number.isFinite(value));
+  const minReconnectAttempts = Math.max(5, ...reconnectRequirementCandidates);
   const reconnectDuplicateEventIds = Array.isArray(bearerReconnect?.duplicate_event_ids)
     ? bearerReconnect.duplicate_event_ids
     : [];
@@ -622,7 +656,7 @@ function analyzeSseSmoke(stepOutcomes) {
     ? bearerReconnect.missing_expected_event_ids
     : [];
   const reconnectOk = bearerReconnect?.ok === true
-    && reconnectAttempts >= 2
+    && reconnectAttempts >= minReconnectAttempts
     && bearerReconnect?.cursors_advanced === true
     && reconnectDuplicateEventIds.length === 0
     && reconnectMissingExpected.length === 0;
@@ -649,6 +683,7 @@ function analyzeSseSmoke(stepOutcomes) {
     missingExpected,
     reconnectOk,
     reconnectAttempts,
+    minReconnectAttempts,
     reconnectDuplicateEventIds,
     reconnectMissingExpected,
     missingStatus: missingEvidenceStatus(step.status),
@@ -717,7 +752,7 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth) {
   const sseStrictOk = sseSmoke.exists && sseSmoke.strict && sseSmoke.summaryPassed && sseSmoke.soakOk;
   const sseStatus = sseSmoke.exists ? sseStrictOk ? "pass" : "fail" : sseSmoke.missingStatus;
   const sseNote = sseSmoke.exists
-    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/2 duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
+    ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
     : sseSmoke.missingNote;
   const strictAuthStatus = (condition) => strictAuth.exists ? condition ? "pass" : "fail" : strictAuth.missingStatus;
   const strictAuthOwner = (condition) => strictAuth.exists && condition ? "" : GATE_OWNERS[3];

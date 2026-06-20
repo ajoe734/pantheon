@@ -22,9 +22,17 @@ jobs:
       VITE_BFF_FALLBACK: strict
       PANTHEON_E2E_STRICT: "1"
       PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run
+      PANTHEON_CONTRACT_ROOT: pantheon-contracts
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Checkout Pantheon contract source
+        uses: actions/checkout@v4
+        with:
+          repository: ajoe734/pantheon
+          ref: dev
+          path: pantheon-contracts
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -93,6 +101,7 @@ jobs:
             --strict-live-evidence \
             --soak-seconds 75 \
             --soak-min-heartbeats 1 \
+            --reconnect-attempts 5 \
             --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json"
 
       - name: Install Playwright

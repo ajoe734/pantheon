@@ -594,7 +594,8 @@
       "task_statuses": [
         "todo"
       ],
-      "require_owner_higher_priority_load": true
+      "require_owner_higher_priority_load": true,
+      "claim_idle_work": true
     },
     "worker_self_claim": {
       "enabled": true,

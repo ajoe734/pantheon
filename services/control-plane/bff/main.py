@@ -182,6 +182,19 @@ _DEFAULT_LOVABLE_CORS_ORIGINS = [
     # BFF-B1-001: execute-plans Lovable project (UUID 140c41d5) published preview.
     "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
 ]
+# Loopback origins for the FE-BFF integration gate and local dev: CI builds the
+# execute-plans frontend and serves it on 127.0.0.1:4173 (vite preview) / 5173
+# (vite dev), then opens a cross-origin browser EventSource against this BFF.
+# These origins are never in the deploy-time PANTHEON_BFF_CORS_ORIGINS allowlist,
+# so without them the browser blocks the SSE handshake (readyState=0) even though
+# the SSE endpoint itself is healthy. Appended only in non-production-strict mode,
+# so production/staging-live preflight is unaffected.
+_DEV_LOOPBACK_CORS_ORIGINS = [
+    "http://127.0.0.1:4173",
+    "http://localhost:4173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+]
 _DEV_LOVABLE_CORS_ORIGINS = {
     # Self-hosted dev FE origin is dev-only: production-strict mode must filter it.
     "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
@@ -268,6 +281,11 @@ def _cors_origins_from_env() -> List[str]:
             for origin in origins
             if origin not in _DEV_LOVABLE_CORS_ORIGINS and origin != "*"
         ]
+    else:
+        # Non-strict (dev/test) tiers always accept the loopback origins the
+        # FE-BFF integration gate and local vite servers use, regardless of the
+        # deploy-time PANTHEON_BFF_CORS_ORIGINS override.
+        origins = origins + _DEV_LOOPBACK_CORS_ORIGINS
     return _dedupe_origins(origins)
 
 
