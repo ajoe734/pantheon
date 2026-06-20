@@ -52,11 +52,11 @@ sidecar documentation only. The parent task remains blocked, waiting for
 | `gh run view 27877483718 --repo ajoe734/execute-plans ...` | Job failed only at step 22, `Aggregate release gate`; earlier job steps were successful. |
 | `gh run view 27877483718 --repo ajoe734/execute-plans --log-failed` | Aggregate summary reports failing release subgates; F13 Agora is listed as passing, while broader static/contract, BFF write/deep validation, F01/F05, performance, SSE rerender, and final release decision gates remain red. |
 | `docs/contracts/agora/dev-compatibility-manifest.json` | Committed manifest sha256 is `d5143fb...`; backend commit is still `7ab267...`; frontend commits are placeholders; committed generated-types hash is `a6a9296...`; blocking reasons include the generated-types blocker and the two placeholder frontend commit blockers. |
-| `scripts/agora_compat_manifest.py write --stdout` | Fresh generator at HEAD `5bc93c6e` emits backend commit `5bc93c6e`, frontend generated-types hash `0244eb11...`, and only the two placeholder frontend commit blockers. |
+| `scripts/agora_compat_manifest.py write --stdout` | Fresh generator at inspected `origin/dev` baseline `5bc93c6e` emits backend commit `5bc93c6e`, frontend generated-types hash `0244eb11...`, and only the two placeholder frontend commit blockers. |
 
 ## Manifest Delta To Resolve
 
-| Field | Committed manifest | Fresh generator output at `5bc93c6e` |
+| Field | Committed manifest | Fresh generator output at inspected `origin/dev` `5bc93c6e` |
 |---|---|---|
 | `backend.runtime_commit` / `backend.contract_commit` | `7ab267adc9f88519149ae01a874764d8fd8c1108` | `5bc93c6eca3ccb2437d465dba9a8fd3b9ca441ce` |
 | `frontend.generated_types_sha256` | `a6a9296efed4c3d00a3bb4d5d20896fd17027bd2484c4ead7b560785772319be` | `0244eb11c43aabe56a4c00ca0244fff4dd3cac134cae8f704bf38335c72b1740` |
@@ -68,6 +68,11 @@ generated-types hash does not match the local generated-types hash expected by
 the verifier. Current `deployment-gate` fails closed on the same hash mismatch,
 pending status, placeholder frontend commits, frontend/backend contract commit
 mismatch, and non-empty blocking reasons.
+
+Reviewer re-run note: after this support packet is committed on the task
+branch, `write --stdout` records the task branch HEAD as the backend commit.
+That changes only the commit-id field in generated stdout; the generated-types
+hash, pending status, and two placeholder frontend blockers remain the same.
 
 ## Dependency Map
 
@@ -111,7 +116,7 @@ Durable interpretation:
 |---|---|---|
 | Pantheon manifest/gate implementation exists | PR #1852 merged; `scripts/agora_compat_manifest.py` and JSON manifest path exist on `dev`. | Satisfied for Pantheon-side existence. |
 | execute-plans mirror exists and can merge | PR #63 is open and unstable. | Not satisfied. |
-| Manifest is internally fresh | Committed manifest still records backend `7ab267...` and generated-types hash `a6a9296...`; fresh generator emits HEAD `5bc93c6e` and `0244eb11...`. | Not satisfied. |
+| Manifest is internally fresh | Committed manifest still records backend `7ab267...` and generated-types hash `a6a9296...`; fresh generator emits inspected baseline `5bc93c6e` and `0244eb11...`. | Not satisfied. |
 | `verify --allow-pending` supports repo sanity | Fails on generated-types hash mismatch. | Not satisfied. |
 | `deployment-gate` fails closed until compatible | Fails closed on pending status, placeholders, mismatch, and non-empty blockers. | Satisfied as a guardrail, not as deployment readiness. |
 | Unit tests reflect current generator behavior | `scripts/test_agora_compat_manifest.py` has 1 stale assertion failure and 3 passes. | Not satisfied. |
@@ -142,7 +147,7 @@ still open/unstable with integration-gate failing at Aggregate release gate.
 
 Local validation shows the committed manifest is still stale relative to the
 fresh generator: manifest has generated_types_sha256 a6a9296..., while write
-and verify expect 0244eb11... at HEAD. verify --allow-pending fails;
+and verify expect 0244eb11... at the inspected baseline. verify --allow-pending fails;
 deployment-gate fails closed; pytest has 1 stale assertion failure and 3 passes;
 Agora contract drift passes locally. This sidecar changes only support
 material and should be used as reviewer/parent-owner intake, not as parent
@@ -203,9 +208,12 @@ Results:
   the two frontend commit placeholder blockers.
 - `npm --prefix execute-plans run contract:drift`: pass; 20 bundle digests, 17
   schemas, and 96 OpenAPI operations verified.
-- `python3 scripts/agora_compat_manifest.py write --stdout`: pass; fresh output
+- `python3 scripts/agora_compat_manifest.py write --stdout`: pass during
+  packet preparation; fresh output at the inspected `origin/dev` baseline
   records backend commit `5bc93c6e...`, generated-types hash `0244eb11...`,
-  and only the two frontend commit placeholder blockers.
+  and only the two frontend commit placeholder blockers. Reviewer re-run on the
+  support branch records backend commit `11c10395...` for the same support-only
+  reason noted above.
 - Manifest sha256: `d5143fb19314d761fb5bd82e23d98e15b2058104bd81c93376aec1b02fceb01b`.
 - Contract snapshot sha256: `fb750e29aa5099ad1afee69f0f4f794f5a70fe884aacb58e110bdecd896c6e28`.
 - Generated types file sha256: `ce03bdc116bd8d5972920a5da9bf952b5314ca1ad564c02a9b5e3953dae59fc4`.
