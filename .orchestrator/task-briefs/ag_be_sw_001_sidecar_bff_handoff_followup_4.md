@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-BE-SW-001 BFF and frontend handoff packet
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Auto-reassigned ownership from Antigravity2 to Codex after repeated Antigravity2 terminal: Worker exited before the task reached a terminal status.. Task returned to todo until Codex starts a fresh run.
+- Next: Review approved: support-only BFF/FE handoff packet scope and claims verified; no canonical/runtime/frontend changes. PR #1888 checks were green but branch is currently BEHIND origin/dev, so Codex must refresh the task branch/PR before final closeout.
 
 ## Summary
 平行支援 AG-BE-SW-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
