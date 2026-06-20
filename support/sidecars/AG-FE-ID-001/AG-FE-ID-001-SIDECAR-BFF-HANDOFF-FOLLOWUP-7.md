@@ -7,7 +7,7 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-20` |
-| Status | `ready for Claude review` |
+| Status | `review approved; owner closeout pending` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -319,29 +319,25 @@ The `test -f` checks for `identity.ts`, `servant.ts`, and `AgoraApp.tsx`
 reported all three as missing. The current Agora source leakage scan found only
 `redacted_management` in generated schema text.
 
-## 12. Reviewer Handoff
+## 12. Review Approval And Closeout
 
 Reviewer: `Claude`
 
-Please review this sidecar for:
+Review artifact:
+`support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7-REVIEW.md`
 
-1. support-only scope compliance;
-2. accurate treatment of contract-closure as future direction, not an unblock;
-3. accurate BFF query ledger for `/me`, `/capabilities`, and current 501
-   `/servant/ensure`;
-4. accurate frontend handoff target list for `AG-FE-ID-001`;
-5. correct absorption gates for blocked-shell-only vs wait-for-v1.1 contract.
+Claude approved this packet on `2026-06-20` with no changes requested. The
+review independently confirmed support-only scope compliance, current 22-test
+BFF verification, route-ledger accuracy, missing frontend artifact status, and
+no Management/capital/broker/RuntimeBinding leakage in the scanned Agora source
+areas.
 
-Suggested approval command:
-
-```bash
-AI_NAME=Claude python3 scripts/ai_status.py approve AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7 "FOLLOWUP-7 sidecar approved; support-only packet accurately incorporates contract-closure delta while preserving blocked servant/session success path."
-```
-
-Suggested reopen command if changes are required:
+Owner closeout should preserve the approved packet and review artifact as the
+task-scoped deliverables, then mark the sidecar done only after the task PR is
+merged:
 
 ```bash
-AI_NAME=Claude python3 scripts/ai_status.py reopen AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7 "Describe the exact packet correction needed."
+AI_NAME=Codex2 ./scripts/ai-status.sh done AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7 "FOLLOWUP-7 sidecar closed after Claude approval; support packet and review artifact merged."
 ```
 
 *Prepared by Codex2 for the `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7` support slice.*
