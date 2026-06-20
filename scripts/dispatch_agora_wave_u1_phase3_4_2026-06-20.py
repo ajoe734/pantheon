@@ -25,17 +25,28 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AUTO_BY = "dispatch_agora_wave_u1_phase3_4_2026-06-20"
 
-# Appended to every task summary — the strict design-adherence contract.
+# Appended to every task summary — RAISE-BLOCKER-FIRST design-adherence contract.
 DESIGN_RULE = (
-    " 【嚴格依設計稿,不要亂做】必須完全依照上面引用的 SD 章節與 design-closure spec/canonical schema 實作:"
-    "欄位、enum、API route、狀態機、event、capability 名稱一字不差對齊 services/control-plane/specs/agora/*.schema.json、"
-    "services/control-plane/openapi/agora_v1.openapi.yaml、capability_manifest.json 與 "
-    "docs/04/pantheon_agora_cross_repo_2026-06-20/(SD_2026-06-20.md + design-closure/)。"
-    "禁止自創 schema/欄位/評分公式/widget/route,禁止擴張 capability allowlist,禁止 Agora 直接下單/綁資金/寫 RuntimeBinding。"
-    "spec 不足、衝突或與既有 code 對不上時,STOP 並開 blocker 說明,不要臆測或自行發明。"
+    " 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + "
+    "docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical "
+    "services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。"
+    "只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,"
+    "用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。"
+    "可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、"
+    "不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。"
+)
+# Extra UI clause appended only to FE / UI tasks.
+UI_RULE = (
+    " 【UI 一律照設計稿,不要自己發想】凡與畫面有關(頁面、route、layout、component、widget、chart、互動、文案、樣式)"
+    "必須嚴格依 SD §9/§10/§11/§12/§23 的 IA/版面/元件規格、design-closure A3 widget_registry/chart grammar,"
+    "以及 V10/V11 視覺參考實作;沿用既有 design tokens 與共用元件,不得自創畫面、元件、版面、route 或自由發揮樣式。"
+    "設計稿沒涵蓋到的畫面或互動,先開 blocker 問清楚再做。"
 )
 # Appended to every acceptance line.
-ACC_RULE = ";實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum,偏離設計稿即不通過"
+ACC_RULE = (
+    ";【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;"
+    "遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過"
+)
 
 # (task_id, title, summary_zh, owner, reviewer, phase, depends_on, acceptance, artifacts)
 TASKS = [
@@ -203,8 +214,10 @@ def run(cmd, env_extra=None):
 def main() -> int:
     ok = True
     for task_id, title, summary, owner, reviewer, phase, deps, acc, arts in TASKS:
+        is_ui = task_id.startswith("AG-FE-") or "execute-plans/" in arts
+        full_summary = summary + DESIGN_RULE + (UI_RULE if is_ui else "")
         env_extra = {
-            "TASK_SUMMARY_ZH": summary + DESIGN_RULE, "TASK_PHASE": phase, "TASK_DEPENDS_ON": deps,
+            "TASK_SUMMARY_ZH": full_summary, "TASK_PHASE": phase, "TASK_DEPENDS_ON": deps,
             "TASK_ACCEPTANCE": acc + ACC_RULE, "TASK_ARTIFACTS": arts, "TASK_AUTO_CREATED_BY": AUTO_BY,
         }
         r = run([sys.executable, "scripts/ai_status.py", "assign", task_id, owner, reviewer, title],
