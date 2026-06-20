@@ -4,7 +4,7 @@
 - Helper task: `AG-XR-001A-SIDECAR-ACCEPTANCE`
 - Helper kind: `acceptance_packet`
 - Owner: `Codex`
-- Reviewer: `Codex2`
+- Reviewer: `Claude`
 - Prepared: `2026-06-20`
 - Mutates canonical truth: `no`
 
@@ -50,6 +50,7 @@ The important acceptance distinction is:
 | `services/control-plane/specs/agora/capability_manifest.json` | Frozen v1 capability list and safety notes. |
 | `services/control-plane/specs/agora/bundle_index.json` | Frozen v1 per-file digest baseline. |
 | `scripts/agora_schema_bundle.py` | Existing v1 digest verification behavior to preserve. |
+| `support/sidecars/AG-XR-001A/review_ag_xr_001a_sidecar_acceptance_claude.md` | Materialized reviewer approval record for owner finalization. |
 
 `current-work.md` and the full `ai-activity-log.jsonl` were not read.
 
@@ -121,7 +122,7 @@ Durable interpretation:
 - `AG-XR-003` depends on both cross-repo type alignment and the v1.1 manifest
   hash semantics before it can implement a meaningful deployment gate.
 
-## Reviewer Questions For Codex2
+## Reviewer Questions Addressed By Claude
 
 | Question | Expected reviewer stance |
 |---|---|
@@ -131,9 +132,23 @@ Durable interpretation:
 | Are the seed-artifact limitations represented? | Approve only if parent review knows the seed OpenAPI is incomplete and prose docs are authority. |
 | Are broker/capital/runtime write boundaries explicit? | Approve only if no new live-order, capital-binding, or RuntimeBinding authority is implied. |
 
+## Review Approval
+
+The active task state records Claude review approval for this packet:
+
+- Support-only boundary preserved.
+- `AG-XR-001` immutability confirmed.
+- Dependency map accepted.
+- Seed YAML limitations documented.
+- Broker, capital, and RuntimeBinding write boundaries kept explicit.
+
+The review record is materialized at
+`support/sidecars/AG-XR-001A/review_ag_xr_001a_sidecar_acceptance_claude.md`
+for closeout auditability.
+
 ## Suggested Handoff
 
-If this packet is acceptable, reviewer `Codex2` can treat it as the support
+This packet is approved by reviewer `Claude` and can be treated as the support
 acceptance and dependency map for `AG-XR-001A-SIDECAR-ACCEPTANCE`.
 
 Recommended status handoff message:
@@ -170,6 +185,27 @@ Results:
   pass.
 - `rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" ...`: pass; no matches.
 
+Closeout owner finalization commands:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-001A-SIDECAR-ACCEPTANCE
+python3 scripts/agora_schema_bundle.py --verify
+GIT_INDEX_FILE=/tmp/git-index-check-AG-XR-001A-SIDECAR-ACCEPTANCE git read-tree HEAD
+GIT_INDEX_FILE=/tmp/git-index-check-AG-XR-001A-SIDECAR-ACCEPTANCE git add -N support/sidecars/AG-XR-001A/AG-XR-001A-SIDECAR-ACCEPTANCE.md support/sidecars/AG-XR-001A/review_ag_xr_001a_sidecar_acceptance_claude.md
+GIT_INDEX_FILE=/tmp/git-index-check-AG-XR-001A-SIDECAR-ACCEPTANCE git diff --check -- support/sidecars/AG-XR-001A/AG-XR-001A-SIDECAR-ACCEPTANCE.md support/sidecars/AG-XR-001A/review_ag_xr_001a_sidecar_acceptance_claude.md
+rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" support/sidecars/AG-XR-001A/AG-XR-001A-SIDECAR-ACCEPTANCE.md support/sidecars/AG-XR-001A/review_ag_xr_001a_sidecar_acceptance_claude.md
+```
+
+Closeout results:
+
+- `AI_NAME=Codex ./scripts/ai-status.sh show ...`: pass; task is
+  `review_approved`, reviewer is `Claude`, and `review_file` points to the
+  materialized review record.
+- `python3 scripts/agora_schema_bundle.py --verify`: pass; all 15 indexed v1
+  Agora files reported `OK`.
+- private-index `git diff --check -- ...`: pass.
+- placeholder sentinel scan: pass; no matches.
+
 ## Sidecar Completion Criteria
 
 This sidecar is ready for review when:
@@ -178,5 +214,5 @@ This sidecar is ready for review when:
 - it maps parent acceptance to concrete artifacts and verification evidence;
 - it records the dependency/unblock relationship without broadening scope;
 - it preserves the "no canonical truth changes" sidecar boundary;
-- it is handed off to `Codex2` for review and possible absorption by the parent
+- it is handed off to `Claude` for review and possible absorption by the parent
   owner.
