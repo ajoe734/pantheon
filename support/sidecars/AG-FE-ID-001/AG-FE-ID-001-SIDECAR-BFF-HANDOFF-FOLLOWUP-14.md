@@ -7,7 +7,8 @@
 | Helper kind | `bff_handoff_packet` |
 | Owner / reviewer | `Codex2` / `Codex` |
 | Date | `2026-06-20` |
-| Status | `ready for reviewer handoff` |
+| Status | `review_approved` |
+| Current dev base | `80f2832373aa390a952d61022b50933a473171ca` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -17,20 +18,24 @@ migrations, or execute-plans source.
 
 ## 1. Purpose
 
-This fourteenth followup refreshes the `AG-FE-ID-001` BFF/frontend handoff
-after this task branch merged current `origin/dev` at merge commit
-`95f085da0ffaef2e45bdad331880f23538cc45a7` (PR #1903).
+This fourteenth followup refreshes the `AG-FE-ID-001` BFF/frontend handoff.
+The initial owner packet refreshed the branch after `origin/dev`
+`95f085da0ffaef2e45bdad331880f23538cc45a7` (PR #1903). Owner closeout now
+records the reviewer-approved state against current `origin/dev`
+`80f2832373aa390a952d61022b50933a473171ca` (PR #1904).
 
 The relevant session-gate freshness update is
 `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` closeout PR #1897 at merge
 commit `e51bc8fdcdce119bd66596367c468364d18bf835`, plus the newer
 `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` packet merged through PR #1901
-at `4a6a593d0edd33e6ac4d3b17e533ff047dd38530`. Followup-5 is currently
-`review`, pending Codex2 review, so this packet treats it as current
-review-pending session-gate evidence rather than approved closure. The earlier
-FOLLOWUP-14 baselines at `c9f6c2e5c4d340d97d1cbcaeacf8f82545eaa7a5` and
-`2eae7afbb9323063a9369ae31dfd3f90acd0eba4` are historical and are not the
-current freshness baseline for this packet.
+at `4a6a593d0edd33e6ac4d3b17e533ff047dd38530` and finalized through PR #1904
+at `80f2832373aa390a952d61022b50933a473171ca`. Followup-5 is now archived
+`done`, but it remains support evidence only and does not unblock
+`AG-BE-ID-003` implementation or frontend session readiness. The earlier
+FOLLOWUP-14 baselines at `c9f6c2e5c4d340d97d1cbcaeacf8f82545eaa7a5`,
+`2eae7afbb9323063a9369ae31dfd3f90acd0eba4`, and
+`95f085da0ffaef2e45bdad331880f23538cc45a7` are historical and are not the
+current closeout freshness baseline for this packet.
 
 The important delta from FOLLOWUP-13 is a downstream session-gate freshness
 update, not a new BFF or frontend implementation:
@@ -49,10 +54,9 @@ update, not a new BFF or frontend implementation:
    into a decision-ready matrix covering the public type contract,
    `research_task` skill mapping, capability manifest alignment, legacy route
    substitution risk, and `OPENCLAW_UPSTREAM_DEGRADED`.
-4. `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` is now present on
-   `origin/dev` through PR #1901 / merge `4a6a593d`; active task status is
-   `review` pending Codex2 review. It restates the same contract decision
-   request and marks followup-4 as archived `done`.
+4. `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` is archived `done` on
+   `origin/dev` through closeout PR #1904 / merge `80f28323`. It restates the
+   same contract decision request and marks followup-4 as archived `done`.
 5. Parent `AG-FE-ID-001` remains `todo` and still depends on `AG-BE-ID-003`.
 6. `AG-BE-ID-003` itself remains `blocked`, waiting for `Claude`, on the
    servant session type contract disposition.
@@ -67,14 +71,14 @@ Status commands used `AI_NAME=Codex2`.
 
 | Task | Status | Handoff implication |
 |---|---|---|
-| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` | `review` after owner handoff | This refreshed packet is the intended deliverable for Codex review. |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` | `review_approved` before owner closeout | Codex approved the support-only packet; this addendum makes the approved state durable. |
 | `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | archived `done`; packet PR #1884 and closeout PR #1885 merged | Previous approved packet is now durable on `dev`. |
 | `AG-FE-ID-001` | `todo`; owner `Claude`, reviewer `Codex`; depends on `AG-FE-000`, `AG-BE-ID-003` | Parent implementation has not started in durable task state. |
 | `AG-BE-ID-002` | archived `done` | `/bff/agora/servant/ensure` remains a successful create/reconcile runtime path. |
 | `AG-BE-ID-003` | `blocked`; owner `Codex2`, reviewer `Claude`, waiting for `Claude` | Servant session facade remains unavailable pending `session_type` contract disposition. |
 | `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` | archived `done`; packet PR #1886 and closeout PR #1890 merged | Predecessor support finding; no longer the latest session-gate packet. |
 | `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | archived `done`; packet PR #1895 and closeout PR #1897 / merge `e51bc8fd` merged | Archived session-gate closeout baseline for frontend handoff purposes. |
-| `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | `review`; packet PR #1901 / merge `4a6a593d` merged | Latest review-pending session-gate packet; do not treat it as approved closure until Codex2 review completes. |
+| `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | archived `done`; packet PR #1901 / merge `4a6a593d` and closeout PR #1904 / merge `80f28323` merged | Latest archived session-gate support packet; still not implementation readiness for parent `AG-BE-ID-003`. |
 | `AG-XR-003` | `blocked`; waiting for `Claude2` | Compatibility manifest/deployment gate is still not complete frontend deployment proof. |
 | `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-6` | archived `done`; PR #1889, clarification PR #1891, and closeout PR #1892 merged | Predecessor acceptance support packet; does not unblock parent `AG-XR-003` or `AG-FE-ID-001`. |
 | `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7` | archived `done`; closeout PR #1902 / merge `81b17d67` merged | Latest acceptance support packet; parent `AG-XR-003` remains blocked on Claude2 / execute-plans PR #63 disposition. |
@@ -89,22 +93,23 @@ readiness.
 | Source | Why it matters |
 |---|---|
 | `.orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_14.md` | This sidecar's support-only assignment. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` | Confirms owner, reviewer, artifact, and handoff-ready task identity before re-handoff. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` | Confirms owner, reviewer, artifact, review notes, review file path, and `review_approved` state before closeout. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | Confirms previous packet archived `done` through PR #1884 and PR #1885. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms parent remains `todo` and depends on `AG-BE-ID-003`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-002` | Confirms servant ensure/provision/reconcile remains archived `done`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003` | Confirms session facade remains `blocked` on the missing `session_type` contract decision. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` | Confirms predecessor session sidecar archived `done` after PR #1886 and #1890. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | Confirms followup-4 is archived `done` after closeout PR #1897 / merge `e51bc8fd`. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | Confirms newest session sidecar is `review`, merged through PR #1901, and pending Codex2 review. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | Confirms newest session sidecar is archived `done` after PR #1904 / merge `80f28323`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003` | Confirms compatibility manifest/deployment gate remains blocked. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-6` | Confirms related acceptance sidecar is archived `done` without unblocking parent `AG-XR-003`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7` | Confirms latest acceptance sidecar is archived `done` while parent `AG-XR-003` remains blocked. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md` | Previous approved handoff baseline. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-REVIEW.md` | Previous explicit Claude approval record. |
+| `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14-REVIEW.md` | Codex approval and owner closeout instruction for this packet. |
 | `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md` | Predecessor servant-session contract blocker and frontend gate reference. |
 | `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md` | Archived servant-session contract decision matrix and frontend gate baseline. |
-| `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md` | Latest review-pending session-gate packet and decision request. |
+| `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md` | Latest archived session-gate support packet and decision request. |
 | `services/control-plane/bff/agora/router.py` | Runtime identity/capability readiness routes. |
 | `services/control-plane/bff/agora/servant/router.py` | Runtime servant ensure implementation; no servant session routes. |
 | `services/control-plane/bff/main.py` | Existing legacy Agora session, ask/session, and SSE routes. |
@@ -117,12 +122,12 @@ readiness.
 
 | Change | What changed | Parent implication |
 |---|---|---|
-| Branch currentness | This task branch merged current `origin/dev` at `95f085da0ffaef2e45bdad331880f23538cc45a7`. | FOLLOWUP-14 now starts from the current dev tip and includes followup-4 closeout PR #1897, review-pending followup-5 PR #1901, AG-XR followup-7 closeout PR #1902, AG-FE-DB followup-4 closeout PR #1903, and earlier unrelated support merges PR #1899/#1900. |
+| Branch currentness | This task branch is current with `origin/dev` at `80f2832373aa390a952d61022b50933a473171ca`. | FOLLOWUP-14 closeout includes followup-4 closeout PR #1897, followup-5 packet PR #1901 and closeout PR #1904, AG-XR followup-7 closeout PR #1902, AG-FE-DB followup-4 closeout PR #1903, and earlier unrelated support merges PR #1899/#1900/#1905. |
 | Older baseline correction | The previous branch-currentness merges at `c9f6c2e5c4d340d97d1cbcaeacf8f82545eaa7a5` and `2eae7afbb9323063a9369ae31dfd3f90acd0eba4` are historical. | Do not use the previously recorded invalid full SHA or treat `2eae7afb`/`c9f6c2e5` as the latest dev baseline. |
 | FOLLOWUP-13 closed | Archived `done`; delivery records packet PR #1884 and closeout PR #1885. | Treat FOLLOWUP-13 as accepted support evidence unless superseded by this packet. |
 | AG-BE-ID-003 followup-3 closed | Archived `done`; it records packet PR #1886 and closeout PR #1890. | Treat it as predecessor evidence for the `servant/sessions` blocker, not the latest frontend gate reference. |
 | AG-BE-ID-003 followup-4 closed | Artifact merged through PR #1895 / packet commit `7de50e42`, then closeout merged through PR #1897 / `e51bc8fdcdce119bd66596367c468364d18bf835`. | Archived baseline for the explicit type-contract decision, research mapping, capability manifest, legacy substitution, and degradation-code questions. |
-| AG-BE-ID-003 followup-5 in review | Artifact merged through PR #1901 / `4a6a593d0edd33e6ac4d3b17e533ff047dd38530`; active status is `review` pending Codex2 review. | Treat it as the newest session-gate packet, but not as approved closeout or implementation readiness. |
+| AG-BE-ID-003 followup-5 closed | Artifact merged through PR #1901 / `4a6a593d0edd33e6ac4d3b17e533ff047dd38530`; closeout merged through PR #1904 / `80f2832373aa390a952d61022b50933a473171ca`. | Treat it as the newest archived session-gate support packet, but not as parent implementation readiness. |
 | Parent AG-FE-ID-001 unchanged | Parent remains `todo` and target files are still absent. | There is still no `AgoraApp.tsx`, `identity.ts`, or `servant.ts` implementation to review or absorb. |
 | AG-BE-ID-003 unchanged | Still `blocked` waiting for `Claude`; canonical create request lacks `session_type`. | Parent frontend must keep create/message/terminate/stream controls unavailable. |
 | Servant ensure unchanged | Runtime still has successful `/bff/agora/servant/ensure` with required `Idempotency-Key` and `X-Request-Id`. | Parent `servant.ts` should target observed 200 create/reconcile behavior and explicit 401/403/422/503 handling. |
@@ -201,10 +206,11 @@ may be displayed as safety facts. They must not become operator controls.
 The latest session support packet on `origin/dev` is
 `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5`. Its packet landed through
 PR #1901 / merge `4a6a593d0edd33e6ac4d3b17e533ff047dd38530` and task commit
-`5feac63882551a884f7505e831fd227b36fd2d13`. Its active task status is
-`review`, pending Codex2 review. FOLLOWUP-14 can absorb it as current
-review-pending support evidence without treating it as approved closure or
-parent implementation readiness.
+`5feac63882551a884f7505e831fd227b36fd2d13`; its closeout landed through
+PR #1904 / merge `80f2832373aa390a952d61022b50933a473171ca`. Its terminal task
+status is archived `done`. FOLLOWUP-14 can absorb it as closed support
+evidence without treating it as `AG-BE-ID-003` implementation readiness or
+frontend session readiness.
 
 Followup-5 carries forward followup-4's archived `ServantSessionCreateRequest`
 blocker and restates the decision matrix the frontend must wait on:
@@ -338,8 +344,8 @@ Expected current interpretation:
 
 ## 12. Sidecar Verification
 
-Commands run from branch
-`task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` after merging current
+Initial packet commands ran from branch
+`task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` after merging then-current
 `origin/dev` at `95f085da0ffaef2e45bdad331880f23538cc45a7`:
 
 ```bash
@@ -383,10 +389,23 @@ node execute-plans/scripts/generate-agora-types.mjs --check --pantheon-root .
 git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_14.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.md
 ```
 
+Closeout finalization additionally rechecked current reviewer-approved state
+against `origin/dev` `80f2832373aa390a952d61022b50933a473171ca`:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003
+git show --oneline --stat --decorate 80f2832373aa390a952d61022b50933a473171ca
+git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_14.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14-REVIEW.md
+```
+
 Results:
 
-- Branch was correct and merged current `origin/dev` at
-  `95f085da0ffaef2e45bdad331880f23538cc45a7`.
+- Branch was correct. Initial packet work merged current `origin/dev` at
+  `95f085da0ffaef2e45bdad331880f23538cc45a7`; closeout finalization refreshed
+  the approved state against `80f2832373aa390a952d61022b50933a473171ca`.
 - The older `c9f6c2e5` and `2eae7afb` baselines are historical; the invalid
   previous full SHA for `2eae7afb` is no longer used.
 - Parent `AG-FE-ID-001` remains `todo`.
@@ -397,9 +416,9 @@ Results:
   packet artifact is on `origin/dev` through PR #1895 / packet commit
   `7de50e42`, its closeout is on PR #1897 / merge `e51bc8fd`, and it is the
   archived session-gate closeout baseline for this handoff.
-- `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` is `review`; its packet is on
-  `origin/dev` through PR #1901 / merge `4a6a593d`, and it is the latest
-  review-pending session-gate reference for this handoff.
+- `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` is archived `done`; its packet
+  is on `origin/dev` through PR #1901 / merge `4a6a593d`, and its closeout is
+  on `origin/dev` through PR #1904 / merge `80f28323`.
 - `AG-XR-003` remains blocked; its followup-6 and followup-7 support packets
   are archived `done` but do not unblock parent FE readiness.
 - `AgoraApp.tsx`, `identity.ts`, and `servant.ts` are still missing.
@@ -407,25 +426,28 @@ Results:
 - Agora schema bundle verify passed.
 - v1.1 OpenAPI YAML parse passed.
 - Generated Agora types are current: `17` schemas and `96` operations.
-- Scoped tracked diff check passed.
+- Initial scoped tracked diff check passed.
+- Closeout scoped diff check passed for the task brief, support packet, and
+  review artifact.
 
-## 13. Reviewer Handoff
+## 13. Reviewer Approval And Closeout
 
 Reviewer: `Codex`
 
-Please review this support packet for:
+Review outcome: approved in `ai-status.json`.
 
-1. support-only scope compliance
-2. correct absorption of FOLLOWUP-13, AG-BE-ID-003 FOLLOWUP-3, archived
-   FOLLOWUP-4, and review-pending FOLLOWUP-5
-3. accurate statement that parent `AG-FE-ID-001` remains `todo`
-4. accurate statement that `AG-BE-ID-003` remains blocked on the servant
-   session type contract decision
-5. actionable frontend gate guidance for identity plus servant-profile shell
-   without exposing live session behavior
+Reviewer notes:
 
-Suggested approval command:
+- Support packet and review artifact stay support-only.
+- No L1 canonical truth, OpenAPI, BFF runtime, capability manifest, registry,
+  governance, database migration, or frontend source changed.
+- FOLLOWUP-13 and AG-BE-ID-003 followup-3/followup-4/followup-5 are correctly
+  absorbed, with followup-5 now archived `done`.
+- Parent `AG-FE-ID-001` remains `todo`.
+- `AG-BE-ID-003` remains blocked on the servant-session `session_type`
+  contract decision.
+- `AgoraApp.tsx`, `identity.ts`, and `servant.ts` remain missing.
 
-```bash
-AI_NAME=Codex ./scripts/ai-status.sh approve AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14 "Support packet approved; scope is support-only; FOLLOWUP-13 plus AG-BE-ID-003 followup-3/followup-4/followup-5 are correctly absorbed with followup-5 still review-pending; parent AG-FE-ID-001 remains todo; AG-BE-ID-003 session gate remains blocked; frontend targets remain missing."
-```
+Owner closeout action: make this approved support state durable through a
+task-scoped closeout commit and PR, then run
+`AI_NAME=Codex2 ./scripts/ai-status.sh done` after the PR merges into `dev`.
