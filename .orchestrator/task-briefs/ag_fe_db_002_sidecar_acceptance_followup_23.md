@@ -16,7 +16,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 - Packet: `support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-23.md`
 - Baseline: follow-up 22 closeout merged to `dev` at `f0f33ca6` (PR #2052)
-- Current dev observed: `aa9f021b`
+- Current dev observed: `0e5b9b42`
 - Support-only boundary: no canonical truth, runtime, registry, schema,
   OpenAPI, BFF, governance, broker, RuntimeBinding, or frontend
   implementation changes.

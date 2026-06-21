@@ -11,7 +11,7 @@
 | Reviewer | `Claude2` |
 | Date | `2026-06-21` |
 | Baseline | follow-up 22 closeout merged to `dev` at `f0f33ca6` (PR #2052) |
-| Current dev | `aa9f021b` (PR #2076) |
+| Current dev | `0e5b9b42` (PR #2082) |
 | Mutates canonical truth | `false` |
 | Status | Ready for review |
 
@@ -76,7 +76,7 @@ and parent `AG-FE-DB-002` still blocked.
 ## Current Dev Delta Since Follow-up 22 Closeout
 
 Follow-up 22 closeout merged to `dev` at `f0f33ca6`. Current `origin/dev`
-during this packet is `aa9f021b`.
+during this packet is `0e5b9b42`.
 
 `git log --first-parent --oneline f0f33ca6..origin/dev` shows later merges in
 these groups:
@@ -87,6 +87,7 @@ these groups:
 | AG-XR-OPENAPI-004 | Additive Agora v1.3 OpenAPI/capability/schema bundle and hashes. | `AG-XR-OPENAPI-004` is archived `done`, but DB002 remains a delivery/sync issue rather than a v1.3 design blocker. The v1.3 OpenAPI file does not add or alter the dashboard layout PATCH route used by DB002. |
 | Management live-evidence and stream-control fixes | Release-gate artifact verification and Management AI stream-control/BFF adjustments. | Not a DB002 dashboard editor/widget route change. Parent validation should still account for current CI gates at closeout. |
 | Strategy-workshop sidecar/support work | AG-BE-SW-002 and AG-BE-SW-004 support/handoff packets. | Separate strategy-workshop support material. No DB002 dashboard editor implementation surface. |
+| Frontend identity sidecar support | AG-FE-ID-001 sidecar BFF handoff follow-up 30. | Separate identity/BFF handoff material. No DB002 dashboard editor implementation surface. |
 
 Path-limited delta from `f0f33ca6` to `origin/dev` confirms:
 
