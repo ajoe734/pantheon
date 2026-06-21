@@ -15,7 +15,7 @@
 
 This packet is a support artifact only. It supersedes certain findings of
 `AG-BE-RS-002-SIDECAR-BFF-HANDOFF` with the ground-truth state observed in the
-`review_approved` implementation, and provides concrete frontend guidance for
+`done` implementation, and provides concrete frontend guidance for
 `AG-FE-RS-001`. No canonical docs, schemas, OpenAPI, BFF runtime, research
 services, registry/governance, or frontend files are modified.
 
@@ -23,19 +23,19 @@ services, registry/governance, or frontend files are modified.
 
 | Item | Predecessor state | Current state |
 |---|---|---|
-| `AG-BE-RS-002` | `todo` | `review_approved` — all routes implemented, 173 pytest passed |
+| `AG-BE-RS-002` | `todo` | `done` (archived 2026-06-21) |
 | `AG-BE-RS-001` | `review_approved` | `done` (archived 2026-06-21) |
 | `AG-XR-OPENAPI-004` | `done` | `done` (unchanged) |
-| `AG-FE-RS-001` | `todo` | `todo` — unblocked once AG-BE-RS-002 reaches `done` |
-| BFF run routes | Not implemented | Implemented and review-approved |
+| `AG-FE-RS-001` | `todo` | `todo` — still blocked; depends on both `AG-BE-RS-002` (now done) and `AG-FE-SW-002` |
+| BFF run routes | Not implemented | Implemented and done |
 | SSE progress event | `publish_research_progress()` helper present; no caller | All dispatch/cancel paths call `publish_research_progress()` |
 
 ## Sources Read
 
 | Source | Relevant finding |
 |---|---|
-| `AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-RS-002` | Status `review_approved`; owner `Codex`; reviewer `Claude`; 173 pytest; all run routes approved. |
-| `AI_NAME=Claude python3 scripts/ai_status.py show AG-FE-RS-001` | Status `todo`; owner `Claude`; reviewer `Codex`; depends on `AG-BE-RS-002`. |
+| `AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-RS-002` | Status `done` (archived 2026-06-21); all run routes implemented; 173 pytest passed. |
+| `AI_NAME=Claude python3 scripts/ai_status.py show AG-FE-RS-001` | Status `todo`; owner `Claude`; reviewer `Codex`; depends on `AG-FE-SW-002`, `AG-BE-RS-002`, `AG-XR-OPENAPI-004`. |
 | `AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-RS-001` | Status `done` (archived); plan-first facade is complete. |
 | `services/control-plane/bff/agora/research/router.py` | Full implementation with all plan and run routes, SSE publish calls, ETag locking, and idempotency enforcement. |
 | `services/control-plane/bff/agora/research/store.py` | In-memory store (MemoryResearchPlanStore); Postgres backend deferred. |
@@ -190,7 +190,7 @@ All routes confirmed in `services/control-plane/bff/agora/research/router.py`.
 | `POST` | `/bff/agora/research-plans/{plan_id}/approve` | 200 | Bearer + role | `Idempotency-Key`, `If-Match` | Action envelope |
 | `POST` | `/bff/agora/research-plans/{plan_id}/cancel` | 200 | Bearer + role | `Idempotency-Key`, `If-Match` | Action envelope |
 
-### Run Routes (AG-BE-RS-002, `review_approved`)
+### Run Routes (AG-BE-RS-002, `done`)
 
 | Method | Path | Status | Auth | Required headers | Response |
 |---|---|---|---|---|---|
@@ -335,7 +335,7 @@ cancelResearchPlan(
 ): Promise<ActionEnvelope>
 
 // ──────────────────────────────────────────────────
-// Run methods (from AG-BE-RS-002, review_approved)
+// Run methods (from AG-BE-RS-002, done)
 // ──────────────────────────────────────────────────
 
 /** List runs for a plan. Returns list envelope with ResearchRunProjection items. */
@@ -392,7 +392,7 @@ interface ResearchRunProjection {
   execution_status:
     | "queued" | "dispatching" | "running"
     | "succeeded" | "failed" | "cancelled" | "timed_out";
-  outcome: "pending" | "succeeded" | "failed" | "cancelled";
+  outcome: "pending" | "pass" | "fail" | "inconclusive";
   progress: {
     phase: string;
     percent: number;
@@ -409,7 +409,7 @@ interface ResearchRunProjection {
   warnings: string[];
   blocking_reasons: string[];
   artifact_refs: string[];
-  evidence_refs: unknown[];
+  evidence_refs: EvidenceRef[];
   lineage_refs: unknown[];
   failure?: unknown;
   data_cutoff?: string;
@@ -427,18 +427,29 @@ interface ResearchMetric {
   name: string;
   value: unknown;
   unit?: string;
-  direction?: "higher_better" | "lower_better" | "target";
-  threshold?: unknown;
-  gate_result?: "pass" | "fail" | "warn" | "skipped";
+  direction?: "higher_better" | "lower_better" | "target_range";
+  threshold?: number;
+  gate_result: "pass" | "fail" | "not_applicable" | "not_evaluated";
   baseline?: unknown;
   delta?: unknown;
 }
 
 interface ResearchFinding {
+  finding_id: string;
   severity: "info" | "watch" | "warning" | "high" | "critical";
   summary: string;
   detail?: string;
-  evidence_refs?: string[];
+  evidence_refs?: EvidenceRef[];
+}
+
+interface EvidenceRef {
+  ref_type:
+    | "evidence_bundle" | "evidence_item" | "source_record" | "citation"
+    | "experiment_artifact" | "registry_entry" | "consult_memo"
+    | "research_run" | "telemetry_snapshot" | "market_context";
+  ref_id: string;
+  summary?: string;
+  data_cutoff?: string;
 }
 
 interface DispatchConfirmationEnvelope {
@@ -519,9 +530,9 @@ canary controls from any research response.
 
 ## Open Items For Parent Owner
 
-1. **AG-BE-RS-002 closeout**: Task is `review_approved`; Codex (owner) must run
-   closeout (`worker_commit.py` + `task_finalize.sh` + PR merge + `done` command)
-   before AG-FE-RS-001 can formally unblock.
+1. **AG-FE-RS-001 remaining blocker**: AG-BE-RS-002 is `done`. AG-FE-RS-001 still
+   depends on `AG-FE-SW-002` — that task must also reach `done` before AG-FE-RS-001
+   is formally unblocked.
 
 2. **Store persistence**: `MemoryResearchPlanStore` resets on restart. If the
    integration environment requires persistence across restarts, a Postgres backend
@@ -547,16 +558,16 @@ Codex review should verify:
 |---|---|
 | Scope | Only this support artifact and task-owned status metadata changed. |
 | Canonical truth | No canonical docs, schemas, OpenAPI, BFF runtime, research service, registry/governance, or frontend files changed. |
-| Factual alignment (status) | AG-BE-RS-002 is `review_approved`; AG-BE-RS-001 is `done`; AG-XR-OPENAPI-004 is `done`; AG-FE-RS-001 is `todo`. |
+| Factual alignment (status) | AG-BE-RS-002 is `done` (archived 2026-06-21); AG-BE-RS-001 is `done`; AG-XR-OPENAPI-004 is `done`; AG-FE-RS-001 is `todo` (still blocked on AG-FE-SW-002). |
 | Corrections are accurate | SSE event type `research.run.progress`; dispatch returns queued-confirmation not a full projection; cancel returns 409 for terminal statuses; dispatch requires `If-Match`. |
 | Implementation-aligned | Route table, response shapes, allowed-actions matrix, and field list match `services/control-plane/bff/agora/research/router.py`. |
-| Open items accurate | Store is in-memory only; AG-BE-RS-002 closeout is the immediate gate for AG-FE-RS-001. |
+| Open items accurate | Store is in-memory only; AG-FE-RS-001 is still blocked on AG-FE-SW-002 (AG-BE-RS-002 is done). |
 
 Recommended reviewer approval command:
 
 ```bash
 AI_NAME=Codex REVIEW_FILE=support/sidecars/AG-BE-RS-002/AG-BE-RS-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md \
-  REVIEW_NOTES_ZH="Followup-2 handoff packet approved: updated status (AG-BE-RS-002 review_approved), corrected SSE event name to research.run.progress, corrected dispatch response shape and cancel 409 behavior, documented ETag/Idempotency-Key header requirements, and provided concrete AG-FE-RS-001 client guidance — no canonical truth modified." \
+  REVIEW_NOTES_ZH="Followup-2 handoff packet approved: updated status (AG-BE-RS-002 done archived 2026-06-21), corrected SSE event name to research.run.progress, corrected dispatch response shape and cancel 409 behavior, documented ETag/Idempotency-Key header requirements, aligned TS types with v4 schema (outcome/direction/gate_result enums, ResearchFinding finding_id, EvidenceRef object type), and provided concrete AG-FE-RS-001 client guidance — no canonical truth modified." \
   ./scripts/ai-status.sh approve AG-BE-RS-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2 \
   "Followup-2 handoff packet approved; parent owner may absorb updated BFF client guidance into AG-FE-RS-001."
 ```
@@ -580,13 +591,13 @@ git status --short
 # ?? .orchestrator/task-briefs/ag_be_rs_002_sidecar_bff_handoff_followup_2.md
 
 AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-RS-002
-# status: review_approved; owner: Codex; 173 pytest
+# source: archive; terminal_status: done; archived_at: 2026-06-21T15:06:34Z
 
 AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-RS-001
 # source: archive; terminal_status: done
 
 AI_NAME=Claude python3 scripts/ai_status.py show AG-FE-RS-001
-# status: todo; depends_on: AG-FE-SW-002, AG-BE-RS-002, AG-XR-OPENAPI-004
+# status: todo; depends_on: AG-FE-SW-002, AG-BE-RS-002, AG-XR-OPENAPI-004  (AG-FE-SW-002 still pending)
 
 AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-RS-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2
 # status: in_progress; owner: Claude; helper_kind: bff_handoff_packet
