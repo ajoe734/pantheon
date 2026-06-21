@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-21` |
 | Status | `in_progress; packet ready for reviewer handoff after PR merge` |
-| Current dev base | `a9347b7a942e17da05ac13d31c74cf64cdf3feea` |
+| Current dev base | `fe6136c80b20ae57d525191db0120a845b62d2a7` |
 | Previous AG-FE-ID-001 sidecar closeout merge | `a93a26b980757ca96ebd6d76979f2a8409495c67` |
 | Previous AG-FE-ID-001 packet PR | `#1955` merged at `a2d16e4c2758c7efc8e75be6da3fbd063eab364d` |
 | Previous AG-FE-ID-001 closeout PR | `#1977` merged at `a93a26b980757ca96ebd6d76979f2a8409495c67` |
@@ -17,6 +17,7 @@
 | New AG-XR-003 sidecar closeout | PR `#1976` merged at `d63c0eb47275072f6ccceca8dd218f9ff5cb8d75` |
 | New AG-XR-OPENAPI-002 implementation merge | PR `#1983` merged at `dffa0ee5a0f310e20ab423749441ec7e032fdbdb` |
 | Latest unrelated dev refresh | `a9347b7a942e17da05ac13d31c74cf64cdf3feea` updated AG-DES-SW-PRIV sidecar review support text |
+| Latest GitHub behind refresh | `fe6136c80b20ae57d525191db0120a845b62d2a7` added Management/release-gate upload-path test coverage outside this handoff scope |
 | Execute-plans refs checked | `origin/main` at `7b2f17c4dee8dcafe62c2295504df03aed0ae16e`; `origin/dev` at `7aa4917272212452fe5e4dc99bf2d76fe48eacfd` |
 | Mutates canonical truth | `false` |
 
@@ -114,6 +115,7 @@ merged into `dev` at `a93a26b980757ca96ebd6d76979f2a8409495c67`.
 | Additive v1.2 OpenAPI/spec material landed | Adds `services/control-plane/openapi/agora_v1_2.openapi.yaml`, `bundle_index.v1_2.json`, `capability_manifest_v1_2.json`, and v3 private-content/storage schemas. | Useful future contract context; does not supersede the AG-FE-ID-001 v1.1 identity/servant handoff. |
 | AG-XR-OPENAPI-002 PR #1983 landed | Merges the additive v1.2 OpenAPI/capability/bundle implementation and bundle tests. | Parent should treat it as review-pending v1.2 contract context, not an implemented AG-FE-ID-001 frontend shell/client. |
 | AG-DES-SW-PRIV review followup refreshed | `dffa0ee5..a9347b7a` updates AG-DES-SW-PRIV sidecar review support text only. | No AG-FE-ID-001 BFF/frontend handoff implication in the checked pathset. |
+| Management upload-path refresh landed | `a9347b7a..fe6136c8` adds `scripts/test_release_gate_current_run.py`. | No AG-FE-ID-001 BFF/frontend handoff implication in the checked pathset. |
 | v1.2 servant-session create shape checked | `ServantSessionCreateRequest` in v1.2 still lacks a public session type field, matching v1.1. | AG-BE-ID-003 type-contract blocker remains. |
 | AG-BE-ID-003 followup-12 closed | Closeout PR `#1980` merged at `ff92e8cb`; task archive says parent AG-BE-ID-003 remains blocked. | Reinforces that frontend session controls must stay disabled. |
 | AG-DES-SW-PRIV support material landed | Private-content design/task/support updates landed in task briefs. | No direct AG-FE-ID-001 shell/client implementation impact. |
@@ -262,6 +264,7 @@ Commands and results:
 | `./scripts/git/task_start.sh "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-23"` | Reset the task branch to then-current `origin/dev` at `539e4184`. |
 | `git merge --ff-only origin/dev` | Fast-forwarded the task branch to current `origin/dev` at `dffa0ee5` after AG-XR-OPENAPI-002 PR `#1983` merged. |
 | `git merge --ff-only origin/dev` after latest fetch | Fast-forwarded the task branch to current `origin/dev` at `a9347b7a`; the new diff only touched AG-DES-SW-PRIV sidecar review support text. |
+| `git merge origin/dev --no-edit` after PR `#1986` reported `BEHIND` | Merged current `origin/dev` at `fe6136c8`; the new checked diff only added `scripts/test_release_gate_current_run.py` outside this handoff scope. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-23` | Active `in_progress`, owner `Codex`, reviewer `Claude`, support-only artifact path. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001` | Parent `todo`; depends on `AG-FE-000` and `AG-BE-ID-003`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003` | Dependency remains `blocked`, waiting for `Claude`. |
@@ -298,7 +301,7 @@ Claude should review this packet as support-only. The review basis is:
 
 1. Followup-22 is archived `done` through packet PR `#1955` and closeout PR
    `#1977`.
-2. Current `origin/dev` is `a9347b7a`.
+2. Current `origin/dev` is `fe6136c8`.
 3. New dependency-side support (`AG-BE-ID-003` followup-12) is archived `done`
    and explicitly leaves the parent `AG-BE-ID-003` blocker unchanged.
 4. AG-XR-003 is archived `done`, but execute-plans PR `#63` remains
