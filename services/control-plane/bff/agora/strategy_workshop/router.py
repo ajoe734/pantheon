@@ -574,7 +574,7 @@ def create_strategy_workshop_router(
         """SSE aggregate of workshop events (AG-BE-SW-004).
 
         Streams workshop.connected (ack), workshop.message.ack, workshop.completeness.updated,
-        workshop.research.progress, workshop.version.created, and workshop.openclaw.degraded
+        research.run.progress, workshop.version.created, and workshop.openclaw.degraded
         events.  Supports reconnection via Last-Event-ID.  First event is always
         workshop.connected, delivered immediately (< 2 s guarantee).
         OpenClaw degradation is surfaced as OPENCLAW_UPSTREAM_DEGRADED in event data.
