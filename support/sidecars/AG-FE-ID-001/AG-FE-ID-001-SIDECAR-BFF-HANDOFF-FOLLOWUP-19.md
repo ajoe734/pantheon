@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-21` |
 | Status | `ready for Claude review` |
-| Packet observation base | `3a2caee4366eea1e5bc239ee860a9dc64bf69965` |
+| Packet observation base | `6de042cd1a88c51b22dbf6275e0785f49a6e7998` |
 | Execute-plans remotes checked | `origin/main` at `7b2f17c4dee8dcafe62c2295504df03aed0ae16e`; `origin/dev` at `7aa4917272212452fe5e4dc99bf2d76fe48eacfd` |
 | Mutates canonical truth | `false` |
 
@@ -27,13 +27,18 @@ The material delta from followup-18 is narrow:
 
 1. Followup-18 is archived `done`; PR #1931 merged into `dev` at
    `3a2caee4366eea1e5bc239ee860a9dc64bf69965`.
-2. This followup branch starts at the same commit as `origin/dev`.
-3. A focused diff from `3a2caee..HEAD` over the BFF/OpenAPI/spec/Agora
-   frontend/support pathset is empty.
-4. Parent `AG-FE-ID-001` remains `todo`.
-5. Parent dependency `AG-BE-ID-003` remains `blocked` waiting for Claude on the
+2. Current `origin/dev` has since advanced to `6de042cd`, including
+   `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9` through PR #1932 and an
+   unrelated `AG-FE-DB-002` acceptance sidecar through PR #1933.
+3. A focused diff from `3a2caee..origin/dev` over BFF/OpenAPI/spec/Agora
+   frontend and `AG-FE-ID-001` support paths is empty. The only checked
+   dependency-support delta is the AG-BE-ID-003 followup-9 support packet.
+4. This followup branch is rebased onto `origin/dev` and adds only the
+   followup-19 support packet in the checked handoff pathset.
+5. Parent `AG-FE-ID-001` remains `todo`.
+6. Parent dependency `AG-BE-ID-003` remains `blocked` waiting for Claude on the
    servant session type-contract decision.
-6. `execute-plans` remote refs were refreshed. `origin/HEAD` still points to
+7. `execute-plans` remote refs were refreshed. `origin/HEAD` still points to
    `origin/main`, and `origin/dev` still exists. The three parent target files
    are still absent from both checked remote trees: `AgoraApp.tsx`,
    `identity.ts`, and `servant.ts`.
@@ -52,6 +57,7 @@ Status commands used `AI_NAME=Codex2`.
 | `AG-FE-000` | archived `done` | Separate Agora/Management entry/build/audience work is accepted, but prior scope/bundle contamination history remains useful review context. |
 | `AG-BE-ID-002` | archived `done`; implementation PRs merged | `/bff/agora/servant/ensure` is the accepted servant ensure/provision/reconcile surface. |
 | `AG-BE-ID-003` | `blocked`; owner `Codex2`, reviewer `Claude`, waiting for `Claude` | Servant session facade remains unavailable pending the session type contract decision. |
+| `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9` | `review`; PR #1932 / merge `7169f6b1` | Latest dependency-side support packet keeps the parent blocker unchanged; it is not runtime readiness. |
 | `AG-XR-OPENAPI-001` | archived `done` | v1.1 OpenAPI and capability manifest remain present on `dev`. |
 | `AG-XR-003` | `blocked`; owner `Codex`, reviewer `Claude2`, waiting for `Claude2` | Cross-repo compatibility/deployment gate is still unresolved. |
 
@@ -68,12 +74,16 @@ but it must not claim interactive, trainer, or research session readiness.
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-18` | Confirms predecessor archived `done` through PR #1931 / merge `3a2caee4`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms parent remains `todo` and still depends on `AG-BE-ID-003`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003` | Confirms session facade remains `blocked` on the missing session type contract decision. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9` | Confirms the latest dependency-side support packet is in `review`, merged through PR #1932, and keeps AG-BE-ID-003 blocked. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-002` | Confirms servant ensure/provision/reconcile is archived `done`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-001` | Confirms v1.1 OpenAPI and capability manifest work is archived `done`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003` | Confirms compatibility manifest/deployment gate remains blocked. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-18.md` | Previous AG-FE-ID-001 approved support baseline. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-18-REVIEW.md` | Claude's review record for followup-18. |
-| `git diff --name-only 3a2caee..HEAD -- ...` | Confirms no relevant runtime, contract, source, or support delta after followup-18 closeout. |
+| `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md` | Latest dependency-side session-gate support packet. |
+| `git diff --name-only 3a2caee..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora execute-plans support/sidecars/AG-FE-ID-001` | Confirms no relevant runtime, contract, source, or AG-FE-ID-001 support delta after followup-18 closeout. |
+| `git diff --name-only 3a2caee..origin/dev -- support/sidecars/AG-BE-ID-003` | Shows the only checked dependency-support delta is AG-BE-ID-003 followup-9. |
+| `git diff --name-only 6de042cd..HEAD -- ...` | Confirms this branch adds only the followup-19 packet in the checked handoff pathset. |
 | Target file probes against `/home/lupin/code/execute-plans` `origin/main` and `origin/dev` | Confirms the parent frontend target files are still absent from the refreshed frontend remote trees. |
 | Focused BFF/OpenClaw pytest, schema bundle verify, and OpenAPI YAML load | Confirms the current BFF identity/servant evidence and frozen bundle remain green. |
 
@@ -84,7 +94,9 @@ but it must not claim interactive, trainer, or research session readiness.
 | Change | What changed | Parent implication |
 |---|---|---|
 | FOLLOWUP-18 closed | Archived `done`; PR #1931 merged at `3a2caee4`. | Treat FOLLOWUP-18 as accepted support evidence on `dev`. |
-| Pantheon relevant pathset | `3a2caee..HEAD` over BFF/OpenAPI/execute-plans Agora/support paths is empty. | No Pantheon source or contract change supersedes FOLLOWUP-18 in this branch. |
+| AG-BE-ID-003 followup-9 landed | PR #1932 merged at `7169f6b1`; the task is in `review`, not `done`. | Latest session-gate support evidence still keeps AG-BE-ID-003 blocked on the type-contract decision. |
+| Unrelated dev sidecar landed | PR #1933 merged `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-9` at `6de042cd`. | No AG-FE-ID-001 BFF/frontend handoff implication in the checked pathset. |
+| Pantheon relevant pathset | `3a2caee..origin/dev` over BFF/OpenAPI/execute-plans Agora and AG-FE-ID-001 support paths is empty; `6de042cd..HEAD` contains only this followup-19 support packet. | No Pantheon source or contract change supersedes FOLLOWUP-18 in this branch. |
 | Execute-plans remote probe | `origin/main` at `7b2f17c4` and `origin/dev` at `7aa49172` both lack `src/agora/AgoraApp.tsx`, `src/lib/bff-v1/agora/identity.ts`, and `src/lib/bff-v1/agora/servant.ts`. | Parent still needs to add the requested shell/client files or open a blocker. |
 | Execute-plans branch ambiguity | `origin/HEAD -> origin/main`, but `origin/dev` also exists and AG-FE-000 archive mentions a dev/default-branch closeout. | Parent must confirm the actual frontend delivery base before coding or reviewing. |
 | Execute-plans local checkout | `/home/lupin/code/execute-plans` worktree is `main...origin/main [ahead 2, behind 467]`. | Do not rely on that local checkout as latest frontend truth; use remote tree or a clean task worktree for parent implementation. |
@@ -118,7 +130,7 @@ that stale header comment.
 ## 6. Session Gate Status
 
 `AG-BE-ID-003` remains blocked on the same contract decision recorded in the
-followup-18 and AG-BE-ID-003 support packets.
+followup-18 and AG-BE-ID-003 followup-9 support packets.
 
 | Gate | Current blocker | Frontend rule |
 |---|---|---|
@@ -295,9 +307,10 @@ Commands and results:
 
 | Command | Result |
 |---|---|
-| `git rev-parse HEAD` | `3a2caee4366eea1e5bc239ee860a9dc64bf69965` |
-| `git rev-parse origin/dev` | `3a2caee4366eea1e5bc239ee860a9dc64bf69965` |
-| `git diff --name-only 3a2caee4366eea1e5bc239ee860a9dc64bf69965..HEAD -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora execute-plans support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003` | Empty output. |
+| `git rev-parse origin/dev` | `6de042cd1a88c51b22dbf6275e0785f49a6e7998` |
+| `git diff --name-only 3a2caee4366eea1e5bc239ee860a9dc64bf69965..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora execute-plans support/sidecars/AG-FE-ID-001` | Empty output. |
+| `git diff --name-only 3a2caee4366eea1e5bc239ee860a9dc64bf69965..origin/dev -- support/sidecars/AG-BE-ID-003` | `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md` |
+| `git diff --name-only 6de042cd1a88c51b22dbf6275e0785f49a6e7998..HEAD -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora execute-plans support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003` | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-19.md` |
 | `git -C /home/lupin/code/execute-plans fetch origin --prune` | Completed successfully. |
 | `git -C /home/lupin/code/execute-plans symbolic-ref refs/remotes/origin/HEAD` | `refs/remotes/origin/main` |
 | `git -C /home/lupin/code/execute-plans rev-parse origin/main` | `7b2f17c4dee8dcafe62c2295504df03aed0ae16e` |
@@ -316,11 +329,14 @@ Claude review should focus on whether this packet remains support-only and
 whether the narrow delta from followup-18 is correctly represented:
 
 1. Followup-18 closed through PR #1931 at `3a2caee4`.
-2. No relevant Pantheon runtime, contract, source, or support delta exists after
-   that closeout base before this packet.
-3. Parent `AG-FE-ID-001` remains `todo`.
-4. `AG-BE-ID-003` and `AG-XR-003` remain blocked.
-5. Execute-plans target files `AgoraApp.tsx`, `identity.ts`, and `servant.ts`
+2. Current dev base is `6de042cd`; the only related support delta since
+   followup-18 is AG-BE-ID-003 followup-9 through PR #1932, which keeps the
+   session blocker unchanged.
+3. No relevant Pantheon runtime, OpenAPI, Agora spec, execute-plans source, or
+   AG-FE-ID-001 support delta exists after followup-18 before this packet.
+4. Parent `AG-FE-ID-001` remains `todo`.
+5. `AG-BE-ID-003` and `AG-XR-003` remain blocked.
+6. Execute-plans target files `AgoraApp.tsx`, `identity.ts`, and `servant.ts`
    remain absent from both checked frontend remote trees.
-6. The packet does not change canonical truth, BFF runtime code, OpenAPI,
+7. The packet does not change canonical truth, BFF runtime code, OpenAPI,
    capability manifests, governance, or frontend source.
