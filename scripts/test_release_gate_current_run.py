@@ -1289,6 +1289,8 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "workflow_dispatch" in text
     assert dispatch_inputs["approval_race_id"]["required"] is True
     assert dispatch_inputs["two_man_race_id"]["required"] is True
+    assert "default" not in dispatch_inputs["approval_race_id"]
+    assert "default" not in dispatch_inputs["two_man_race_id"]
     assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
     assert "PANTHEON_LIVE_EVIDENCE_ENVIRONMENT: ${{ inputs.environment }}" in text
     assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in text
@@ -1333,6 +1335,8 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "two_man_race_id:" in text
     assert dispatch_inputs["approval_race_id"]["required"] is True
     assert dispatch_inputs["two_man_race_id"]["required"] is True
+    assert "default" not in dispatch_inputs["approval_race_id"]
+    assert "default" not in dispatch_inputs["two_man_race_id"]
     assert "soak_seconds:" in text
     assert "live-evidence:" in text
     assert "github.event_name == 'workflow_dispatch' && inputs.mode == 'live-evidence'" in text
