@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | Codex2 / Codex |
 | Date | 2026-06-21 |
 | Mutates canonical truth | false |
-| Status | Ready for sidecar review after task commit |
+| Status | Review approved; original packet PR #1954 merged into `dev` |
 
 ## Purpose
 
@@ -309,9 +309,33 @@ Expected scope check:
 - The packet does not claim AG-XR-002A, AG-XR-003, AG-BE-ID-002, AG-BE-SW-001,
   AG-BE-DB-001, or AG-FE-DB-001 are complete.
 
+## Closeout Evidence
+
+Codex review approved this sidecar packet. The active task record reported by
+`AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-002A-SIDECAR-BFF-HANDOFF`
+records:
+
+- task status: `review_approved`;
+- owner / reviewer: Codex2 / Codex;
+- reviewed task commit:
+  `1adc0f9935ec5edf183457bd5ffddbbef6373c5b`;
+- merged packet PR: #1954 into `dev` at
+  `285a6d6002da982f029d0b8b7447f95f10efc09b`;
+- reviewer reran `git diff --check`,
+  `python3 scripts/agora_schema_bundle.py --verify`,
+  `python3 -m pytest scripts/test_agora_compat_manifest.py -q`, and
+  `python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q`;
+- no blocking issues found.
+
+Owner closeout scope remains support-only. This finalization refresh updates
+the packet's review and merge state; it does not change canonical truth,
+contract bundles, OpenAPI, schema files, BFF runtime handlers, route
+registries, governance code, OpenClaw adapter code, or execute-plans files.
+
 ## Handoff
 
-This packet is ready for Codex review after the task commit. It should be used
-as support material for AG-XR-002A frontend contract review and for downstream
-runtime/frontend owners who need to separate v1.1 generated contract surface
-from live BFF route readiness.
+This packet is approved support material for AG-XR-002A frontend contract
+review and for downstream runtime/frontend owners who need to separate v1.1
+generated contract surface from live BFF route readiness. Parent owner Codex
+decides whether to absorb these notes into mainline AG-XR-002A review or route
+them into narrower downstream BFF/frontend follow-ups.
