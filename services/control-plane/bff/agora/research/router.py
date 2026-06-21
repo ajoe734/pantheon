@@ -180,30 +180,55 @@ def _plan_detail_envelope(
     }
 
 
-def _run_detail_envelope(
-    run: Dict[str, Any],
-    utc_now: Callable[[], str],
-    scope: Any,
+def _run_projection_with_defaults(run: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a ResearchRunProjection-shaped dict with stable optional arrays."""
+    projected = dict(run)
+    projected.setdefault("metrics", [])
+    projected.setdefault("findings", [])
+    projected.setdefault("warnings", [])
+    projected.setdefault("blocking_reasons", [])
+    projected.setdefault("artifact_refs", [])
+    projected.setdefault("evidence_refs", [])
+    projected.setdefault("lineage_refs", [])
+    return projected
+
+
+def _build_run_projection(
+    *,
+    plan: Dict[str, Any],
+    stage: Dict[str, Any],
+    run_id: str,
+    now: str,
 ) -> Dict[str, Any]:
-    status = run.get("execution_status", "queued")
-    run_id = run["run_id"]
-    return {
-        "object_ref": {"type": "research_run", "id": run_id},
-        "status": status,
-        "lifecycle_state": status,
-        "allowedActions": _RUN_ALLOWED_ACTIONS.get(status, {}),
-        "data": run,
-        "meta": {
-            "snapshot_at": utc_now(),
-            "capability": _CAPABILITY,
-            "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+    routing = stage.get("routing", {})
+    backend = routing.get("effective_backend") or routing.get("preferred_backend", "")
+    run = {
+        "spec_version": "1.0",
+        "run_id": run_id,
+        "plan_id": plan["plan_id"],
+        "workshop_id": plan["workshop_id"],
+        "strategy_id": plan["strategy_id"],
+        "strategy_spec_registry_id": plan["strategy_spec_registry_id"],
+        "stage_id": stage["stage_id"],
+        "stage_type": stage["stage_type"],
+        "execution_status": "queued",
+        "outcome": "pending",
+        "progress": {
+            "phase": "queued",
+            "percent": 0,
+            "message": "Run queued for dispatch",
+            "updated_at": now,
         },
-        "links": {
-            "self": f"/bff/agora/research-runs/{run_id}",
-            "artifacts": f"/bff/agora/research-runs/{run_id}/artifacts",
-            "plan": f"/bff/agora/research-plans/{run.get('plan_id', '')}",
+        "backend": {
+            "requested": routing.get("preferred_backend", ""),
+            "effective": backend,
+            "mode": routing.get("backend_mode", "real"),
         },
+        "no_order_route_proof": _RUN_NO_ORDER_ROUTE_PROOF,
+        "created_at": now,
+        "updated_at": now,
     }
+    return _run_projection_with_defaults(run)
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +241,10 @@ def publish_research_progress(
     progress_pct: float,
     message: str = "",
     *,
+    phase: str = "running",
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    """Publish a workshop.research.progress event to the workshop SSE stream.
+    """Publish a canonical research.run.progress event to the workshop SSE stream.
 
     Imports _ws_publish lazily to avoid a circular import with the workshop router.
     Returns the SSE event_id, or an empty string if the workshop has no active stream.
@@ -226,10 +252,11 @@ def publish_research_progress(
     from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415 (lazy import)
     return _ws_publish(
         workshop_id,
-        "workshop.research.progress",
+        "research.run.progress",
         {
             "run_id": run_id,
-            "progress_pct": progress_pct,
+            "phase": phase,
+            "percent": progress_pct,
             "message": message,
         },
         utc_now_fn=utc_now_fn,
@@ -423,6 +450,11 @@ def create_research_router(
             plan["execution_constraints"] = body.execution_constraints.model_dump(exclude_none=True)
         return plan
 
+    def _publish_research_event(workshop_id: str, event_type: str, data: Dict[str, Any]) -> None:
+        from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415 (lazy import)
+
+        _ws_publish(workshop_id, event_type, data, utc_now_fn=utc_now)
+
     # -------------------------------------------------------------------
     # GET /bff/agora/workshops/{workshop_id}/research-plans
     # -------------------------------------------------------------------
@@ -476,6 +508,11 @@ def create_research_router(
         plan_id = str(uuid.uuid4())
         plan = _build_plan(body, workshop_id, plan_id, now)
         plan = store.create_plan(plan)
+        _publish_research_event(
+            workshop_id,
+            "research.plan.created",
+            {"plan_id": plan_id, "status": plan["status"]},
+        )
         return _plan_detail_envelope(plan, utc_now, scope)
 
     # -------------------------------------------------------------------
@@ -538,6 +575,11 @@ def create_research_router(
             "lock_version": plan.get("lock_version", 1) + 1,
             "updated_at": now,
         })
+        _publish_research_event(
+            plan["workshop_id"],
+            "research.plan.approved",
+            {"plan_id": plan_id, "status": "approved"},
+        )
         return {
             "status": "completed",
             "data": {"plan_id": plan_id, "status": "approved"},
@@ -587,6 +629,11 @@ def create_research_router(
             "lock_version": plan.get("lock_version", 1) + 1,
             "updated_at": now,
         })
+        _publish_research_event(
+            plan["workshop_id"],
+            "research.plan.cancelled",
+            {"plan_id": plan_id, "status": "cancelled"},
+        )
         return {
             "status": "completed",
             "data": {"plan_id": plan_id, "status": "cancelled"},
@@ -674,32 +721,12 @@ def create_research_router(
             )
         now = utc_now()
         run_id = str(uuid.uuid4())
-        routing = dispatch_stage.get("routing", {})
-        run: Dict[str, Any] = {
-            "spec_version": "1.0",
-            "run_id": run_id,
-            "plan_id": plan_id,
-            "workshop_id": plan["workshop_id"],
-            "strategy_id": plan["strategy_id"],
-            "strategy_spec_registry_id": plan["strategy_spec_registry_id"],
-            "stage_id": dispatch_stage["stage_id"],
-            "stage_type": dispatch_stage["stage_type"],
-            "execution_status": "queued",
-            "outcome": "pending",
-            "progress": {
-                "phase": "queued",
-                "percent": 0,
-                "message": "Run queued for dispatch",
-                "updated_at": now,
-            },
-            "backend": {
-                "requested": routing.get("preferred_backend", ""),
-                "effective": routing.get("preferred_backend", ""),
-                "mode": routing.get("backend_mode", "real"),
-            },
-            "no_order_route_proof": _RUN_NO_ORDER_ROUTE_PROOF,
-            "created_at": now,
-        }
+        run = _build_run_projection(
+            plan=plan,
+            stage=dispatch_stage,
+            run_id=run_id,
+            now=now,
+        )
         store.create_run(run)
         # Update plan: mark dispatched stage as queued, record run_id, advance to running
         updated_stages = [
@@ -715,6 +742,17 @@ def create_research_router(
             "lock_version": plan.get("lock_version", 1) + 1,
             "updated_at": now,
         })
+        _publish_research_event(
+            plan["workshop_id"],
+            "research.run.queued",
+            {
+                "run_id": run_id,
+                "plan_id": plan_id,
+                "stage_id": dispatch_stage["stage_id"],
+                "stage_type": dispatch_stage["stage_type"],
+                "percent": 0,
+            },
+        )
         return {
             "status": "queued",
             "data": {
@@ -739,12 +777,12 @@ def create_research_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        _scope(authorization, x_tenant_id)
         run = store.get_run(run_id)
         if run is None:
             from models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research run not found", run_id)
-        return _run_detail_envelope(run, utc_now, scope)
+        return _run_projection_with_defaults(run)
 
     # -------------------------------------------------------------------
     # POST /bff/agora/research-runs/{run_id}/cancel
@@ -780,9 +818,23 @@ def create_research_router(
         now = utc_now()
         store.update_run(run_id, {
             "execution_status": "cancelled",
+            "progress": {
+                **run.get("progress", {}),
+                "phase": "cancelled",
+                "message": "Run cancellation accepted",
+                "updated_at": now,
+            },
             "completed_at": now,
             "updated_at": now,
         })
+        publish_research_progress(
+            run["workshop_id"],
+            run_id,
+            float(run.get("progress", {}).get("percent", 0)),
+            "Run cancellation accepted",
+            phase="cancelled",
+            utc_now_fn=utc_now,
+        )
         return {
             "status": "accepted",
             "data": {"run_id": run_id, "execution_status": "cancelled"},
