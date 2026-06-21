@@ -10,7 +10,7 @@
 | Reviewer | `Codex2` |
 | Date | `2026-06-21` |
 | Baseline | follow-up 21 merged to `dev` at `f84bf705` (PR #2041) |
-| Current dev | `2ecc0fa1` (PR #2047) |
+| Current dev | `d7e9446f` (PR #2048) |
 | Mutates canonical truth | `false` |
 | Status | Ready for review |
 
@@ -64,9 +64,9 @@ canonical truth mutation, and parent `AG-FE-DB-002` still blocked waiting for
 ## Current Dev Delta Since Follow-up 21 Closeout
 
 Follow-up 21 merged to `dev` at `f84bf705`. Current `origin/dev` during this
-packet is `2ecc0fa1`.
+packet is `d7e9446f`.
 
-`git log --first-parent --oneline f84bf705..origin/dev` shows six later
+`git log --first-parent --oneline f84bf705..origin/dev` shows seven later
 merges:
 
 | Area | Merged work since follow-up 21 | DB002 consequence |
@@ -76,6 +76,7 @@ merges:
 | Strategy workshop BFF handoff support | PR #2043 `AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` added a strategy-workshop BFF handoff support packet. | Separate strategy-workshop handoff material only. It does not change dashboard layout PATCH semantics or DB002 frontend composition. |
 | Management live-evidence release gate | PR #2046 `MGMT-LIVE-EVIDENCE-NO-BLANK-RACE-DEFAULTS` updated `.github/workflows/stage-0-ci.yml` and `scripts/test_release_gate_current_run.py`. | CI/test release-gate mechanics only. It does not add `DashboardGridEditor`, change the dashboard BFF helper, or alter Agora dashboard contracts. Parent closeout should still record whatever current validation commands are relevant. |
 | Strategy workshop acceptance support | PR #2047 `AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-7` added a task brief and support packet for strategy-workshop acceptance. | Support material for a separate strategy-workshop sidecar. It does not touch DB002 dashboard editor, widget renderer, dashboard helper, OpenAPI, or schema surfaces. |
+| Strategy workshop BFF handoff support | PR #2048 `AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` added another strategy-workshop BFF handoff support packet. | Separate strategy-workshop handoff material only. It does not change dashboard layout PATCH semantics or DB002 frontend composition. |
 
 `git diff --name-status f84bf705 origin/dev` lists only:
 
@@ -90,6 +91,7 @@ merges:
 - `A .orchestrator/task-briefs/ag_be_sw_002_sidecar_acceptance_followup_7.md`
 - `A support/sidecars/AG-BE-SW-002/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-7.md`
 - `A support/sidecars/AG-BE-SW-004/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md`
+- `A support/sidecars/AG-BE-SW-004/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md`
 
 `git diff --name-status f84bf705 origin/dev -- execute-plans/src/agora/dashboard
 execute-plans/src/agora/widgets execute-plans/src/lib/bff-v1/agora
@@ -312,9 +314,10 @@ Please review this packet for:
 1. Support-only boundary: it changes only this sidecar artifact and does not
    claim parent runtime completion.
 2. Accuracy of the post-followup-21 dev delta: PRs
-   #2040/#2042/#2043/#2044/#2047 are strategy-workshop support/review packets,
-   and PR #2046 is a management live-evidence release-gate workflow/test
-   change; none touch DB002 dashboard layout semantics or compose paths.
+   #2040/#2042/#2043/#2044/#2047/#2048 are strategy-workshop support/review
+   packets, and PR #2046 is a management live-evidence release-gate
+   workflow/test change; none touch DB002 dashboard layout semantics or compose
+   paths.
 3. Completeness of the parent acceptance checklist and dependency map.
 4. Correct parent handoff: parent `AG-FE-DB-002` remains `blocked` waiting for
    `Codex`; this packet asks the parent reviewer to absorb the reviewed
