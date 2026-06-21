@@ -1,0 +1,59 @@
+{
+  "manifest_version": "1.3",
+  "extends_manifest": "services/control-plane/specs/agora/v3/capability_manifest_v1_2.json",
+  "base_bundle": "services/control-plane/specs/agora/bundle_index.v1_2.json",
+  "capabilities": [
+    {
+      "name": "agora.workshop.v1",
+      "version": "1.3",
+      "description": "Adds governed StrategySpec patch proposals, version comparison, readiness gates, typed workshop cards and typed workshop SSE events.",
+      "bff_path_prefixes": [
+        "/bff/agora/workshops",
+        "/bff/agora/workshops/{workshop_id}/patch-proposals",
+        "/bff/agora/workshops/{workshop_id}/version-comparisons",
+        "/bff/agora/workshops/{workshop_id}/readiness"
+      ],
+      "schemas": [
+        "v4/version_patch_proposal.schema.json",
+        "v4/version_compare.schema.json",
+        "v4/strategy_readiness.schema.json",
+        "v4/workshop_stream_event.schema.json",
+        "v4/workshop_card.schema.json"
+      ],
+      "auth_level": "agora_user",
+      "execution_authority": "none"
+    },
+    {
+      "name": "agora.research.v1",
+      "version": "1.1",
+      "description": "Adds plan-first research facade, governed stage routing and run/result projections.",
+      "bff_path_prefixes": [
+        "/bff/agora/research-plans",
+        "/bff/agora/research-runs",
+        "/bff/agora/workshops/{workshop_id}/research-plans"
+      ],
+      "schemas": [
+        "v4/research_plan_execution.schema.json",
+        "v4/research_run_projection.schema.json"
+      ],
+      "auth_level": "agora_user",
+      "execution_authority": "research_only"
+    },
+    {
+      "name": "agora.trading.v1",
+      "version": "1.1",
+      "description": "Adds Trading Room read aggregates, decision support events and request-only governed intent handoffs.",
+      "bff_path_prefixes": [
+        "/bff/agora/trading-room",
+        "/bff/agora/trading-intents"
+      ],
+      "schemas": [
+        "v4/trading_room_aggregate.schema.json",
+        "v4/trading_decision_event.schema.json",
+        "v4/governed_intent_handoff.schema.json"
+      ],
+      "auth_level": "agora_user",
+      "execution_authority": "none"
+    }
+  ]
+}
