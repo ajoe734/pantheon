@@ -8,10 +8,12 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-21` |
-| Status | `in_progress; packet prepared for Claude review` |
+| Status | `review_approved; owner closeout finalization recorded` |
 | Current dev base | `fa4894300d79254ef45ef293a997c2b95285a4fa` |
 | Previous packet closeout | Followup-25 archived `done`; packet PR `#1993` merged at `0c7eb8082452152dbaa435dfbfc9f1ee0b951e54`; review record PR `#1994` merged at `0f88261fbd18106589e95600412924380681f02a` |
 | New dev delta after followup-25 closeout | PR `#1996` merged `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` at `fa4894300d79254ef45ef293a997c2b95285a4fa`; checked delta is support-only and keeps `AG-BE-ID-003` blocked |
+| Review record | PR `#1999` merged `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26-REVIEW.md` at `0b0662079128d0e569e02598b99c9fb28a3d492f` |
+| Closeout recheck | `origin/dev` rechecked at `0e95a754c972fb280cbb15da6774eccf35715a4b`; post-review delta remains sidecar/review support material only |
 | Execute-plans refs checked | `origin/main` at `7b2f17c4dee8dcafe62c2295504df03aed0ae16e`; `origin/dev` at `7aa4917272212452fe5e4dc99bf2d76fe48eacfd` |
 | Execute-plans compatibility PR | `#63` remains `OPEN` / `UNSTABLE`, head `e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5`; `integration-gate` failed |
 | Mutates canonical truth | `false` |
@@ -55,7 +57,7 @@ Status commands used `AI_NAME=Codex`.
 
 | Task | Status | Handoff implication |
 |---|---|---|
-| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` | active `in_progress`; owner `Codex`, reviewer `Claude` | This packet is the intended support-only deliverable. |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` | `review_approved`; owner `Codex`, reviewer `Claude` | Claude approved the support-only deliverable; this owner closeout records the final recheck before `done`. |
 | `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25` | archived `done`; packet PR `#1993`, review record PR `#1994` merged | Previous support packet is durable on `dev` and is the baseline for this refresh. |
 | `AG-FE-ID-001` | `todo`; owner `Claude`, reviewer `Codex`; depends on `AG-FE-000` and `AG-BE-ID-003` | Parent implementation has not started in durable task state. |
 | `AG-FE-000` | archived `done`; main execute-plans deliverable PR `#1771` merged | Entry/build/audience separation is accepted context, but parent target shell/client files are still absent from checked remote trees. |
@@ -75,7 +77,7 @@ is blocked.
 | Source | Why it matters |
 |---|---|
 | `.orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_26.md` | This sidecar's support-only assignment. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` | Confirms active sidecar owner/reviewer, artifact path, and support-only acceptance. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` | Confirms `review_approved`, owner/reviewer, artifact path, support-only acceptance, and review file path. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25` | Confirms predecessor archived `done` through packet PR `#1993` and review record PR `#1994`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms parent remains `todo` and depends on `AG-FE-000` plus `AG-BE-ID-003`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-000` | Confirms Phase 0 frontend entry/build/audience dependency is archived `done`. |
@@ -257,7 +259,7 @@ Commands and results:
 | `git merge --no-edit origin/dev` | Merged PR `#1996` support-only AG-BE-ID-003 followup-13 into this task branch before refreshing the packet. |
 | `git log --oneline 0f88261fbd18106589e95600412924380681f02a..origin/dev --decorate` | Shows `fa489430` merge PR `#1996` and `d307dbe9` AG-BE-ID-003 followup-13 packet commit. |
 | `git diff --name-status 0f88261fbd18106589e95600412924380681f02a..origin/dev -- <checked handoff pathset>` | Shows `A support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md` only. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` | Active `in_progress`, owner `Codex`, reviewer `Claude`, support-only artifact path. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` | Active `review_approved`, owner `Codex`, reviewer `Claude`, support-only artifact path, review file recorded. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25` | Archived `done`; packet PR `#1993` merged at `0c7eb8082452152dbaa435dfbfc9f1ee0b951e54`; review record PR `#1994` merged at `0f88261fbd18106589e95600412924380681f02a`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001` | Parent `todo`; depends on `AG-FE-000` and `AG-BE-ID-003`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-000` | Archived `done`; execute-plans entry/build/audience split accepted. |
@@ -275,22 +277,31 @@ Commands and results:
 | `python3 -m pytest services/control-plane/bff/tests/test_agora_router.py integrations/openclaw/test_persona_agent_sync.py services/control-plane/bff/tests/test_agora_identity_scope.py` | `35 passed in 18.05s`. |
 | `GIT_INDEX_FILE=/tmp/git-index-check-AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26 git diff --check --cached -- support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26.md` | Clean after private-index staging. |
 | `rg` spot checks over BFF/OpenAPI/test files | Confirms `/me`, `/capabilities`, `/servant/ensure`, required headers, current 200/422/401 tests, v1.1/v1.2 servant-session paper routes, and missing public session type field. |
+| `git log --oneline 9a5ec4c836f82b1bcbd8ce8d998dceabd6c2d5f5..origin/dev` | Closeout recheck shows only sidecar/review/closeout support PRs after packet review, including followup-26 review record PR `#1999`. |
+| `git diff --name-status 9a5ec4c836f82b1bcbd8ce8d998dceabd6c2d5f5..origin/dev` | Closeout recheck shows task briefs and support sidecar/review artifacts only; no canonical truth, runtime, BFF contract, manifest source, or execute-plans source files. |
 
 ## 11. Reviewer Handoff
 
-Claude review focus:
+Claude approved this sidecar as support material only. The durable review record
+is `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26-REVIEW.md`,
+merged through PR `#1999` at
+`0b0662079128d0e569e02598b99c9fb28a3d492f`.
 
-1. Confirm this packet is support-only and does not mutate canonical truth.
-2. Confirm the post-followup-25 delta conclusion is accurate: PR `#1996`
-   added only AG-BE-ID-003 support material and did not unblock sessions.
-3. Confirm the parent absorption checklist remains conservative: identity,
-   capabilities, and servant ensure are usable support context; servant sessions
-   remain blocked by `AG-BE-ID-003`.
-4. Confirm execute-plans PR `#63` and missing parent target files remain
-   compatibility/readiness risks for parent `AG-FE-ID-001`.
+The approval does not implement or approve parent `AG-FE-ID-001`. Parent owner
+`Claude` still decides whether and how to absorb the packet into the eventual
+parent implementation.
 
-Recommended reviewer disposition if accurate: approve this sidecar as support
-material only, then let parent owner `Claude` decide whether and how to absorb
-it into the eventual parent implementation.
+## 12. Owner Closeout Note
+
+Codex rechecked the approved scope before owner closeout. The active task state
+is `review_approved`, the packet remains support-only, and the post-review
+`origin/dev` delta is limited to task briefs plus sidecar/review support
+artifacts. `AG-FE-ID-001` remains `todo`, `AG-BE-ID-003` remains blocked waiting
+for Claude, and execute-plans PR `#63` remains an unresolved compatibility risk.
+
+This closeout update does not mutate canonical truth, BFF runtime code,
+OpenAPI/source-of-truth contract semantics, route registries, governance policy,
+database migrations, OpenClaw adapter code, capability manifest source, or
+execute-plans source files.
 
 *Prepared by Codex for the `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` support slice.*
