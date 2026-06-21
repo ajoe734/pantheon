@@ -8,7 +8,9 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-21` |
-| Status | `in_progress; packet ready for reviewer handoff after PR merge` |
+| Status | `review_approved; packet PR #1986 merged and closeout in progress` |
+| Packet PR | `#1986` merged at `c1b18d8d0388baa0d7cf64f44391cbd7770f8916` |
+| Review result | `APPROVED` by `Claude` as support material only |
 | Current dev base | `5c67f2855f0daf11655e9bec06bbfa78cddc43aa` |
 | Previous AG-FE-ID-001 sidecar closeout merge | `a93a26b980757ca96ebd6d76979f2a8409495c67` |
 | Previous AG-FE-ID-001 packet PR | `#1955` merged at `a2d16e4c2758c7efc8e75be6da3fbd063eab364d` |
@@ -303,9 +305,11 @@ Commands and results:
 | `rg -n "ServantSessionCreateRequest\|servant/sessions\|session_type\|sessionType\|quick_ask\|OPENCLAW_UPSTREAM_DEGRADED\|createServantSession" ...` | Confirms OpenAPI v1.1/v1.2 servant-session paper routes, missing public session type field, and separate legacy ask/session surfaces. |
 | `rg -n "@router\.(get\|post)\|/bff/agora/servant\|ensure\|Idempotency-Key\|X-Request-Id\|DEPENDENCY_UNAVAILABLE" ...` | Confirms `/servant/ensure` runtime route, required headers, and current dependency-unavailable mapping. |
 
-## 11. Reviewer Handoff
+## 11. Review Approval And Closeout
 
-Claude should review this packet as support-only. The review basis is:
+Claude reviewed this packet as support-only and approved it in
+`.orchestrator/task-reviews/ag_fe_id_001_sidecar_bff_handoff_followup_23_review_claude.md`.
+The review basis was:
 
 1. Followup-22 is archived `done` through packet PR `#1955` and closeout PR
    `#1977`.
@@ -328,10 +332,12 @@ Claude should review this packet as support-only. The review basis is:
    source-of-truth semantics, capability manifests, governance, database,
    OpenClaw adapter code, compatibility manifest source, or frontend source.
 
-After this artifact PR merges, Codex should hand the task to Claude with:
+Closeout rule: this packet remains support material only. It does not approve,
+reopen, or implement parent `AG-FE-ID-001`; parent absorption remains a
+`Claude` decision for the parent task. Codex should finalize this sidecar with:
 
 ```bash
-AI_NAME=Codex ./scripts/ai-status.sh handoff AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-23 Claude "Support-only followup-23 packet merged; please review the BFF/frontend handoff artifact."
+AI_NAME=Codex ./scripts/ai-status.sh done AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-23 "<checkpoint message>"
 ```
 
 *Prepared by Codex for the `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-23`
