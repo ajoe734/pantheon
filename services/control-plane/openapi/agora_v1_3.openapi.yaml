@@ -1,0 +1,702 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.3 Extension
+  version: "1.3.0"
+  description: |
+    Additive extension over the Agora v1.2 contract (agora_v1_2.openapi.yaml).
+    It preserves the frozen AG-XR-001 v1 bundle, the v1.1 extension, and the
+    v1.2 workshop lifecycle closure. This file adds v1.3 capabilities:
+
+    v1.3 changes:
+    - Governed StrategySpec patch proposals: create, validate, accept, reject.
+    - Version comparison: compare two or more workshop version snapshots.
+    - Workshop readiness gates: structured StrategyReadinessAssessment projection.
+    - Typed workshop cards: 12 card types with BFF-projected typed payloads.
+      Frontend must not infer card type or payload semantics from free LLM markdown.
+    - Plan-first research facade: ResearchPlanExecution lifecycle and run projections.
+    - Trading Room: read-only aggregate, decision-event queue, governed intent handoffs.
+      Agora never places broker orders, never binds capital, never writes RuntimeBinding.
+      Intent handoffs are request-only; the governed handoff contract enforces
+      no_order_route_proof = "agora_request_only_no_order_route".
+
+    All v1.3 schemas live in services/control-plane/specs/agora/v4/.
+
+    v1/v1.1/v1.2 files remain immutable. This file together with agora_v1.openapi.yaml,
+    agora_v1_1.openapi.yaml, and agora_v1_2.openapi.yaml form the additive v1.3 bundle
+    described in bundle_index.v1_3.json.
+  contact:
+    name: Pantheon Platform
+  x-extends-contract: "services/control-plane/openapi/agora_v1_2.openapi.yaml"
+
+servers:
+  - url: "{bff_base}"
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    WorkshopId:
+      name: workshop_id
+      in: path
+      required: true
+      schema: { type: string }
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema: { type: string }
+    PlanId:
+      name: plan_id
+      in: path
+      required: true
+      schema: { type: string }
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema: { type: string }
+    StrategyId:
+      name: strategy_id
+      in: path
+      required: true
+      schema: { type: string }
+    DecisionEventId:
+      name: decision_event_id
+      in: path
+      required: true
+      schema: { type: string }
+    IntentId:
+      name: intent_id
+      in: path
+      required: true
+      schema: { type: string }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      schema: { type: string }
+
+  schemas:
+    VersionPatchProposal:
+      $ref: "../specs/agora/v4/version_patch_proposal.schema.json"
+    VersionCompare:
+      $ref: "../specs/agora/v4/version_compare.schema.json"
+    StrategyReadinessAssessment:
+      $ref: "../specs/agora/v4/strategy_readiness.schema.json"
+    ResearchPlanExecution:
+      $ref: "../specs/agora/v4/research_plan_execution.schema.json"
+    ResearchRunProjection:
+      $ref: "../specs/agora/v4/research_run_projection.schema.json"
+    WorkshopStreamEvent:
+      $ref: "../specs/agora/v4/workshop_stream_event.schema.json"
+    TradingRoomAggregate:
+      $ref: "../specs/agora/v4/trading_room_aggregate.schema.json"
+    TradingDecisionEvent:
+      $ref: "../specs/agora/v4/trading_decision_event.schema.json"
+    GovernedIntentHandoff:
+      $ref: "../specs/agora/v4/governed_intent_handoff.schema.json"
+    WorkshopCard:
+      $ref: "../specs/agora/v4/workshop_card.schema.json"
+
+    CommandResponse:
+      type: object
+      required: [status, data, meta]
+      properties:
+        status:
+          type: string
+          enum: [accepted, queued, completed]
+        data: {}
+        meta:
+          type: object
+          additionalProperties: true
+
+    DetailEnvelope:
+      type: object
+      required: [object_ref, status, allowedActions, meta, links, data]
+      properties:
+        object_ref:
+          type: object
+          required: [type, id]
+          properties:
+            type: { type: string }
+            id: { type: string }
+        status: { type: string }
+        lifecycle_state: { type: string }
+        allowedActions:
+          type: object
+          additionalProperties: { type: boolean }
+        meta:
+          type: object
+          additionalProperties: true
+        links:
+          type: object
+          additionalProperties: true
+        data: {}
+      additionalProperties: false
+
+    ListEnvelope:
+      type: object
+      required: [items, page_info, meta]
+      properties:
+        items:
+          type: array
+          items: {}
+        page_info:
+          type: object
+          required: [next_page_token, page_size, has_more]
+          properties:
+            next_page_token:
+              type: [string, "null"]
+            page_size:
+              type: integer
+            has_more:
+              type: boolean
+            total:
+              type: integer
+        meta:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+
+paths:
+  # ── Patch Proposals ──────────────────────────────────────────────────────────
+
+  /bff/agora/workshops/{workshop_id}/patch-proposals:
+    get:
+      operationId: listWorkshopPatchProposals
+      summary: List patch proposals for a workshop
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+      responses:
+        "200":
+          description: Patch proposal list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    post:
+      operationId: createWorkshopPatchProposal
+      summary: Create a governed patch proposal for a workshop version
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VersionPatchProposal" }
+      responses:
+        "202":
+          description: Proposal accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "409":
+          description: Concurrent modification or base document SHA256 mismatch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/workshops/{workshop_id}/patch-proposals/{proposal_id}:
+    get:
+      operationId: getWorkshopPatchProposal
+      summary: Get a patch proposal detail
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/ProposalId"
+      responses:
+        "200":
+          description: Patch proposal detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "404":
+          description: Proposal not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/workshops/{workshop_id}/patch-proposals/{proposal_id}/validate:
+    post:
+      operationId: validateWorkshopPatchProposal
+      summary: Queue schema and policy validation for a draft patch proposal
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/ProposalId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "202":
+          description: Validation queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+
+  /bff/agora/workshops/{workshop_id}/patch-proposals/{proposal_id}/accept:
+    post:
+      operationId: acceptWorkshopPatchProposal
+      summary: Accept a validated patch proposal; queues new Registry draft version creation
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/ProposalId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "202":
+          description: New Registry draft/version creation queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "409":
+          description: Proposal not in validated state or ETag mismatch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/workshops/{workshop_id}/patch-proposals/{proposal_id}/reject:
+    post:
+      operationId: rejectWorkshopPatchProposal
+      summary: Reject a patch proposal
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/ProposalId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "200":
+          description: Proposal rejected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+
+  # ── Version Comparison ───────────────────────────────────────────────────────
+
+  /bff/agora/workshops/{workshop_id}/version-comparisons:
+    post:
+      operationId: compareWorkshopVersions
+      summary: Compare base workshop version against one or more candidate versions
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_version_id, candidate_version_ids]
+              properties:
+                base_version_id: { type: string }
+                candidate_version_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 4
+                  items: { type: string }
+      responses:
+        "200":
+          description: Version comparison result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionCompare" }
+
+  # ── Readiness Gates ──────────────────────────────────────────────────────────
+
+  /bff/agora/workshops/{workshop_id}/readiness:
+    get:
+      operationId: getWorkshopReadiness
+      summary: Get current readiness gate assessment for the workshop
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+      responses:
+        "200":
+          description: Readiness assessment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StrategyReadinessAssessment" }
+
+  /bff/agora/workshops/{workshop_id}/readiness/reassess:
+    post:
+      operationId: reassessWorkshopReadiness
+      summary: Queue a fresh readiness gate assessment
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "202":
+          description: Reassessment queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+
+  # ── Workshop Cards ───────────────────────────────────────────────────────────
+
+  /bff/agora/workshops/{workshop_id}/cards:
+    get:
+      operationId: listWorkshopCards
+      summary: >
+        List typed card projections for a workshop. Cards are BFF-projected; the
+        frontend renders markdown within typed payload fields and must not infer
+        card_type or payload semantics from free LLM output.
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+      responses:
+        "200":
+          description: Typed card projection list (items are WorkshopCard objects)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+
+  # ── Research Plans ───────────────────────────────────────────────────────────
+
+  /bff/agora/workshops/{workshop_id}/research-plans:
+    get:
+      operationId: listWorkshopResearchPlans
+      summary: List research plans for a workshop
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+      responses:
+        "200":
+          description: Research plan list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+    post:
+      operationId: createWorkshopResearchPlan
+      summary: Create a draft research plan attached to the workshop
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResearchPlanExecution" }
+      responses:
+        "201":
+          description: Draft plan created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+
+  /bff/agora/research-plans/{plan_id}:
+    get:
+      operationId: getAgoraResearchPlan
+      summary: Get research plan detail
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Research plan detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+
+  /bff/agora/research-plans/{plan_id}/approve:
+    post:
+      operationId: approveAgoraResearchPlan
+      summary: Approve a draft research plan for dispatch
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "200":
+          description: Plan approved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+
+  /bff/agora/research-plans/{plan_id}/cancel:
+    post:
+      operationId: cancelAgoraResearchPlan
+      summary: Cancel an approved or running research plan
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "200":
+          description: Plan cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+
+  /bff/agora/research-plans/{plan_id}/runs:
+    get:
+      operationId: listAgoraResearchPlanRuns
+      summary: List research runs for a plan
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200":
+          description: Run list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+    post:
+      operationId: dispatchAgoraResearchPlan
+      summary: Dispatch an approved research plan (creates a new run)
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "202":
+          description: Run queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+
+  # ── Research Runs ────────────────────────────────────────────────────────────
+
+  /bff/agora/research-runs/{run_id}:
+    get:
+      operationId: getAgoraResearchRun
+      summary: Get research run projection
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: Run projection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResearchRunProjection" }
+
+  /bff/agora/research-runs/{run_id}/cancel:
+    post:
+      operationId: cancelAgoraResearchRun
+      summary: Request cancellation of an active research run
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "202":
+          description: Cancellation queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+
+  /bff/agora/research-runs/{run_id}/artifacts:
+    get:
+      operationId: listAgoraResearchRunArtifacts
+      summary: List artifact and evidence refs produced by a research run
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: Artifact and evidence ref list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+
+  # ── Trading Room (read-only; no order routing, no capital binding) ───────────
+
+  /bff/agora/trading-room:
+    get:
+      operationId: getAgoraTradingRoom
+      summary: >
+        Get user-scoped Trading Room read aggregate. Read-only; Agora never
+        routes orders or binds capital through this surface.
+      responses:
+        "200":
+          description: User-scoped Trading Room aggregate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TradingRoomAggregate" }
+
+  /bff/agora/trading-room/strategies/{strategy_id}:
+    get:
+      operationId: getAgoraTradingRoomStrategy
+      summary: Get strategy-level Trading Room read detail
+      parameters:
+        - $ref: "#/components/parameters/StrategyId"
+      responses:
+        "200":
+          description: Strategy Trading Room detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+
+  /bff/agora/trading-room/decision-events:
+    get:
+      operationId: listAgoraTradingDecisionEvents
+      summary: List decision events in the Trading Room queue (read-only)
+      parameters:
+        - name: event_kind
+          in: query
+          schema:
+            type: string
+            enum: [entry, add, reduce, exit, review]
+        - name: state
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Decision-event queue
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+
+  /bff/agora/trading-room/decision-events/{decision_event_id}:
+    get:
+      operationId: getAgoraTradingDecisionEvent
+      summary: Get decision event detail
+      parameters:
+        - $ref: "#/components/parameters/DecisionEventId"
+      responses:
+        "200":
+          description: Decision-event detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TradingDecisionEvent" }
+
+  /bff/agora/trading-room/decision-events/{decision_event_id}/decisions:
+    post:
+      operationId: decideAgoraTradingEvent
+      summary: >
+        Record trader decision on a decision event. A decision of "approve"
+        creates a TradingIntent (request-only); the governed handoff contract
+        enforces no_order_route_proof. Agora does not route live broker orders.
+      parameters:
+        - $ref: "#/components/parameters/DecisionEventId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approve, reject, defer, modify]
+                rationale: { type: string }
+                modifications:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Decision recorded; may create TradingIntent (request-only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+
+  /bff/agora/trading-room/stream:
+    get:
+      operationId: streamAgoraTradingRoom
+      summary: Typed SSE stream for user-scoped Trading Room events
+      responses:
+        "200":
+          description: Typed Trading Room SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  # ── Trading Intents (request-only governed handoffs) ─────────────────────────
+
+  /bff/agora/trading-intents/{intent_id}:
+    get:
+      operationId: getAgoraTradingIntent
+      summary: Get trading intent detail
+      parameters:
+        - $ref: "#/components/parameters/IntentId"
+      responses:
+        "200":
+          description: Intent detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+
+  /bff/agora/trading-intents/{intent_id}/handoffs:
+    post:
+      operationId: submitAgoraTradingIntentHandoff
+      summary: >
+        Submit a governed intent handoff request. This is a request-only surface:
+        no RuntimeBinding is written, no capital is bound, and no broker order is
+        routed. Enforced by GovernedIntentHandoff.no_order_route_proof.
+      parameters:
+        - $ref: "#/components/parameters/IntentId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GovernedIntentHandoff" }
+      responses:
+        "202":
+          description: Request-only handoff submitted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+
+  /bff/agora/trading-intents/{intent_id}/withdraw:
+    post:
+      operationId: withdrawAgoraTradingIntent
+      summary: Withdraw a pending intent or handoff request
+      parameters:
+        - $ref: "#/components/parameters/IntentId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "200":
+          description: Intent/handoff withdrawal recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }

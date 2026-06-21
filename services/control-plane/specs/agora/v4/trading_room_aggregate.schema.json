@@ -1,0 +1,203 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/trading_room_aggregate/v1",
+  "title": "TradingRoomAggregate",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "user_scope_ref",
+    "strategies",
+    "queue_summary",
+    "risk_summary",
+    "snapshot_at",
+    "data_cutoff"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "user_scope_ref": {
+      "type": "string"
+    },
+    "strategies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "strategy_id",
+          "strategy_spec_registry_id",
+          "title",
+          "readiness_state",
+          "monitoring_state",
+          "pending_event_counts"
+        ],
+        "properties": {
+          "strategy_id": {
+            "type": "string"
+          },
+          "strategy_spec_registry_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "readiness_state": {
+            "type": "string",
+            "enum": [
+              "blocked",
+              "conditional",
+              "ready",
+              "stale"
+            ]
+          },
+          "dashboard_recipe_id": {
+            "type": "string"
+          },
+          "monitoring_state": {
+            "type": "string",
+            "enum": [
+              "inactive",
+              "shadow",
+              "paper_requested",
+              "monitoring",
+              "paused"
+            ]
+          },
+          "candidate_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "position_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pending_event_counts": {
+            "type": "object",
+            "properties": {
+              "entry": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "add": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reduce": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "exit": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "review": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "shadow_status": {
+            "type": "string"
+          },
+          "performance_summary": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "staleness_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "queue_summary": {
+      "type": "object",
+      "required": [
+        "entry",
+        "add",
+        "reduce",
+        "exit",
+        "review"
+      ],
+      "properties": {
+        "entry": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "add": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reduce": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "review": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "top_decision_events": {
+      "type": "array",
+      "items": {
+        "$ref": "trading_decision_event.schema.json"
+      }
+    },
+    "position_summaries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "risk_summary": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "watch",
+            "warning",
+            "critical"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "alerts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "data_cutoff": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}
