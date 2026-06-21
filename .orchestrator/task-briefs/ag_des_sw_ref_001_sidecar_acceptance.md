@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Review approved: all eight reviewer questions pass. Acceptance packet and dependency map accepted as support artifact. Returned to owner Claude for finalization.
+- Next: Supervisor resumed AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE for finalize after successful dispatch.
 
 ## Summary
 平行支援 AG-DES-SW-REF-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
