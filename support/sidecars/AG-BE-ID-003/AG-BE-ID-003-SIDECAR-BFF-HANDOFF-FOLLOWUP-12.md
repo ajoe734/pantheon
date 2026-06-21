@@ -8,10 +8,12 @@
 | Parent owner / reviewer | `Codex2` / `Claude` |
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-21` |
-| Status | `in_progress; ready for review after task commit` |
+| Status | `review_approved; owner closeout recorded before formal done` |
 | Current dev base | `1cedc9791180fee9e38dbf1fa856383fd0afcf81` |
 | Previous sidecar closeout merge | `bfb6b1c640db2a19a3ce025aa8d29982b9164a0b` |
 | Previous reviewed packet merge | `9880c81584ab3b6985c197916674ad073680dd3d` |
+| Reviewed packet PR | `#1964` merged at `321414475757e663317c194522adc76c37f7b3d7` |
+| Closeout PR refresh base | `origin/dev` at `7271174c9e7b12968bd3423254a2e4a23c93125c` after PR `#1980` reported `BEHIND` |
 | New relevant dev merge | `e5f20720` / PR `#1952` for `AG-XR-002A` |
 | New relevant sidecar merge | `285a6d60` / PR `#1954` for `AG-XR-002A-SIDECAR-BFF-HANDOFF` |
 | New compatibility support merge | `e7d75a11` / PR `#1956` for `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` |
@@ -66,6 +68,17 @@ AG-BE-ID-003 runtime or servant-session contract implementation. The parent
 contract carries or derives `interactive`, `trainer`, and `research_task`.
 
 This packet does not approve, reopen, or implement parent `AG-BE-ID-003`.
+
+Owner closeout note: Codex2 approved this support-only packet after PR #1964
+merged into `dev` at `321414475757e663317c194522adc76c37f7b3d7`. This closeout
+records the accepted review state and the support-only boundary before the task
+is formally archived with `AI_NAME=Codex ./scripts/ai-status.sh done`. No L1
+truth, OpenAPI, BFF runtime, route registry, governance, database, OpenClaw
+adapter, compatibility manifest source, or execute-plans source path is changed
+by this closeout. PR #1980 initially reported `BEHIND`; the branch was refreshed
+by merging `origin/dev` at `7271174c9e7b12968bd3423254a2e4a23c93125c`, then
+this task-owned closeout refresh note was recorded so the final branch HEAD
+continues to carry the task id and required trailers.
 
 ## 2. Current Task State Snapshot
 
@@ -385,6 +398,33 @@ Result:
 - `scripts/agora_schema_bundle.py --verify` passed.
 - `scripts/test_agora_compat_manifest.py`: 4 passed.
 - `services/control-plane/bff/tests/test_agora_router.py`: 18 passed.
+
+Owner closeout verification after review approval:
+
+```bash
+git status -sb
+git branch --show-current
+git remote -v
+AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12
+gh pr view 1964 --json number,state,mergedAt,mergeCommit,url,headRefName,baseRefName,title
+git branch -r --contains HEAD
+git rev-parse origin/dev
+git merge --no-edit origin/dev
+git diff --check -- .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_12.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md
+rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_12.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md
+```
+
+Result:
+
+- PR #1964 is merged with merge commit
+  `321414475757e663317c194522adc76c37f7b3d7`.
+- Current branch is the expected task branch.
+- `HEAD` is already contained in `origin/dev`; a separate closeout commit will
+  carry only this accepted-review record.
+- PR #1980 initially reported `BEHIND`; the branch was refreshed by merging
+  `origin/dev` at `7271174c9e7b12968bd3423254a2e4a23c93125c`.
+- `git diff --check` passed for the closeout artifact paths.
+- placeholder scan returned no matches.
 
 ## 13. Handoff Recommendation
 
