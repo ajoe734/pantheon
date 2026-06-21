@@ -1,287 +1,790 @@
-"""Postgres bootstrap for Agora Strategy Workshop persistence.
+"""Agora workshop persistence — three Postgres tables.
 
-The workshop event table stores only encrypted-content references and
-redacted summaries for message events. Raw private content belongs in the
-private content object store, never in these relational rows.
+Tables (owned by this module):
+  strategy_workshop_session      — workshop lifecycle and subject reference
+  strategy_workshop_event        — append-only event log; private content NEVER stored here
+  strategy_completeness_snapshot — completeness/next-question snapshot
+
+Privacy rule: workshop events store only ``private_content_ref`` (pointer to
+the encrypted store) and ``redacted_summary``.  The raw private content must
+never be written into these tables.
+
+Backend env:
+  AGORA_WORKSHOP_STORE_BACKEND   off | postgres  (default: off)
+  AGORA_WORKSHOP_STORE_DSN       Postgres DSN when backend=postgres
+  AGORA_WORKSHOP_STORE_SCHEMA    Schema name     (default: agora)
 """
-
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+import json
+import logging
+import os
+import threading
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
-from services.foundation.postgres_json_store import ensure_postgres_schema, quote_pg_identifier
+_logger = logging.getLogger(__name__)
 
-
-DEFAULT_SCHEMA = ""
-IDEMPOTENCY_AGGREGATE_TYPE = "strategy_workshop"
-WORKSHOP_STATUSES = ("open", "in_review", "concluded", "archived")
-
-
-@dataclass(frozen=True)
-class StrategyWorkshopTableNames:
-    session: str
-    event: str
-    version_link: str
-    completeness_snapshot: str
-    private_content_object: str
+BACKEND_ENV = "AGORA_WORKSHOP_STORE_BACKEND"
+DSN_ENV = "AGORA_WORKSHOP_STORE_DSN"
+SCHEMA_ENV = "AGORA_WORKSHOP_STORE_SCHEMA"
+DEFAULT_SCHEMA = "agora"
 
 
-def _clean_schema(schema: str | None) -> str:
-    return str(schema or "").strip()
+# --------------------------------------------------------------------------- #
+# Internal helpers
+# --------------------------------------------------------------------------- #
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _qualified(schema: str | None, name: str) -> str:
-    clean_schema = _clean_schema(schema)
-    return f"{clean_schema}.{name}" if clean_schema else name
+def _new_id() -> str:
+    return str(uuid.uuid4())
 
 
-def _quoted(schema: str | None, name: str) -> str:
-    return quote_pg_identifier(_qualified(schema, name))
+def _decode_json(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return None
 
 
-def _tables(schema: str | None = DEFAULT_SCHEMA) -> StrategyWorkshopTableNames:
-    return StrategyWorkshopTableNames(
-        session=_quoted(schema, "strategy_workshop_session"),
-        event=_quoted(schema, "strategy_workshop_event"),
-        version_link=_quoted(schema, "strategy_workshop_version_link"),
-        completeness_snapshot=_quoted(schema, "strategy_completeness_snapshot"),
-        private_content_object=_quoted(schema, "agora_private_content_object"),
-    )
+def _json_dumps(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=True)
 
 
-def build_strategy_workshop_table_ddl(schema: str | None = DEFAULT_SCHEMA) -> list[str]:
-    tables = _tables(schema)
-    return [
-        f"""
-        CREATE TABLE IF NOT EXISTS {tables.session} (
-            workshop_id TEXT PRIMARY KEY,
-            tenant_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            servant_persona_id TEXT NOT NULL,
-            openclaw_session_id TEXT NULL,
-            strategy_id TEXT NULL,
-            active_strategy_spec_registry_id TEXT NULL,
-            active_workshop_version_id TEXT NULL,
-            final_strategy_spec_registry_id TEXT NULL,
-            final_workshop_version_id TEXT NULL,
-            status TEXT NOT NULL,
-            lock_version BIGINT NOT NULL DEFAULT 1,
-            title TEXT NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL,
-            concluded_at TIMESTAMPTZ NULL,
-            archived_at TIMESTAMPTZ NULL,
-            CONSTRAINT ck_strategy_workshop_session_status
-                CHECK (status IN ('open','in_review','concluded','archived'))
-        )
-        """,
-        f"""
-        CREATE TABLE IF NOT EXISTS {tables.event} (
-            event_id TEXT PRIMARY KEY,
-            workshop_id TEXT NOT NULL REFERENCES {tables.session}(workshop_id),
-            sequence_no BIGINT NOT NULL,
-            actor_type TEXT NOT NULL,
-            actor_ref TEXT NULL,
-            event_type TEXT NOT NULL,
-            private_content_ref TEXT NULL,
-            redacted_summary TEXT NULL,
-            redaction_policy_version TEXT NULL,
-            payload_refs_json JSONB NOT NULL DEFAULT '[]'::jsonb,
-            trace_id TEXT NOT NULL,
-            request_id TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            CONSTRAINT ux_workshop_event_sequence UNIQUE (workshop_id, sequence_no),
-            CONSTRAINT ck_strategy_workshop_event_message_redaction CHECK (
-                event_type <> 'message'
-                OR (
-                    private_content_ref IS NOT NULL
-                    AND redacted_summary IS NOT NULL
-                    AND redaction_policy_version IS NOT NULL
+def _row_to_dict(row: Any, cols: List[str]) -> Dict[str, Any]:
+    if isinstance(row, (tuple, list)):
+        return dict(zip(cols, row))
+    return {c: getattr(row, c, None) for c in cols}
+
+
+# --------------------------------------------------------------------------- #
+# MemoryWorkshopStore — thread-safe in-memory backend for dev / tests
+# --------------------------------------------------------------------------- #
+
+_SESSION_COLS = [
+    "workshop_id", "tenant_id", "user_id", "servant_persona_id",
+    "openclaw_session_id", "strategy_id", "active_strategy_spec_registry_id",
+    "selected_version_id", "status", "lock_version", "created_at", "updated_at",
+]
+_EVENT_COLS = [
+    "event_id", "workshop_id", "sequence_no", "actor_type", "event_type",
+    "private_content_ref", "redacted_summary", "payload_refs_json", "trace_id", "created_at",
+]
+_SNAPSHOT_COLS = [
+    "snapshot_id", "workshop_id", "strategy_version_id",
+    "state_map_json", "blocking_items_json", "next_question_json", "created_at",
+]
+
+
+class MemoryWorkshopStore:
+    """Thread-safe in-memory store.  Used when backend=off (dev / tests)."""
+
+    def __init__(self) -> None:
+        self._sessions: Dict[str, Dict[str, Any]] = {}
+        self._events: Dict[str, List[Dict[str, Any]]] = {}
+        self._snapshots: Dict[str, List[Dict[str, Any]]] = {}
+        self._idempotency_keys: Dict[str, bool] = {}
+        self._lock = threading.Lock()
+
+    # --- session ---
+
+    def create_session(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            now = _utc_now()
+            row: Dict[str, Any] = {
+                "workshop_id": session["workshop_id"],
+                "tenant_id": session["tenant_id"],
+                "user_id": session["user_id"],
+                "servant_persona_id": session.get("servant_persona_id"),
+                "openclaw_session_id": session.get("openclaw_session_id"),
+                "strategy_id": session.get("strategy_id"),
+                "active_strategy_spec_registry_id": session.get("active_strategy_spec_registry_id"),
+                "selected_version_id": session.get("selected_version_id"),
+                "status": session.get("status", "open"),
+                "lock_version": 1,
+                "created_at": session.get("created_at", now),
+                "updated_at": session.get("updated_at", now),
+            }
+            self._sessions[row["workshop_id"]] = row
+            return dict(row)
+
+    def get_session(self, workshop_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._sessions.get(workshop_id)
+            return dict(row) if row else None
+
+    def update_session_lock_version(self, workshop_id: str) -> int:
+        with self._lock:
+            session = self._sessions.get(workshop_id)
+            if session is None:
+                return 1
+            session["lock_version"] = session.get("lock_version", 1) + 1
+            session["updated_at"] = _utc_now()
+            return session["lock_version"]
+
+    def append_event_cas(
+        self,
+        workshop_id: str,
+        expected_lock_version: int,
+        event: Dict[str, Any],
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+        """Atomically append an event and bump lock_version if version matches.
+
+        Returns (event_dict, new_lock_version) on success.
+        Returns (None, current_lock_version) on version conflict.
+        Returns (None, None) if workshop not found.
+
+        The entire check + append + bump happens under a single lock, preventing
+        concurrent same-ETag writes from both succeeding.
+        """
+        with self._lock:
+            session = self._sessions.get(workshop_id)
+            if session is None:
+                return (None, None)
+            current_version = session.get("lock_version", 1)
+            if current_version != expected_lock_version:
+                return (None, current_version)
+            bucket = self._events.setdefault(workshop_id, [])
+            ev: Dict[str, Any] = {
+                "event_id": event.get("event_id") or _new_id(),
+                "workshop_id": workshop_id,
+                "sequence_no": len(bucket) + 1,
+                "actor_type": event["actor_type"],
+                "event_type": event["event_type"],
+                "private_content_ref": event.get("private_content_ref"),
+                "redacted_summary": event.get("redacted_summary"),
+                "payload_refs_json": event.get("payload_refs_json"),
+                "trace_id": event.get("trace_id"),
+                "created_at": event.get("created_at", _utc_now()),
+            }
+            bucket.append(ev)
+            session["lock_version"] = current_version + 1
+            session["updated_at"] = _utc_now()
+            return (dict(ev), current_version + 1)
+
+    def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
+        """Return True if the key was already seen (duplicate); False if it is new.
+
+        The key is recorded on first call so subsequent calls return True.
+        scope should encode user+tenant+endpoint to avoid cross-user conflicts.
+        """
+        composite = f"{scope}:{key}"
+        with self._lock:
+            if composite in self._idempotency_keys:
+                return True
+            self._idempotency_keys[composite] = True
+            return False
+
+    def list_sessions(
+        self,
+        *,
+        user_id: str,
+        tenant_id: str,
+        status: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: int = 20,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        with self._lock:
+            rows = [
+                s for s in self._sessions.values()
+                if s["user_id"] == user_id
+                and s["tenant_id"] == tenant_id
+                and (status is None or s["status"] == status)
+            ]
+            rows.sort(key=lambda r: r["created_at"])
+            if cursor:
+                start = next(
+                    (i + 1 for i, r in enumerate(rows) if r["workshop_id"] == cursor),
+                    0,
                 )
-            )
-        )
-        """,
-        f"""
-        CREATE TABLE IF NOT EXISTS {tables.version_link} (
-            workshop_version_id TEXT PRIMARY KEY,
-            workshop_id TEXT NOT NULL REFERENCES {tables.session}(workshop_id),
-            strategy_id TEXT NOT NULL,
-            strategy_spec_registry_id TEXT NOT NULL,
-            parent_workshop_version_id TEXT NULL,
-            source_event_id TEXT NULL,
-            sequence_no BIGINT NOT NULL,
-            created_by TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            CONSTRAINT ux_workshop_version_sequence UNIQUE (workshop_id, sequence_no),
-            CONSTRAINT ux_workshop_registry_version UNIQUE (workshop_id, strategy_spec_registry_id)
-        )
-        """,
-        f"""
-        CREATE TABLE IF NOT EXISTS {tables.completeness_snapshot} (
-            snapshot_id TEXT PRIMARY KEY,
-            workshop_id TEXT NOT NULL REFERENCES {tables.session}(workshop_id),
-            workshop_version_id TEXT NULL,
-            assessment_version BIGINT NOT NULL,
-            state_map_json JSONB NOT NULL,
-            blocking_items_json JSONB NOT NULL,
-            next_question_json JSONB NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            CONSTRAINT ux_workshop_completeness_version UNIQUE (workshop_id, assessment_version)
-        )
-        """,
-        f"""
-        CREATE TABLE IF NOT EXISTS {tables.private_content_object} (
-            private_content_ref TEXT PRIMARY KEY,
-            tenant_id TEXT NOT NULL,
-            owner_user_id TEXT NOT NULL,
-            workshop_id TEXT NOT NULL,
-            event_id TEXT NULL,
-            object_uri TEXT NOT NULL,
-            ciphertext_sha256 CHAR(64) NOT NULL,
-            encrypted_dek BYTEA NOT NULL,
-            kek_key_version TEXT NOT NULL,
-            content_type TEXT NOT NULL,
-            retention_class TEXT NOT NULL,
-            expires_at TIMESTAMPTZ NULL,
-            state TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            deleted_at TIMESTAMPTZ NULL
-        )
-        """,
-    ]
+                rows = rows[start:]
+            page = [dict(r) for r in rows[:limit]]
+            next_cursor = page[-1]["workshop_id"] if len(rows) > limit else None
+            return page, next_cursor
+
+    # --- event ---
+
+    def create_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            wid = event["workshop_id"]
+            bucket = self._events.setdefault(wid, [])
+            ev: Dict[str, Any] = {
+                "event_id": event.get("event_id") or _new_id(),
+                "workshop_id": wid,
+                "sequence_no": len(bucket) + 1,
+                "actor_type": event["actor_type"],
+                "event_type": event["event_type"],
+                "private_content_ref": event.get("private_content_ref"),
+                "redacted_summary": event.get("redacted_summary"),
+                "payload_refs_json": event.get("payload_refs_json"),
+                "trace_id": event.get("trace_id"),
+                "created_at": event.get("created_at", _utc_now()),
+            }
+            bucket.append(ev)
+            return dict(ev)
+
+    def list_events(
+        self,
+        workshop_id: str,
+        *,
+        after_sequence: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        with self._lock:
+            evs = list(self._events.get(workshop_id, []))
+            if after_sequence is not None:
+                evs = [e for e in evs if e["sequence_no"] > after_sequence]
+            return [dict(e) for e in evs]
+
+    # --- completeness snapshot ---
+
+    def create_completeness_snapshot(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            wid = snapshot["workshop_id"]
+            snap: Dict[str, Any] = {
+                "snapshot_id": snapshot.get("snapshot_id") or _new_id(),
+                "workshop_id": wid,
+                "strategy_version_id": snapshot.get("strategy_version_id"),
+                "state_map_json": snapshot.get("state_map_json"),
+                "blocking_items_json": snapshot.get("blocking_items_json"),
+                "next_question_json": snapshot.get("next_question_json"),
+                "created_at": snapshot.get("created_at", _utc_now()),
+            }
+            self._snapshots.setdefault(wid, []).append(snap)
+            return dict(snap)
+
+    def get_latest_completeness_snapshot(
+        self, workshop_id: str
+    ) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            snaps = self._snapshots.get(workshop_id, [])
+            return dict(snaps[-1]) if snaps else None
 
 
-def build_strategy_workshop_index_ddl(schema: str | None = DEFAULT_SCHEMA) -> list[str]:
-    tables = _tables(schema)
+# --------------------------------------------------------------------------- #
+# PostgresWorkshopStore — production Postgres backend
+# --------------------------------------------------------------------------- #
 
-    def index_name(name: str) -> str:
-        return quote_pg_identifier(_qualified(schema, name))
+class PostgresWorkshopStore:
+    """Postgres-backed workshop store.
 
-    return [
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_workshop_user_status_updated")}
-        ON {tables.session}
-        (tenant_id, user_id, status, updated_at DESC)
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_workshop_servant_status_updated")}
-        ON {tables.session}
-        (servant_persona_id, status, updated_at DESC)
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_workshop_strategy_updated")}
-        ON {tables.session}
-        (strategy_id, updated_at DESC)
-        WHERE strategy_id IS NOT NULL
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_workshop_active_registry_ref")}
-        ON {tables.session}
-        (active_strategy_spec_registry_id)
-        WHERE active_strategy_spec_registry_id IS NOT NULL
-        """,
-        f"""
-        CREATE UNIQUE INDEX IF NOT EXISTS {index_name("ux_workshop_openclaw_session")}
-        ON {tables.session}
-        (openclaw_session_id)
-        WHERE openclaw_session_id IS NOT NULL
-        """,
-        f"""
-        CREATE UNIQUE INDEX IF NOT EXISTS {index_name("ux_workshop_event_sequence")}
-        ON {tables.event}
-        (workshop_id, sequence_no)
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_workshop_event_created")}
-        ON {tables.event}
-        (workshop_id, created_at, sequence_no)
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_workshop_event_trace")}
-        ON {tables.event}
-        (trace_id)
-        """,
-        f"""
-        CREATE UNIQUE INDEX IF NOT EXISTS {index_name("ux_workshop_event_private_ref")}
-        ON {tables.event}
-        (private_content_ref)
-        WHERE private_content_ref IS NOT NULL
-        """,
-        f"""
-        CREATE UNIQUE INDEX IF NOT EXISTS {index_name("ux_workshop_version_sequence")}
-        ON {tables.version_link}
-        (workshop_id, sequence_no)
-        """,
-        f"""
-        CREATE UNIQUE INDEX IF NOT EXISTS {index_name("ux_workshop_registry_version")}
-        ON {tables.version_link}
-        (workshop_id, strategy_spec_registry_id)
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_workshop_version_strategy")}
-        ON {tables.version_link}
-        (strategy_id, created_at DESC)
-        """,
-        f"""
-        CREATE UNIQUE INDEX IF NOT EXISTS {index_name("ux_workshop_completeness_version")}
-        ON {tables.completeness_snapshot}
-        (workshop_id, assessment_version)
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_workshop_completeness_latest")}
-        ON {tables.completeness_snapshot}
-        (workshop_id, created_at DESC)
-        """,
-        f"""
-        CREATE UNIQUE INDEX IF NOT EXISTS {index_name("ux_private_content_object_uri")}
-        ON {tables.private_content_object}
-        (object_uri)
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_private_content_owner_expiry")}
-        ON {tables.private_content_object}
-        (tenant_id, owner_user_id, expires_at)
-        WHERE state = 'active'
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_private_content_workshop_created")}
-        ON {tables.private_content_object}
-        (workshop_id, created_at DESC)
-        """,
-        f"""
-        CREATE INDEX IF NOT EXISTS {index_name("ix_private_content_expiry_gc")}
-        ON {tables.private_content_object}
-        (expires_at)
-        WHERE state = 'active' AND expires_at IS NOT NULL
-        """,
-    ]
+    Bootstrap creates the three tables and their §22.6 indexes on first run.
+    Restricted roles that cannot CREATE SCHEMA are tolerated if the schema
+    already exists.
+    """
 
-
-def build_strategy_workshop_bootstrap_ddl(schema: str | None = DEFAULT_SCHEMA) -> list[str]:
-    return build_strategy_workshop_table_ddl(schema) + build_strategy_workshop_index_ddl(schema)
-
-
-class PostgresStrategyWorkshopStore:
-    """Small bootstrap wrapper for the strategy workshop owner tables."""
-
-    def __init__(self, *, dsn: str, schema: str | None = DEFAULT_SCHEMA, bootstrap: bool = True) -> None:
+    def __init__(self, *, dsn: str, schema: str = DEFAULT_SCHEMA) -> None:
         if not dsn:
-            raise ValueError("Postgres DSN is required")
+            raise ValueError("Postgres DSN is required for PostgresWorkshopStore")
         self.dsn = dsn
-        self.schema = _clean_schema(schema)
-        if bootstrap:
-            self.bootstrap()
+        self.schema = schema
+        q = f'"{schema}"'
+        self._st = f'{q}."strategy_workshop_session"'
+        self._et = f'{q}."strategy_workshop_event"'
+        self._cst = f'{q}."strategy_completeness_snapshot"'
+        self._ikt = f'{q}."workshop_idempotency_key"'
+        self._bootstrap()
+
+    # -- internal --
 
     def _connect(self) -> Any:
         try:
             import psycopg  # type: ignore[import]
         except ImportError as exc:
-            raise RuntimeError("psycopg is required for PostgresStrategyWorkshopStore") from exc
+            raise RuntimeError(
+                "psycopg is required for PostgresWorkshopStore"
+            ) from exc
         return psycopg.connect(self.dsn)
 
-    def bootstrap(self) -> None:
+    def _bootstrap(self) -> None:
         with self._connect() as conn:
-            ensure_postgres_schema(conn, self.schema)
-            for statement in build_strategy_workshop_bootstrap_ddl(self.schema):
-                conn.execute(statement)
+            # Create schema — tolerate restricted-role 42501
+            try:
+                conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") != "42501":
+                    raise
+                if hasattr(conn, "rollback"):
+                    conn.rollback()
+                cur = conn.execute(
+                    "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                    (self.schema,),
+                )
+                if not (cur.fetchone()):
+                    raise
+
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._st} (
+                    workshop_id                      TEXT PRIMARY KEY,
+                    tenant_id                        TEXT NOT NULL,
+                    user_id                          TEXT NOT NULL,
+                    servant_persona_id               TEXT,
+                    openclaw_session_id              TEXT,
+                    strategy_id                      TEXT,
+                    active_strategy_spec_registry_id TEXT,
+                    selected_version_id              TEXT,
+                    status                           TEXT NOT NULL DEFAULT 'open',
+                    lock_version                     INTEGER NOT NULL DEFAULT 1,
+                    created_at                       TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at                       TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_ws_session_user_tenant
+                    ON {self._st} (user_id, tenant_id, created_at DESC)
+            """)
+
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._et} (
+                    event_id            TEXT PRIMARY KEY,
+                    workshop_id         TEXT NOT NULL
+                        REFERENCES {self._st}(workshop_id),
+                    sequence_no         INTEGER NOT NULL,
+                    actor_type          TEXT NOT NULL,
+                    event_type          TEXT NOT NULL,
+                    private_content_ref TEXT,
+                    redacted_summary    TEXT,
+                    payload_refs_json   JSONB,
+                    trace_id            TEXT,
+                    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT uq_ws_event_seq UNIQUE (workshop_id, sequence_no)
+                )
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_ws_event_workshop_created
+                    ON {self._et} (workshop_id, created_at)
+            """)
+            # Add FK for existing tables that were created before this constraint was added.
+            try:
+                conn.execute(f"""
+                    ALTER TABLE {self._et}
+                        ADD CONSTRAINT fk_ws_event_session
+                        FOREIGN KEY (workshop_id)
+                        REFERENCES {self._st}(workshop_id)
+                """)
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") not in ("42710", "42P16"):
+                    raise
+                if hasattr(conn, "rollback"):
+                    conn.rollback()
+
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._cst} (
+                    snapshot_id         TEXT PRIMARY KEY,
+                    workshop_id         TEXT NOT NULL
+                        REFERENCES {self._st}(workshop_id),
+                    strategy_version_id TEXT,
+                    state_map_json      JSONB,
+                    blocking_items_json JSONB,
+                    next_question_json  JSONB,
+                    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_ws_snapshot_workshop_created
+                    ON {self._cst} (workshop_id, created_at)
+            """)
+            # Add FK for existing tables that were created before this constraint was added.
+            try:
+                conn.execute(f"""
+                    ALTER TABLE {self._cst}
+                        ADD CONSTRAINT fk_ws_snapshot_session
+                        FOREIGN KEY (workshop_id)
+                        REFERENCES {self._st}(workshop_id)
+                """)
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") not in ("42710", "42P16"):
+                    raise
+                if hasattr(conn, "rollback"):
+                    conn.rollback()
+
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._ikt} (
+                    scope               TEXT NOT NULL,
+                    idempotency_key     TEXT NOT NULL,
+                    recorded_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT pk_ws_idempotency_key PRIMARY KEY (scope, idempotency_key)
+                )
+            """)
+
+    # --- session ---
+
+    def create_session(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        now = _utc_now()
+        row: Dict[str, Any] = {
+            "workshop_id": session["workshop_id"],
+            "tenant_id": session["tenant_id"],
+            "user_id": session["user_id"],
+            "servant_persona_id": session.get("servant_persona_id"),
+            "openclaw_session_id": session.get("openclaw_session_id"),
+            "strategy_id": session.get("strategy_id"),
+            "active_strategy_spec_registry_id": session.get("active_strategy_spec_registry_id"),
+            "selected_version_id": session.get("selected_version_id"),
+            "status": session.get("status", "open"),
+            "lock_version": 1,
+            "created_at": now,
+            "updated_at": now,
+        }
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self._st}
+                    (workshop_id, tenant_id, user_id, servant_persona_id,
+                     openclaw_session_id, strategy_id,
+                     active_strategy_spec_registry_id, selected_version_id,
+                     status, lock_version, created_at, updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    row["workshop_id"], row["tenant_id"], row["user_id"],
+                    row["servant_persona_id"], row["openclaw_session_id"],
+                    row["strategy_id"], row["active_strategy_spec_registry_id"],
+                    row["selected_version_id"], row["status"], row["lock_version"],
+                    row["created_at"], row["updated_at"],
+                ),
+            )
+        return row
+
+    def get_session(self, workshop_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT workshop_id, tenant_id, user_id, servant_persona_id,
+                       openclaw_session_id, strategy_id,
+                       active_strategy_spec_registry_id, selected_version_id,
+                       status, lock_version,
+                       created_at::text, updated_at::text
+                FROM {self._st} WHERE workshop_id = %s
+                """,
+                (workshop_id,),
+            )
+            row = cur.fetchone()
+        return _row_to_dict(row, _SESSION_COLS) if row is not None else None
+
+    def update_session_lock_version(self, workshop_id: str) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                UPDATE {self._st}
+                   SET lock_version = lock_version + 1,
+                       updated_at   = now()
+                 WHERE workshop_id = %s
+                RETURNING lock_version
+                """,
+                (workshop_id,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else 1
+
+    def append_event_cas(
+        self,
+        workshop_id: str,
+        expected_lock_version: int,
+        event: Dict[str, Any],
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+        """Atomically append an event and bump lock_version if version matches.
+
+        Returns (event_dict, new_lock_version) on success.
+        Returns (None, current_lock_version) on version conflict.
+        Returns (None, None) if workshop not found.
+
+        Everything runs in a single Postgres transaction: the CAS UPDATE and
+        the event INSERT are committed or rolled back together.
+        """
+        now = _utc_now()
+        event_id = event.get("event_id") or _new_id()
+        payload_refs = event.get("payload_refs_json")
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                UPDATE {self._st}
+                   SET lock_version = lock_version + 1,
+                       updated_at   = now()
+                 WHERE workshop_id = %s AND lock_version = %s
+                RETURNING lock_version
+                """,
+                (workshop_id, expected_lock_version),
+            )
+            bump_row = cur.fetchone()
+            if bump_row is None:
+                cur2 = conn.execute(
+                    f"SELECT lock_version FROM {self._st} WHERE workshop_id = %s",
+                    (workshop_id,),
+                )
+                current_row = cur2.fetchone()
+                return (None, current_row[0] if current_row else None)
+            new_version = bump_row[0]
+            cur3 = conn.execute(
+                f"""
+                INSERT INTO {self._et}
+                    (event_id, workshop_id, sequence_no, actor_type, event_type,
+                     private_content_ref, redacted_summary, payload_refs_json,
+                     trace_id, created_at)
+                SELECT %s, %s,
+                       COALESCE((SELECT MAX(sequence_no) FROM {self._et}
+                                  WHERE workshop_id = %s), 0) + 1,
+                       %s, %s, %s, %s, %s::jsonb, %s, %s
+                RETURNING sequence_no
+                """,
+                (
+                    event_id, workshop_id, workshop_id,
+                    event["actor_type"], event["event_type"],
+                    event.get("private_content_ref"),
+                    event.get("redacted_summary"),
+                    _json_dumps(payload_refs),
+                    event.get("trace_id"),
+                    now,
+                ),
+            )
+            seq_row = cur3.fetchone()
+        return (
+            {
+                "event_id": event_id,
+                "workshop_id": workshop_id,
+                "sequence_no": seq_row[0] if seq_row else 1,
+                "actor_type": event["actor_type"],
+                "event_type": event["event_type"],
+                "private_content_ref": event.get("private_content_ref"),
+                "redacted_summary": event.get("redacted_summary"),
+                "payload_refs_json": payload_refs,
+                "trace_id": event.get("trace_id"),
+                "created_at": now,
+            },
+            new_version,
+        )
+
+    def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
+        """Return True if duplicate; False if first occurrence (and record it).
+
+        Uses INSERT ... ON CONFLICT DO NOTHING for atomic first-write-wins dedup.
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                INSERT INTO {self._ikt} (scope, idempotency_key, recorded_at)
+                VALUES (%s, %s, now())
+                ON CONFLICT DO NOTHING
+                RETURNING 1
+                """,
+                (scope, key),
+            )
+            row = cur.fetchone()
+        # RETURNING row present → first occurrence (new insert).
+        # RETURNING row absent → conflict (duplicate key).
+        return row is None
+
+    def list_sessions(
+        self,
+        *,
+        user_id: str,
+        tenant_id: str,
+        status: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: int = 20,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        params: List[Any] = [user_id, tenant_id]
+        where = "user_id = %s AND tenant_id = %s"
+        if status:
+            where += " AND status = %s"
+            params.append(status)
+        if cursor:
+            where += (
+                f" AND created_at > (SELECT created_at FROM {self._st}"
+                " WHERE workshop_id = %s)"
+            )
+            params.append(cursor)
+        params.append(limit + 1)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT workshop_id, tenant_id, user_id, servant_persona_id,
+                       openclaw_session_id, strategy_id,
+                       active_strategy_spec_registry_id, selected_version_id,
+                       status, lock_version,
+                       created_at::text, updated_at::text
+                FROM {self._st}
+                WHERE {where}
+                ORDER BY created_at ASC
+                LIMIT %s
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+        sessions = [_row_to_dict(r, _SESSION_COLS) for r in rows]
+        if len(sessions) > limit:
+            next_cursor = sessions[limit - 1]["workshop_id"]
+            sessions = sessions[:limit]
+        else:
+            next_cursor = None
+        return sessions, next_cursor
+
+    # --- event ---
+
+    def create_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        now = _utc_now()
+        event_id = event.get("event_id") or _new_id()
+        workshop_id = event["workshop_id"]
+        payload_refs = event.get("payload_refs_json")
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                INSERT INTO {self._et}
+                    (event_id, workshop_id, sequence_no, actor_type, event_type,
+                     private_content_ref, redacted_summary, payload_refs_json,
+                     trace_id, created_at)
+                SELECT %s, %s,
+                       COALESCE((SELECT MAX(sequence_no) FROM {self._et}
+                                  WHERE workshop_id = %s), 0) + 1,
+                       %s, %s, %s, %s, %s::jsonb, %s, %s
+                RETURNING sequence_no
+                """,
+                (
+                    event_id, workshop_id, workshop_id,
+                    event["actor_type"], event["event_type"],
+                    event.get("private_content_ref"),
+                    event.get("redacted_summary"),
+                    _json_dumps(payload_refs),
+                    event.get("trace_id"),
+                    now,
+                ),
+            )
+            seq_row = cur.fetchone()
+        return {
+            "event_id": event_id,
+            "workshop_id": workshop_id,
+            "sequence_no": seq_row[0] if seq_row else 1,
+            "actor_type": event["actor_type"],
+            "event_type": event["event_type"],
+            "private_content_ref": event.get("private_content_ref"),
+            "redacted_summary": event.get("redacted_summary"),
+            "payload_refs_json": payload_refs,
+            "trace_id": event.get("trace_id"),
+            "created_at": now,
+        }
+
+    def list_events(
+        self,
+        workshop_id: str,
+        *,
+        after_sequence: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        params: List[Any] = [workshop_id]
+        where = "workshop_id = %s"
+        if after_sequence is not None:
+            where += " AND sequence_no > %s"
+            params.append(after_sequence)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT event_id, workshop_id, sequence_no, actor_type, event_type,
+                       private_content_ref, redacted_summary,
+                       payload_refs_json::text, trace_id, created_at::text
+                FROM {self._et}
+                WHERE {where}
+                ORDER BY sequence_no ASC
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+        result = []
+        for row in rows:
+            r = _row_to_dict(row, _EVENT_COLS)
+            r["payload_refs_json"] = _decode_json(r.get("payload_refs_json"))
+            result.append(r)
+        return result
+
+    # --- completeness snapshot ---
+
+    def create_completeness_snapshot(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        now = _utc_now()
+        row: Dict[str, Any] = {
+            "snapshot_id": snapshot.get("snapshot_id") or _new_id(),
+            "workshop_id": snapshot["workshop_id"],
+            "strategy_version_id": snapshot.get("strategy_version_id"),
+            "state_map_json": snapshot.get("state_map_json"),
+            "blocking_items_json": snapshot.get("blocking_items_json"),
+            "next_question_json": snapshot.get("next_question_json"),
+            "created_at": now,
+        }
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self._cst}
+                    (snapshot_id, workshop_id, strategy_version_id,
+                     state_map_json, blocking_items_json, next_question_json, created_at)
+                VALUES (%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s)
+                """,
+                (
+                    row["snapshot_id"], row["workshop_id"],
+                    row["strategy_version_id"],
+                    _json_dumps(row["state_map_json"]),
+                    _json_dumps(row["blocking_items_json"]),
+                    _json_dumps(row["next_question_json"]),
+                    row["created_at"],
+                ),
+            )
+        return row
+
+    def get_latest_completeness_snapshot(
+        self, workshop_id: str
+    ) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT snapshot_id, workshop_id, strategy_version_id,
+                       state_map_json::text, blocking_items_json::text,
+                       next_question_json::text, created_at::text
+                FROM {self._cst}
+                WHERE workshop_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (workshop_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        r = _row_to_dict(row, _SNAPSHOT_COLS)
+        r["state_map_json"] = _decode_json(r.get("state_map_json"))
+        r["blocking_items_json"] = _decode_json(r.get("blocking_items_json"))
+        r["next_question_json"] = _decode_json(r.get("next_question_json"))
+        return r
+
+
+# --------------------------------------------------------------------------- #
+# Factory
+# --------------------------------------------------------------------------- #
+
+def make_workshop_store(
+    backend: Optional[str] = None,
+    dsn: Optional[str] = None,
+    schema: Optional[str] = None,
+) -> Any:
+    """Return the appropriate WorkshopStore implementation.
+
+    backend=off  → MemoryWorkshopStore (default; safe for dev and tests)
+    backend=postgres → PostgresWorkshopStore
+    """
+    resolved = (backend or os.environ.get(BACKEND_ENV, "off")).strip().lower()
+    if resolved in {"off", "false", "disabled", "none", ":memory:", ""}:
+        return MemoryWorkshopStore()
+    if resolved == "postgres":
+        resolved_dsn = dsn or os.environ.get(DSN_ENV, "")
+        if not resolved_dsn:
+            raise RuntimeError(
+                f"{DSN_ENV} must be set when {BACKEND_ENV}=postgres"
+            )
+        resolved_schema = schema or os.environ.get(SCHEMA_ENV, DEFAULT_SCHEMA)
+        return PostgresWorkshopStore(dsn=resolved_dsn, schema=resolved_schema)
+    raise RuntimeError(
+        f"Unknown {BACKEND_ENV}={resolved!r}; expected 'off' or 'postgres'"
+    )
