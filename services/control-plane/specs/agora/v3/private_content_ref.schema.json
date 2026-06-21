@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12",
+  "$id": "https://pantheon.internal/specs/agora/v3/private_content_ref.schema.json",
+  "title": "PrivateContentRef",
+  "description": "Opaque reference to a private content object. Encodes no tenant, user, workshop or object-store path (AG-DES-SW-PRIV-001 §3.3).",
+  "type": "string",
+  "pattern": "^pcnt_[0-9A-HJKMNP-TV-Z]{26}$",
+  "examples": [
+    "pcnt_01KVM5JZBQZ1W50SPRG6S0850M"
+  ],
+  "x-ag-task": "AG-DES-SW-PRIV-001",
+  "x-frozen": false
+}

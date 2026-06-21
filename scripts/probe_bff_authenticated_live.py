@@ -971,24 +971,34 @@ def build_rbac_matrix_results(
         can_write = bool(case["can_write"])
         deny_status = {401, 403} if label == "anonymous" else {403}
 
+        case_info = source.get("cases", {}).get(label, {})
+        auth_case_kind = str(case_info.get("kind") or "") if isinstance(case_info, dict) else ""
+        token_hash = sha256_12(token) if token else None
+
         for path in RBAC_READ_PATHS:
+            resource = path.strip("/").replace("/", "-")
             probe = Probe(
                 "GET",
                 path,
-                f"rbac-read-{label}-{path.strip('/').replace('/', '-')}",
+                f"rbac-read-{label}-{resource}",
                 expect_status={200} if can_read else deny_status,
                 expect_error_envelope=not can_read,
                 allowed_error_codes=() if can_read else DENIED_ERROR_CODES,
             )
-            results.append(
-                request_json(
-                    base_url=base_url,
-                    probe=probe,
-                    token=token,
-                    timeout=timeout,
-                    idempotency_prefix=idempotency_prefix,
-                )
+            result = request_json(
+                base_url=base_url,
+                probe=probe,
+                token=token,
+                timeout=timeout,
+                idempotency_prefix=idempotency_prefix,
             )
+            result["rbac_label"] = label
+            result["rbac_operation"] = "read"
+            result["rbac_resource"] = resource
+            result["auth_case_kind"] = auth_case_kind
+            if token_hash:
+                result["request_bearer_sha256_12"] = token_hash
+            results.append(result)
 
         for name, path, base_body in RBAC_WRITE_PATHS:
             marker = f"live-rbac-{label}-{name}-{int(time.time())}"
@@ -1011,6 +1021,12 @@ def build_rbac_matrix_results(
                 timeout=timeout,
                 idempotency_prefix=idempotency_prefix,
             )
+            result["rbac_label"] = label
+            result["rbac_operation"] = "write"
+            result["rbac_resource"] = name
+            result["auth_case_kind"] = auth_case_kind
+            if token_hash:
+                result["request_bearer_sha256_12"] = token_hash
             result["request_marker_sha256_12"] = marker_hash
             result["side_effect_check"] = rbac_write_side_effect_check(
                 result,

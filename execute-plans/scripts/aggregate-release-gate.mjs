@@ -69,6 +69,17 @@ const gateTitles = {
 const REQUIRED_RBAC_LABELS = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"];
 const REQUIRED_RBAC_READ_FAMILIES = ["bff-strategies", "bff-ranking-formulas", "bff-agora-signals"];
 const REQUIRED_RBAC_WRITE_FAMILIES = ["strategy", "ranking-formula", "agora-note", "intervention-claim"];
+const REQUIRED_RBAC_READ_PATHS = {
+  "bff-strategies": "/bff/strategies",
+  "bff-ranking-formulas": "/bff/ranking-formulas",
+  "bff-agora-signals": "/bff/agora/signals",
+};
+const REQUIRED_RBAC_WRITE_PATHS = {
+  strategy: "/bff/strategies",
+  "ranking-formula": "/bff/ranking-formulas",
+  "agora-note": "/bff/agora/notes",
+  "intervention-claim": "/bff/v5/interventions/int-live-rbac-matrix/claim",
+};
 const REQUIRED_RBAC_MATRIX_FAMILIES = REQUIRED_RBAC_LABELS.flatMap((label) => [
   ...REQUIRED_RBAC_READ_FAMILIES.map((family) => `rbac-read-${label}-${family}`),
   ...REQUIRED_RBAC_WRITE_FAMILIES.map((family) => `rbac-write-${label}-${family}`),
@@ -299,6 +310,43 @@ function approvalRaceDetailProof(race) {
 function extractedResultValue(result, key) {
   const extracted = result?.extracted && typeof result.extracted === "object" ? result.extracted : {};
   return extracted[key];
+}
+
+function rbacMatrixDetailFamily(item, rbacCaseInfoByLabel) {
+  const family = String(item?.family || "");
+  const match = family.match(/^rbac-(read|write)-([^-]+)-(.+)$/);
+  if (!match) return "";
+  const [, operation, label, resource] = match;
+  const expectedPath = operation === "read"
+    ? REQUIRED_RBAC_READ_PATHS[resource]
+    : REQUIRED_RBAC_WRITE_PATHS[resource];
+  const expectedMethod = operation === "read" ? "GET" : "POST";
+  const caseInfo = rbacCaseInfoByLabel.get(label);
+  if (!expectedPath || !caseInfo) return "";
+  const authCaseLinked = label === "anonymous"
+    ? item?.auth_case_kind === "anonymous" && !item?.request_bearer_sha256_12
+    : item?.auth_case_kind === "provided_bearer"
+      && caseInfo?.kind === "provided_bearer"
+      && item?.request_bearer_sha256_12 === caseInfo?.sha256_12;
+  return item?.rbac_label === label
+    && item?.rbac_operation === operation
+    && item?.rbac_resource === resource
+    && item?.method === expectedMethod
+    && item?.path === expectedPath
+    && authCaseLinked
+    ? family
+    : "";
+}
+
+function sseAttemptUrlMatchesChannel(urlPath, expectedChannel) {
+  if (typeof urlPath !== "string" || !urlPath || !expectedChannel) return false;
+  try {
+    const parsed = new URL(urlPath, "https://pantheon.local");
+    return parsed.pathname === "/bff/events/stream"
+      && parsed.searchParams.get("channel") === expectedChannel;
+  } catch {
+    return false;
+  }
 }
 
 function twoManRaceDetailProof(race) {
@@ -638,6 +686,15 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const duplicateRbacMatrixFamilies = REQUIRED_RBAC_MATRIX_FAMILIES.filter((family) => (rbacFamilyCounts.get(family) || 0) > 1);
   const rbacMatrixCoveredFamilyCount = REQUIRED_RBAC_MATRIX_FAMILIES.length - missingRbacMatrixFamilies.length;
   const rbacMatrixCoverageOk = missingRbacMatrixFamilies.length === 0 && duplicateRbacMatrixFamilies.length === 0;
+  const rbacDetailLinkedFamilyCounts = new Map();
+  for (const item of rbacMatrix) {
+    const linkedFamily = rbacMatrixDetailFamily(item, rbacCaseInfoByLabel);
+    if (linkedFamily) rbacDetailLinkedFamilyCounts.set(linkedFamily, (rbacDetailLinkedFamilyCounts.get(linkedFamily) || 0) + 1);
+  }
+  const missingRbacDetailLinkedFamilies = REQUIRED_RBAC_MATRIX_FAMILIES.filter((family) => !rbacDetailLinkedFamilyCounts.has(family));
+  const duplicateRbacDetailLinkedFamilies = REQUIRED_RBAC_MATRIX_FAMILIES.filter((family) => (rbacDetailLinkedFamilyCounts.get(family) || 0) > 1);
+  const rbacMatrixDetailLinkedFamilyCount = REQUIRED_RBAC_MATRIX_FAMILIES.length - missingRbacDetailLinkedFamilies.length;
+  const rbacMatrixDetailLinksOk = missingRbacDetailLinkedFamilies.length === 0 && duplicateRbacDetailLinkedFamilies.length === 0;
   const rbacWrite = rbacMatrix.filter((item) => String(item?.family || "").startsWith("rbac-write-"));
   const rbacWriteSideEffectProofs = rbacWrite.filter((item) => item?.side_effect_check?.ok === true);
   const rbacWriteMarkerLinkedProofs = rbacWrite.filter((item) =>
@@ -708,6 +765,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
   const fullRbacMatrix = rbacProbeCount >= REQUIRED_RBAC_MATRIX_FAMILIES.length
     && rbacMatrix.length >= REQUIRED_RBAC_MATRIX_FAMILIES.length
     && rbacMatrixCoverageOk
+    && rbacMatrixDetailLinksOk
     && requiredRbacCaseCoverage;
   const distinctProvidedRbacCaseHashCount = new Set(providedRbacCaseHashes).size;
   const distinctProvidedRbac = providedRbacCaseHashes.length === expectedProvidedCases
@@ -780,7 +838,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManTokenPair
       && twoManTokenPairDistinct,
     note: {
-      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
+      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} detailLinks:${rbacMatrixDetailLinkedFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 targetLinks:${approvalDetailProof.targetLinkedCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 targetLinks:${twoManDetailProof.targetLinkedCount}/2 signatureLinks:${twoManDetailProof.signatureLinkedCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
@@ -863,7 +921,12 @@ function analyzeSseSmoke(stepOutcomes) {
       const firstEvent = attempt?.first_event && typeof attempt.first_event === "object" ? attempt.first_event : {};
       const firstEventData = firstEvent?.data && typeof firstEvent.data === "object" ? firstEvent.data : {};
       const shapeChecks = firstEvent?.shape_checks && typeof firstEvent.shape_checks === "object" ? firstEvent.shape_checks : {};
+      const eventLine = typeof firstEvent?.event === "string" ? firstEvent.event : "";
+      const dataType = typeof firstEventData?.type === "string" ? firstEventData.type : "";
+      const dataTimestamp = typeof firstEventData?.timestamp === "string" ? firstEventData.timestamp : "";
       return Number(attempt?.attempt) === index + 1
+        && attempt?.mode === "bearer_polyfill"
+        && sseAttemptUrlMatchesChannel(attempt?.url_path, sseChannel)
         && typeof attempt?.cursor_event_id === "string"
         && attempt.cursor_event_id === cursor
         && (index === 0 || cursor === reconnectExpectedEventIds[index - 1])
@@ -875,6 +938,9 @@ function analyzeSseSmoke(stepOutcomes) {
         && observed === expected
         && firstEvent?.id === observed
         && firstEventData?.id === observed
+        && eventLine === dataType
+        && dataType.length > 0
+        && dataTimestamp.length > 0
         && shapeChecks?.id_line_matches_data_id === true
         && shapeChecks?.event_line_matches_data_type === true
         && shapeChecks?.data_json_parse_ok === true;
