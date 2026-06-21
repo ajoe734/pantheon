@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-21` |
 | Status | `review handoff prepared` |
-| Current Pantheon dev base | `dd812370282b6096205718e58fb8f40781841d07` |
+| Current Pantheon dev base | `61b78053d4af0da094ba9edd3b85693678cdb9d2` |
 | Previous packet closeout | Followup-30 archived `done`; packet commit `f3c7811b`; closeout review commit `4b3d7517`; final closeout PR `#2085` merged at `e048d60c` |
 | Parent implementation PR | execute-plans PR `#66`, `OPEN` / `UNKNOWN`, head `de7834b8c33d39942e37f0fb8d4511726d828ad8`, updated `2026-06-21T11:34:55Z`; `integration-gate` still failed |
 | execute-plans dev base | `574cc541bf326e031a2f6bf9081e428a708b929a` |
@@ -28,13 +28,13 @@ This followup refreshes the `AG-FE-ID-001` BFF/frontend handoff after
 
 Material changes since followup-30:
 
-1. Pantheon `origin/dev` advanced from `e048d60c` to `dd812370`. The new Agora
+1. Pantheon `origin/dev` advanced from `e048d60c` to `61b78053`. The new Agora
    runtime deltas are research/workshop surfaces: `AG-BE-SW-004`,
-   `AG-BE-RS-001`, and AG-BE-RS support sidecars. There is still no delta in
+   `AG-BE-RS-001`, and `AG-BE-RS-002`. There is still no delta in
    `services/control-plane/bff/agora/router.py` or
    `services/control-plane/bff/agora/servant/*`.
 2. Focused BFF validation still passes for the AG-FE-ID-001 identity and
-   servant-session surface: `39 passed in 30.34s`.
+   servant-session surface: `39 passed in 21.02s`.
 3. execute-plans `origin/dev` advanced from `c357688c` to `574cc541` through
    PR `#68`, refreshing `src/lib/bff-v1/agora/types.ts` and adjusting eslint
    ignore behavior for the Pantheon contract mirror. Parent PR `#66` has not
@@ -62,7 +62,7 @@ Status commands used `AI_NAME=Codex`.
 | `AG-BE-ID-003` | archived `done` | Servant-session backend facade remains available; parent must still prove frontend session client/UI readiness before enabling session controls. |
 | `AG-BE-SW-004` | archived `done` | Workshop SSE aggregate stream is new Phase 2 context; do not fold it into the Phase 1 identity/servant shell. |
 | `AG-BE-RS-001` | archived `done` | ResearchPlan facade is new Phase 3 context; not parent shell acceptance scope. |
-| `AG-BE-RS-002` | active `in_progress`; owner `Codex`, reviewer `Claude` | Research run/progress/result projection work is in flight and separate from AG-FE-ID-001. |
+| `AG-BE-RS-002` | active `in_progress`; owner `Codex`, reviewer `Claude`; code PR `#2092` merged into `dev` | Research run/progress/result projection implementation is now on `dev`, but durable task closeout is not recorded in `ai-status` yet. This remains separate from AG-FE-ID-001. |
 
 Dependency honesty rule: `AG-FE-ID-001` may rely on identity, capability,
 servant ensure, and servant-session BFF routes as backend-available facts. It
@@ -81,16 +81,16 @@ merges or the release-gate blocker is explicitly dispositioned.
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-ID-003` | Confirms servant-session backend dependency is archived `done`. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-SW-004` | Confirms workshop SSE aggregate stream is archived `done`. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-RS-001` | Confirms ResearchPlan facade is archived `done`. |
-| `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-RS-002` | Confirms research run/progress/result work is active and separate. |
+| `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-RS-002` | Confirms `ai-status` still shows active `in_progress` even though code PR `#2092` has merged. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-30.md` | Previous AG-FE-ID-001 support baseline. |
-| `git log --oneline e048d60c..origin/dev --decorate` | Shows Pantheon dev delta through PR `#2090`. |
+| `git log --oneline e048d60c..origin/dev --decorate` | Shows Pantheon dev delta through PR `#2092`. |
 | `git diff --name-status e048d60c..origin/dev -- <checked pathset>` | Confirms research/workshop deltas, no identity/servant router delta. |
 | `rg -n "@router\\.(get|post|delete)|sessions|ensure|reconcile|stream" services/control-plane/bff/agora/router.py services/control-plane/bff/agora/servant/router.py` | Confirms active identity and servant route families. |
 | `gh pr view 66 --repo ajoe734/execute-plans --json ...` | Confirms PR `#66` remains open, merge state `UNKNOWN`, head `de7834b8`. |
 | `gh pr checks 66 --repo ajoe734/execute-plans` | Confirms `integration-gate` failed. |
 | `gh api repos/ajoe734/execute-plans/issues/66/comments ...` | Confirms latest Codex re-review approved the narrow code slice while keeping PR merge blocked by aggregate gate. |
 | execute-plans remote tree probes | Confirm PR branch contains the new shell/client files; `origin/dev` still lacks those files but now has refreshed `types.ts`. |
-| `python3 -m pytest services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py integrations/openclaw/test_persona_agent_sync.py` | `39 passed in 30.34s`. |
+| `python3 -m pytest services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py integrations/openclaw/test_persona_agent_sync.py` | `39 passed in 21.02s`. |
 | `python3 scripts/agora_compat_manifest.py deployment-gate --manifest docs/contracts/agora/dev-compatibility-manifest.json` | Expected fail-closed: not compatible, placeholder frontend runtime commit, blocking reasons non-empty. |
 
 `current-work.md` and the full `ai-activity-log.jsonl` were not read.
@@ -101,11 +101,11 @@ Baseline: followup-30 closeout merge `e048d60c`.
 
 | Change | What changed | Parent implication |
 |---|---|---|
-| Pantheon dev advanced | `origin/dev` moved from `e048d60c` to `dd812370`. | Use `dd812370`, not the followup-30 base, when checking current support facts. |
+| Pantheon dev advanced | `origin/dev` moved from `e048d60c` to `61b78053`. | Use `61b78053`, not the followup-30 base, when checking current support facts. |
 | AG-FE-DB followup | `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-23` merged support/review artifacts. | No AG-FE-ID-001 identity/servant implication. |
 | `AG-BE-SW-004` | Workshop SSE aggregate stream landed; `strategy_workshop/router.py` changed. | Workshop stream context only. Do not treat as parent status-shell acceptance or session UI readiness. |
 | `AG-BE-RS-001` | ResearchPlan facade landed; `research/router.py` and `research/store.py` changed. | Research plan/run surface is Phase 3 scope; keep separate from AG-FE-ID-001 Phase 1 identity/servant shell. |
-| `AG-BE-RS-002` sidecar | Support packet for research run/progress/result projection merged; parent `AG-BE-RS-002` is now active. | Research progress/result UI remains separate follow-through, not a reason to broaden AG-FE-ID-001. |
+| `AG-BE-RS-002` | Support packet merged and implementation PR `#2092` merged into `dev`; `ai-status` still reports active `in_progress`. | Research progress/result UI remains separate follow-through, and the status/code closeout mismatch is not a reason to broaden AG-FE-ID-001. |
 | Identity and servant routes | `git diff e048d60c..origin/dev -- services/control-plane/bff/agora/router.py services/control-plane/bff/agora/servant` returned no changed files. | The BFF identity/servant ledger from followup-30 remains valid. |
 | execute-plans dev advanced | PR `#68` merged at `574cc541`: eslint ignores `pantheon-contract`, and `src/lib/bff-v1/agora/types.ts` was refreshed. | Parent PR `#66` should rebase or otherwise absorb this refreshed type baseline before claiming current dev compatibility. |
 | execute-plans PR `#66` | Still open; merge state changed from `UNSTABLE` in followup-30 to `UNKNOWN`; head unchanged at `de7834b8`. | This is not a merge-readiness improvement. The aggregate gate still fails. |
@@ -128,7 +128,7 @@ Baseline: followup-30 closeout merge `e048d60c`.
 | `GET/POST /bff/agora/sessions*` | Legacy routes still live outside the servant facade. | Do not treat as proof of `interactive`, `trainer`, or `research_task` servant-session readiness. |
 | `GET/POST /bff/agora/ask/sessions*` | Existing quick-ask surface remains separate from the servant facade. | Do not use for parent servant-session controls unless explicitly reassigned. |
 | Workshop SSE stream | `AG-BE-SW-004` landed workshop aggregate streaming. | Separate Phase 2 workshop context; not AG-FE-ID-001 status-shell acceptance. |
-| Research plan/run routes | `AG-BE-RS-001` changed research router/store; `AG-BE-RS-002` run/projection work is active. | Separate Phase 3 research UI/client scope. Do not fold research progress/result cards into the identity/servant shell. |
+| Research plan/run routes | `AG-BE-RS-001` changed research router/store; `AG-BE-RS-002` implementation is now on `dev` while durable status remains active. | Separate Phase 3 research UI/client scope. Do not fold research progress/result cards into the identity/servant shell. |
 
 Safe parent-shell facts now are: user-private identity scope, filtered
 capability readiness, successful servant profile ensure through
@@ -253,8 +253,9 @@ Commands and results:
 |---|---|
 | `git status -sb`; `git branch --show-current`; `git remote -v` | Started on expected task branch with origin `https://github.com/ajoe734/pantheon.git`; only generated followup-31 task brief was untracked. |
 | `AI_NAME=Codex ./scripts/ai-status.sh progress AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31 ...` | Recorded owner progress using the required `AI_NAME=Codex`. |
-| `git fetch origin --prune` | Completed; `origin/dev` advanced to `dd812370`. |
+| `git fetch origin --prune` | Completed; `origin/dev` first advanced to `dd812370`, then later to `61b78053`. |
 | `git merge --ff-only origin/dev` | Fast-forwarded this task branch from `af5f803b` to `dd812370`. |
+| `git merge --no-edit origin/dev` | Merged latest `origin/dev` at `61b78053` after this packet's first commit, bringing in AG-BE-RS-002 research projection changes. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31` | Active `in_progress`, owner `Codex`, reviewer `Claude`, support artifact path. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-30` | Archived `done`; packet/review/closeout durable on `dev`. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001` | Parent active `blocked`, waiting for `Gemini`; PR `#66` gate blocker recorded. |
@@ -262,9 +263,9 @@ Commands and results:
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-ID-003` | Archived `done`; servant-session facade accepted. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-SW-004` | Archived `done`; workshop SSE aggregate stream accepted. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-RS-001` | Archived `done`; ResearchPlan facade accepted. |
-| `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-RS-002` | Active `in_progress`; research run/progress/result projection separate from parent shell. |
-| `git log --oneline e048d60c..origin/dev --decorate --max-count=80` | Shows Pantheon dev delta through PR `#2090`. |
-| `git diff --name-status e048d60c..origin/dev -- services/control-plane/bff/agora/router.py services/control-plane/bff/agora/servant services/control-plane/bff/agora/research services/control-plane/bff/agora/strategy_workshop` | Shows only `research/router.py`, `research/store.py`, and `strategy_workshop/router.py` changes; no identity/servant route delta. |
+| `AI_NAME=Codex python3 scripts/ai_status.py show AG-BE-RS-002` | Active `in_progress`; code PR `#2092` has merged; research run/progress/result projection remains separate from parent shell. |
+| `git log --oneline e048d60c..origin/dev --decorate --max-count=100` | Shows Pantheon dev delta through PR `#2092`. |
+| `git diff --name-status e048d60c..origin/dev -- services/control-plane/bff/agora/router.py services/control-plane/bff/agora/servant services/control-plane/bff/agora/research services/control-plane/bff/agora/strategy_workshop services/control-plane/bff/tests/test_agora_research_run_projection.py` | Shows `research/router.py`, `research/store.py`, `strategy_workshop/router.py`, and research-run projection tests; no identity/servant route delta. |
 | `rg -n "@router\\.(get|post|delete)|sessions|ensure|reconcile|stream" services/control-plane/bff/agora/router.py services/control-plane/bff/agora/servant/router.py` | Confirms `/me`, `/capabilities`, `/servant/ensure`, servant session create/detail/message/terminate/stream routes; no `GET /servant` or `/servant/reconcile` handler. |
 | `git -C /home/lupin/code/execute-plans fetch origin --prune` | Completed; `origin/dev` now `574cc541`. |
 | `git -C /home/lupin/code/execute-plans log --oneline c357688c..origin/dev --decorate --max-count=80` | Shows PR `#68` merge and commit `06769d7` refreshing Agora types. |
@@ -273,14 +274,14 @@ Commands and results:
 | `gh pr view 66 --repo ajoe734/execute-plans --json number,state,mergeStateStatus,headRefName,baseRefName,headRefOid,updatedAt,url,reviewDecision,isDraft` | PR `#66` `OPEN` / `UNKNOWN`, base `dev`, head `task/AG-FE-ID-001`, commit `de7834b8`, not draft. |
 | `gh pr checks 66 --repo ajoe734/execute-plans` | `integration-gate` failed. |
 | `gh pr view 63 --repo ajoe734/execute-plans --json number,state,mergeStateStatus,headRefName,baseRefName,headRefOid,updatedAt,url,reviewDecision,isDraft` | PR `#63` `OPEN` / `UNKNOWN`, head `e1cb9125`, timestamp unchanged. |
-| `python3 -m pytest services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py integrations/openclaw/test_persona_agent_sync.py` | `39 passed in 30.34s`. |
+| `python3 -m pytest services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py integrations/openclaw/test_persona_agent_sync.py` | `39 passed in 21.02s`. |
 | `python3 scripts/agora_compat_manifest.py deployment-gate --manifest docs/contracts/agora/dev-compatibility-manifest.json` | Exit `1`; expected fail-closed with compatibility status, placeholder frontend runtime commit, and blocking reason errors. |
 
 ## 11. Reviewer Handoff
 
 This packet is ready for review by `Claude`. Review should check:
 
-- The update from followup-30 is accurate: Pantheon dev moved to `dd812370`,
+- The update from followup-30 is accurate: Pantheon dev moved to `61b78053`,
   identity/servant routes are unchanged, and new research/workshop surfaces are
   separate from AG-FE-ID-001.
 - execute-plans facts are accurate: `origin/dev` now has PR `#68`, PR `#66`
