@@ -497,13 +497,72 @@ function markdownHasException(idOrLabel) {
   return text.includes(String(idOrLabel).toLowerCase());
 }
 
-function buildGate0(hosted) {
+function listStringValues(value) {
+  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+}
+
+function analyzeLiveEvidencePreflight() {
+  const file = latestAuditFile([/^BFF-LIVE-EVIDENCE-PREFLIGHT\.json$/]);
+  const json = readJson(file);
+  const remediation = json?.operator_remediation && typeof json.operator_remediation === "object"
+    ? json.operator_remediation
+    : {};
+  const missing = listStringValues(json?.missing);
+  const missingSecrets = listStringValues(remediation?.missing_secret_names).length
+    ? listStringValues(remediation?.missing_secret_names)
+    : missing.filter((name) => name.startsWith("PANTHEON_BFF_"));
+  const missingInputs = listStringValues(remediation?.missing_workflow_inputs).length
+    ? listStringValues(remediation?.missing_workflow_inputs)
+    : missing.filter((name) => !name.startsWith("PANTHEON_BFF_"));
+  const invalid = Array.isArray(json?.invalid)
+    ? json.invalid
+      .map((item) => ({
+        name: String(item?.name || "").trim(),
+        reason: String(item?.reason || "").trim(),
+      }))
+      .filter((item) => item.name || item.reason)
+    : [];
+  const environment = String(json?.github_environment || remediation?.github_environment || process.env.PANTHEON_LIVE_EVIDENCE_ENVIRONMENT || "").trim();
+  const workflow = String(remediation?.workflow_dispatch?.recommended_workflow || "Pantheon Stage 0 CI").trim();
+  const commandCount = listStringValues(remediation?.secret_set_commands).length;
+  const hasIssues = Boolean(json && (missing.length || invalid.length));
+  const invalidText = invalid.map((item) => item.name ? `${item.name}:${item.reason || "invalid"}` : item.reason).join(",");
+  const parts = [];
+  if (missingSecrets.length) parts.push(`missingSecrets:${missingSecrets.join(",")}`);
+  if (missingInputs.length) parts.push(`missingInputs:${missingInputs.join(",")}`);
+  if (invalidText) parts.push(`invalid:${invalidText}`);
+  if (environment) parts.push(`environment:${environment}`);
+  if (workflow) parts.push(`workflow:${workflow}`);
+  if (commandCount) parts.push(`remediationCommands:${commandCount}`);
+  return {
+    exists: Boolean(json),
+    file,
+    missing,
+    missingSecrets,
+    missingInputs,
+    invalid,
+    environment,
+    workflow,
+    hasIssues,
+    secretIssue: missingSecrets.length > 0 || invalid.some((item) => item.name.startsWith("PANTHEON_BFF_")),
+    note: json
+      ? hasIssues
+        ? `strict live preflight failed; ${parts.join(" ")}`
+        : `strict live preflight passed; environment:${environment || "unknown"} workflow:${workflow}`
+      : "strict live preflight JSON missing",
+  };
+}
+
+function buildGate0(hosted, preflight) {
   const sha = process.env.PANTHEON_FRONTEND_SHA || process.env.GITHUB_SHA || getGitValue(["rev-parse", "HEAD"]);
   const trackedDirty = getGitValue(["status", "--short", "--untracked-files=no"]);
   const bffShaPresent = envPresent("PANTHEON_BFF_SHA", "PANTHEON_BACKEND_SHA", "PANTHEON_PANTHEON_SHA");
   const feUrlPresent = envPresent("PANTHEON_FE_BASE_URL");
   const bffUrlPresent = envPresent("PANTHEON_BFF_BASE_URL", "VITE_BFF_BASE_URL");
   const authPresent = envPresent("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "BFF_AUTH_TOKEN", "PANTHEON_TEST_OIDC_PATH");
+  const preflightAuthReady = preflight.exists && preflight.missingSecrets.length === 0 && !preflight.secretIssue;
+  const authReady = authPresent || preflightAuthReady;
+  const authStatus = authReady ? "pass" : preflight.secretIssue ? "fail" : "missing";
   const noOldUrl = hosted.exists
     ? hosted.oldHitCount === 0 && hosted.containsOld !== true
     : null;
@@ -536,10 +595,10 @@ function buildGate0(hosted) {
       evidence: hostedEvidence,
       note: noOldUrl === null ? hosted.missingNote || "hosted browser probe missing" : `old URL hit count: ${hosted.oldHitCount}`,
     }),
-    makeCheck("Auth token or test OIDC path available for authenticated smoke.", authPresent ? "pass" : "missing", {
-      owner: authPresent ? "" : GATE_OWNERS[3],
-      evidence: RUN_URL || ROOT,
-      note: authPresent ? "auth input present" : "PANTHEON_BFF_SMOKE_BEARER_TOKEN or test OIDC path missing",
+    makeCheck("Auth token or test OIDC path available for authenticated smoke.", authStatus, {
+      owner: authReady ? "" : GATE_OWNERS[3],
+      evidence: preflight.file || RUN_URL || ROOT,
+      note: authReady ? "auth input present" : preflight.secretIssue ? preflight.note : "PANTHEON_BFF_SMOKE_BEARER_TOKEN or test OIDC path missing",
     }),
   ];
 }
@@ -992,10 +1051,11 @@ function analyzeSseSmoke(stepOutcomes) {
   };
 }
 
-function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth) {
+function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth, preflight) {
   const routeEvidence = routeProbe.file || routeProbe.stepEvidence;
   const authEvidence = authSmoke.file || routeEvidence;
-  const strictAuthEvidence = strictAuth.file || authEvidence || routeEvidence;
+  const strictAuthEvidence = strictAuth.file || preflight.file || authEvidence || routeEvidence;
+  const preflightBlocksStrictEvidence = preflight.exists && preflight.hasIssues;
   const healthStatus = [routeProbe.rows.get("/health")?.status, routeProbe.rows.get("/healthz")?.status].includes("200");
   const openapiStatus = routeProbe.rows.get("/openapi.json")?.status === "200";
   const streamStatus = routeProbe.rows.get("/bff/events/stream")?.status;
@@ -1047,13 +1107,17 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth) {
   const authNote = (note) => authSmoke.exists ? note : authSmoke.missingNote;
   const authMissingResult = { status: authSmoke.missingStatus, note: authSmoke.missingNote };
   const sseStrictOk = sseSmoke.exists && sseSmoke.strict && sseSmoke.summaryPassed && sseSmoke.soakOk;
-  const sseStatus = sseSmoke.exists ? sseStrictOk ? "pass" : "fail" : sseSmoke.missingStatus;
+  const sseStatus = sseSmoke.exists
+    ? sseStrictOk ? "pass" : "fail"
+    : preflightBlocksStrictEvidence ? "fail" : sseSmoke.missingStatus;
   const sseNote = sseSmoke.exists
     ? `strict:${sseSmoke.strict} soak:${sseSmoke.seconds}s heartbeat:${sseSmoke.heartbeatCount}/${sseSmoke.minHeartbeats} reconnect:${sseSmoke.reconnectAttempts}/${sseSmoke.minReconnectAttempts} attemptDetails:${sseSmoke.reconnectAttemptDetailsOk} attemptLineage:${sseSmoke.reconnectAttemptLineageOk} observed:${sseSmoke.reconnectObservedEventIds.length}/${sseSmoke.minReconnectAttempts} observedSequence:${sseSmoke.reconnectObservedSequenceOk} duplicates:${sseSmoke.duplicateEventIds.length + sseSmoke.reconnectDuplicateEventIds.length} missingReplay:${sseSmoke.missingExpected.length + sseSmoke.reconnectMissingExpected.length}`
-    : sseSmoke.missingNote;
-  const strictAuthStatus = (condition) => strictAuth.exists ? condition ? "pass" : "fail" : strictAuth.missingStatus;
+    : preflightBlocksStrictEvidence ? preflight.note : sseSmoke.missingNote;
+  const strictAuthStatus = (condition) => strictAuth.exists
+    ? condition ? "pass" : "fail"
+    : preflightBlocksStrictEvidence ? "fail" : strictAuth.missingStatus;
   const strictAuthOwner = (condition) => strictAuth.exists && condition ? "" : GATE_OWNERS[3];
-  const strictAuthNote = (key) => strictAuth.exists ? strictAuth.note[key] : strictAuth.missingNote;
+  const strictAuthNote = (key) => strictAuth.exists ? strictAuth.note[key] : preflightBlocksStrictEvidence ? preflight.note : strictAuth.missingNote;
   const listResult = authSmoke.exists ? allRowsPass(authSmoke.rows, readListPaths) : authMissingResult;
   const v5Result = authSmoke.exists ? allRowsPass(authSmoke.rows, v5Paths) : authMissingResult;
   const writeResult = authSmoke.exists ? allRowsPass(authSmoke.rows, writePaths) : authMissingResult;
@@ -1093,7 +1157,7 @@ function buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth) {
     }),
     makeCheck("Authenticated: strict SSE soak observes heartbeat and no duplicate replay.", sseStatus, {
       owner: sseStatus === "pass" ? "" : GATE_OWNERS[3],
-      evidence: sseSmoke.file || authEvidence || routeEvidence,
+      evidence: sseSmoke.file || preflight.file || authEvidence || routeEvidence,
       note: sseNote,
     }),
     makeCheck("Authenticated: strict bearer RBAC matrix evidence passed.", strictAuthStatus(strictAuth.rbacOk), {
@@ -1472,14 +1536,15 @@ function main() {
   const authSmoke = analyzeAuthSmoke(stepOutcomes);
   const strictAuth = analyzeStrictAuthEvidence(stepOutcomes);
   const sseSmoke = analyzeSseSmoke(stepOutcomes);
+  const preflight = analyzeLiveEvidencePreflight();
   const hosted = analyzeHostedProbe(stepOutcomes);
   const playwright = analyzePlaywright();
 
   const gates = {
-    0: buildGate0(hosted),
+    0: buildGate0(hosted, preflight),
     1: buildGate1(stepOutcomes),
     2: buildGate2(stepOutcomes),
-    3: buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth),
+    3: buildGate3(routeProbe, authSmoke, sseSmoke, strictAuth, preflight),
     4: buildGate4(hosted),
     5: buildGate5(playwright),
     6: buildGate6(playwright),
