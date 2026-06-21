@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Unblock integration for AG-FE-RS-001-SIDECAR-BFF-HANDOFF: ci-red
-- Status: in_progress
+- Status: done
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Root cause documented; PR merged with all CI green; handing off to reviewer
+- Next: Closeout finalized. PR merged; root cause documented; all CI SUCCESS.
 
 ## Summary
 auto-integrator 無法安全整合 AG-FE-RS-001-SIDECAR-BFF-HANDOFF: ci-red. 請修正 PR/rebase/CI 後交回整合。
@@ -50,3 +50,9 @@ This unblock task required no code changes. The original CI-red was a transient 
 from a supervisor rebase sequence, resolved by the task owner's final closeout sync commit
 before this worker was dispatched. This task brief serves as the documentation artifact
 confirming the resolution.
+
+## Finalization (Claude2)
+
+Review approved by Claude. Reviewer confirmed: root cause documented (stale CI from supervisor
+rebase), PR #2151 merged with all CI SUCCESS (merge commit a5fc30a7), all acceptance criteria
+met. Finalized by Claude2.
