@@ -6,7 +6,7 @@
 - Owner: `Codex2`
 - Reviewer: `Codex`
 - Generated: `2026-06-21`
-- Baseline inspected: `origin/dev` / `fe6136c80b20ae57d525191db0120a845b62d2a7`
+- Baseline inspected: `origin/dev` / `994dce7df17cc71a65abd516d0371d871b44141a`
 - Parent merge evidence: Pantheon PR `#1983` merged `AG-XR-OPENAPI-002`; implementation commit `f7e0b2b9`
 - Mutates canonical truth: `no`
 
@@ -117,7 +117,7 @@ Durable interpretation:
 | Item | Why it matters | Suggested reviewer action |
 |---|---|---|
 | Missing parent review file | `ai-status` references `.orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md`, but the file was not found. | Confirm whether status review notes are sufficient, or ask the reviewer/owner to restore the review artifact before parent `done`. |
-| `origin/dev` advanced during packet prep | Baseline was refreshed to `fe6136c8`; the AG-XR v1.2 surfaces did not change in the intervening MGMT evidence commit. | If reviewing after more dev merges, re-run the focused checks below. |
+| `origin/dev` advanced during packet prep | Baseline was refreshed to `994dce7d`; the AG-XR v1.2 surfaces did not change in the intervening MGMT/BFF commits. | If reviewing after more dev merges, re-run the focused checks below. |
 | Scope separation | This packet is not permission to mutate OpenAPI, runtime, registry, governance, broker, or capital paths. | Review only the support packet and parent acceptance mapping. |
 
 ## Suggested Handoff To Reviewer
@@ -126,7 +126,7 @@ Durable interpretation:
 Support-only acceptance packet ready:
 support/sidecars/AG-XR-OPENAPI-002/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE.md
 
-Baseline: origin/dev fe6136c8. Parent AG-XR-OPENAPI-002 is review_approved.
+Baseline: origin/dev 994dce7d. Parent AG-XR-OPENAPI-002 is review_approved.
 Packet verifies the v1.2 acceptance matrix, dependency map, exact-byte v1.1
 inheritance, lifecycle/status_group semantics, server-side private_content_ref
 boundary, owner/management projection split, and section 9 error coverage.
@@ -162,7 +162,7 @@ git diff --name-status HEAD -- \
 
 ```bash
 python3 -m pytest scripts/test_agora_v1_2_bundle.py -q
-# -> 5 passed in 0.97s
+# -> 5 passed in 2.00s
 git diff --check -- support/sidecars/AG-XR-OPENAPI-002/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE.md
 # -> clean
 ```
