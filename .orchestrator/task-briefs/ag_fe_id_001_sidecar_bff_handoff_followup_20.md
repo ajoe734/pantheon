@@ -34,5 +34,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Claude approved the support packet in
   `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20-REVIEW.md`;
   the review artifact is committed as `b0fba76b` on the task branch.
+- Owner closeout refreshed the task branch against `origin/dev` at
+  `c009f0a5774a81af0686b3a6e4eda21881918e0e` for PR merge readiness. The
+  refreshed dev material is support-only and does not change the approved
+  parent-facing handoff.
 - `current-work.md` and the full `ai-activity-log.jsonl` were not read for this
   task brief refresh.
