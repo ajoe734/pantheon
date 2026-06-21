@@ -6,7 +6,7 @@
 **Date:** 2026-06-21  
 **Author:** Claude (auto-worker)  
 **Reviewer:** Claude2  
-**Status:** handoff_candidate  
+**Status:** publication_ready  
 
 > **Scope notice.** This packet is a support artifact only.
 > It does not modify canonical truth (L1 policy, OpenAPI contracts, DB schemas, or service implementations).
@@ -39,6 +39,8 @@ AG-DES-SW-DB-001 creates the exact executable Postgres migration for the Agora S
 - `UNIQUE (workshop_id, sequence_no)` on events and version links — guarantees append-only ordering invariant
 
 ### 1.3 Indexes added (BFF-relevant)
+
+> **Note:** This table lists only the indexes that directly serve BFF read paths. The full migration defines additional indexes (unique constraints, internal consistency, and private-content management) listed in design closure §8.
 
 The migration adds indexes that directly support the BFF read paths:
 
@@ -81,7 +83,7 @@ The migration adds indexes that directly support the BFF read paths:
 | 10 | POST | `/bff/agora/workshops/{id}/research-runs` | INSERT `strategy_workshop_event` (type=research_dispatch) | Requires active strategy version; mutates `lock_version` |
 | 11 | POST | `/bff/agora/workshops/{id}/consultations` | INSERT `strategy_workshop_event` (type=consultation_open) | Calls consultation-svc via owner API |
 | 12 | POST | `/bff/agora/workshops/{id}/conclude` | UPDATE status=concluded on session | Requires final version; non-reversible; mutates `lock_version` |
-| 13 | GET | `/bff/agora/workshops/{id}/stream` | SSE from `strategy_workshop_event` | Not in v1.1 OpenAPI explicitly; assumed via existing SSE infrastructure |
+| 13 | GET | `/bff/agora/workshops/{id}/stream` | SSE from `strategy_workshop_event` | Explicitly defined in v1.1 OpenAPI as `streamAgoraWorkshop`; SSE stream sourced from `strategy_workshop_event` rows. |
 
 ### 2.3 Status filter alignment gap (critical)
 
@@ -191,17 +193,19 @@ Mismatch between `strategy_id` and `strategy_spec_registry_id` returns `409 STRA
 
 ```
          ┌──────── archived (terminal) ◄────────────────────────┐
-         │                                                       │
-open ────► in_review ──► concluded ──► (archived)               │
-  ▲           │                                                  │
-  └───────────┘ (reopen: requires If-Match + audit reason)      │
-         │                                                       │
-         └───────────────────────────────────────────────────────┘
+         │                             ▲                         │
+open ────► in_review ──► concluded ───┘                         │
+  │  ▲        │                                                  │
+  │  └────────┘ (reopen: requires If-Match + audit reason)      │
+  │                                                              │
+  └──────────────────────────────────────────────────────────────┘
+                (open → archived direct transition allowed)
 ```
 
 - `open` and `in_review`: messages, versions, research runs, and consultations allowed
 - `concluded` and `archived`: all mutations rejected
 - `in_review → open` reopen: requires `If-Match` and a non-empty `reason` field
+- Archiving an `open` workshop directly (without conclude) is allowed; the frontend must show an "Archive" action in both the `open` and `in_review` states.
 - Frontend must disable input areas and show a banner when status is `concluded` or `archived`
 
 ### 3.4 Degraded-mode behavior
