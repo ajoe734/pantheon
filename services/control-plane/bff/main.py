@@ -34556,6 +34556,149 @@ def _mgmt_nl_maybe_provider_answer(
     return answer, status, actions
 
 
+_MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS = 12.0
+# Strong references to in-flight provider finaliser tasks; asyncio keeps only a
+# weak reference to bare tasks, so without this they could be GC'd mid-run.
+_MGMT_NL_PROVIDER_FINALIZE_TASKS: Set["asyncio.Task[Any]"] = set()
+
+
+def _mgmt_nl_provider_inline_grace_seconds() -> float:
+    """Seconds POST /bff/management/nl/ask waits inline for the assistant provider
+    before returning 202 with the deterministic answer and finishing the provider
+    turn in the background. Override with
+    PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS."""
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS")
+    if raw is None or not str(raw).strip():
+        return _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
+    return value if value > 0 else _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
+
+
+def _mgmt_nl_finalize_result(
+    base_result: Dict[str, Any],
+    *,
+    answer: str,
+    provider_status: Dict[str, Any],
+    actions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Rewrite a processing nl/ask result into a completed one for the
+    idempotency record once the provider answer is available."""
+    completed_data = {
+        **base_result.get("data", {}),
+        "status": "completed",
+        "lifecycleStatus": "completed",
+        "lifecycle_status": "completed",
+        "answer": answer,
+        "providerStatus": provider_status,
+        "provider_status": provider_status,
+        "uiActions": actions,
+        "ui_actions": actions,
+        "actions": actions,
+    }
+    completed_meta = {
+        **base_result.get("meta", {}),
+        "status": "completed",
+        "lifecycleStatus": "completed",
+        "lifecycle_status": "completed",
+        "providerStatus": provider_status,
+        "provider_status": provider_status,
+    }
+    return {**base_result, "data": completed_data, "meta": completed_meta}
+
+
+async def _mgmt_nl_finalize_provider_turn(
+    *,
+    provider_task: "asyncio.Future[Any]",
+    deterministic_answer: str,
+    session_id: str,
+    message_id: str,
+    assistant_turn_id: str,
+    trace_id: str,
+    focus: str,
+    resolved_key: str,
+    request_hash: str,
+    audit_log_href: str,
+    conversation_href: str,
+    base_result: Dict[str, Any],
+) -> None:
+    """Finish a nl/ask exchange whose provider call exceeded the inline grace
+    window: await the in-flight agent run, then append the assistant turn exactly
+    once and rewrite the idempotency record from processing -> completed."""
+    try:
+        provider_answer, provider_status, actions = await provider_task
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.warning("Management NL async provider turn failed", exc_info=True)
+        provider_answer, actions = None, []
+        provider_status = _mgmt_nl_provider_status(
+            provider=_mgmt_nl_provider_name(),
+            enabled=True,
+            status="degraded",
+            reason="provider_async_failed",
+            run_id=trace_id,
+        )
+    answer = provider_answer or deterministic_answer
+    try:
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.exchange.completed",
+                "session_id": session_id,
+                "message_id": message_id,
+                "assistant_turn_id": assistant_turn_id,
+                "trace_id": trace_id,
+                "route": "POST /bff/management/nl/ask",
+                "answer": _management_ai_summary_value(answer),
+                "provider_status": provider_status,
+                "actions": actions,
+                "action_count": len(actions),
+                "async_finalized": True,
+            }
+        )
+        _management_ai_append_turn(
+            turn_id=assistant_turn_id,
+            session_id=session_id,
+            role="assistant",
+            text=answer,
+            created_at=utc_now(),
+            trace_id=trace_id,
+            provider_status=provider_status,
+            ui_actions=actions,
+        )
+        _management_nl_publish_completed_events(
+            session_id=session_id,
+            message_id=message_id,
+            assistant_turn_id=assistant_turn_id,
+            trace_id=trace_id,
+            focus=focus,
+            provider_status=provider_status,
+            action_count=len(actions),
+            audit_log_href=audit_log_href,
+            conversation_href=conversation_href,
+        )
+        _mgmt_nl_idempotency_put(
+            resolved_key,
+            request_hash=request_hash,
+            result=_mgmt_nl_finalize_result(
+                base_result,
+                answer=answer,
+                provider_status=provider_status,
+                actions=actions,
+            ),
+        )
+    except Exception:
+        log.warning("Failed to persist async-finalised Management NL turn", exc_info=True)
+
+
+def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
+    task = asyncio.create_task(_mgmt_nl_finalize_provider_turn(**kwargs))
+    _MGMT_NL_PROVIDER_FINALIZE_TASKS.add(task)
+    task.add_done_callback(_MGMT_NL_PROVIDER_FINALIZE_TASKS.discard)
+
+
 @app.post("/bff/management/nl/ask", status_code=202)
 async def bff_management_nl_ask(
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -34817,27 +34960,54 @@ async def bff_management_nl_ask(
     # uvicorn worker, so calling it inline would block the event loop and freeze
     # every other request (reads, writes, SSE) for the whole agent turn. Offload
     # it to a worker thread so the event loop stays free to serve concurrently.
-    provider_answer, provider_status, actions = await asyncio.to_thread(
-        _mgmt_nl_maybe_provider_answer,
-        provider=_mgmt_nl_provider_name(),
-        question=question,
-        focus=focus,
-        identity=identity,
-        caller_tenant_id=caller_tenant_id,
-        session_id=session_id,
-        message_id=message_id,
-        trace_id=trace_id,
-        context_pack=context_pack,
-        audit_id=audit_ref.get("auditId"),
-        allowed_action_kinds=allowed_action_kinds,
-        current_user_attachments=current_user_attachments,
-        openclaw_repair_metadata=openclaw_repair_metadata,
-    )
-    answer = provider_answer or deterministic_answer
-
     assistant_turn_id = f"{message_id}-assistant"
     audit_log_href = _management_ai_audit_href(session_id=session_id, trace_id=trace_id)
     conversation_href = _management_ai_conversation_href(session_id)
+
+    # The assistant-provider call (OpenClawOpsClient.invoke_assistant_provider via
+    # _mgmt_nl_maybe_provider_answer) is a synchronous, blocking HTTP call that
+    # drives a CLI agent and routinely takes 30s+. Run it in a worker thread and
+    # wait only up to a short inline grace window. If it finishes in time we answer
+    # synchronously as before; otherwise we return 202 immediately with the
+    # deterministic answer and providerStatus=processing, and a background task
+    # finalises the assistant turn + idempotency record once the agent completes.
+    # asyncio.wait (unlike wait_for) does NOT cancel on timeout, so the in-flight
+    # agent run is preserved and handed to the finaliser.
+    provider_task = asyncio.create_task(
+        asyncio.to_thread(
+            _mgmt_nl_maybe_provider_answer,
+            provider=_mgmt_nl_provider_name(),
+            question=question,
+            focus=focus,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            session_id=session_id,
+            message_id=message_id,
+            trace_id=trace_id,
+            context_pack=context_pack,
+            audit_id=audit_ref.get("auditId"),
+            allowed_action_kinds=allowed_action_kinds,
+            current_user_attachments=current_user_attachments,
+            openclaw_repair_metadata=openclaw_repair_metadata,
+        )
+    )
+    done, _ = await asyncio.wait(
+        {provider_task}, timeout=_mgmt_nl_provider_inline_grace_seconds()
+    )
+    provider_pending = provider_task not in done
+    if provider_pending:
+        provider_answer, actions = None, []
+        provider_status = _mgmt_nl_provider_status(
+            provider=_mgmt_nl_provider_name(),
+            enabled=True,
+            status="processing",
+            reason="provider_async_pending",
+            run_id=trace_id,
+        )
+    else:
+        # Preserve the previous inline-await exception behaviour.
+        provider_answer, provider_status, actions = provider_task.result()
+    answer = provider_answer or deterministic_answer
 
     _publish_event(
         _sse_buffers["ask"],
@@ -34846,7 +35016,7 @@ async def bff_management_nl_ask(
         {"session_id": session_id, "message_id": message_id, "trace_id": trace_id, "focus": focus},
     )
 
-    exchange_status = "completed"
+    exchange_status = "processing" if provider_pending else "completed"
     result = {
         "status": "accepted",
         "data": {
@@ -34945,16 +35115,17 @@ async def bff_management_nl_ask(
             "fallback": provider_status.get("fallback"),
         }
     )
-    _management_ai_append_turn(
-        turn_id=assistant_turn_id,
-        session_id=session_id,
-        role="assistant",
-        text=answer,
-        created_at=utc_now(),
-        trace_id=trace_id,
-        provider_status=provider_status,
-        ui_actions=actions,
-    )
+    if not provider_pending:
+        _management_ai_append_turn(
+            turn_id=assistant_turn_id,
+            session_id=session_id,
+            role="assistant",
+            text=answer,
+            created_at=utc_now(),
+            trace_id=trace_id,
+            provider_status=provider_status,
+            ui_actions=actions,
+        )
     _management_nl_publish_completed_events(
         session_id=session_id,
         message_id=message_id,
@@ -34967,6 +35138,26 @@ async def bff_management_nl_ask(
         conversation_href=conversation_href,
     )
     _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
+    if provider_pending:
+        # The assistant turn was intentionally NOT persisted above: the store's
+        # append_turn is not an upsert, so writing a placeholder here would leave
+        # a duplicate turn once the real answer lands. The finaliser appends it
+        # exactly once with the real provider answer and rewrites the idempotency
+        # record from processing -> completed.
+        _mgmt_nl_schedule_provider_finalize(
+            provider_task=provider_task,
+            deterministic_answer=deterministic_answer,
+            session_id=session_id,
+            message_id=message_id,
+            assistant_turn_id=assistant_turn_id,
+            trace_id=trace_id,
+            focus=focus,
+            resolved_key=resolved_key,
+            request_hash=request_hash,
+            audit_log_href=audit_log_href,
+            conversation_href=conversation_href,
+            base_result=result,
+        )
     return JSONResponse(status_code=202, content=result)
 
 
