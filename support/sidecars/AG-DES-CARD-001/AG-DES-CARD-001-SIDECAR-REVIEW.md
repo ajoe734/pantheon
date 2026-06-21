@@ -500,3 +500,72 @@ begins the implementation:
 | v4 version_compare schema (merged) | `services/control-plane/specs/agora/v4/version_compare.schema.json` |
 | v4 strategy_readiness schema (merged) | `services/control-plane/specs/agora/v4/strategy_readiness.schema.json` |
 | Agora bundle index v1.2 (chain root for v1.3) | `services/control-plane/specs/agora/bundle_index.v1_2.json` |
+
+---
+
+## 12. Reviewer Findings (Claude2 — 2026-06-21)
+
+Reviewer: Claude2
+Review date: 2026-06-21
+Verdict: **APPROVED**
+
+### 12.1 Design Decision Cross-Check
+
+All four design decisions in §2 are confirmed against source documents.
+
+| Decision | Source | Verdict |
+|---|---|---|
+| §2.1 Cards are projections, not truth owners | `05_workshop_card_contracts.md`: "Cards are projections, not separate truth owners." | ✓ Confirmed |
+| §2.2 Frontend binds from BFF projections only | MASTER_SD_RESPONSE §E: "The frontend may render markdown inside a typed field, but cannot infer card type/meaning by parsing free-form assistant output." | ✓ Confirmed |
+| §2.3 Prior bundles remain immutable | MASTER_SD_RESPONSE §2: `bundle_index.json`, `bundle_index.v1_1.json`, `bundle_index.v1_2.json`, all three `agora_v1*.openapi.yaml` files explicitly listed as "不修改" | ✓ Confirmed |
+| §2.4 SSE stream carries references, not payloads | `05_workshop_card_contracts.md` E14: "The SSE stream carries card-update references; it need not resend every large card payload." | ✓ Confirmed |
+
+### 12.2 Card Type List Cross-Check
+
+MASTER_SD_RESPONSE §E lists exactly 12 required card types in the same order as §5. No additions, deletions, or renames detected.
+
+```text
+user_strategy_description       ✓ §5.1
+servant_reconstruction          ✓ §5.2
+completeness_update             ✓ §5.3
+missing_definition              ✓ §5.4
+next_question                   ✓ §5.5
+research_plan_proposal          ✓ §5.6
+research_progress               ✓ §5.7
+research_result                 ✓ §5.8
+consult_result                  ✓ §5.9
+version_patch_proposal          ✓ §5.10
+version_compare                 ✓ §5.11
+readiness_gate                  ✓ §5.12
+```
+
+All 12 payload field sets in §5 match `05_workshop_card_contracts.md` E2–E13 field-for-field. The envelope in §4 matches E1 exactly.
+
+### 12.3 Downstream Unblock Condition Cross-Check
+
+All six conditions in §8 are confirmed against `07_dispatch_unblock_matrix.md`.
+
+| Task | §8 condition | Matrix condition | Verdict |
+|---|---|---|---|
+| `AG-FE-SW-001` | `workshop_card.schema.json` merged | "CARD contract available" | ✓ |
+| `AG-FE-SW-002` | `workshop_card.schema.json` + `workshop_stream_event.schema.json` merged | "CARD + SSE contract available" | ✓ |
+| `AG-FE-SW-003` | VERS + `workshop_card.schema.json` merged | "VERS + CARD contracts mirrored to frontend" | ✓ |
+| `AG-FE-RS-001` | VERS + RS + `workshop_card.schema.json` merged | "VERS + RS + CARD generated types mirrored" | ✓ |
+| `AG-FE-TR-001` | TR aggregates + `workshop_card.schema.json` + BFF client generated | "TR + CARD types and BFF client generated" | ✓ |
+| `AG-FE-TR-002` | TR + candidate-decision contract available | "TR + candidate-decision integration contract available" | ✓ |
+
+### 12.4 Open Questions — Dispatch Blocker Assessment
+
+None of the five open questions in §9 are dispatch blockers. The parent task owner may resolve them during implementation.
+
+| # | Question | Dispatch blocker? | Recommended resolution |
+|---|---|---|---|
+| Q1 | `allowed_actions` value schema | No | Default to `{ "enabled": boolean, "label": string }`. The schema needs `additionalProperties` with this sub-schema. The parent task owner must document the choice in the commit message. |
+| Q2 | Card staleness trigger | No | `stale` is already in the E1 `status` enum. Per-card staleness trigger rules are a BFF runtime concern, not a schema constraint. No schema encoding needed. |
+| Q3 | Inline vs. `$ref` for VERS payloads | No | Recommend `$ref` to avoid duplication. Frontend code-gen runs during `AG-XR-OPENAPI-004` which handles multi-file schemas. Owner must document the choice in the commit message. |
+| Q4 | `workshop_version_id` nullability | No | Safe default: `string | null` for all card types. Can be tightened to required-only for specific card types (e.g. `readiness_gate`) in a follow-on revision. |
+| Q5 | `sequence_no` alignment with SSE replay | No | Card `sequence_no` is a per-workshop creation-order counter; SSE stream may use a separate monotonic counter. These need not be the same. BFF must document which counter drives each. No schema change needed. |
+
+### 12.5 Summary
+
+The review packet is accurate, internally consistent, and grounded in the Round 2 design closure. The parent task owner (`AG-DES-CARD-001`) may proceed to produce `workshop_card.schema.json` at `services/control-plane/specs/agora/v4/workshop_card.schema.json`. All open questions can be resolved locally by the parent task owner with no further reviewer gate required before dispatch.
