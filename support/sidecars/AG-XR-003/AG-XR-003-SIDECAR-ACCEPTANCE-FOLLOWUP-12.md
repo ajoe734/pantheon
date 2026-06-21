@@ -8,6 +8,8 @@
 - Generated: `2026-06-21`
 - Mutates canonical truth: `no`
 - Baseline inspected: `origin/dev` `6de042cd1a88c51b22dbf6275e0785f49a6e7998`
+- Closeout refresh inspected: `origin/dev`
+  `b97af2eeb2ea618cbf6ac76f1263b8532ba769b3`
 - Previous reviewed support packet follow-up 11 was merged through Pantheon PR
   `#1920` at merge commit `c0af1ff82dbaf0c1e039fff2ced33304f06cc225`.
   Since follow-up 11's inspected baseline `3f3cf4eb`, `origin/dev` has advanced
@@ -32,13 +34,20 @@ is correctly blocked and still waits for `Claude2` disposition. The only
 AG-XR support change since the previous inspected baseline is follow-up 11
 itself; no parent implementation artifact changed.
 
+Closeout refresh on `2026-06-21` merged latest `origin/dev`
+`b97af2eeb2ea618cbf6ac76f1263b8532ba769b3` into the task branch. The intervening
+`dev` changes were unrelated sidecar support merges. A scoped diff over
+AG-XR/Agora implementation paths from the original inspected baseline
+`6de042cd` through the refreshed branch remained empty, and execute-plans PR
+`#63` remained `OPEN` / `UNSTABLE` with the same `integration-gate` failure.
+
 ## Current Status Snapshot
 
 | Surface | Current state | Sidecar stance |
 |---|---|---|
 | Parent `AG-XR-003` | `blocked`, waiting for `Claude2` | Keep blocked until execute-plans PR `#63` merges and manifest sanity is resolved, or the parent reviewer gives explicit disposition. |
 | Dependency `AG-XR-001A` | Archived `done` | Parent's direct dependency is satisfied; the remaining blocker is cross-repo compatibility evidence. |
-| This sidecar | `in_progress`, owner `Codex2`, reviewer `Codex` | Packet ready for reviewer handoff after task commit/PR. |
+| This sidecar | `review_approved`, owner `Codex2`, reviewer `Codex` | Reviewer approved support-only packet; closeout refresh keeps scope limited to support material before PR merge and `done`. |
 | Pantheon PR `#1852` | `MERGED` at merge commit `0765018c838547108fa56fcf089b5e2bbafd4387` | Pantheon-side manifest gate implementation is durable on `dev`. |
 | execute-plans PR `#63` | `OPEN`, head `e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5`, `mergeStateStatus=UNSTABLE` | Cross-repo mirror is not merged; parent acceptance remains blocked. |
 | PR `#63` latest CI run | `27877483718` - `Pantheon FE-BFF Integration Gate`, `failure`, created `2026-06-20T16:43:32Z` | Same failing PR run as follow-up 11; no newer PR run changed the result. |
