@@ -301,6 +301,17 @@ function extractedResultValue(result, key) {
   return extracted[key];
 }
 
+function sseAttemptUrlMatchesChannel(urlPath, expectedChannel) {
+  if (typeof urlPath !== "string" || !urlPath || !expectedChannel) return false;
+  try {
+    const parsed = new URL(urlPath, "https://pantheon.local");
+    return parsed.pathname === "/bff/events/stream"
+      && parsed.searchParams.get("channel") === expectedChannel;
+  } catch {
+    return false;
+  }
+}
+
 function twoManRaceDetailProof(race) {
   const results = Array.isArray(race?.results) ? race.results : [];
   const targetId = String(race?.target_id || "");
@@ -863,7 +874,12 @@ function analyzeSseSmoke(stepOutcomes) {
       const firstEvent = attempt?.first_event && typeof attempt.first_event === "object" ? attempt.first_event : {};
       const firstEventData = firstEvent?.data && typeof firstEvent.data === "object" ? firstEvent.data : {};
       const shapeChecks = firstEvent?.shape_checks && typeof firstEvent.shape_checks === "object" ? firstEvent.shape_checks : {};
+      const eventLine = typeof firstEvent?.event === "string" ? firstEvent.event : "";
+      const dataType = typeof firstEventData?.type === "string" ? firstEventData.type : "";
+      const dataTimestamp = typeof firstEventData?.timestamp === "string" ? firstEventData.timestamp : "";
       return Number(attempt?.attempt) === index + 1
+        && attempt?.mode === "bearer_polyfill"
+        && sseAttemptUrlMatchesChannel(attempt?.url_path, sseChannel)
         && typeof attempt?.cursor_event_id === "string"
         && attempt.cursor_event_id === cursor
         && (index === 0 || cursor === reconnectExpectedEventIds[index - 1])
@@ -875,6 +891,9 @@ function analyzeSseSmoke(stepOutcomes) {
         && observed === expected
         && firstEvent?.id === observed
         && firstEventData?.id === observed
+        && eventLine === dataType
+        && dataType.length > 0
+        && dataTimestamp.length > 0
         && shapeChecks?.id_line_matches_data_id === true
         && shapeChecks?.event_line_matches_data_type === true
         && shapeChecks?.data_json_parse_ok === true;
