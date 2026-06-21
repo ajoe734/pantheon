@@ -32,12 +32,10 @@ on:
       approval_race_id:
         description: "Expendable approval id for the two-operator race proof"
         required: true
-        default: ""
         type: string
       two_man_race_id:
         description: "Expendable intervention id for the two-operator two-man-sign race proof"
         required: true
-        default: ""
         type: string
       soak_seconds:
         description: "SSE reconnect soak duration; strict evidence requires at least 75"
