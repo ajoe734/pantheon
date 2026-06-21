@@ -132,6 +132,46 @@ class MemoryWorkshopStore:
             session["updated_at"] = _utc_now()
             return session["lock_version"]
 
+    def append_event_cas(
+        self,
+        workshop_id: str,
+        expected_lock_version: int,
+        event: Dict[str, Any],
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+        """Atomically append an event and bump lock_version if version matches.
+
+        Returns (event_dict, new_lock_version) on success.
+        Returns (None, current_lock_version) on version conflict.
+        Returns (None, None) if workshop not found.
+
+        The entire check + append + bump happens under a single lock, preventing
+        concurrent same-ETag writes from both succeeding.
+        """
+        with self._lock:
+            session = self._sessions.get(workshop_id)
+            if session is None:
+                return (None, None)
+            current_version = session.get("lock_version", 1)
+            if current_version != expected_lock_version:
+                return (None, current_version)
+            bucket = self._events.setdefault(workshop_id, [])
+            ev: Dict[str, Any] = {
+                "event_id": event.get("event_id") or _new_id(),
+                "workshop_id": workshop_id,
+                "sequence_no": len(bucket) + 1,
+                "actor_type": event["actor_type"],
+                "event_type": event["event_type"],
+                "private_content_ref": event.get("private_content_ref"),
+                "redacted_summary": event.get("redacted_summary"),
+                "payload_refs_json": event.get("payload_refs_json"),
+                "trace_id": event.get("trace_id"),
+                "created_at": event.get("created_at", _utc_now()),
+            }
+            bucket.append(ev)
+            session["lock_version"] = current_version + 1
+            session["updated_at"] = _utc_now()
+            return (dict(ev), current_version + 1)
+
     def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
         """Return True if the key was already seen (duplicate); False if it is new.
 
@@ -444,6 +484,83 @@ class PostgresWorkshopStore:
             )
             row = cur.fetchone()
         return row[0] if row else 1
+
+    def append_event_cas(
+        self,
+        workshop_id: str,
+        expected_lock_version: int,
+        event: Dict[str, Any],
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+        """Atomically append an event and bump lock_version if version matches.
+
+        Returns (event_dict, new_lock_version) on success.
+        Returns (None, current_lock_version) on version conflict.
+        Returns (None, None) if workshop not found.
+
+        Everything runs in a single Postgres transaction: the CAS UPDATE and
+        the event INSERT are committed or rolled back together.
+        """
+        now = _utc_now()
+        event_id = event.get("event_id") or _new_id()
+        payload_refs = event.get("payload_refs_json")
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                UPDATE {self._st}
+                   SET lock_version = lock_version + 1,
+                       updated_at   = now()
+                 WHERE workshop_id = %s AND lock_version = %s
+                RETURNING lock_version
+                """,
+                (workshop_id, expected_lock_version),
+            )
+            bump_row = cur.fetchone()
+            if bump_row is None:
+                cur2 = conn.execute(
+                    f"SELECT lock_version FROM {self._st} WHERE workshop_id = %s",
+                    (workshop_id,),
+                )
+                current_row = cur2.fetchone()
+                return (None, current_row[0] if current_row else None)
+            new_version = bump_row[0]
+            cur3 = conn.execute(
+                f"""
+                INSERT INTO {self._et}
+                    (event_id, workshop_id, sequence_no, actor_type, event_type,
+                     private_content_ref, redacted_summary, payload_refs_json,
+                     trace_id, created_at)
+                SELECT %s, %s,
+                       COALESCE((SELECT MAX(sequence_no) FROM {self._et}
+                                  WHERE workshop_id = %s), 0) + 1,
+                       %s, %s, %s, %s, %s::jsonb, %s, %s
+                RETURNING sequence_no
+                """,
+                (
+                    event_id, workshop_id, workshop_id,
+                    event["actor_type"], event["event_type"],
+                    event.get("private_content_ref"),
+                    event.get("redacted_summary"),
+                    _json_dumps(payload_refs),
+                    event.get("trace_id"),
+                    now,
+                ),
+            )
+            seq_row = cur3.fetchone()
+        return (
+            {
+                "event_id": event_id,
+                "workshop_id": workshop_id,
+                "sequence_no": seq_row[0] if seq_row else 1,
+                "actor_type": event["actor_type"],
+                "event_type": event["event_type"],
+                "private_content_ref": event.get("private_content_ref"),
+                "redacted_summary": event.get("redacted_summary"),
+                "payload_refs_json": payload_refs,
+                "trace_id": event.get("trace_id"),
+                "created_at": now,
+            },
+            new_version,
+        )
 
     def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
         """Return True if duplicate; False if first occurrence (and record it).

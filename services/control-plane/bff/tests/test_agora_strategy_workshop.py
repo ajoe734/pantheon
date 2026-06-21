@@ -696,6 +696,45 @@ class TestWorkshopConcurrencyContract:
             "ETag must change after a successful mutation"
         )
 
+    def test_post_message_409_includes_current_etag_and_latest_href(self, monkeypatch):
+        """409 response body must include current_etag and latest_href in details."""
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-409-detail-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "409 detail test"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        stale_etag = f'W/"workshop:{workshop_id}:v0"'
+        resp = client.post(
+            f"/bff/agora/workshops/{workshop_id}/messages",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-409-detail-msg-001",
+                "If-Match": stale_etag,
+                "Content-Type": "application/json",
+            },
+            json={"content": "Should be rejected"},
+        )
+        assert resp.status_code == 409, resp.text
+        body = resp.json()
+        # details must carry current_etag and latest_href for client recovery
+        details = body.get("details") or body.get("error", {}).get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        assert "current_etag" in details, (
+            f"409 response must include current_etag; got details={details}"
+        )
+        assert "latest_href" in details, (
+            f"409 response must include latest_href; got details={details}"
+        )
+
 
 class TestWorkshopPrivacyContract:
     """Events from message/create paths must carry private_content_ref.
@@ -844,6 +883,68 @@ class TestMemoryWorkshopStoreConcurrencyHelpers:
         store.check_and_record_idempotency_key("scope-c:user1", "shared-key")
         seen = store.check_and_record_idempotency_key("scope-c:user2", "shared-key")
         assert seen is False, "Different scopes must not share idempotency key state"
+
+    def test_append_event_cas_success(self):
+        """CAS succeeds when expected_lock_version matches current."""
+        store = self._store()
+        store.create_session({"workshop_id": "ws-cas-1", "tenant_id": "t1", "user_id": "u1"})
+
+        ev, new_ver = store.append_event_cas("ws-cas-1", 1, {
+            "actor_type": "operator",
+            "event_type": "message",
+            "private_content_ref": "ref-cas-1",
+        })
+        assert ev is not None
+        assert ev["sequence_no"] == 1
+        assert ev["private_content_ref"] == "ref-cas-1"
+        assert new_ver == 2
+
+        session = store.get_session("ws-cas-1")
+        assert session["lock_version"] == 2
+
+    def test_append_event_cas_conflict_returns_current_version(self):
+        """CAS fails when expected_lock_version doesn't match; returns actual current version."""
+        store = self._store()
+        store.create_session({"workshop_id": "ws-cas-2", "tenant_id": "t1", "user_id": "u1"})
+
+        ev, current_ver = store.append_event_cas("ws-cas-2", 99, {
+            "actor_type": "operator",
+            "event_type": "message",
+        })
+        assert ev is None
+        assert current_ver == 1
+
+        # No event must have been created and lock_version must be unchanged.
+        assert store.list_events("ws-cas-2") == []
+        assert store.get_session("ws-cas-2")["lock_version"] == 1
+
+    def test_append_event_cas_sequential_same_version_only_first_wins(self):
+        """Two sequential CAS ops with the same expected version: only the first succeeds."""
+        store = self._store()
+        store.create_session({"workshop_id": "ws-cas-3", "tenant_id": "t1", "user_id": "u1"})
+
+        ev1, new_ver1 = store.append_event_cas("ws-cas-3", 1, {
+            "actor_type": "operator", "event_type": "message",
+        })
+        ev2, current_ver2 = store.append_event_cas("ws-cas-3", 1, {
+            "actor_type": "operator", "event_type": "message",
+        })
+
+        assert ev1 is not None
+        assert new_ver1 == 2
+        assert ev2 is None
+        assert current_ver2 == 2
+
+        assert len(store.list_events("ws-cas-3")) == 1
+
+    def test_append_event_cas_not_found_returns_none_none(self):
+        """CAS on a non-existent workshop returns (None, None)."""
+        store = self._store()
+        ev, ver = store.append_event_cas("no-such-ws", 1, {
+            "actor_type": "operator", "event_type": "message",
+        })
+        assert ev is None
+        assert ver is None
 
 
 # --------------------------------------------------------------------------- #

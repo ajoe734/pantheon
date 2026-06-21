@@ -37,6 +37,25 @@ from .store import make_workshop_store
 
 
 # --------------------------------------------------------------------------- #
+# Internal helpers
+# --------------------------------------------------------------------------- #
+
+def _parse_etag_lock_version(if_match: str, workshop_id: str) -> int:
+    """Return the lock_version encoded in the ETag, or 0 if the header is malformed.
+
+    Expected format: W/"workshop:{workshop_id}:v{N}"
+    Returns 0 so a malformed header is guaranteed to conflict (lock_version >= 1).
+    """
+    prefix = f'W/"workshop:{workshop_id}:v'
+    if if_match.startswith(prefix) and if_match.endswith('"'):
+        try:
+            return int(if_match[len(prefix):-1])
+        except ValueError:
+            pass
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Request / response models
 # --------------------------------------------------------------------------- #
 
@@ -269,17 +288,6 @@ def create_strategy_workshop_router(
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
             from models import ErrorCode
             raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop not owned by caller", workshop_id)
-        # If-Match concurrency enforcement: reject stale ETag with 409.
-        lock_version = session.get("lock_version", 1)
-        current_etag = f'W/"workshop:{workshop_id}:v{lock_version}"'
-        if if_match != current_etag:
-            from models import ErrorCode
-            raise bff_error(
-                409, ErrorCode.RESOURCE_CONFLICT,
-                "Concurrent modification: ETag mismatch",
-                f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
-                details_extra={"current_etag": current_etag},
-            )
         # Reject duplicate keys for the same user+workshop+endpoint.
         if hasattr(store, "check_and_record_idempotency_key"):
             idem_scope = (
@@ -296,7 +304,10 @@ def create_strategy_workshop_router(
         # In production the content is handed off to the encrypted private-content store;
         # here we generate a stub ref and leave redacted_summary empty.
         event_id = str(uuid.uuid4())
-        event = store.create_event({
+        expected_version = _parse_etag_lock_version(if_match, workshop_id)
+        # Atomic CAS: compare expected lock_version, append event, bump version —
+        # all in one store transaction so concurrent same-ETag writes both cannot succeed.
+        event, _new_version = store.append_event_cas(workshop_id, expected_version, {
             "event_id": event_id,
             "workshop_id": workshop_id,
             "actor_type": "operator",
@@ -305,8 +316,20 @@ def create_strategy_workshop_router(
             "redacted_summary": None,
             "payload_refs_json": body.attachment_refs or None,
         })
-        # Bump lock_version so subsequent If-Match checks use the new version
-        store.update_session_lock_version(workshop_id)
+        if event is None:
+            from models import ErrorCode
+            # _new_version is the actual current lock_version (or None if not found)
+            current_lock_version = _new_version if _new_version is not None else 1
+            current_etag = f'W/"workshop:{workshop_id}:v{current_lock_version}"'
+            raise bff_error(
+                409, ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent modification: ETag mismatch",
+                f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
+                details_extra={
+                    "current_etag": current_etag,
+                    "latest_href": f"/bff/agora/workshops/{workshop_id}",
+                },
+            )
         return {
             "data": {"event_id": event["event_id"], "sequence_no": event["sequence_no"]},
             "meta": {
