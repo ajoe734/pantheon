@@ -56,6 +56,8 @@ def clean_env() -> dict[str, str]:
         "APPROVAL_RACE_ID",
         "TWO_MAN_RACE_ID",
         "SOAK_SECONDS",
+        "GITHUB_REPOSITORY",
+        "PANTHEON_LIVE_EVIDENCE_ENVIRONMENT",
     ):
         env.pop(name, None)
     return env
@@ -95,6 +97,22 @@ def test_preflight_writes_missing_inputs_without_secret_values(tmp_path: Path) -
         "token_b_present": False,
         "distinct_bearers": False,
     }
+    remediation = payload["operator_remediation"]
+    assert payload["github_environment"] == "dev"
+    assert remediation["github_environment"] == "dev"
+    assert remediation["repository"] == "ajoe734/pantheon"
+    assert remediation["required_secret_names"] == list(REQUIRED_SECRET_ENV_VARS)
+    assert remediation["missing_secret_names"] == list(REQUIRED_SECRET_ENV_VARS)
+    assert remediation["missing_workflow_inputs"] == ["APPROVAL_RACE_ID", "TWO_MAN_RACE_ID"]
+    assert len(remediation["secret_set_commands"]) == len(REQUIRED_SECRET_ENV_VARS)
+    assert all("--env dev" in command for command in remediation["secret_set_commands"])
+    assert all("/secure/path/" in command for command in remediation["secret_set_commands"])
+    dispatch = remediation["workflow_dispatch"]
+    assert dispatch["recommended_workflow"] == "Pantheon Stage 0 CI"
+    assert dispatch["mode"] == "live-evidence"
+    assert dispatch["environment"] == "dev"
+    assert "gh workflow run \"Pantheon Stage 0 CI\"" in dispatch["run_command_template"]
+    assert "-f environment=dev" in dispatch["run_command_template"]
 
 
 def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -> None:
@@ -107,6 +125,8 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
         "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "race-secret-b",
     }
     env.update(secret_values)
+    env["GITHUB_REPOSITORY"] = "example/pantheon"
+    env["PANTHEON_LIVE_EVIDENCE_ENVIRONMENT"] = "staging-live"
 
     result = run_preflight(
         tmp_path,
@@ -139,6 +159,16 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
         "token_b_present": True,
         "distinct_bearers": True,
     }
+    remediation = payload["operator_remediation"]
+    assert payload["github_environment"] == "staging-live"
+    assert remediation["repository"] == "example/pantheon"
+    assert remediation["github_environment"] == "staging-live"
+    assert remediation["missing_secret_names"] == []
+    assert remediation["missing_workflow_inputs"] == []
+    assert remediation["invalid_inputs"] == []
+    assert all("--repo example/pantheon" in command for command in remediation["secret_set_commands"])
+    assert all("--env staging-live" in command for command in remediation["secret_set_commands"])
+    assert "-f environment=staging-live" in remediation["workflow_dispatch"]["run_command_template"]
     leaked_values = [
         "smoke-secret",
         *rbac_tokens.values(),
