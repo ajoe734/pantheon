@@ -34556,7 +34556,7 @@ def _mgmt_nl_maybe_provider_answer(
     return answer, status, actions
 
 
-_MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS = 12.0
+_MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS = 3.0
 # Strong references to in-flight provider finaliser tasks; asyncio keeps only a
 # weak reference to bare tasks, so without this they could be GC'd mid-run.
 _MGMT_NL_PROVIDER_FINALIZE_TASKS: Set["asyncio.Task[Any]"] = set()
