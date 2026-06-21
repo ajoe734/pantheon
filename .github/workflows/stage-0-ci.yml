@@ -31,12 +31,12 @@ on:
         type: string
       approval_race_id:
         description: "Expendable approval id for the two-operator race proof"
-        required: false
+        required: true
         default: ""
         type: string
       two_man_race_id:
         description: "Expendable intervention id for the two-operator two-man-sign race proof"
-        required: false
+        required: true
         default: ""
         type: string
       soak_seconds:
