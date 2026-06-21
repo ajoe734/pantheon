@@ -8,10 +8,30 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 def _sha256_12(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _workflow_step(workflow_path: Path, job_id: str, step_name: str) -> dict:
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    steps = workflow["jobs"][job_id]["steps"]
+    return next(step for step in steps if step.get("name") == step_name)
+
+
+def _upload_artifact_paths(step: dict) -> list[str]:
+    raw_path = step.get("with", {}).get("path")
+    assert isinstance(raw_path, str)
+    return [line.strip() for line in raw_path.splitlines() if line.strip()]
+
+
+def _assert_current_run_is_only_uploaded_audit_path(paths: list[str]) -> None:
+    audit_paths = [path for path in paths if path.startswith(".lovable/audits")]
+    assert audit_paths == [".lovable/audits/current-run"]
+    assert all("*" not in path for path in audit_paths)
+    assert all("historical" not in path for path in audit_paths)
 
 
 def _strict_dry_run_items(*, with_side_effect_checks: bool = True, mismatched_readback_target: bool = False):
@@ -569,10 +589,16 @@ def test_integration_gate_uploads_only_current_run_audits() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workflow = repo_root / "execute-plans" / ".github" / "workflows" / "pantheon-integration-gate.yml"
     text = workflow.read_text(encoding="utf-8")
+    upload_step = _workflow_step(workflow, "integration-gate", "Upload evidence")
+    upload_paths = _upload_artifact_paths(upload_step)
 
     assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
     assert ".lovable/audits/current-run" in text
     assert ".lovable/audits/*.md" not in text
+    assert ".lovable/audits/historical" not in text
+    assert upload_step["uses"] == "actions/upload-artifact@v4"
+    assert upload_paths == [".lovable/audits/current-run", "playwright-report", "test-results"]
+    _assert_current_run_is_only_uploaded_audit_path(upload_paths)
     assert "Strict SSE live soak" in text
     assert "scripts/probe_bff_sse_stream.py" in text
     assert "--strict-live-evidence" in text
@@ -1128,6 +1154,13 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "path: .lovable/audits/current-run" in text
     assert ".lovable/audits/*.md" not in text
+    assert ".lovable/audits/historical" not in text
+    upload_step = _workflow_step(workflow, "live-evidence", "Upload current-run evidence")
+    upload_paths = _upload_artifact_paths(upload_step)
+    assert upload_step["uses"] == "actions/upload-artifact@v4"
+    assert upload_paths == [".lovable/audits/current-run"]
+    assert upload_step["with"]["if-no-files-found"] == "error"
+    _assert_current_run_is_only_uploaded_audit_path(upload_paths)
 
 
 def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> None:
@@ -1164,6 +1197,13 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "path: .lovable/audits/current-run" in text
     assert ".lovable/audits/*.md" not in text
+    assert ".lovable/audits/historical" not in text
+    upload_step = _workflow_step(workflow, "live-evidence", "Upload current-run evidence")
+    upload_paths = _upload_artifact_paths(upload_step)
+    assert upload_step["uses"] == "actions/upload-artifact@v4"
+    assert upload_paths == [".lovable/audits/current-run"]
+    assert upload_step["with"]["if-no-files-found"] == "error"
+    _assert_current_run_is_only_uploaded_audit_path(upload_paths)
 
 
 def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: Path) -> None:
