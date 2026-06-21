@@ -125,6 +125,17 @@ Reviewer timing note: PR #2114 (`INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HA
 was open at packet-preparation time. Parent approval should re-check PR #2114 state before
 moving parent to `review_approved` → `done`.
 
+## CI Re-Trigger Note
+
+The sidecar task branch itself experienced the same shallow-fetch git log exit 128 false
+positive during closeout push. Root cause: `task_finalize.sh` force-rebased local commits
+onto the existing remote task branch history, producing a BASE_SHA in the push event that
+no longer existed in the CI-checked-out repo. Fix: push a fresh commit on top so the new
+CI push event uses a range where both SHAs exist.
+
+This is the same infrastructure false positive documented in § CI-Red Root Cause And
+Resolution above; it is not a trailer or content failure.
+
 ## Evidence Commands Run
 
 Commands run from the sidecar task worktree:
