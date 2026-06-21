@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-21` |
 | Status | `in_progress; ready for review after task commit` |
-| Current dev base | `270340d3471bf14d6cb5d12f47328c30c2ca45d3` |
+| Current dev base | `1cedc9791180fee9e38dbf1fa856383fd0afcf81` |
 | Previous sidecar closeout merge | `bfb6b1c640db2a19a3ce025aa8d29982b9164a0b` |
 | Previous reviewed packet merge | `9880c81584ab3b6985c197916674ad073680dd3d` |
 | New relevant dev merge | `e5f20720` / PR `#1952` for `AG-XR-002A` |
@@ -19,6 +19,8 @@
 | New sidecar closeout merge | `4588fe17` / PR `#1959` for `AG-XR-002A-SIDECAR-BFF-HANDOFF` |
 | New unrelated design-closure archive | `52a2d5a8` / PR `#1961` for `AG-BE-SW-001` |
 | New unrelated BFF runtime merge | `270340d3` / PR `#1960` for management `nl/ask` async provider finalization |
+| New downstream frontend support merge | `a2d16e4c` / PR `#1955` for `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22` |
+| New unrelated OpenClaw e2e merge | `1cedc979` / PR `#1962` for persona OpenClaw adapter route-backed flow test |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -33,7 +35,7 @@ Followup 11 is archived `done`. Its reviewed packet PR #1948 merged at
 merged at `bfb6b1c640db2a19a3ce025aa8d29982b9164a0b`.
 
 Current `origin/dev` for this followup is
-`270340d3471bf14d6cb5d12f47328c30c2ca45d3`. Since followup-11 closeout, `dev`
+`1cedc9791180fee9e38dbf1fa856383fd0afcf81`. Since followup-11 closeout, `dev`
 advanced through:
 
 - AG-FE-DB-002 support-only followup-12 packet and review material.
@@ -53,6 +55,10 @@ advanced through:
 - Management `POST /bff/management/nl/ask` async provider finalization. A
   targeted diff check showed only management NL provider/session bookkeeping,
   not Agora servant-session implementation.
+- AG-FE-ID-001 followup-22 downstream support packet, which rechecks the
+  frontend shell/client handoff and keeps `AG-BE-ID-003` as the session gate.
+- Persona OpenClaw adapter route-backed e2e test refresh. Targeted grep found
+  no AG-BE-ID-003 servant-session/type-contract keywords in that test delta.
 
 This is a meaningful compatibility-context delta, but it is not an
 AG-BE-ID-003 runtime or servant-session contract implementation. The parent
@@ -77,6 +83,7 @@ Status commands used `AI_NAME=Codex` and read the central status root via
 | `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` | `review_approved`; reviewer reassigned to `Claude`; PR #1956 merged | Latest compatibility support packet says local v1.1 sanity improved, but execute-plans PR #63/runtime pin/deployment gate still block parent done. |
 | `AG-XR-003` | `in_progress`; owner `Codex2`, reviewer `Claude2`; depends on `AG-XR-002A` | Compatibility work is moving again, but still needs cross-repo PR/runtime-pin/deployment-gate disposition. |
 | `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21` | archived `done`; PR #1949 merged | Latest frontend support packet is durable but predates AG-XR-002A and does not unblock session UI. |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22` | `review`; PR #1955 merged | Latest downstream frontend support packet says target shell/client files remain absent and `AG-BE-ID-003` remains the session gate. |
 | `AG-FE-ID-001` | `todo`; depends on `AG-FE-000` and `AG-BE-ID-003` | Frontend parent implementation has not started in durable task state. |
 
 Dependency honesty rule: the frontend may use identity, servant ensure, and
@@ -97,9 +104,10 @@ interactive, trainer, or research-task session readiness while
 | `AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` | Confirms the latest AG-XR-003 support packet is `review_approved` after PR #1956, with Claude review approval recorded. |
 | `AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-XR-003` | Confirms compatibility task is now `in_progress` and depends on AG-XR-002A, rather than the prior blocked state. |
 | `AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21` | Confirms latest frontend support packet is archived `done`. |
+| `AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22` | Confirms the newest frontend support packet is in `review` after PR #1955 and keeps AG-BE-ID-003 as the session gate. |
 | `AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms frontend parent remains `todo` and still depends on `AG-BE-ID-003`. |
-| `git merge --ff-only origin/dev` | Refreshed this task branch from followup-11 closeout merge `bfb6b1c6` to `285a6d60`, `e7d75a11`, `f8a8dd73`, `4588fe17`, `52a2d5a8`, and finally `270340d3` as AG-XR, archive, and unrelated BFF material landed. |
-| `git log --oneline bfb6b1c6..origin/dev` | Shows AG-FE-DB-002 followup-12, AG-XR-002A parent/sidecar/review/closeout PRs, AG-XR-003 followup-14, AG-BE-SW-001 design-closure archive, and management nl/ask async closeout after followup 11. |
+| `git merge --ff-only` / `git merge --no-edit origin/dev` | Refreshed this task branch from followup-11 closeout merge `bfb6b1c6` through `270340d3`, then merged `a2d16e4c` and `1cedc979` as downstream frontend and unrelated e2e material landed. |
+| `git log --oneline bfb6b1c6..origin/dev` | Shows AG-FE-DB-002 followup-12, AG-XR-002A parent/sidecar/review/closeout PRs, AG-XR-003 followup-14, AG-BE-SW-001 design-closure archive, management nl/ask async closeout, AG-FE-ID-001 followup-22, and persona OpenClaw e2e test refresh after followup 11. |
 | `git diff --name-status bfb6b1c6..origin/dev -- ...` | Shows no Agora servant-session runtime, OpenAPI, or AG-BE-ID-003 support-path implementation delta; compatibility/typegen/support files changed, plus an unrelated management `nl/ask` BFF runtime update. |
 | `git diff -U0 52a2d5a8..HEAD -- services/control-plane/bff/main.py \| rg ...` | Confirms the latest BFF runtime diff is management NL provider finalization around `POST /bff/management/nl/ask`, not Agora servant/session logic. |
 | `docs/contracts/agora/dev-compatibility-manifest.json` | Frontend generated contract/hash placeholders were filled, but `compatibility_status` remains `pending` due to `frontend-runtime-commit-placeholder`. |
@@ -109,6 +117,8 @@ interactive, trainer, or research-task session readiness while
 | `services/control-plane/bff/main.py` | Legacy `/bff/agora/sessions*` routes and SSE alias remain in `main.py`; stream alias still ignores `sessionId`. |
 | `support/sidecars/AG-XR-002A/AG-XR-002A-SIDECAR-BFF-HANDOFF.md` | New support packet states generated clients may expose routes that strict live BFF cannot satisfy yet. |
 | `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14.md` | Latest AG-XR support packet says deployment gate still fails closed while frontend runtime commit is a placeholder. |
+| `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22.md` | New downstream frontend support packet confirms AG-FE-ID-001 target files are still absent and AG-BE-ID-003 remains the session dependency. |
+| `rg -n "...keywords..." tests/e2e/test_persona_openclaw_adapter_backed_flow_100.py` | Targeted grep found no AG-BE-ID-003, servant session, session type, research_task, degradation, or management NL keywords in the new e2e test delta. |
 | `docs/reviews/2026-06-21-ag-xr-002a-claude-review.md` | Materialized Claude approval for AG-XR-002A; records PR #1952 merge evidence. |
 | `rg -n "...keywords..." docs/04/pantheon_agora_cross_repo_2026-06-20/sw001-deep-closure/AG-BE-SW-001_deep_design_closure_2026-06-21.md` | Targeted grep found no AG-BE-ID-003, servant session, session type, or degradation keywords in the new SW001 closure archive. |
 
@@ -119,7 +129,7 @@ interactive, trainer, or research-task session readiness while
 | Change | What changed | Parent implication |
 |---|---|---|
 | Followup 11 closed | Archived `done`; reviewed packet PR #1948 and closeout PR #1950 are merged. | Treat followup 11 as accepted support evidence. |
-| Dev advanced to `270340d3` | AG-FE-DB-002 followup-12 support/closeout material, AG-XR-002A parent/sidecar/review/closeout material, AG-XR-003 followup-14, AG-BE-SW-001 design-closure archive, and management `nl/ask` async BFF closeout landed. | Additional support, compatibility, and unrelated BFF context landed, but no AG-BE-ID-003 Agora servant-session implementation changed. |
+| Dev advanced to `1cedc979` | AG-FE-DB-002 followup-12 support/closeout material, AG-XR-002A parent/sidecar/review/closeout material, AG-XR-003 followup-14, AG-BE-SW-001 design-closure archive, management `nl/ask` async BFF closeout, AG-FE-ID-001 followup-22, and persona OpenClaw e2e test refresh landed. | Additional support, compatibility, downstream frontend, unrelated BFF, and unrelated e2e context landed, but no AG-BE-ID-003 Agora servant-session implementation changed. |
 | AG-XR-002A parent landed | `execute-plans/src/lib/bff-v1/agora/types.ts`, typegen scripts, drift check, manifest test, and frontend manifest half were refreshed. | The old "frontend generated types still v1" blocker is materially improved. |
 | AG-XR-002A closed | `docs/reviews/2026-06-21-ag-xr-002a-claude-review.md` and task brief were added via PR #1957; central status now archives AG-XR-002A as `done`. | Review and owner closeout evidence are durable, but this still does not implement AG-BE-ID-003. |
 | AG-XR-002A sidecar closed | AG-XR-002A sidecar closeout PR #1959 merged; central status archives the sidecar as `done`. | Support packet is durable context, not AG-BE-ID-003 runtime readiness. |
@@ -129,6 +139,8 @@ interactive, trainer, or research-task session readiness while
 | AG-XR-003 status changed | Central status now shows `in_progress`, owner `Codex2`, reviewer `Claude2`, depends on `AG-XR-002A`; previous followup-11 packet described it as blocked. | Followup-12 supersedes that narrow status fact, but not the AG-BE-ID-003 blocker. |
 | AG-BE-SW-001 archive landed | New deep closure archive did not match targeted AG-BE-ID-003/servant-session/type-contract keywords. | No change to this sidecar's parent blocker conclusion. |
 | Management NL ask async landed | `services/control-plane/bff/main.py` changed, but targeted diff hits are management NL provider finalization and session bookkeeping only. | BFF changed, but not the Agora servant-session route family or type contract blocking AG-BE-ID-003. |
+| AG-FE-ID-001 followup-22 landed | Downstream frontend support packet confirms parent `AG-FE-ID-001` remains `todo`, target shell/client files remain absent from checked execute-plans remotes, and `AG-BE-ID-003` remains blocked. | Reinforces the session/front-end gate; does not unblock AG-BE-ID-003. |
+| Persona OpenClaw e2e refresh landed | New e2e test delta had no targeted servant-session/type-contract keyword hits. | No change to this sidecar's parent blocker conclusion. |
 | Checked AG-BE pathset | No diff from `bfb6b1c6..origin/dev` over OpenAPI, Agora specs, AG-BE-ID-003 support path, or servant-session implementation paths; BFF diff is unrelated management NL ask async work. | No new evidence unblocks AG-BE-ID-003. |
 | Frontend support state | AG-FE-ID-001 followup-21 is archived `done`; parent `AG-FE-ID-001` remains `todo`. | Frontend remains downstream and must not enable servant-session UI before AG-BE-ID-003 lands. |
 
@@ -189,7 +201,7 @@ support context, not AG-BE-ID-003 readiness.
 
 ## 7. Current Route Evidence
 
-| Surface | Current observation at dev `270340d3` | Readiness impact |
+| Surface | Current observation at dev `1cedc979` | Readiness impact |
 |---|---|---|
 | OpenAPI v1.1 | Defines `POST /bff/agora/servant/sessions`, get, messages, terminate, and stream. | Route family exists on paper. |
 | OpenAPI create body | References `ServantSessionCreateRequest`, which lacks a session type field. | Blocks strict create UI and parent implementation review. |
@@ -334,8 +346,11 @@ AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status
 AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14
 AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-XR-003
 AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21
+AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22
 AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001
 git merge --ff-only origin/dev
+git merge --no-edit origin/dev
+git merge --no-edit origin/dev
 git merge --ff-only origin/dev
 git merge --ff-only origin/dev
 git merge --ff-only origin/dev
@@ -348,6 +363,7 @@ git diff bfb6b1c640db2a19a3ce025aa8d29982b9164a0b..origin/dev -- execute-plans/s
 rg -n "ServantSessionCreateRequest|session_type|sessionType|session_kind|/bff/agora/servant/sessions|OPENCLAW_UPSTREAM_DEGRADED" services/control-plane/openapi/agora_v1_1.openapi.yaml services/control-plane/bff services/control-plane/specs/agora docs/contracts/agora/dev-compatibility-manifest.json execute-plans/src/lib/bff-v1/agora/types.ts
 rg -n "AG-BE-ID-003|ServantSessionCreateRequest|servant/sessions|research_task|session_type|sessionType|interactive|trainer|OPENCLAW_UPSTREAM_DEGRADED" docs/04/pantheon_agora_cross_repo_2026-06-20/sw001-deep-closure/AG-BE-SW-001_deep_design_closure_2026-06-21.md
 git diff -U0 52a2d5a8cf6eff9e6fda7d98d170d389196cc29c..HEAD -- services/control-plane/bff/main.py | rg -n "agora|servant|session|OPENCLAW_UPSTREAM_DEGRADED|management/nl|nl/ask|ask|provider"
+rg -n "AG-BE-ID-003|servant|ServantSession|session_type|sessionType|research_task|interactive|trainer|OPENCLAW_UPSTREAM_DEGRADED|management/nl" tests/e2e/test_persona_openclaw_adapter_backed_flow_100.py
 ```
 
 Final validation run before commit:
@@ -375,5 +391,5 @@ Result:
 Recommended status transition after commit and PR:
 
 ```bash
-AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh handoff AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12 Codex2 "Followup-12 support-only BFF/frontend handoff packet is ready for review at support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md. Scope changed only the task brief and support packet; no canonical truth, OpenAPI, Agora servant-session runtime, route registry, governance, compatibility manifest source, OpenClaw adapter, or execute-plans source paths changed. Delta since followup-11: AG-XR-002A and its BFF handoff sidecar are archived done; AG-XR-003 is in_progress and followup-14 is review_approved but still says execute-plans PR #63/runtime pin/deployment gate block compatibility done; latest AG-BE-SW-001 closure archive had no targeted servant-session/type-contract keyword hits; BFF main.py advanced for unrelated management nl/ask async provider finalization; AG-BE-ID-003 remains blocked on the servant session type contract decision."
+AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh handoff AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12 Codex2 "Followup-12 support-only BFF/frontend handoff packet is ready for review at support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md. Scope changed only the task brief and support packet; no canonical truth, OpenAPI, Agora servant-session runtime, route registry, governance, compatibility manifest source, OpenClaw adapter, or execute-plans source paths changed. Delta since followup-11: AG-XR-002A and its BFF handoff sidecar are archived done; AG-XR-003 is in_progress and followup-14 is review_approved but still says execute-plans PR #63/runtime pin/deployment gate block compatibility done; AG-FE-ID-001 followup-22 is in review and confirms frontend shell/client files remain absent; latest AG-BE-SW-001 closure archive and persona OpenClaw e2e refresh had no targeted servant-session/type-contract keyword hits; BFF main.py advanced for unrelated management nl/ask async provider finalization; AG-BE-ID-003 remains blocked on the servant session type contract decision."
 ```
