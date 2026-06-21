@@ -141,7 +141,7 @@ Format: `W/"research-plan:<plan_id>:v<lock_version>"`.
 
 The plan approve and cancel endpoints also require both headers.
 
-### 5. Plan List Returns Plans Directly (Not Run Projections)
+### 5. Run List Returns Full `ResearchRunProjection` Objects
 
 `GET /bff/agora/research-plans/{plan_id}/runs` returns `ResearchRunProjection`
 objects in `items[]`. Each item is the full run projection with optional arrays
@@ -249,7 +249,7 @@ All routes confirmed in `services/control-plane/bff/agora/research/router.py`.
 | `stage_id` | string (uuid) | — |
 | `stage_type` | string | One of 12 canonical stage types |
 | `execution_status` | enum | `queued` / `dispatching` / `running` / `succeeded` / `failed` / `cancelled` / `timed_out` |
-| `outcome` | enum | `pending` / `succeeded` / `failed` / `cancelled` |
+| `outcome` | enum | `pending` / `pass` / `fail` / `inconclusive` |
 | `progress` | object | `{phase, percent, message, updated_at}` |
 | `backend` | object | `{requested, effective, mode}` — mode: `real` / `fixture` / `stub` |
 | `metrics` | array | Default `[]`; 7 categories when present |

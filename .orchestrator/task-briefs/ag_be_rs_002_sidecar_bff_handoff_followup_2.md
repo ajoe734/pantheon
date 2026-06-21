@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Claude
 - Reviewer: Codex
-- Next: Review blocked: packet is now stale/inaccurate. AG-BE-RS-002 is archived done (not review_approved) and closeout is no longer an open gate; AG-FE-RS-001 still also depends on AG-FE-SW-002, so do not say it is unblocked only by AG-BE-RS-002 done. Align ResearchRunProjection TS sketch with v4 schema: outcome is pending/pass/fail/inconclusive; metric direction uses target_range; gate_result uses pass/fail/not_applicable/not_evaluated; ResearchFinding requires finding_id and evidence_refs are evidence_ref objects, not string[]; avoid approval text that still says AG-BE-RS-002 review_approved. Scope and canonical boundary are otherwise clean.
+- Next: Residual schema-drift fixes applied (2026-06-21): (1) outcome field summary in ResearchRunProjection table corrected from pending/succeeded/failed/cancelled to pending/pass/fail/inconclusive, matching v4 schema and the TS sketch; (2) section 5 title renamed from "Plan List Returns Plans Directly (Not Run Projections)" to "Run List Returns Full ResearchRunProjection Objects", accurately describing GET /research-plans/{plan_id}/runs behavior. Packet now consistent across field summary, TS sketch, and v4 schema. Ready for Codex re-review.
 
 ## Summary
 平行支援 AG-BE-RS-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
