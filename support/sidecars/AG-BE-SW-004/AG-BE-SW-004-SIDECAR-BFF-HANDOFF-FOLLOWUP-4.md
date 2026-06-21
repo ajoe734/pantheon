@@ -10,7 +10,7 @@
 | Reviewer | `Codex` |
 | Date | 2026-06-21 |
 | Mutates canonical truth | `false` |
-| Status | Ready for Codex review |
+| Status | Review approved; owner closeout finalized |
 
 This is a support-only follow-up packet. It does not modify L1 canonical truth,
 L2 execution truth, OpenAPI/schema files, BFF runtime, registry/governance
@@ -174,6 +174,19 @@ Recommended reviewer reopen command:
 AI_NAME=Codex ./scripts/ai-status.sh reopen AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4 \
   "Describe the factual correction, missing source, or parent disposition gap needed before approval."
 ```
+
+Review outcome:
+
+- Reviewer `Codex` approved this support packet with the note that follow-up 4
+  stays support-only, confirms the full aggregate workshop stream remains
+  blocked by missing typed event contract truth, and gives the parent decision
+  memo plus BFF/frontend handoff delta without changing canonical truth or
+  runtime files.
+- The original packet landed through PR #2048 at merge commit
+  `d7e9446f6e1f5d5451b4d9bf213f0fd12bde2a0e`.
+- Owner closeout kept the task boundary unchanged: only this support artifact
+  was updated for finalization, and no L1/L2 truth, schema, runtime,
+  governance, or execute-plans frontend file was touched.
 
 ## Validation Run
 
