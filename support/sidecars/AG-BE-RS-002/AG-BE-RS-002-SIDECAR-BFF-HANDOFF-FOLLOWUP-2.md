@@ -39,7 +39,7 @@ services, registry/governance, or frontend files are modified.
 | `AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-RS-001` | Status `done` (archived); plan-first facade is complete. |
 | `services/control-plane/bff/agora/research/router.py` | Full implementation with all plan and run routes, SSE publish calls, ETag locking, and idempotency enforcement. |
 | `services/control-plane/bff/agora/research/store.py` | In-memory store (MemoryResearchPlanStore); Postgres backend deferred. |
-| `services/control-plane/specs/agora/v4/research_run_projection.schema.json` | 24 fields confirmed. |
+| `services/control-plane/specs/agora/v4/research_run_projection.schema.json` | 26 fields confirmed. |
 | `execute-plans/src/lib/bff-v1/agora/` | Only `contract-snapshot.json`, `dashboard.ts`, `types.ts` present; `research.ts` is absent and must be created by AG-FE-RS-001. |
 | `support/sidecars/AG-BE-RS-002/AG-BE-RS-002-SIDECAR-BFF-HANDOFF.md` | Predecessor sidecar for comparison. |
 
@@ -236,7 +236,7 @@ All routes confirmed in `services/control-plane/bff/agora/research/router.py`.
 | `completed` | false | false | false |
 | `cancelled` | false | false | false |
 
-### `ResearchRunProjection` Field Summary (24 fields)
+### `ResearchRunProjection` Field Summary (26 fields)
 
 | Field | Type | Notes |
 |---|---|---|
@@ -604,7 +604,7 @@ AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-RS-002-SIDECAR-BFF-HANDOF
 
 python3 -m json.tool services/control-plane/specs/agora/v4/research_run_projection.schema.json \
   | python3 -c "import sys, json; d=json.load(sys.stdin); print(list(d['properties'].keys()))"
-# 24 fields confirmed
+# 26 fields confirmed
 
 ls execute-plans/src/lib/bff-v1/agora/
 # contract-snapshot.json  dashboard.ts  types.ts  (research.ts absent)

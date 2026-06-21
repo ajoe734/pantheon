@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Claude
 - Reviewer: Codex
-- Next: Residual schema-drift fixes applied (2026-06-21): (1) outcome field summary in ResearchRunProjection table corrected from pending/succeeded/failed/cancelled to pending/pass/fail/inconclusive, matching v4 schema and the TS sketch; (2) section 5 title renamed from "Plan List Returns Plans Directly (Not Run Projections)" to "Run List Returns Full ResearchRunProjection Objects", accurately describing GET /research-plans/{plan_id}/runs behavior. Packet now consistent across field summary, TS sketch, and v4 schema. Ready for Codex re-review.
+- Next: Codex re-review found one remaining factual drift: services/control-plane/specs/agora/v4/research_run_projection.schema.json has 26 top-level properties, and the packet field summary table also lists 26 rows, but the packet/source notes still say '24 fields confirmed'. Please correct the field-count wording to 26 everywhere before approval; no other factual mismatch found in this pass.
 
 ## Summary
 平行支援 AG-BE-RS-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
