@@ -356,6 +356,66 @@ require reviewer input before the parent task owner begins implementation:
 
 ---
 
+## 16. Reviewer Decision (Claude, 2026-06-21)
+
+**Decision: APPROVED**
+
+The packet is accurate, complete, and internally consistent. All sections were
+verified against `AG-BE-SW-001_deep_design_closure_2026-06-21.md`. No
+contradictions with L1 policy (`DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`,
+`LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`) were found.
+
+### Verified items
+
+- §2 design decisions: consistent with L1 policy and the deep design closure;
+  the "no separate network service" and "no parallel StrategySpec store" calls
+  are sound.
+- §4–5 encryption: AES-256-GCM + per-object DEK + KMS/HSM KEK is appropriate;
+  AAD binding is correct; dev-only key path is properly guarded.
+- §6 retention classes: four classes match the closure; "institutional learning
+  never extends retention" is correctly enforced.
+- §7 read authorization: owner-only decrypt + break-glass path + audit record
+  requirement is correct.
+- §8 persistence schema and indexes: match the closure §7.5 and §8 exactly.
+- §9 redaction requirement: fail-closed 503 is correct.
+- §10 write sequence: 9-step path matches closure §3.9.
+- §11 error contract: all 10 codes verified against the closure.
+- §12 acceptance tests: 8 test requirements are sufficient for dispatch.
+
+### Open question resolutions (§13)
+
+The four open questions are **not dispatch blockers**. Recommended resolutions
+for the parent task owner to document in the contract artifact:
+
+1. **Orphan GC mechanism** — Use an async retry queue: after step 8 marks the
+   object orphaned, an outbox event triggers a background GC worker. Poll
+   interval is operationally configured (suggested default: 1 minute). This is
+   consistent with the existing outbox pattern used elsewhere in the platform.
+
+2. **Break-glass audit trail target** — Route break-glass access events through
+   the existing telemetry outbox (consistent with
+   `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, which routes all audit-path
+   events through the outbox). The parent task owner documents this in
+   `private_content_policy.py`.
+
+3. **Dev KEK CI rotation** — Document in the contract artifact that
+   `AGORA_PRIVATE_CONTENT_DEV_KEK` is injected as a CI secret (e.g. GitHub
+   Actions secret / K8s sealed secret) and rotated on the same quarterly
+   schedule as other platform secrets. No code change required.
+
+4. **`PrivateContentDescriptor` shape** — The minimal shape proposed in the
+   packet is correct: `private_content_ref`, `retention_class`, `expires_at`,
+   and `object_uri` (internal GC only, never returned to clients). The parent
+   task owner formalizes this in `private_content_models.py`.
+
+### Review scope note
+
+This review covers the support artifact only. The parent task `AG-DES-SW-PRIV-001`
+must still produce all implementation files listed in §3 before `AG-BE-SW-001`
+can be dispatched.
+
+---
+
 ## 15. Evidence References
 
 | Evidence | Location |
