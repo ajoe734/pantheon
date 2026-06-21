@@ -484,11 +484,10 @@ git branch --show-current
 # task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4
 
 git status --short
-# ?? .orchestrator/task-briefs/ag_be_tr_001_sidecar_bff_handoff_followup_4.md
-# ?? support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md
+# (clean worktree — all task files committed)
 
 AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4
-# in_progress; owner Claude; reviewer Claude2
+# review_approved; owner Claude; reviewer Claude2
 
 AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-TR-001
 # todo; owner Claude2; reviewer Codex
