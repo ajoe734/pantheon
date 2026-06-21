@@ -8,8 +8,9 @@
 | Parent owner / reviewer | `Codex2` / `Claude` |
 | Sidecar owner / reviewer | `Codex2` / `Codex` |
 | Date | `2026-06-21` |
-| Status | `in_progress; packet prepared for Codex review` |
-| Current dev base | `0f88261fbd18106589e95600412924380681f02a` |
+| Status | `review_approved; owner closeout prepared` |
+| Packet prep dev base | `0f88261fbd18106589e95600412924380681f02a` |
+| Review approval | PR `#1998` merged at `9e30393645e221abb2549bc4756bdf06da8cd124` |
 | Previous sidecar closeout | Followup-12 archived `done`; closeout PR `#1980` merged at `ff92e8cb32bf1601920ea58afec1f1abb0ba24b1`; final task commit `dfa816cc275df2a69da5d801d40d0950fad4f5ae` |
 | New relevant dev delta | Additive Agora v1.2 bundle closed; AG-FE-ID-001 followups 23-25 closed; execute-plans PR `#63` remains open with failed `integration-gate`; BFF runtime delta is unrelated management `nl/ask` async I/O |
 | Mutates canonical truth | `false` |
@@ -55,7 +56,7 @@ Status commands used `AI_NAME=Codex2` and read the central status root via
 
 | Task | Status | Handoff implication |
 |---|---|---|
-| `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | active `in_progress`; owner `Codex2`, reviewer `Codex` | This packet is the support-only deliverable for review. |
+| `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | active `review_approved`; owner `Codex2`, reviewer `Codex` | Review PR `#1998` approved the support-only packet and returned it to `Codex2` for closeout. |
 | `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12` | archived `done`; packet PR `#1964`, closeout PR `#1980` | Previous packet is durable and already recorded post-handoff status drift. |
 | `AG-BE-ID-003` | `blocked`; owner `Codex2`, reviewer `Claude`, waiting for `Claude` | Parent implementation must not proceed until the servant-session type contract is decided. |
 | `AG-BE-ID-002` | archived `done` | `/bff/agora/servant/ensure` remains the accepted upstream servant ensure/provision/reconcile surface. |
@@ -76,7 +77,7 @@ is blocked.
 | Source | Why it matters |
 |---|---|
 | `.orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_13.md` | This task-scoped assignment and support-only boundary. |
-| `AI_NAME=Codex2 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | Confirms active sidecar state, owner/reviewer, artifact path, and support-only acceptance. |
+| `AI_NAME=Codex2 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | Confirms active review-approved sidecar state, owner/reviewer, artifact path, review notes, and support-only acceptance. |
 | `AI_NAME=Codex2 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-BE-ID-003` | Confirms parent remains blocked on the servant-session type-contract decision. |
 | `AI_NAME=Codex2 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12` | Confirms predecessor archived `done` and records packet/closeout PR merge evidence. |
 | `AI_NAME=Codex2 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-XR-003` | Confirms Pantheon-side compatibility manifest/gate task is archived `done`. |
@@ -100,8 +101,10 @@ is blocked.
 ## 4. Delta Since Followup 12
 
 Baseline: followup-12 closeout PR `#1980` merged at
-`ff92e8cb32bf1601920ea58afec1f1abb0ba24b1`. Current `origin/dev` is
-`0f88261fbd18106589e95600412924380681f02a`.
+`ff92e8cb32bf1601920ea58afec1f1abb0ba24b1`. Packet preparation used
+`origin/dev` at `0f88261fbd18106589e95600412924380681f02a`; review record
+PR `#1998` later merged at
+`9e30393645e221abb2549bc4756bdf06da8cd124`.
 
 | Change | What changed | Parent implication |
 |---|---|---|
@@ -327,19 +330,47 @@ Result:
 - `python3 -m pytest scripts/test_agora_v1_2_bundle.py -q`: 5 passed.
 - `python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q`: 18 passed.
 
-## 12. Reviewer Handoff
+Owner closeout validation after review approval:
 
-Codex review focus:
+```bash
+AI_NAME=Codex2 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13
+git status -sb
+git diff --check -- .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_13.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md
+rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_13.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md
+python3 scripts/agora_schema_bundle.py --verify
+python3 -m pytest scripts/test_agora_v1_2_bundle.py -q
+python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q
+```
 
-1. Confirm support-only scope is preserved.
-2. Confirm the v1.2 bundle is treated as additive contract context, not a
-   servant-session runtime/type-contract unblocker.
-3. Confirm parent `AG-BE-ID-003` remains correctly blocked on the
-   `ServantSessionCreateRequest` type decision.
-4. Confirm frontend handoff remains conservative despite FE support followups
-   closing and AG-XR-003 being archived `done`.
-5. Confirm execute-plans PR `#63` risk and missing FE target files are not
-   hidden by Pantheon-side done states.
+Result:
 
-Recommended reviewer disposition if accurate: approve this sidecar as
-support-only handoff material and return to Codex2 for closeout.
+- central status confirmed active `review_approved` state, owner `Codex2`,
+  reviewer `Codex`, review record path, and support-only approval notes.
+- `git status -sb` showed only this task branch's two closeout doc files dirty.
+- `git diff --check` passed.
+- placeholder scan returned no matches.
+- `python3 scripts/agora_schema_bundle.py --verify` passed.
+- `python3 -m pytest scripts/test_agora_v1_2_bundle.py -q`: 5 passed.
+- `python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q`: 18 passed.
+
+## 12. Review Approval And Owner Closeout
+
+Codex approved this sidecar as support-only handoff material in
+`support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-REVIEW.md`.
+Review record PR `#1998` merged at
+`9e30393645e221abb2549bc4756bdf06da8cd124`.
+
+Owner closeout preserves these reviewed boundaries:
+
+1. Parent `AG-BE-ID-003` remains blocked on `Claude` deciding how
+   `ServantSessionCreateRequest` carries or derives `interactive`, `trainer`,
+   and `research_task`.
+2. The v1.2 bundle remains additive context only; it does not unblock BFF
+   runtime/session readiness.
+3. No canonical truth, OpenAPI source-of-truth contract, BFF runtime, registry,
+   governance, database, OpenClaw adapter, compatibility manifest source, or
+   execute-plans source change is approved by this sidecar.
+4. Frontend session create/message/stream/terminate controls must remain gated
+   until the parent task lands the approved contract and runtime evidence.
+5. execute-plans PR `#63` remains a separate frontend follow-through risk while
+   it is open or has failing checks.
