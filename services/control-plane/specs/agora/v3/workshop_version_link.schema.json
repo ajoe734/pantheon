@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/v3/workshop_version_link",
+  "title": "WorkshopVersionLink",
+  "description": "An immutable pointer from a workshop to a Strategy Registry version. A workshop version is a link, not a copy of the StrategySpec document. StrategySpec JSON, lifecycle, ExperimentRun, and CandidateArtifact truth remain exclusively in the Strategy Registry.",
+  "type": "object",
+  "required": [
+    "workshop_version_id",
+    "workshop_id",
+    "strategy_id",
+    "strategy_spec_registry_id",
+    "sequence_no",
+    "created_by",
+    "created_at"
+  ],
+  "properties": {
+    "workshop_version_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Immutable identifier for this workshop-version link."
+    },
+    "workshop_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Workshop this link belongs to."
+    },
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable strategy identity across Registry versions. Copied from the resolved Registry record; not synthesized locally."
+    },
+    "strategy_spec_registry_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Immutable Registry record/version ID this link points to. The pointed record is the single source of StrategySpec JSON truth."
+    },
+    "parent_workshop_version_id": {
+      "type": ["string", "null"],
+      "description": "The preceding workshop-version link in the same workshop, or null for the first link."
+    },
+    "source_event_id": {
+      "type": ["string", "null"],
+      "description": "The workshop event that caused this version link to be created."
+    },
+    "sequence_no": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing version counter within the workshop."
+    },
+    "created_by": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Actor reference (user_id or persona_id) that created this link."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when this link was created."
+    }
+  },
+  "additionalProperties": false
+}
