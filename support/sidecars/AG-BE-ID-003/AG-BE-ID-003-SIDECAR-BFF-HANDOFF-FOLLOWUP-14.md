@@ -9,9 +9,9 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-21` |
 | Status | `in_progress; packet prepared for review` |
-| Current dev base | `4192ba9ca0145771b344342bb10a28f0d2fb17b8` |
+| Current dev base | `38341b12abff963e652bc1d15f7ea6ae0489c743` |
 | Previous sidecar closeout | Followup-13 archived `done`; closeout PR `#2001` merged at `b4a74e92fd4ad270c6933ad81fbf4698ce96243a`; final task branch HEAD `5a84eea2d03701a401db2c48e1d1881c19d5cd17` |
-| New relevant dev delta | AG-FE-ID-001 followup-26 review/closeout and AG-FE-DB-002 followup-16 review/closeout support material only |
+| New relevant dev delta | AG-FE-ID-001 followup-26 review/closeout and AG-FE-DB-002 followup-16/17 support/review/closeout material only |
 | Execute-plans compatibility PR | `#63` remains `OPEN` / `UNSTABLE`; `integration-gate` failed |
 | Mutates canonical truth | `false` |
 
@@ -33,8 +33,8 @@ The fresh post-followup-13 facts are:
 
 1. `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` is archived `done`; its
    support-only closeout PR `#2001` merged at `b4a74e92`.
-2. `origin/dev` advanced to `4192ba9c` through AG-FE-ID-001 followup-26
-   review/closeout and AG-FE-DB-002 followup-16 review/closeout material.
+2. `origin/dev` advanced to `38341b12` through AG-FE-ID-001 followup-26
+   review/closeout and AG-FE-DB-002 followup-16/17 support material.
 3. The checked dev delta after `b4a74e92` contains only sidecar task brief,
    review, and closeout support documents. It does not add or change Agora BFF
    runtime, OpenAPI, specs, canonical contract files, AG-BE-ID-003 support
@@ -60,6 +60,7 @@ Status commands used `AI_NAME=Codex` and read the central status root via
 | `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` | archived `done`; closeout PR `#2003` merged at `4192ba9c` | Latest FE sidecar still keeps session controls gated on blocked `AG-BE-ID-003`. |
 | `AG-FE-ID-001` | active `todo`; depends on `AG-FE-000` and `AG-BE-ID-003` | Frontend parent implementation has not started in durable task state. |
 | `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16` | archived `done`; closeout PR `#2002` merged at `0e95a754` | Dashboard editor support context only; no servant-session implication. |
+| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-17` | active `in_progress`; packet PR `#2004` merged at `38341b12` | Dashboard editor support refresh only; no servant-session implication. |
 | `AG-XR-003` | archived `done` | Pantheon-side compatibility manifest/gate task is closed; execute-plans PR `#63` remains separate frontend follow-through risk. |
 
 Dependency honesty rule: frontend and sidecar work may use identity,
@@ -78,6 +79,7 @@ while `AG-BE-ID-003` is blocked.
 | `AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` | Confirms latest FE support packet is archived `done` and still gates session UI on AG-BE-ID-003. |
 | `AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms FE parent remains `todo` and depends on blocked `AG-BE-ID-003`. |
 | `AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16` | Confirms DB002 followup-16 is archived `done` and support-only. |
+| `AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-17` | Confirms DB002 followup-17 is active `in_progress` and support-only. |
 | `git log --oneline b4a74e92fd4ad270c6933ad81fbf4698ce96243a..origin/dev` | Shows FE followup-26 and DB002 followup-16 support/review/closeout activity after followup-13 closeout. |
 | `git diff --name-status b4a74e92fd4ad270c6933ad81fbf4698ce96243a..origin/dev -- <checked pathset>` | Shows only sidecar task brief/review/closeout material; no BFF/OpenAPI/spec/contract runtime delta. |
 | `services/control-plane/openapi/agora_v1_1.openapi.yaml` and `agora_v1_2.openapi.yaml` | `ServantSessionCreateRequest` still lacks a public type field and rejects undeclared top-level fields. |
@@ -86,7 +88,8 @@ while `AG-BE-ID-003` is blocked.
 | `services/control-plane/bff/main.py` | Legacy `/bff/agora/sessions*` and OpenClaw ops routes remain separate from the servant-session facade. |
 | `rg -n "servant/sessions\|/bff/agora/servant/sessions\|OPENCLAW_UPSTREAM_DEGRADED\|ServantSession" services/control-plane/bff` | No matches; no runtime servant-session route family or accepted degraded code found in checked BFF paths. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26.md` and review record | Latest FE support still says identity/servant readiness is safe context, but sessions remain blocked. |
-| `support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16.md` | New DB support is dashboard-editor context only and does not affect AG-BE-ID-003. |
+| `support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16.md` | DB followup-16 support is dashboard-editor context only and does not affect AG-BE-ID-003. |
+| `support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-17.md` | DB followup-17 support is a later dashboard-editor blocker refresh and does not affect AG-BE-ID-003. |
 | `gh pr view 63 --repo ajoe734/execute-plans` | Confirms PR `#63` remains `OPEN`, `UNSTABLE`, and failed `integration-gate`. |
 | `/home/lupin/code/execute-plans` remote tree probes | Confirm target Agora shell/client files remain absent from checked remotes except the previously noted `types.ts` on `origin/dev`, `AskPersonas.tsx`, and `src/lib/bff/agora.ts`. |
 
@@ -102,6 +105,7 @@ Baseline: followup-13 closeout PR `#2001` merged at
 | Followup-13 closed | Archived `done`; closeout says parent remains blocked on Claude's servant-session type-contract decision. | Treat followup-13 as accepted support evidence. |
 | FE followup-26 closed | PR `#2003` merged at `4192ba9c`; packet and closeout preserve the frontend session gate. | Reinforces AG-FE-ID-001 must not enable session controls while AG-BE-ID-003 is blocked. |
 | DB002 followup-16 closed | PR `#2002` merged review/closeout support records. | Dashboard layout/editor context only; no backend session implication. |
+| DB002 followup-17 packet landed | PR `#2004` merged a support-only DB002 acceptance refresh; central status still shows active `in_progress`. | Dashboard layout/editor context only; no backend session implication. |
 | Checked BFF/OpenAPI/spec paths | No changed files in the post-followup-13 checked pathset. | No new evidence unblocks AG-BE-ID-003. |
 | `ServantSessionCreateRequest` | v1.1 and v1.2 still expose only `intent`, `strategy_ref`, and open `metadata`, with `additionalProperties: false` at top level. | Strict clients still cannot send undeclared top-level `session_type`, `sessionType`, or `session_kind`. |
 | Runtime servant sessions | Targeted BFF grep found no `servant/sessions`, `/bff/agora/servant/sessions`, `ServantSession`, or `OPENCLAW_UPSTREAM_DEGRADED`. | Parent still needs implementation after the contract decision. |
@@ -149,7 +153,7 @@ for `research_task`. Parent should stay blocked until this is decided.
 
 ## 6. Current Route Evidence
 
-| Surface | Current observation at dev `4192ba9c` | Readiness impact |
+| Surface | Current observation at dev `38341b12` | Readiness impact |
 |---|---|---|
 | v1.1/v1.2 OpenAPI servant-session routes | Paper routes exist for create/message/terminate/stream. | Contract family exists on paper, but create is underspecified for type. |
 | `ServantSessionCreateRequest` | No public type field; top-level unknown properties rejected. | Blocks strict create clients and parent implementation review. |
@@ -265,6 +269,7 @@ AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status
 AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26
 AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-ID-001
 AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16
+AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-17
 AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh show AG-XR-003
 AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status.sh progress AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-14 "Preparing support-only followup-14 packet from post-followup-13 dev delta; parent remains blocked on Claude servant-session type-contract decision."
 git log --oneline b4a74e92fd4ad270c6933ad81fbf4698ce96243a..origin/dev
@@ -282,14 +287,14 @@ git -C /home/lupin/code/execute-plans ls-tree -r --name-only origin/dev -- src/a
 
 Results:
 
-- Current branch is `task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` at
-  `origin/dev` `4192ba9ca0145771b344342bb10a28f0d2fb17b8`.
+- Current branch is `task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-14`,
+  refreshed with `origin/dev` `38341b12abff963e652bc1d15f7ea6ae0489c743`.
 - Before packet edits, `git status -sb` showed only the generated task brief as
   untracked.
 - Parent `AG-BE-ID-003` remains active `blocked`, waiting for `Claude`.
 - Followup-13 is archived `done`; closeout PR `#2001` merged at `b4a74e92`.
 - Post-followup-13 dev delta is sidecar support material only: FE followup-26
-  and DB002 followup-16 review/closeout records.
+  and DB002 followup-16/17 support/review/closeout records.
 - Targeted BFF runtime grep for servant-session route family and
   `OPENCLAW_UPSTREAM_DEGRADED` returned no matches.
 - v1.1 and v1.2 `ServantSessionCreateRequest` still have no public type field.
