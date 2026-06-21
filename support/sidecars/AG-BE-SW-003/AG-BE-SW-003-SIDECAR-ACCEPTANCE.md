@@ -10,7 +10,8 @@
 | Reviewer | Claude |
 | Date | 2026-06-21 |
 | Mutates canonical truth | false |
-| Status | In-progress sidecar — support artifact only |
+| Status | Accepted — sidecar support artifact; reviewed and approved by Claude 2026-06-21 |
+| Reviewer annotation | Golden cases fixture already exists in design-closure; implementer should copy not create |
 
 ## Purpose
 
@@ -76,7 +77,7 @@ The skill evaluates a StrategySpec draft and outputs:
 | Gap | Evidence | Impact |
 |---|---|---|
 | No `strategy_completeness` skill module exists | `integrations/openclaw/skills/agora/` has only `expert_consult/` | Blocking — entire NBQ engine is absent |
-| No `next_best_question_gold_cases.json` fixture | A1 §9 requires minimum 10 golden cases; none found in repo | Blocking — acceptance cannot be verified without fixtures |
+| `next_best_question_gold_cases.json` exists only in design-closure | A1 §9 requires minimum 10 golden cases; fixture found at `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/next_best_question_gold_cases.json` — not yet placed in skill or test directory | Non-blocking for implementation start; implementer must copy (not recreate) the fixture to its target location |
 | No `QuestionScoringPolicy` dataclass or scoring engine | A1 §8 requires offline-updateable policy version with factor weights | Blocking — scoring formula is not implemented |
 | `StrategyCompletenessMap` field taxonomy not codified | A1 §2 lists candidate sources (missing/weak/conflicting/inferred_needs_confirmation); no Python enum or model found | Blocking — skill cannot produce state_map without field taxonomy |
 | `strategy_completeness_snapshot.state_map_json` column type | Store saves state_map as a JSON blob; the top-level shape must match SPEC.md `CompletenessOutput.stateMap` record, not the current `strategy_completeness.schema.json` `dimensions` array | Design decision for owner — the schema shape differs between the storage model and the skill output shape |
@@ -138,7 +139,7 @@ All ten golden cases from A1 §9 must have corresponding fixtures and pass:
 | GC-09: Provisional defaults available | Must state provisional values, proceed to initial research (score < 55 path) |
 | GC-10: User corrects question as too low-level | Subsequent similar questions must receive elevated `low_level_question_penalty` |
 
-- [ ] Fixture file `next_best_question_gold_cases.json` exists in the skill directory or `tests/fixtures/agora/`
+- [ ] Fixture file `next_best_question_gold_cases.json` copied from `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/next_best_question_gold_cases.json` into the skill directory or `tests/fixtures/agora/` — **do not recreate; source fixture already exists in design-closure**
 - [ ] All 10 golden cases produce deterministic, spec-compliant outputs
 - [ ] At least 1 privacy/scope failure case
 - [ ] At least 1 tool failure / degraded case
@@ -165,7 +166,7 @@ integrations/openclaw/skills/agora/strategy_completeness/
   test_skill.py     — unit tests for scoring engine + golden cases
 
 tests/fixtures/agora/
-  next_best_question_gold_cases.json   — 10 golden cases + 1 privacy + 1 degraded
+  next_best_question_gold_cases.json   — COPY from docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/next_best_question_gold_cases.json (do not recreate)
 ```
 
 ### Existing files to verify (not change unless required)
