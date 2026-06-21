@@ -10,7 +10,7 @@
 | Reviewer | `Codex` |
 | Date | `2026-06-21` |
 | Mutates canonical truth | `false` |
-| Status | Ready for Codex review |
+| Status | Review approved; owner closeout in progress |
 
 ## Purpose
 
@@ -87,7 +87,7 @@ No changed file in this delta is under:
 | Surface | Observed state | Acceptance consequence |
 |---|---|---|
 | `AG-FE-DB-002` | Active `blocked`; owner `Codex`; reviewer `Claude`; `waiting_for` `Claude`. | Parent remains blocked until `Claude` explicitly absorbs reviewed sidecar evidence or records a new concrete blocker. |
-| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16` | Active `in_progress` at authoring; owner `Codex2`; reviewer `Codex`; artifact is this support packet. | Owner should commit this packet, hand it to `Codex` for review, and preserve parent status unchanged. |
+| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16` | Active `review_approved` at closeout; owner `Codex2`; reviewer `Codex`; packet PR #2000 merged. | Owner closeout preserves the reviewed support-only packet and review record, then marks this sidecar `done`; parent status remains unchanged. |
 | `AG-XR-DASH-001` | Archived `done`. | v1.1 dashboard routes, v2 schemas, ETag/If-Match, expected version, idempotency, and 409 conflict semantics are available. |
 | `AG-XR-OPENAPI-002` | Archived `done`. | v1.2 additive route/type context is merged; DB002 should refresh against it before implementation closeout. |
 | `AG-BE-DB-001` | Archived `done`. | Dashboard BFF CRUD, layout PATCH, widget validator, append-only versioning, and core A3 safety rules are merged. |
@@ -263,7 +263,8 @@ Observed results:
 - Working tree had one untracked entry before authoring:
   `.orchestrator/task-briefs/ag_fe_db_002_sidecar_acceptance_followup_16.md`
   (task-scoped brief - expected).
-- This sidecar is active `in_progress`, owned by `Codex2`, reviewed by `Codex`.
+- This sidecar was active `in_progress`, owned by `Codex2`, reviewed by
+  `Codex`, while the packet was authored.
 - Parent `AG-FE-DB-002` remains active `blocked`, waiting for `Claude`.
 - Follow-up 15 is archived `done` with Codex review approval and PR #1995
   merged at `add046b8`.
@@ -282,15 +283,42 @@ Observed results:
 - No canonical truth, schema, OpenAPI, runtime, registry, governance, broker,
   or RuntimeBinding implementation was changed by this sidecar.
 
-## Reviewer Handoff
+## Reviewer Approval
 
-To `Codex`, sidecar reviewer:
+`Codex` approved this sidecar for owner closeout. Review details are recorded
+in
+`support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16-REVIEW.md`.
 
-Please review this packet for:
+Reviewer approval confirms:
 
-1. Accuracy of the post-followup-15 dev delta summary.
-2. Completeness of the parent acceptance checklist for `DashboardGridEditor`.
-3. Correctness of the support-only boundary: no canonical truth, runtime,
-   schema, registry, governance, broker, or RuntimeBinding surface is changed.
-4. Whether this packet is sufficient for parent reviewer `Claude` to either
-   absorb the reviewed evidence or record a new concrete parent blocker.
+- PR #2000 merged the packet into `dev` at
+  `f7500878297428318e52b9355c7be657dbb33d50`.
+- The packet is support-only and does not mutate canonical truth, runtime,
+  schema, registry, governance, broker, or RuntimeBinding surfaces.
+- The post-followup-15 dev delta still does not add `DashboardGridEditor` or
+  change the DB002 dashboard/editor/runtime/contract compose surface.
+- Parent `AG-FE-DB-002` remains separately blocked, owned by `Codex`, reviewed
+  by `Claude`, and waiting for `Claude`.
+
+## Closeout Finalization
+
+Owner closeout confirms:
+
+- The reviewed deliverable is an acceptance/dependency support packet plus the
+  task-scoped review record.
+- The generated local task brief
+  `.orchestrator/task-briefs/ag_fe_db_002_sidecar_acceptance_followup_16.md`
+  is preserved as task-scoped context, not canonical truth.
+- This closeout does not reopen, unblock, implement, or close parent
+  `AG-FE-DB-002`.
+- No L1/L2 canonical truth, primary runtime, registry, schema, OpenAPI,
+  governance, broker, RuntimeBinding, or parent implementation surface is
+  changed.
+
+Additional owner closeout checks:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-002
+git diff --check -- support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16.md support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-16-REVIEW.md .orchestrator/task-briefs/ag_fe_db_002_sidecar_acceptance_followup_16.md
+```
