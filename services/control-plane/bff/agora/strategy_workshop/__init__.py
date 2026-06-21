@@ -12,3 +12,13 @@ from .store import (  # noqa: F401
     SCHEMA_ENV,
     DEFAULT_SCHEMA,
 )
+
+__all__ = [
+    "MemoryWorkshopStore",
+    "PostgresWorkshopStore",
+    "make_workshop_store",
+    "BACKEND_ENV",
+    "DSN_ENV",
+    "SCHEMA_ENV",
+    "DEFAULT_SCHEMA",
+]
