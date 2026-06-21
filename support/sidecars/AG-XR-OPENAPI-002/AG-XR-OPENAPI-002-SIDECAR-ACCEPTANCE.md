@@ -7,6 +7,8 @@
 - Reviewer: `Codex`
 - Generated: `2026-06-21`
 - Baseline inspected: `origin/dev` / `c1b18d8d0388baa0d7cf64f44391cbd7770f8916`
+- Closeout refresh: `origin/dev` / `08390874bfed1dead152db0fc48c0aa70f9033db`
+  after reviewer sidecar PR `#1988`; focused checks re-ran clean.
 - Parent merge evidence: Pantheon PR `#1983` merged implementation commit `f7e0b2b9`; PR `#1985` merged parent closeout commit `0766e51d`
 - Mutates canonical truth: `no`
 
@@ -34,8 +36,8 @@ The sidecar stance is narrow:
 
 | Source | Evidence used |
 |---|---|
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002` | Parent status is archived `done`; delivery notes list PR `#1985`, closeout commit `0766e51d`, and 5/5 bundle checks with frozen v1/v1.1 diff guard. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE` | Sidecar scope is support-only, owner `Codex2`, reviewer `Codex`, artifact path is this packet. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-002` | Parent status is archived `done`; delivery notes list PR `#1985`, closeout commit `0766e51d`, and 5/5 bundle checks with frozen v1/v1.1 diff guard. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE` | Sidecar scope is support-only, owner `Codex2`, reviewer `Codex`, artifact path is this packet. |
 | `.orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md` | Parent review artifact is present on the refreshed `dev` baseline and records an approved review of PR `#1983`, task commit `f7e0b2b9`, 5/5 tests, bundle verifier, and frozen-file diff guard. |
 | `services/control-plane/openapi/agora_v1_2.openapi.yaml` | Confirms OpenAPI 3.1.0, info version 1.2.0, additive v1.2 description, v1.1 extension pointer, v1.2 capability manifest pointer, persistence/private-content/strategy-ref pointers, route inventory, lifecycle filter wording, private-content projection rules, and section 9 error codes. |
 | `services/control-plane/specs/agora/v3/capability_manifest_v1_2.json` | Confirms manifest version 1.2, extends v1.1 manifest, `extension_by: AG-XR-OPENAPI-002`, workshop lifecycle/status-group authority order, private-content rules, strategy-ref rules, and error-code map. |
@@ -118,7 +120,7 @@ Durable interpretation:
 | Item | Why it matters | Suggested reviewer action |
 |---|---|---|
 | Parent already closed | Parent `AG-XR-OPENAPI-002` is now archived `done`, so this packet should be treated as downstream support context rather than a prerequisite for parent closeout. | Use the packet to seed follow-on implementation acceptance; do not reopen the closed parent from this sidecar. |
-| `origin/dev` advanced during packet prep | Baseline was refreshed to `c1b18d8d`; the AG-XR v1.2 surfaces did not change in the intervening closeout and FE sidecar commits. | If reviewing after more dev merges, re-run the focused checks below. |
+| `origin/dev` advanced during packet prep and closeout | Baseline was refreshed to `c1b18d8d` during packet prep, then to `08390874` during owner closeout after reviewer sidecar PR `#1988`; the AG-XR v1.2 surfaces did not change in the intervening closeout, FE sidecar, and reviewer sidecar commits. | If reviewing after more dev merges, re-run the focused checks below. |
 | Scope separation | This packet is not permission to mutate OpenAPI, runtime, registry, governance, broker, or capital paths. | Review only the support packet and parent acceptance mapping. |
 
 ## Suggested Handoff To Reviewer
@@ -145,8 +147,8 @@ Commands run while preparing the packet:
 ```bash
 git fetch origin dev
 git merge --no-edit origin/dev
-AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002
-AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-002
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE
 sha256sum \
   services/control-plane/specs/agora/bundle_index.v1_1.json \
   services/control-plane/openapi/agora_v1_1.openapi.yaml \
@@ -165,5 +167,26 @@ git diff --name-status HEAD -- \
 python3 -m pytest scripts/test_agora_v1_2_bundle.py -q
 # -> 5 passed in 2.00s
 git diff --check -- support/sidecars/AG-XR-OPENAPI-002/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE.md
+# -> clean
+```
+
+Commands re-run during owner closeout refresh after merging reviewer sidecar
+PR `#1988` into this task branch:
+
+```bash
+git merge --no-edit origin/dev
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE
+python3 -m pytest scripts/test_agora_v1_2_bundle.py -q
+# -> 5 passed in 1.37s
+git diff --check -- \
+  support/sidecars/AG-XR-OPENAPI-002/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE.md \
+  support/sidecars/AG-XR-OPENAPI-002/AG-XR-OPENAPI-002-SIDECAR-REVIEW.md
+# -> clean
+git diff --name-status HEAD -- \
+  services/control-plane/specs/agora/bundle_index.v1_1.json \
+  services/control-plane/openapi/agora_v1_1.openapi.yaml \
+  services/control-plane/specs/agora/bundle_index.v1_2.json \
+  services/control-plane/openapi/agora_v1_2.openapi.yaml \
+  services/control-plane/specs/agora/v3/capability_manifest_v1_2.json
 # -> clean
 ```
