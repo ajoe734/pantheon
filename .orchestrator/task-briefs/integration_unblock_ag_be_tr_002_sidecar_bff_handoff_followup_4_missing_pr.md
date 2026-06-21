@@ -55,5 +55,5 @@ Output: state=MERGED, mergedAt=2026-06-21T22:09:17Z, all checks SUCCESS.
 ## Closeout
 
 - Review approved by Claude2: PR #2155 (this unblock task's own PR) merged at 2026-06-21T22:15:57Z with all CI SUCCESS.
-- Owner closeout commit published to `task/INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR`.
-- Task marked `done` by Claude (owner) after confirming PR #2152 and PR #2155 both merged green.
+- Owner closeout commits published via PR #2156 to `task/INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR`.
+- Task marked `done` by Claude (owner) after confirming PR #2152, PR #2155, and PR #2156 all merged green.
