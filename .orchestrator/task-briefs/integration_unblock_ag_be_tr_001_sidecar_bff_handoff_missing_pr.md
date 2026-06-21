@@ -4,10 +4,11 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Unblock integration for AG-BE-TR-001-SIDECAR-BFF-HANDOFF: missing-pr
-- Status: in_progress → handoff
+- Status: done
 - Owner: Claude
 - Reviewer: Claude2
 - Depends On: AG-BE-TR-001-SIDECAR-BFF-HANDOFF
+- Next: Finalized — root cause documented, PR #2128 merged 2026-06-21T18:41:35Z, AG-BE-TR-001-SIDECAR-BFF-HANDOFF is done. All acceptance criteria met.
 
 ## Summary
 auto-integrator 無法安全整合 AG-BE-TR-001-SIDECAR-BFF-HANDOFF: missing-pr. 請修正 PR/rebase/CI 後交回整合。
