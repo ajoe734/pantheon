@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-ID-001 BFF and frontend handoff packet
-- Status: review_approved
+- Status: in_progress
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Followup-34 support packet approved; factually accurate refresh with no canonical truth mutations. Pantheon dev advanced 7b112049->6393f121 (AG-BE-TR-002 sidecar, PR #2161) with no Agora path changes. BFF 39/39 pass reconfirmed. Parent AG-FE-ID-001 remains blocked pending execute-plans PR#66 merge or gate disposition.
+- Next: Re-dispatched; syncing dev to 441f661e (INTG-UNBLK-FU4-C PR #2167); pushing for auto-merge on PR #2164. Next: run done once PR merges.
 
 ## Summary
 平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
