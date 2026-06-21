@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12",
+  "$id": "https://pantheon.internal/specs/agora/v3/workshop_storage_contract.schema.json",
+  "title": "WorkshopStorageContract",
+  "description": "Contract schema for Agora private-content storage, retention, encryption envelope, and error codes (AG-DES-SW-PRIV-001 §3, §9).",
+  "x-ag-task": "AG-DES-SW-PRIV-001",
+  "x-frozen": false,
+
+  "$defs": {
+
+    "RetentionClass": {
+      "description": "Retention class governing expiry and deletion policy (§3.5).",
+      "type": "string",
+      "enum": ["workshop_default", "user_saved", "ephemeral_attachment", "legal_hold"]
+    },
+
+    "ContentObjectState": {
+      "description": "Lifecycle state of a private content object (§7.5).",
+      "type": "string",
+      "enum": ["active", "deleted", "orphaned"]
+    },
+
+    "PrivateContentDescriptor": {
+      "description": "Immutable descriptor returned by PrivateContentStore.put (§3.2). Object URI is never included.",
+      "type": "object",
+      "required": [
+        "private_content_ref",
+        "tenant_id",
+        "owner_user_id",
+        "workshop_id",
+        "content_type",
+        "retention_class",
+        "state",
+        "created_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "private_content_ref": {
+          "$ref": "private_content_ref.schema.json",
+          "description": "Opaque reference; encodes no identity or path."
+        },
+        "tenant_id": { "type": "string" },
+        "owner_user_id": { "type": "string" },
+        "workshop_id": { "type": "string" },
+        "event_id": { "type": ["string", "null"] },
+        "content_type": { "type": "string" },
+        "retention_class": { "$ref": "#/$defs/RetentionClass" },
+        "expires_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "UTC expiry. Null for legal_hold."
+        },
+        "state": { "$ref": "#/$defs/ContentObjectState" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "DecryptAuditRecord": {
+      "description": "Audit record emitted for every decrypt call (§3.6).",
+      "type": "object",
+      "required": [
+        "private_content_ref",
+        "tenant_id",
+        "owner_user_id",
+        "actor_ref",
+        "purpose",
+        "request_id",
+        "accessed_at",
+        "outcome"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "private_content_ref": { "$ref": "private_content_ref.schema.json" },
+        "tenant_id": { "type": "string" },
+        "owner_user_id": { "type": "string" },
+        "actor_ref": { "type": "string" },
+        "purpose": { "type": "string" },
+        "request_id": { "type": "string" },
+        "accessed_at": { "type": "string", "format": "date-time" },
+        "outcome": {
+          "type": "string",
+          "enum": ["success", "denied", "expired", "not_found"]
+        }
+      }
+    },
+
+    "RedactionResult": {
+      "description": "Mandatory redaction output before a workshop message event is committed (§3.8).",
+      "type": "object",
+      "required": ["redacted_summary", "redaction_policy_version", "redaction_status"],
+      "additionalProperties": false,
+      "properties": {
+        "redacted_summary": { "type": "string", "minLength": 1 },
+        "redaction_policy_version": { "type": "string", "minLength": 1 },
+        "redaction_status": { "type": "string", "enum": ["completed"] }
+      }
+    },
+
+    "EncryptionEnvelopeMetadata": {
+      "description": "Fields persisted in agora_private_content_object (§3.4, §7.5). No plaintext hash is stored.",
+      "type": "object",
+      "required": [
+        "encrypted_dek",
+        "kek_key_version",
+        "nonce",
+        "tag",
+        "ciphertext_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "encrypted_dek": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "DEK encrypted under the configured KEK (AES-256-GCM, production KMS)."
+        },
+        "kek_key_version": {
+          "type": "string",
+          "description": "Opaque KEK version string from the key provider."
+        },
+        "nonce": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "12-byte AES-256-GCM nonce."
+        },
+        "tag": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "16-byte AES-256-GCM authentication tag."
+        },
+        "ciphertext_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of ciphertext bytes (not plaintext)."
+        }
+      }
+    },
+
+    "WriteSequenceStep": {
+      "description": "Individual step in the §3.9 create-message write sequence.",
+      "type": "string",
+      "enum": [
+        "authenticate_and_resolve_scope",
+        "validate_size_and_type",
+        "reserve_event_id_and_idempotency_record",
+        "redact_plaintext_in_memory",
+        "encrypt_and_write_object",
+        "transactional_create_or_update_workshop_aggregate",
+        "commit_outbox_event",
+        "mark_ciphertext_orphaned_on_db_failure",
+        "return_response"
+      ]
+    },
+
+    "PrivateContentErrorCode": {
+      "description": "Wire error codes emitted by the private-content subsystem (§9).",
+      "type": "string",
+      "enum": [
+        "PRIVATE_CONTENT_STORE_UNAVAILABLE",
+        "PRIVATE_CONTENT_REDACTION_UNAVAILABLE",
+        "PRIVATE_CONTENT_EXPIRED",
+        "PRIVATE_CONTENT_ACCESS_DENIED",
+        "STRATEGY_REFERENCE_MISMATCH",
+        "STRATEGY_REFERENCE_NOT_FOUND",
+        "WORKSHOP_ALREADY_CONCLUDED",
+        "WORKSHOP_ARCHIVED",
+        "WORKSHOP_VERSION_REQUIRED",
+        "CONCURRENT_MODIFICATION"
+      ]
+    },
+
+    "PrivateContentErrorResponse": {
+      "description": "Wire error envelope. Must never echo raw content, object URI or encrypted key material (§3.7, §9).",
+      "type": "object",
+      "required": ["error_code", "http_status"],
+      "additionalProperties": false,
+      "properties": {
+        "error_code": { "$ref": "#/$defs/PrivateContentErrorCode" },
+        "http_status": { "type": "integer" },
+        "request_id": { "type": "string" },
+        "message": {
+          "type": "string",
+          "description": "Human-readable detail. Must not include raw content or sensitive material."
+        }
+      }
+    },
+
+    "AgendaPrivateContentObject": {
+      "description": "DB row shape for agora_private_content_object (§7.5). No plaintext body or hash.",
+      "type": "object",
+      "required": [
+        "private_content_ref",
+        "tenant_id",
+        "owner_user_id",
+        "workshop_id",
+        "object_uri",
+        "ciphertext_sha256",
+        "encrypted_dek",
+        "kek_key_version",
+        "content_type",
+        "retention_class",
+        "state",
+        "created_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "private_content_ref": { "$ref": "private_content_ref.schema.json" },
+        "tenant_id": { "type": "string" },
+        "owner_user_id": { "type": "string" },
+        "workshop_id": { "type": "string" },
+        "event_id": { "type": ["string", "null"] },
+        "object_uri": {
+          "type": "string",
+          "description": "Internal object-store URI. Never returned to callers."
+        },
+        "ciphertext_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "encrypted_dek": { "type": "string", "contentEncoding": "base64" },
+        "kek_key_version": { "type": "string" },
+        "content_type": { "type": "string" },
+        "retention_class": { "$ref": "#/$defs/RetentionClass" },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" },
+        "state": { "$ref": "#/$defs/ContentObjectState" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "deleted_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    }
+  },
+
+  "type": "object",
+  "description": "Top-level contract object referencing all sub-schemas above.",
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "ag_task": { "type": "string", "const": "AG-DES-SW-PRIV-001" }
+  }
+}
