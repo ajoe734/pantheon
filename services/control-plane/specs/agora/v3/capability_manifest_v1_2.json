@@ -3,19 +3,34 @@
   "extends_manifest": "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json",
   "base_frozen_by": "AG-XR-001",
   "v1_1_frozen_by": "AG-XR-OPENAPI-001",
-  "extension_by": "AG-XR-OPENAPI-002",
+  "extension_by": "AG-XR-OPENAPI-003",
   "governed_by": "docs/04/pantheon_agora_cross_repo_2026-06-20/sw001-deep-closure/AG-BE-SW-001_deep_design_closure_2026-06-21.md",
-  "description": "Agora v1.2 additive capability manifest. Preserves v1 and v1.1 bundles, then tightens Strategy Workshop private-content, Strategy Registry reference, lifecycle filter, projection, persistence, and error semantics.",
+  "description": "Agora v1.2 additive capability manifest. Preserves v1 and v1.1 bundles, then tightens Strategy Workshop private-content, Strategy Registry reference, lifecycle filter, projection, persistence, and error semantics. AG-XR-OPENAPI-003 adds session_type to ServantSessionCreateRequest (C1 common envelope alignment).",
   "capabilities": [
     {
       "name": "agora.servant.v1",
       "version": "1.0",
       "inherited_from": "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json",
-      "description": "User-private servant ensure, reconcile and session facade.",
+      "extended_by": "AG-XR-OPENAPI-003",
+      "description": "User-private servant ensure, reconcile and session facade. v1.2 adds optional session_type to ServantSessionCreateRequest (C1 common envelope alignment).",
       "bff_path_prefixes": ["/bff/agora/servant"],
       "internal_path_prefixes": ["/api/openclaw-adapter/agents"],
       "auth_level": "agora_user",
-      "execution_authority": "none"
+      "execution_authority": "none",
+      "session_type_contract": {
+        "field": "session_type",
+        "location": "ServantSessionCreateRequest",
+        "enum": ["interactive", "trainer", "research_task"],
+        "default": "interactive",
+        "optional": true,
+        "additionalProperties_unchanged": true,
+        "c1_common_envelope_aligned": true,
+        "strategy_dialogue_allows": ["interactive", "trainer"]
+      },
+      "authority_order": [
+        "agora_v1_2.openapi.yaml and this manifest define the v1.2 ServantSessionCreateRequest shape including session_type.",
+        "v1.2 ServantSessionCreateRequest supersedes the v1.1 definition. The v1.1 file remains immutable historical evidence; do not edit it."
+      ]
     },
     {
       "name": "agora.workshop.v1",
