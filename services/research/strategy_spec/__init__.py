@@ -1,5 +1,43 @@
-"""StrategySpec contract models and RS-002 normalization helpers."""
+"""StrategySpec contract models, normalization, patching, and version comparison."""
 
+from .patching import (
+    ALLOWED_OPS,
+    ALLOWED_TOP_LEVEL_PREFIXES,
+    FORBIDDEN_PATHS,
+    PATCH_FORMAT_VERSION,
+    PatchBaseHashMismatchError,
+    PatchError,
+    PatchOperationError,
+    PatchPathForbiddenError,
+    PatchPolicyInvalidError,
+    PatchResultSchemaInvalidError,
+    apply_patch,
+    apply_patch_validated,
+    compute_document_sha256,
+    validate_operations,
+)
+from .version_compare import (
+    MAX_CANDIDATE_VERSIONS,
+    VALID_EVIDENCE_CLASSES,
+    VALID_GATES,
+    VALID_READINESS_STATES,
+    VersionCompareError,
+    VersionCompareLimitExceededError,
+    build_recommendation,
+    build_version_compare,
+    compute_field_diffs,
+    compute_metric_diffs,
+    compute_readiness_diffs,
+)
+from .workshop_projection import (
+    WorkshopProjection,
+    WorkshopVersionLink,
+    build_projection,
+    build_version_link,
+    compute_patch_base,
+    latest_version,
+    select_version,
+)
 from .models import (
     CodeRef,
     DataDependency,
@@ -35,6 +73,42 @@ from .normalizer import (
 )
 
 __all__ = [
+    # patching
+    "ALLOWED_OPS",
+    "ALLOWED_TOP_LEVEL_PREFIXES",
+    "FORBIDDEN_PATHS",
+    "PATCH_FORMAT_VERSION",
+    "PatchBaseHashMismatchError",
+    "PatchError",
+    "PatchOperationError",
+    "PatchPathForbiddenError",
+    "PatchPolicyInvalidError",
+    "PatchResultSchemaInvalidError",
+    "apply_patch",
+    "apply_patch_validated",
+    "compute_document_sha256",
+    "validate_operations",
+    # version_compare
+    "MAX_CANDIDATE_VERSIONS",
+    "VALID_EVIDENCE_CLASSES",
+    "VALID_GATES",
+    "VALID_READINESS_STATES",
+    "VersionCompareError",
+    "VersionCompareLimitExceededError",
+    "build_recommendation",
+    "build_version_compare",
+    "compute_field_diffs",
+    "compute_metric_diffs",
+    "compute_readiness_diffs",
+    # workshop_projection
+    "WorkshopProjection",
+    "WorkshopVersionLink",
+    "build_projection",
+    "build_version_link",
+    "compute_patch_base",
+    "latest_version",
+    "select_version",
+    # models / lineage / normalizer
     "CodeRef",
     "DataDependency",
     "EvidenceRef",
