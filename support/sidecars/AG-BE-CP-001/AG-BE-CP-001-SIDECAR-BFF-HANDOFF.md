@@ -27,7 +27,7 @@ whether and how to absorb it into the main implementation.
 | `.orchestrator/skills/worker-anchor-commit.md` | Task-owned support changes require explicit scope and narrow commit discipline. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Repo changes must pass task commit, PR, merge, and owner closeout before `done`. |
 | `AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-CP-001-SIDECAR-BFF-HANDOFF` | Sidecar is `in_progress`, owner `Claude`, reviewer `Codex`, helper parent `AG-BE-CP-001`, helper kind `bff_handoff_packet`. |
-| `AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-CP-001` | Parent is `blocked`; owner `Codex`, reviewer `Claude2`; depends on `AG-BE-RS-002`; blocker: no candidate pool/score HTTP route defined in any OpenAPI file; `candidate_pool.schema.json` has `additionalProperties: false` and no score, discussion, monitoring, or negative-example fields. |
+| `AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-CP-001` | Parent is `blocked`; owner `Codex`, reviewer `Claude2`; depends on `AG-BE-RS-002` (now **done** — archive, closeout merge `3566d9e6`, implementation PR #2092 merged to `dev`); blocker: no candidate pool/score HTTP route defined in any OpenAPI file; `candidate_pool.schema.json` has `additionalProperties: false` and no score, discussion, monitoring, or negative-example fields. |
 | `AI_NAME=Claude python3 scripts/ai_status.py show AG-FE-TR-002` | Status `todo`; depends on `AG-FE-TR-001`, `AG-BE-CP-001`, and `AG-XR-OPENAPI-004`; needs CandidateReviewDrawer and entry/exit queues binding A2 score components. |
 | `services/control-plane/specs/agora/candidate_pool.schema.json` | `CandidatePool` v1.0 schema: pool-level fields (`pool_id`, `operator_id`, `filter`, `candidates`, `total`, `snapshot_at`); each candidate member has `artifact_id`, `strategy_ref`, `title`, `lifecycle_state`, `producing_persona_id`, `sharpe_summary`, `run_ref`, `created_at`; `additionalProperties: false` at both levels. No score components, discussion, monitoring, or negative-example fields. |
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/A2_candidate_scoring_recipe_spec.md` | A2 recipe frozen v1.0: scoring formula (`raw_score`, `penalty_score`, `effective_score`, `confidence_multiplier`); `CandidateScoreComponent` and `CandidateScoreResult` TypeScript contracts; 7 normalization transforms; missing-value policy; default winner-branch recipe (8 positive + 4 penalty components); weight constraints; score bands; UI decomposition requirements. Unblocks `AG-BE-CP-001`. |
@@ -74,7 +74,7 @@ whether and how to absorb it into the main implementation.
 - Research run dispatch or projection (`AG-BE-RS-001` / `AG-BE-RS-002` own this).
 - `TradingIntent` creation (`AG-BE-TR-002` owns this; it is triggered from Trading Room decisions only).
 
-Dependencies: `AG-BE-CP-001` depends on `AG-BE-RS-002` merging first because the candidate pool is expected to include `run_ref` linking candidates to their research run projections.
+Dependencies: `AG-BE-CP-001` depended on `AG-BE-RS-002` for the `run_ref` field linking candidates to their research run projections. **AG-BE-RS-002 is now `done`** (archive: closeout merge `3566d9e6ee1f531e84c536fd3ff0d4b44e0744c4`, implementation PR #2092 merged to `dev`). The RS-002 dependency is satisfied; `run_ref` is available.
 
 ## BFF Query Gap Matrix
 
@@ -160,7 +160,7 @@ Dependencies: `AG-BE-CP-001` depends on `AG-BE-RS-002` merging first because the
 | Missing-value indicators | When any component's `rawValue` is null, display the `missingPolicy` label. When `data_quality < 0.50`, cap indicator and show "needs more research" tooltip. |
 | No-order guard | No candidate decision verb creates a broker order, `RuntimeBinding`, or capital binding. UI must not expose "Place order" or "Execute" controls from any candidate route response. |
 | Write actions | Decision and discussion POST must use idempotency keys; map `409` to refresh-required, `422` to governance/precondition failure. |
-| Degraded state | `501`: feature not implemented (show coming-soon if gated on RS-002). `403`: missing scope. `404`: pool or candidate not found (clear stale view). `422`: governance or lifecycle precondition failure. `503`/blocked: registry unavailable with `blocking_reasons`. |
+| Degraded state | `501`: feature not implemented (candidate pool routes not yet live). `403`: missing scope. `404`: pool or candidate not found (clear stale view). `422`: governance or lifecycle precondition failure. `503`/blocked: registry unavailable with `blocking_reasons`. |
 
 Suggested frontend client methods (all to be placed in `candidate.ts` or equivalent):
 
@@ -210,9 +210,17 @@ Parent owner (`Codex`) must not self-create these fields. A blocker toward `Clau
 
 The parent acceptance criteria cite "§17.3 endpoint:score", but `SD_2026-06-20.md §17` is only an anchor to §5 (route catalog). §5.1 and §5.2 contain no candidate pool or score routes. The A2 recipe spec defines the scoring model but does not specify an HTTP route path. Parent owner should request an explicit route definition (path, method, request/response shapes) from SD or design-closure-round2 before coding the endpoint.
 
-### 3. Gated on AG-BE-RS-002
+### 3. AG-BE-RS-002 Is Now Done — run_ref Available
 
-`AG-BE-CP-001` depends on `AG-BE-RS-002` for the `run_ref` field that links candidate members to their research run projections. Until `AG-BE-RS-002` closes, candidate members may reference run IDs but the projection detail will be unavailable. BFF should return candidate pool data with `run_ref` as an opaque string; the frontend must not attempt to follow it to the RS-002 projection until that route is live.
+`AG-BE-RS-002` (Unified run/progress/result projection) completed and merged. Archive confirms: terminal status `done`, implementation PR #2092 merged into `dev` at `61b78053`, closeout merge `3566d9e6ee1f531e84c536fd3ff0d4b44e0744c4`. The `run_ref` field linking candidate members to their research run projections is now available from the live `GET /research-runs/{run_id}` route.
+
+The remaining blockers for `AG-BE-CP-001` are:
+
+- **Missing candidate score/review HTTP route**: §17.3 `endpoint:score` is not formally defined in the SD (see §2 above). Parent owner must request an explicit route definition (path, method, request/response shapes) from SD or design-closure-round2 before implementing the endpoint.
+- **Missing schema extension**: `candidate_pool.schema.json` has `additionalProperties: false`; score-component, discussion, monitoring, and negative-example fields cannot be added without a design-team schema extension or a new sibling `candidate_score.schema.json` (see §1 above).
+- **Missing lifecycle persistence definition**: The `lifecycle_state` transition map (candidate → review → approved/rejected) must be explicitly defined before decision recording can be implemented.
+
+The RS-002 gate is lifted. BFF now can follow `run_ref` to the research-run projection route when it is implemented.
 
 ### 4. Trading Room isolation
 
@@ -226,10 +234,10 @@ Codex review should verify:
 |---|---|
 | Scope | Only this support artifact and task-owned status/brief metadata are in scope. |
 | Canonical truth | No canonical docs, schemas, OpenAPI, BFF runtime, registry/governance, or frontend files changed by this sidecar. |
-| Factual alignment | `AG-BE-CP-001` is `blocked` (owner `Codex`, reviewer `Claude2`); `AG-BE-RS-002` is `todo`; `AG-FE-TR-002` is `todo`; no candidate pool BFF route exists in any OpenAPI file. |
+| Factual alignment | `AG-BE-CP-001` is `blocked` (owner `Codex`, reviewer `Claude2`); `AG-BE-RS-002` is **`done`** (archive, closeout merge `3566d9e6`, implementation PR #2092 merged to `dev`); `AG-FE-TR-002` is `todo`; no candidate pool BFF route exists in any OpenAPI file. Remaining blockers for parent are: missing candidate score/review HTTP route + schema extension + lifecycle transition map. |
 | Schema accuracy | `candidate_pool.schema.json` accurately described: v1.0, `additionalProperties: false`, no score/discussion/monitoring/negative-example fields. |
 | A2 recipe accuracy | A2 scoring formula, component contract, weight rules, bands, and default winner-branch recipe accurately reflected from `design-closure/A2_candidate_scoring_recipe_spec.md`. |
-| Open design note accuracy | Schema extension is genuinely required before parent owner can implement; §17.3 is not formally defined in the SD; gating on RS-002 is correctly stated. |
+| Open design note accuracy | Schema extension is genuinely required before parent owner can implement; §17.3 is not formally defined in the SD; RS-002 is now `done` and its dependency note is updated accordingly; remaining blockers are schema/route/lifecycle-map. |
 | Trading Room boundary | Correct that `AG-BE-CP-001` is the sole candidate-state writer; Trading Room consumes the decision reference without duplicating the state machine. |
 | No-order guard | All journeys and acceptance checks correctly exclude broker orders, `RuntimeBinding`, and capital binding. |
 
@@ -251,14 +259,14 @@ AI_NAME=Codex ./scripts/ai-status.sh reopen AG-BE-CP-001-SIDECAR-BFF-HANDOFF \
 
 ## Validation Run
 
-Commands run from this sidecar worktree:
+Commands run from this sidecar worktree (initial pass):
 
 ```bash
 git branch --show-current
 # task/AG-BE-CP-001-SIDECAR-BFF-HANDOFF
 
 git status --short
-# ?? .orchestrator/task-briefs/ag_be_cp_001_sidecar_bff_handoff.md
+# M .orchestrator/task-briefs/ag_be_cp_001_sidecar_bff_handoff.md
 
 AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-CP-001-SIDECAR-BFF-HANDOFF
 AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-CP-001
@@ -267,4 +275,11 @@ python3 -m json.tool services/control-plane/specs/agora/candidate_pool.schema.js
 grep -n "candidate\|score\|pool" services/control-plane/openapi/agora_v1.openapi.yaml
 grep -n "candidate\|score\|pool" services/control-plane/openapi/agora_v1_3.openapi.yaml
 grep -n "§17\|17\.3\|candidate.pool" docs/04/pantheon_agora_cross_repo_2026-06-20/SD_2026-06-20.md
+```
+
+Follow-up pass (RS-002 fact-check after Codex reopen):
+
+```bash
+AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-RS-002
+# source: archive; terminal_status: done; closeout merge 3566d9e6ee1f531e84c536fd3ff0d4b44e0744c4; impl PR #2092 merged to dev
 ```
