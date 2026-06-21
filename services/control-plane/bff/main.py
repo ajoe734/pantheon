@@ -34557,6 +34557,7 @@ def _mgmt_nl_maybe_provider_answer(
 
 
 _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS = 3.0
+_MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS = 30.0
 # Strong references to in-flight provider finaliser tasks; asyncio keeps only a
 # weak reference to bare tasks, so without this they could be GC'd mid-run.
 _MGMT_NL_PROVIDER_FINALIZE_TASKS: Set["asyncio.Task[Any]"] = set()
@@ -34575,6 +34576,36 @@ def _mgmt_nl_provider_inline_grace_seconds() -> float:
     except (TypeError, ValueError):
         return _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
     return value if value > 0 else _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
+
+
+def _mgmt_nl_stream_read_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_STREAM_READ_TIMEOUT_SECONDS")
+    if raw is None or not str(raw).strip():
+        return _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS
+    return value if value > 0 else _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS
+
+
+def _mgmt_nl_sse_frame(payload: Any) -> str:
+    if payload == "[DONE]":
+        return "data: [DONE]\n\n"
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+
+def _mgmt_nl_json_response_payload(response: JSONResponse) -> Dict[str, Any]:
+    raw = getattr(response, "body", b"") or b""
+    if isinstance(raw, str):
+        raw_text = raw
+    else:
+        raw_text = raw.decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(raw_text) if raw_text else {}
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _mgmt_nl_finalize_result(
@@ -35174,27 +35205,21 @@ async def bff_management_nl_ask(
 def bff_management_nl_ask_stream(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
 ):
-    """SSE-streaming variant of /bff/management/nl/ask.
-
-    Builds the same management context pack + provider prompt, then streams the
-    OpenClaw agent reply token-by-token (via the adapter `/v1/responses` SSE path)
-    so the console renders progressively. Emits:
-        data: {"type":"meta","sessionId":...,"traceId":...,"messageId":...}
-        data: {"type":"delta","text":...}            (repeated)
-        data: {"type":"done","text":...,"transport":...}
-        data: {"type":"error","error_code":...,"message":...}
-        data: [DONE]
-    Read-only: the high-risk refusal policy applies, exactly like the non-stream route.
-    """
+    """SSE-streaming variant of /bff/management/nl/ask."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+
     question = _agora_required_text(payload, "question")
     _mgmt_nl_validate_question_size(question)
+    control_command = _mgmt_nl_parse_control_command(question)
 
-    risk = _mgmt_nl_high_risk_classify(question)
+    risk = None if control_command is not None else _mgmt_nl_high_risk_classify(question)
     if risk is not None:
         raise _bff_error(
             403,
@@ -35213,10 +35238,75 @@ def bff_management_nl_ask_stream(
     focus = _mgmt_nl_normalize_focus(payload.get("focus"))
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
-    trace_id = f"mnl-trace-{uuid.uuid4().hex[:12]}"
+    trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
     message_id = f"mnl-{uuid.uuid4().hex[:12]}"
-    control_mode = _assistant_control_mode_for_identity(identity, management_session_id=session_id, touch=True)
     ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
+
+    if control_command is not None:
+        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask/stream", "payload": payload})
+        control_response = _mgmt_nl_handle_control_command(
+            control_command=control_command,
+            payload=payload,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            focus=focus,
+            ui_snapshot=ui_snapshot,
+            resolved_key=resolved_key,
+            request_hash=request_hash,
+            session_id=session_id,
+            message_id=message_id,
+            trace_id=trace_id,
+            now=now,
+        )
+        control_payload = _mgmt_nl_json_response_payload(control_response)
+        control_data = control_payload.get("data") if isinstance(control_payload.get("data"), dict) else {}
+        answer = str((control_data or {}).get("answer") or "")
+        provider_status = (control_data or {}).get("providerStatus") or (control_data or {}).get("provider_status") or {}
+        audit_log = (control_data or {}).get("auditLog") or (control_data or {}).get("audit_log") or None
+        conversation = (control_data or {}).get("conversation") or None
+        ui_actions = (control_data or {}).get("uiActions") or (control_data or {}).get("ui_actions") or []
+        command_kind = (control_data or {}).get("controlCommand") or (control_data or {}).get("control_command")
+
+        def control_event_stream() -> Iterator[str]:
+            yield _mgmt_nl_sse_frame(
+                {
+                    "type": "meta",
+                    "sessionId": (control_data or {}).get("sessionId") or session_id,
+                    "session_id": (control_data or {}).get("session_id") or session_id,
+                    "traceId": (control_data or {}).get("traceId") or trace_id,
+                    "trace_id": (control_data or {}).get("trace_id") or trace_id,
+                    "messageId": (control_data or {}).get("message_id") or message_id,
+                    "controlCommand": command_kind,
+                    "control_command": command_kind,
+                }
+            )
+            if answer:
+                yield _mgmt_nl_sse_frame({"type": "delta", "text": answer})
+            yield _mgmt_nl_sse_frame(
+                {
+                    "type": "done",
+                    "text": answer,
+                    "providerStatus": provider_status,
+                    "provider_status": provider_status,
+                    "auditLog": audit_log,
+                    "audit_log": audit_log,
+                    "conversation": conversation,
+                    "uiActions": ui_actions,
+                    "ui_actions": ui_actions,
+                    "controlCommand": command_kind,
+                    "control_command": command_kind,
+                }
+            )
+            yield _mgmt_nl_sse_frame("[DONE]")
+
+        return StreamingResponse(
+            control_event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
+
+    control_mode = _assistant_control_mode_for_identity(identity, management_session_id=session_id, touch=True)
     conversation_context = _management_ai_server_conversation_context(
         session_id=session_id,
         client_hint=_mgmt_nl_normalize_conversation_context(payload.get("conversation")),
@@ -35253,11 +35343,12 @@ def bff_management_nl_ask_stream(
     )
 
     def event_stream() -> Iterator[str]:
-        meta = {
-            "type": "meta", "sessionId": session_id, "session_id": session_id,
-            "traceId": trace_id, "trace_id": trace_id, "messageId": message_id,
-        }
-        yield "data: " + json.dumps(meta) + "\n\n"
+        yield _mgmt_nl_sse_frame(
+            {
+                "type": "meta", "sessionId": session_id, "session_id": session_id,
+                "traceId": trace_id, "trace_id": trace_id, "messageId": message_id,
+            }
+        )
         chunks: List[str] = []
         had_error = False
         try:
@@ -35268,24 +35359,31 @@ def bff_management_nl_ask_stream(
                 operator_id=identity.operator_id,
                 trace_id=trace_id,
                 session_user=session_id,
+                read_timeout_seconds=_mgmt_nl_stream_read_timeout_seconds(),
             ):
                 if evt.get("type") == "delta":
                     chunks.append(str(evt.get("text") or ""))
                 elif evt.get("type") == "error":
                     had_error = True
-                yield "data: " + json.dumps(evt, ensure_ascii=False) + "\n\n"
+                yield _mgmt_nl_sse_frame(evt)
         except OpenClawOpsClientError as exc:
             had_error = True
-            yield "data: " + json.dumps(
+            yield _mgmt_nl_sse_frame(
                 {"type": "error", "error_code": exc.error_code, "message": exc.message}
-            ) + "\n\n"
+            )
         except Exception as exc:  # noqa: BLE001
             had_error = True
-            yield "data: " + json.dumps(
+            yield _mgmt_nl_sse_frame(
                 {"type": "error", "error_code": "BFF_STREAM_ERROR", "message": str(exc)[:200]}
-            ) + "\n\n"
+            )
         answer = "".join(chunks).strip()
         if answer and not had_error:
+            provider_status = {
+                "provider": "openclaw",
+                "used": True,
+                "status": "completed",
+                "transport": "responses_http",
+            }
             _management_ai_append_turn(
                 turn_id=f"{message_id}-assistant",
                 session_id=session_id,
@@ -35293,16 +35391,16 @@ def bff_management_nl_ask_stream(
                 text=answer,
                 created_at=utc_now(),
                 trace_id=trace_id,
-                provider_status={"provider": "openclaw", "used": True, "status": "completed", "transport": "responses_http"},
+                provider_status=provider_status,
             )
-        yield "data: [DONE]\n\n"
+            yield _mgmt_nl_sse_frame({"type": "done", "text": answer, "providerStatus": provider_status})
+        yield _mgmt_nl_sse_frame("[DONE]")
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
-
 
 @app.get("/bff/management/ai/audit")
 async def bff_management_ai_audit(

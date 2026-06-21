@@ -315,6 +315,7 @@ class OpenClawOpsClient:
         metadata: Optional[Dict[str, Any]] = None,
         trace_id: Optional[str] = None,
         session_user: Optional[str] = None,
+        read_timeout_seconds: Optional[float] = None,
     ):
         """Stream the OpenClaw assistant provider via the adapter SSE endpoint.
 
@@ -349,7 +350,10 @@ class OpenClawOpsClient:
             method="POST",
         )
         try:
-            response = urllib.request.urlopen(request, timeout=self._assistant_timeout_seconds())
+            timeout = self._assistant_timeout_seconds()
+            if read_timeout_seconds is not None:
+                timeout = min(timeout, max(float(read_timeout_seconds), 0.1))
+            response = urllib.request.urlopen(request, timeout=timeout)
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace") if exc.fp is not None else ""
             payload = _safe_json(raw)
@@ -377,6 +381,12 @@ class OpenClawOpsClient:
                     yield json.loads(payload_str)
                 except (ValueError, TypeError):
                     continue
+        except OSError as exc:
+            raise OpenClawOpsClientError(
+                f"OpenClaw adapter stream read failed: {exc}",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_STREAM_READ_FAILED",
+            ) from exc
         finally:
             try:
                 response.close()

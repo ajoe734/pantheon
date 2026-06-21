@@ -1143,6 +1143,46 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
         bff_main._sse_buffers["ask"].clear()
 
 
+
+def test_management_nl_stream_control_status_uses_bff_interceptor(tmp_path, monkeypatch) -> None:
+    original_store = bff_main.read_store
+    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
+    control_store = ControlModeStore(storage_path="off", initial_passphrase="九條好漢在一班")
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask/stream",
+            json={"question": "/control status", "sessionId": "mgmt-chat-stream-control-status"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-stream-control-status"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.text
+        assert '"type": "delta"' in body
+        assert "Control mode is inactive for this Management AI session." in body
+        assert '"type": "done"' in body
+        assert "management_nl_control_command_interceptor" in body
+        assert "data: [DONE]" in body
+
+        audit_resp = client.get(
+            "/bff/management/ai/audit?session_id=mgmt-chat-stream-control-status",
+            headers=OPERATOR_HEADERS,
+        )
+        assert audit_resp.status_code == 200, audit_resp.text
+        events = audit_resp.json()["data"]
+        assert any(event.get("control_command") == "status" for event in events)
+    finally:
+        bff_main.read_store = original_store
+        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
 def test_management_nl_chat_control_command_requires_authorized_operator(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
