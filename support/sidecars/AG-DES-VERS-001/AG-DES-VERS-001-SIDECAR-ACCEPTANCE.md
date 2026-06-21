@@ -69,7 +69,7 @@ Sections that must be present and internally consistent for acceptance:
 | A5 | Version comparison — up to 4 candidates, evidence class taxonomy, decision-authority rule |
 | A6 | Readiness gate definitions — Gate 1 (`preliminary_research`, 8 criteria), Gate 2 (`full_validation`, 10 criteria), Gate 3 (`trading_room`, 10 criteria) |
 | A7 | Staleness triggers for a previously ready gate |
-| A8 | Error code catalogue (8 codes) |
+| A8 | Error code catalogue (9 codes) |
 
 ### 3.2 JSON Schemas
 
@@ -108,7 +108,7 @@ For the parent reviewer (`Codex`) to check when reviewing AG-DES-VERS-001.
 | A-01 | Patch grammar uses restricted RFC 6902 | A2 prose | `move` and `copy` are absent from the `operations` items' `op` enum in `version_patch_proposal.schema.json` |
 | A-02 | Immutable StrategySpec paths are protected | A2 prose | `/spec_version`, `/strategy_id`, `/lifecycle_state`, `/provenance` are not in the allowed-paths list in the schema or prose |
 | A-03 | `base_document_sha256` is enforced | A3 validation step 2 | Schema `base_document_sha256` pattern is `^[a-f0-9]{64}$`; every write command requires `If-Match` |
-| A-04 | Proposal lifecycle is complete | A3 state machine | All five terminal/non-terminal states — `draft`, `validating`, `validated`, `accepted`, `rejected`, `superseded` — present in schema `status` enum and prose diagram |
+| A-04 | Proposal lifecycle is complete | A3 state machine | All six terminal/non-terminal states — `draft`, `validating`, `validated`, `accepted`, `rejected`, `superseded` — present in schema `status` enum and prose diagram |
 | A-05 | Version comparison caps candidates at 4 | A5 prose | `candidate_versions.maxItems: 4` in schema |
 | A-06 | Evidence class taxonomy is correct | A5 prose | Exactly four `evidence_class` values in schema: `predicted`, `backtested_in_sample`, `backtested_oos`, `paper_observed` |
 | A-07 | `decision_authority` is always `trader` | A5 prose ("The servant may recommend, but decision_authority is always trader") | Schema field `decision_authority` is a const or single-value enum `trader` |

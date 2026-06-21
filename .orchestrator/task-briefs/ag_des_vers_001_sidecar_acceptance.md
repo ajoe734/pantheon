@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-DES-VERS-001 acceptance packet and dependency map
-- Status: todo
+- Status: done (closeout)
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.
+- Next: Closeout complete. Wording fixes applied (A8 count corrected to 9 codes; A-04 count corrected to six states). Review file committed. Task-scoped commit created and PR merged into dev. Support-only boundary maintained throughout.
 
 ## Summary
 平行支援 AG-DES-VERS-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
