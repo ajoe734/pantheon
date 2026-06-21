@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-DES-SW-PRIV-001 acceptance packet and dependency map
-- Status: review_approved
+- Status: done
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Review approved: acceptance checklist maps correctly to source doc §§3–3.9; dependency map consistent with §§11–12; no canonical truth modified; non-claims explicit. Returned to Claude2 for finalization.
+- Next: Closeout finalized. Acceptance packet committed and merged via PR #1970. Review approved (review_notes_zh present). Status restored from in_progress after supervisor re-dispatch and marked done.
 
 ## Summary
 平行支援 AG-DES-SW-PRIV-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
