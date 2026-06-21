@@ -8,7 +8,7 @@
 | Parent owner / reviewer | `Codex2` / `Claude` |
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-21` |
-| Status | `review_ready` |
+| Status | `review_approved; owner_closeout` |
 | Current dev base | `3a2caee4366eea1e5bc239ee860a9dc64bf69965` |
 | Previous sidecar merge | `ccff7df1df4dec221de5eacf9264a5d16cbd0448` |
 | Mutates canonical truth | `false` |
@@ -333,3 +333,23 @@ sed -n '1,180p' docs/contracts/agora/dev-compatibility-manifest.json
 ```
 
 No runtime tests were run because this sidecar changes only support artifacts.
+
+## 13. Owner Closeout Note
+
+Codex2 approved this sidecar packet as support-only. PR #1932 merged at
+`7169f6b1eafb52474188ae69a4fee8681b2fc6a3` with green GitHub checks, and the
+review notes confirm commit `43bd6dab` changed only this packet path.
+
+This closeout note does not broaden the handoff. `AG-BE-ID-003` remains
+blocked on the servant session type-contract decision, and `AG-FE-ID-001`
+remains gated on the parent runtime/session contract and compatibility
+disposition.
+
+Closeout verification:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9
+gh pr view 1932 --json number,state,headRefName,baseRefName,mergeCommit,url,statusCheckRollup
+git merge-base --is-ancestor 7169f6b1eafb52474188ae69a4fee8681b2fc6a3 origin/dev
+git show --stat --oneline --decorate --no-renames 43bd6dab
+```
