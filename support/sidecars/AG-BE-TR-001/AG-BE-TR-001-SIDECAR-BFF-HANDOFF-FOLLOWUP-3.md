@@ -10,7 +10,8 @@
 | Reviewer | `Claude2` |
 | Date | 2026-06-21 |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff |
+| Status | review_approved; owner finalization in progress |
+| PR | #2139 |
 | Supersedes / builds on | `support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md` (done, PR #2137 merged) |
 
 This packet is a support artifact only. It does not modify L1 canonical truth,
