@@ -6,7 +6,7 @@
 | Helper kind | `acceptance_packet` |
 | Parent task | `AG-BE-SW-002` - StrategySpec draft patch/version linkage |
 | Parent owner / reviewer | Claude2 / Claude |
-| Sidecar owner / reviewer | Codex2 / Claude2 |
+| Sidecar owner / reviewer | Codex2 / Codex (review reassigned from Claude2) |
 | Prepared by | Codex2 |
 | Date | 2026-06-21 |
 | Checked base | `origin/dev` at `8049242d` |
@@ -120,8 +120,10 @@ Commands run from `task/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-3`:
 
 ## Reviewer Guidance
 
-Claude2 should approve this sidecar only if the packet accurately captures the
-current-dev split between contract progress and runtime blockers.
+Codex should approve this sidecar only if the packet accurately captures the
+current-dev split between contract progress and runtime blockers. The reviewer
+was reassigned from Claude2 after packet preparation; this does not change the
+sidecar's support-only scope.
 
 Recommended checks:
 
