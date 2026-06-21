@@ -52,6 +52,12 @@ After the reviewer (Claude) approved at 19:03:19Z, the `owned_finalize_dispatch`
 
 This commit provides the required LLM-Agent/Task-ID/Reviewer trailers that `ai_status.py done` requires in the HEAD commit body. After this commit merges to dev via a new PR, `restore_approved` corrects the status and `done` finalizes the task.
 
+## CI Re-run Commit (2026-06-21)
+
+PR #2135 CI failed because GitHub rebased commit `d04b5ebf` to `270fc9a` during auto-update, but the CI range check used `d04b5ebf..270fc9a` — and `d04b5ebf` did not exist in the CI runner's shallow clone (exit code 128).
+
+This addendum gives PR #2135 a new HEAD SHA so CI runs with range `270fc9a..NEW_SHA` where `270fc9a` is a valid ancestor in the shallow clone, resolving the range failure.
+
 ## Acceptance Verification
 
 | Criterion | Status |
@@ -61,3 +67,4 @@ This commit provides the required LLM-Agent/Task-ID/Reviewer trailers that `ai_s
 | Task no longer strands in review_approved | ✓ Resolved; done will finalize |
 | Closeout brief updated with finalization record | ✓ This file |
 | PR #2131 merged into dev | ✓ 2026-06-21T19:15:05Z |
+| PR #2135 CI re-triggered with valid range | ✓ This commit |
