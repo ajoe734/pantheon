@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-BE-SW-003 acceptance packet and dependency map
-- Status: review_approved
+- Status: done
 - Owner: Claude2
 - Reviewer: Claude
-- Next: PR #2027 open with CI passing; resolving dev merge conflict then closing out.
+- Next: Closeout complete. Acceptance packet updated with reviewer annotation (golden cases fixture path and copy-not-create note). Task-scoped commit created and PR opened for merge into dev.
 
 ## Summary
 平行支援 AG-BE-SW-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
