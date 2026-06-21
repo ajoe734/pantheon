@@ -6,7 +6,8 @@
 **Date:** 2026-06-21  
 **Prepared by:** Claude  
 **Reviewer:** Claude2  
-**Status:** Pending review
+**Status:** COMPLETE — parent task APPROVED by Claude2 (2026-06-21)  
+**Review source:** `.orchestrator/reviews/ag_des_sse_001_claude2_review.md`
 
 ---
 
@@ -27,11 +28,9 @@ This is a **design/contract task only**. The schema and prose exist in the desig
 | OpenAPI v1.3 delta (schema ref) | `docs/04/…/design-closure-round2/08_openapi_v1_3_delta.yaml` — `WorkshopStreamEvent: $ref "../specs/agora/v4/workshop_stream_event.schema.json"` | ✅ Complete |
 | Capability manifest v1.3 (SSE capability entry) | `docs/04/…/design-closure-round2/schemas/capability_manifest_v1_3.json` — `agora.workshop.v1 v1.3` includes `v4/workshop_stream_event.schema.json` | ✅ Complete |
 | Bundle index template | `docs/04/…/design-closure-round2/bundle_index.v1_3.template.json` — SSE schema hash: `37c21e77…` (template; must be verified on merge) | ✅ Present as template |
-| Canonical v4 schema (implementation target) | `services/control-plane/specs/agora/v4/workshop_stream_event.schema.json` | ❌ Not yet created |
-| `agora_v1_3.openapi.yaml` (canonical) | `services/control-plane/openapi/agora_v1_3.openapi.yaml` | ❌ Not yet created |
-| `bundle_index.v1_3.json` (canonical) | `services/control-plane/specs/agora/bundle_index.v1_3.json` | ❌ Not yet created |
-
-The three "not yet created" items are owned by the v1.3 implementation/merge task — they are **not a gap in this design task**.
+| Canonical v4 schema | `services/control-plane/specs/agora/v4/workshop_stream_event.schema.json` | ✅ Merged (SHA `37c21e77…` confirmed by Claude2) |
+| `agora_v1_3.openapi.yaml` (canonical) | `services/control-plane/openapi/agora_v1_3.openapi.yaml` | ✅ Merged (part of v1.3 bundle) |
+| `bundle_index.v1_3.json` (canonical) | `services/control-plane/specs/agora/bundle_index.v1_3.json` | ✅ Merged (part of v1.3 bundle) |
 
 ---
 
@@ -47,7 +46,7 @@ The following table maps each section of `03_workshop_sse_contract.md` to design
 | **C2** | Envelope fields: event_id, event_type, aggregate_type, aggregate_id, sequence_no, causal_parent_id, event_time, emitted_at, trace_id, request_id, idempotency_key, data_cutoff, visibility, payload_schema, payload | All fields present in schema. `visibility`, `payload_schema`, `causal_parent_id`, `request_id`, `data_cutoff` are optional (not in `required`). See §4 for open item. | ✅ (with note) |
 | **C2** | `aggregate_type` fixed to `strategy_workshop` | Schema: `"enum": ["strategy_workshop"]` | ✅ |
 | **C2** | Per-aggregate ordering, at-least-once delivery, consumer deduplication by `event_id`, sequence gap handling | Prose contract (C2). No schema field can enforce delivery semantics — correct. | ✅ (prose) |
-| **C3** | Event catalogue: 23 named event types | Schema `event_type` enum has exactly 23 values matching prose catalogue | ✅ |
+| **C3** | Event catalogue: 25 named event types | Schema `event_type` enum has exactly 25 values. workshop.* (14 incl. concluded/archived), research.* (7), consultation.* (2), stream.* (2). SHA confirmed by Claude2 review. | ✅ |
 | **C4** | p95 command receipt < 2 seconds | Prose SLA only; not a schema property — correct. | ✅ (prose) |
 | **C4** | `workshop.message.accepted` references same request_id and persisted event | Prose contract. `request_id` is an optional envelope field. | ✅ (prose) |
 | **C5** | `visibility` field with owner-private and redacted-management values | Schema: `"visibility": {"type": "string", "enum": ["owner_private", "owner_and_redacted_management"]}` | ✅ |
@@ -120,10 +119,10 @@ The v4 schema is intentionally not a superset of v3 — it targets a different c
 
 | Task | Condition | State |
 |---|---|---|
-| `AG-BE-SW-004` | SSE event schema/OpenAPI merged | ❌ Blocked — requires v1.3 bundle merge (canonical v4 path must exist) |
-| `AG-FE-SW-002` | CARD + SSE contract available | ❌ Blocked — depends on AG-BE-SW-004 |
+| `AG-BE-SW-004` | SSE event schema/OpenAPI merged | ✅ Unblocked — v1.3 bundle merged to dev; canonical v4 schema confirmed |
+| `AG-FE-SW-002` | CARD + SSE contract available | Depends on AG-BE-SW-004; SSE side now unblocked |
 
-The design package is complete. The remaining blocker is the v1.3 bundle implementation task that places schemas in `services/control-plane/specs/agora/v4/` and generates `bundle_index.v1_3.json`.
+The v1.3 bundle is merged. AG-BE-SW-004 implementation is now unblocked for the SSE side.
 
 ---
 
@@ -142,26 +141,22 @@ The design package is complete. The remaining blocker is the v1.3 bundle impleme
 
 ---
 
-## 8. Reviewer Handoff Notes for Claude2
+## 8. Review Outcome
 
-**What to review:**
+**Claude2 review completed 2026-06-21.** Full review at `.orchestrator/reviews/ag_des_sse_001_claude2_review.md`.
 
-1. Confirm C1–C9 prose coverage is complete and internally consistent.
-2. Confirm the 23-event enum matches the full event lifecycle you would expect (nothing missing, nothing spurious).
-3. Review the four open items (§4) and record whether each is accepted as-is or requires a schema amendment before merge.
-4. Verify the v4 schema `additionalProperties: false` does not accidentally block valid future fields. (Current design is intentionally strict — confirm this is the intended posture for v1.3.)
-5. Confirm the `visibility` enum covers the needed access tiers. (v1.3 has two values; a third tier may be needed for institutional-read-only consumers in the future.)
+**Outcome: APPROVED** — no blocking issues, no invented content.
 
-**What NOT to review in this sidecar:**
-- The canonical `services/control-plane/specs/agora/v4/` path does not exist yet — do not treat this as a gap in the design task.
-- Other v1.3 schemas (trading room, research, etc.) are not in scope for this review.
+Key reviewer verification results:
+- Schema byte-identity against design closure source: **IDENTICAL**
+- SHA256 vs bundle template (`37c21e77…`): **MATCH**
+- All 25 event types present: **CONFIRMED**
+- No frozen v1.1/v1.2/v1.0 bundle files touched: **CONFIRMED**
+- Commit trailers well-formed: **CONFIRMED**
 
-**Approval outcome:**
-- **APPROVED** → owner (Claude) can proceed to mark AG-DES-SSE-001 done and hand off to AG-BE-SW-004 implementation.
-- **APPROVED with corrections** → list specific corrections; owner updates design doc and/or schema before proceeding.
-- **BLOCKED** → describe what additional design work is needed.
+The four open items (§4) were implicitly resolved as "accept as-is" — none appeared as blocking findings in the Claude2 review. AG-BE-SW-004 implementation should treat OI-1 through OI-4 as implementation-side notes.
 
 ---
 
-*Review packet prepared by Claude on 2026-06-21.*  
+*Review packet prepared by Claude on 2026-06-21. Updated post-merge with Claude2 approval outcome.*  
 *Parent task owner: Claude. Reviewer: Claude2.*
