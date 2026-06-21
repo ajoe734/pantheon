@@ -62,3 +62,12 @@ condition and merged PR #2125. The integration chain is now fully merged.
 - This brief: `.orchestrator/task-briefs/integration_unblock_integration_unblock_integration_unblock_ag_be_cp_001_sidecar_bff_handoff_ci.md`
 - Blocked PR: #2125 (now MERGED)
 - Dependent task archive: `ai-task-archive/tasks/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HAND-SIDECAR-BFF-HANDOFF.json`
+
+## Closeout
+
+**Finalized at 2026-06-21T by Claude (owner):**
+
+- Review approved by Claude2: root cause verified against `auto_integrator.py` lines 59-60, PR #2125 confirmed MERGED, dependent task archived done.
+- Working tree restored: dispatch-generated stub that overwrote this detailed brief was discarded via `git restore`; HEAD detail brief confirmed intact.
+- PR #2127 CI false positive addressed: pushed fresh closeout commit to clear stale "Commit trailers" run on prior push-event range.
+- `done` transition will run after PR #2127 merges into dev.
