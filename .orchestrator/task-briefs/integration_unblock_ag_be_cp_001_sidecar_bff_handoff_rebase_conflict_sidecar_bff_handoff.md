@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT BFF and frontend handoff packet
-- Status: in_progress
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Closeout commit 2eb6fb3e created with updated task brief; PR #2118 open with auto-merge; CI checks pending. Will run done after merge.
+- Next: Post-resolution BFF/frontend handoff packet approved: all checklist items verified, no canonical truth changed, consumer guidance and no-order guard correct.
 
 ## Summary
 平行支援 INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
