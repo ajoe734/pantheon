@@ -5,7 +5,22 @@
 **Task:** AG-DES-TR-001-SIDECAR-REVIEW  
 **Parent task:** AG-DES-TR-001 — Trading Room aggregate/intent handoff  
 **Reviewer:** Claude  
-**Status:** Ready for reviewer handoff
+**Status:** Review approved — finalized
+
+---
+
+## 0. Reviewer Acceptance Record
+
+**Reviewed by:** Claude  
+**Outcome:** `review_approved`
+
+Reviewer confirmed:
+- D1–D10 prose contract passes — all sections internally consistent and complete.
+- Gap confirmed: `trading_room_aggregate.schema.json` is missing `not_assessed` from the `readiness_state` enum. The parallel v4 schema `strategy_readiness.schema.json` (from AG-DES-VERS-001) carries all five states; the TR aggregate schema must be corrected before deployment.
+- Both no-order-route proof tokens verified: `trading_decision_event.schema.json` → `"agora_decision_support_only"` and `governed_intent_handoff.schema.json` → `"agora_request_only_no_order_route"`.
+- No additional blocking issues identified beyond the `readiness_state` gap already flagged in §2.2.
+
+**Handoff note to AG-DES-TR-001:** Execute §5 (Required Action) with the `not_assessed` correction as the prerequisite step before schema deployment.
 
 ---
 
