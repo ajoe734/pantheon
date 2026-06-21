@@ -34836,7 +34836,14 @@ async def bff_management_nl_ask(
     ]
 
     # BFF-B6-001-SEC-FIX: pass tenant scope to context collection.
-    context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
+    # _mgmt_nl_collect_context fans out to several ReadSurfaceStore.list_* calls,
+    # each a blocking urllib HTTP request to runtime-manager (timeout 2s each). On
+    # the single-worker BFF that blocks the event loop for seconds per request;
+    # run it in a worker thread so concurrent requests (and the FE-BFF gate's
+    # nl/ask burst) are not starved.
+    context_bundle = await asyncio.to_thread(
+        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
+    )
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
     evidence_entities = context_bundle.get("evidence_entities") or set()
@@ -34868,7 +34875,8 @@ async def bff_management_nl_ask(
     except Exception:
         nl_capabilities = None
     raw_evidence_refs = list(
-        read_store.list_evidence_refs(
+        await asyncio.to_thread(
+            read_store.list_evidence_refs,
             tenant_id=caller_tenant_id,
             linked_entities=evidence_entities,
             source_types=evidence_source_types,
@@ -34893,7 +34901,8 @@ async def bff_management_nl_ask(
     }
 
     try:
-        accepted_audit = read_store.record_agora_audit_event(
+        accepted_audit = await asyncio.to_thread(
+            read_store.record_agora_audit_event,
             {
                 "action": "management.nl.ask.accepted",
                 "targetType": "ManagementNLExchange",
@@ -34905,7 +34914,7 @@ async def bff_management_nl_ask(
                 "tenantId": caller_tenant_id,
                 "confidence": confidence,
                 "sourceSurfaces": source_keys,
-            }
+            },
         )
     except Exception:
         log.warning("Failed to record management NL happy-path audit event", exc_info=True)
