@@ -11,8 +11,16 @@ info:
     v1.2 changes:
     - Workshop lifecycle status is exactly open, in_review, concluded, archived.
     - Workshop list filters accept status plus status_group=active|closed.
+    - Authority order: v1.2 replaces the v1.1 status=active lifecycle
+      filter wording. `active` is only a status_group alias for open + in_review;
+      it is not a lifecycle status.
     - Message events persist only private_content_ref, redacted_summary, and
       redaction_policy_version; raw private content is not stored in rows.
+    - Workshop create/message requests accept owner raw text only; the browser
+      must not submit private_content_ref. The BFF creates private_content_ref
+      server-side after redaction and encrypted object-store write.
+    - Owner event responses may include decrypted owner-visible content from the
+      private store; management projections never include raw content.
     - The v3 workshop_persistence schema records the five Postgres tables and
       all required indexes from the design closure.
 
@@ -20,9 +28,9 @@ info:
 
     - agora.servant.v1 — 8 BFF routes for user-private servant provisioning
       and session facade, plus 3 internal OpenClaw-adapter routes.
-    - agora.workshop.v1 (v1.1) — 13 /bff/agora/workshops routes covering the
+    - agora.workshop.v1 (v1.2) — 13 /bff/agora/workshops routes covering the
       canonical Strategy Workshop aggregate, streaming, draft versioning, research
-      runs, consultations and conclude. Extends agora.workshop.v1 from v1.0.
+      runs, consultations and conclude. Extends agora.workshop.v1 from v1.1.
     - agora.dashboard.v2 — 11 dashboard-recipe and widget routes with append-only
       version history and optimistic concurrency.
 
@@ -44,10 +52,12 @@ info:
   contact:
     name: Pantheon Platform
   x-extends-contract: "services/control-plane/openapi/agora_v1_1.openapi.yaml"
-  x-capability-manifest: "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json"
+  x-capability-manifest: "services/control-plane/specs/agora/v3/capability_manifest_v1_2.json"
   x-persistence-contract: "services/control-plane/specs/agora/v3/workshop_persistence.schema.json"
+  x-private-content-contract: "services/control-plane/specs/agora/v3/workshop_storage_contract.schema.json"
+  x-strategy-ref-contract: "services/control-plane/specs/agora/v3/strategy_ref_contract.schema.json"
   x-base-frozen-by: "AG-XR-001"
-  x-extension-by: "AG-DES-SW-DB-001"
+  x-extension-by: "AG-XR-OPENAPI-002"
 
 servers:
   - url: "{bff_base}"
@@ -177,14 +187,26 @@ components:
                 - CONCURRENT_MODIFICATION
                 - INVALID_PARAMS
                 - CAPABILITY_UNAVAILABLE
+                - PRIVATE_CONTENT_STORE_UNAVAILABLE
+                - PRIVATE_CONTENT_REDACTION_UNAVAILABLE
+                - PRIVATE_CONTENT_EXPIRED
+                - PRIVATE_CONTENT_ACCESS_DENIED
+                - STRATEGY_REFERENCE_MISMATCH
+                - STRATEGY_REFERENCE_NOT_FOUND
+                - WORKSHOP_ALREADY_CONCLUDED
+                - WORKSHOP_ARCHIVED
+                - WORKSHOP_VERSION_REQUIRED
             message:
               type: string
+              description: Must not echo raw message content, object URI, or encrypted key material.
             details:
               type: object
               additionalProperties: true
               description: >-
                 For CONCURRENT_MODIFICATION: includes expected_version,
-                current_version, current_etag, and latest_href.
+                current_version, current_etag, and latest_href. Error details
+                must never include raw message content, object URI, or encrypted
+                key material.
           additionalProperties: false
       additionalProperties: false
 
@@ -244,16 +266,39 @@ components:
       required: [initial_message]
       description: >-
         Creates a new Strategy Workshop session. Workshop state references the
-        active draft in the existing Strategy Registry; it is not StrategySpec truth.
+        active draft in the existing Strategy Registry; it is not StrategySpec
+        truth. The browser sends raw owner text in initial_message and must not
+        submit private_content_ref; the BFF creates private_content_ref
+        server-side after redaction and encrypted object-store write.
       properties:
         title:
           type: string
         initial_message:
           type: string
           minLength: 1
+        strategy_ref:
+          type: object
+          description: >-
+            Optional Strategy Registry reference. If supplied, the BFF resolves
+            strategy_spec_registry_id, verifies tenant/user scope, verifies any
+            strategy_id match, and stores only strategy_id plus
+            active_strategy_spec_registry_id on the workshop.
+          properties:
+            strategy_id:
+              type: string
+              minLength: 1
+              description: Stable strategy identity across versions.
+            strategy_spec_registry_id:
+              type: string
+              minLength: 1
+              description: Immutable Strategy Registry record/version ID.
+          additionalProperties: false
         strategy_spec_ref:
           type: string
-          description: Optional reference to an existing StrategySpec draft to continue.
+          deprecated: true
+          description: >-
+            Deprecated v1.1 alias. In v1.2 this is interpreted only as
+            strategy_ref.strategy_spec_registry_id.
         metadata:
           type: object
           additionalProperties: true
@@ -262,7 +307,10 @@ components:
     WorkshopMessageRequest:
       type: object
       required: [content]
-      description: Message posted into the workshop, dispatching a servant response workflow.
+      description: >-
+        Message posted into the workshop, dispatching a servant response
+        workflow. The browser sends raw owner text in content and must not submit
+        private_content_ref; the BFF creates private_content_ref server-side.
       properties:
         content:
           type: string
@@ -271,6 +319,64 @@ components:
           type: array
           items:
             type: string
+      additionalProperties: false
+
+    OwnerWorkshopEventResponse:
+      type: object
+      required: [event_id, event_type, redacted_summary, created_at]
+      description: >-
+        Owner-facing event projection. May include decrypted owner-visible
+        content from the private store over TLS/no-store transport. It never
+        returns private_content_ref or object-store URI.
+      properties:
+        event_id:
+          type: string
+        event_type:
+          type: string
+        content:
+          type: string
+          description: Decrypted owner-visible content; omitted when unavailable or expired.
+        content_source:
+          type: string
+          enum: [private_store, redacted_only]
+        redacted_summary:
+          type: string
+        payload_refs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+
+    ManagementWorkshopEventProjection:
+      type: object
+      required: [event_id, event_type, redacted_summary, risk_flags, payload_refs, created_at]
+      description: >-
+        Management/institutional projection of a workshop event. Raw content,
+        private_content_ref, object-store URI, and encrypted key material are
+        forbidden.
+      properties:
+        event_id:
+          type: string
+        event_type:
+          type: string
+        redacted_summary:
+          type: string
+        risk_flags:
+          type: array
+          items:
+            type: string
+        payload_refs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
       additionalProperties: false
 
     VersionCreateRequest:
@@ -882,8 +988,12 @@ paths:
       summary: List ordered append-only workshop events
       tags: [agora-workshop]
       description: >-
-        Returns strategy_workshop_event rows ordered by sequence_no.
-        Private content is omitted; redacted_summary is returned instead.
+        Returns owner-facing strategy_workshop_event projections ordered by
+        sequence_no. Owner responses may include decrypted content from the
+        private store, but never return private_content_ref or object-store URI.
+        Management/institutional projections must use
+        ManagementWorkshopEventProjection and receive redacted_summary only.
+      x-management-projection-schema: "#/components/schemas/ManagementWorkshopEventProjection"
       parameters:
         - $ref: "#/components/parameters/WorkshopId"
         - name: after_sequence
@@ -895,7 +1005,17 @@ paths:
           description: Ordered append-only event list
           content:
             application/json:
-              schema: {type: object}
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OwnerWorkshopEventResponse"
+                  next_cursor:
+                    type: string
+                additionalProperties: false
         "401": {description: Unauthorized}
         "404": {description: Workshop not found}
 
