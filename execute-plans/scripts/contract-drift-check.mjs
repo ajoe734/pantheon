@@ -7,8 +7,8 @@ function usage() {
   return [
     "Usage: node scripts/contract-drift-check.mjs [--pantheon-root <path>]",
     "",
-    "Fails when the checked-in execute-plans Agora v1 generated snapshot/types",
-    "do not match the Pantheon AG-XR-001 OpenAPI/schema bundle digests.",
+    "Fails when the checked-in execute-plans Agora v1.1 generated snapshot/types",
+    "do not match the Pantheon additive OpenAPI/schema bundle digests.",
   ].join("\n");
 }
 

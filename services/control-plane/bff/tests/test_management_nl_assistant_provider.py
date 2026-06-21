@@ -2114,3 +2114,110 @@ def test_claude_provider_degraded_falls_back_to_deterministic_answer(tmp_path, m
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._sse_buffers["ask"].clear()
+
+
+def test_provider_async_returns_processing_under_slow_provider(tmp_path, monkeypatch) -> None:
+    import time as _time
+
+    class SlowProviderClient(FakeProviderClient):
+        def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
+            _time.sleep(1.5)
+            return super().invoke_assistant_provider(**kwargs)
+
+    original_store = bff_main.read_store
+    fake = SlowProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        # Inline grace window well below the provider latency: the handler must
+        # return 202 immediately with the deterministic answer instead of blocking
+        # the event loop until the slow agent finishes.
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS", "0.2")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "What is the scoped portfolio?", "focus": "portfolio"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-async-001"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["status"] == "processing"
+        assert body["data"]["lifecycleStatus"] == "processing"
+        assert body["data"]["providerStatus"]["status"] == "processing"
+        assert body["data"]["providerStatus"]["used"] is False
+        # Deterministic answer is served immediately; the provider answer is
+        # finalised asynchronously by the background task.
+        assert body["data"]["answer"].startswith("Management summary for question:")
+        assert body["meta"]["status"] == "processing"
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_mgmt_nl_finalize_provider_turn_appends_assistant_turn_and_idempotency(tmp_path, monkeypatch) -> None:
+    import asyncio as _asyncio
+
+    _clear_provider_env(monkeypatch)
+    client = _seeded_client(tmp_path, monkeypatch)  # seeds env + fresh conversation store
+    store = bff_main._management_ai_conversation_store()
+    session_id = "mgmt-nl-finalize-session"
+    message_id = "mnl-finalize-001"
+    assistant_turn_id = f"{message_id}-assistant"
+    # Seed the session (the handler creates it before writing turns).
+    store.upsert_session(
+        session_id=session_id,
+        owner_id="asst-bff-002",
+        tenant_id="tenant-alpha",
+        now=bff_main.utc_now(),
+        title="finalize test",
+    )
+    store.append_turn(
+        turn_id=f"{message_id}-user",
+        session_id=session_id,
+        role="user",
+        text="What is the scoped portfolio?",
+        created_at=bff_main.utc_now(),
+    )
+    base_result = {
+        "status": "accepted",
+        "data": {"status": "processing", "lifecycleStatus": "processing", "answer": "deterministic"},
+        "meta": {"status": "processing", "idempotency": {"idempotencyKey": "k-fin", "replayed": False}},
+    }
+    provider_status = bff_main._mgmt_nl_provider_status(
+        provider="codex_cli", enabled=True, status="completed", used=True
+    )
+
+    async def _provider_result():
+        return ("Async provider answer.", provider_status, [])
+
+    _asyncio.run(
+        bff_main._mgmt_nl_finalize_provider_turn(
+            provider_task=_provider_result(),
+            deterministic_answer="deterministic",
+            session_id=session_id,
+            message_id=message_id,
+            assistant_turn_id=assistant_turn_id,
+            trace_id="mnl-trace-fin",
+            focus="portfolio",
+            resolved_key="k-fin",
+            request_hash="hash-fin",
+            audit_log_href="/bff/audit/x",
+            conversation_href="/bff/management/ai/conversations/x",
+            base_result=base_result,
+        )
+    )
+
+    turns = store.list_turns(session_id)
+    assistant = [t for t in turns if t.get("turn_id") == assistant_turn_id]
+    assert len(assistant) == 1, "finaliser must append the assistant turn exactly once"
+    assert assistant[0]["text"] == "Async provider answer."
+    cached = store.get_idempotency("k-fin")
+    assert cached is not None
+    assert cached["result"]["data"]["answer"] == "Async provider answer."
+    assert cached["result"]["data"]["status"] == "completed"
+    bff_main._MGMT_NL_IDEMPOTENCY.clear()
