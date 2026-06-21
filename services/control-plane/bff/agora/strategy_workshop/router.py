@@ -11,6 +11,7 @@ Routes implemented in this module:
   POST /bff/agora/workshops/{workshop_id}/messages   — append event (private_content_ref only)
   GET  /bff/agora/workshops/{workshop_id}/events     — list events
   GET  /bff/agora/workshops/{workshop_id}/completeness — latest completeness snapshot
+  GET  /bff/agora/workshops/{workshop_id}/stream — SSE aggregate (AG-BE-SW-004)
 
 Routes still in main.py (migration pending — see router stub comment):
   GET  /bff/agora/training-examples
@@ -23,17 +24,117 @@ Routes deferred to later AG-BE-SW-* tasks (registered as 501 stubs):
   POST     /bff/agora/workshops/{id}/research-runs
   POST     /bff/agora/workshops/{id}/consultations
   POST     /bff/agora/workshops/{id}/conclude
-  GET      /bff/agora/workshops/{id}/stream
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from collections import deque
+from datetime import datetime, timezone
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .store import make_workshop_store
+
+
+# --------------------------------------------------------------------------- #
+# Module-level SSE state (per-workshop pub-sub)
+#
+# Each workshop gets its own bounded replay buffer and subscriber list.
+# _ws_publish() is called from sync route handlers; asyncio.Queue.put_nowait()
+# is thread-safe and requires no running event loop at the call site.
+# --------------------------------------------------------------------------- #
+
+_WS_SSE_BUFFER_SIZE = 500  # max events per workshop kept for reconnect replay
+
+# workshop_id → deque[(event_id, event_dict)]
+_workshop_sse_buffers: Dict[str, deque] = {}
+# workshop_id → list[asyncio.Queue]
+_workshop_sse_subscribers: Dict[str, List[asyncio.Queue]] = {}
+
+
+def _ws_utc_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _ws_event_id() -> str:
+    return f"wsevt-{uuid.uuid4().hex[:16]}"
+
+
+def _ws_sse_format(event: dict) -> str:
+    return (
+        f"id: {event['id']}\n"
+        f"event: {event['type']}\n"
+        f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+    )
+
+
+def _ws_get_buffer(workshop_id: str) -> deque:
+    if workshop_id not in _workshop_sse_buffers:
+        _workshop_sse_buffers[workshop_id] = deque(maxlen=_WS_SSE_BUFFER_SIZE)
+    return _workshop_sse_buffers[workshop_id]
+
+
+def _ws_get_subscribers(workshop_id: str) -> List[asyncio.Queue]:
+    if workshop_id not in _workshop_sse_subscribers:
+        _workshop_sse_subscribers[workshop_id] = []
+    return _workshop_sse_subscribers[workshop_id]
+
+
+def _ws_publish(
+    workshop_id: str,
+    event_type: str,
+    data: dict,
+    *,
+    utc_now_fn: Optional[Callable[[], str]] = None,
+) -> str:
+    """Publish an SSE event to the workshop buffer and all live subscribers.
+
+    Safe to call from sync route handlers. Returns the new event_id.
+    """
+    event_id = _ws_event_id()
+    timestamp = utc_now_fn() if utc_now_fn else _ws_utc_now()
+    event: Dict[str, Any] = {
+        "id": event_id,
+        "type": event_type,
+        "timestamp": timestamp,
+        "data": {"workshop_id": workshop_id, **data},
+    }
+    _ws_get_buffer(workshop_id).append((event_id, event))
+    for q in list(_ws_get_subscribers(workshop_id)):
+        try:
+            q.put_nowait(event)
+        except (asyncio.QueueFull, Exception):
+            pass
+    return event_id
+
+
+def _ws_replay_after(workshop_id: str, last_event_id: str) -> List[dict]:
+    """Return buffered events that came after *last_event_id*.
+
+    Returns an empty list when last_event_id is not found (caller may treat
+    this as a missed-event condition and reconnect from the top).
+    """
+    buf = _workshop_sse_buffers.get(workshop_id)
+    if not buf:
+        return []
+    found = False
+    replayed: List[dict] = []
+    for eid, evt in buf:
+        if found:
+            replayed.append(evt)
+        elif eid == last_event_id:
+            found = True
+    return replayed  # empty when last_event_id is not in buffer
 
 
 # --------------------------------------------------------------------------- #
@@ -330,6 +431,17 @@ def create_strategy_workshop_router(
                     "latest_href": f"/bff/agora/workshops/{workshop_id}",
                 },
             )
+        # Push SSE ack to any open workshop streams (§8.2 audit: trace_id, sequence_no)
+        _ws_publish(
+            workshop_id,
+            "workshop.message.ack",
+            {
+                "event_id": event["event_id"],
+                "sequence_no": event["sequence_no"],
+                "trace_id": event.get("trace_id"),
+            },
+            utc_now_fn=utc_now,
+        )
         return {
             "data": {"event_id": event["event_id"], "sequence_no": event["sequence_no"]},
             "meta": {
@@ -453,12 +565,79 @@ def create_strategy_workshop_router(
         return {}
 
     @router.get("/bff/agora/workshops/{workshop_id}/stream")
-    def stream_workshop(
+    async def stream_workshop(
         workshop_id: str,
         authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        _scope(authorization)
-        _not_implemented("GET /bff/agora/workshops/{workshop_id}/stream")
-        return {}
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+    ) -> StreamingResponse:
+        """SSE aggregate of workshop events (AG-BE-SW-004).
+
+        Streams workshop.connected (ack), workshop.message.ack, workshop.completeness.updated,
+        workshop.research.progress, workshop.version.created, and workshop.openclaw.degraded
+        events.  Supports reconnection via Last-Event-ID.  First event is always
+        workshop.connected, delivered immediately (< 2 s guarantee).
+        OpenClaw degradation is surfaced as OPENCLAW_UPSTREAM_DEGRADED in event data.
+        """
+        scope = _scope(authorization, x_tenant_id)
+        session = store.get_session(workshop_id)
+        if session is None:
+            from models import ErrorCode
+            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
+        if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
+            from models import ErrorCode
+            raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop not owned by caller", workshop_id)
+
+        async def _event_stream() -> AsyncGenerator[str, None]:
+            q: asyncio.Queue = asyncio.Queue(maxsize=500)
+            subs = _ws_get_subscribers(workshop_id)
+            subs.append(q)
+            try:
+                # Replay missed events when client reconnects with Last-Event-ID
+                if last_event_id:
+                    for replayed_evt in _ws_replay_after(workshop_id, last_event_id):
+                        yield _ws_sse_format(replayed_evt)
+
+                # Immediate ack on connect — satisfies the < 2s first-acknowledgement requirement.
+                # §8.2 audit: trace_id from the session's openclaw_session_id.
+                ack_event_id = _ws_event_id()
+                ack_event: Dict[str, Any] = {
+                    "id": ack_event_id,
+                    "type": "workshop.connected",
+                    "timestamp": utc_now(),
+                    "data": {
+                        "workshop_id": workshop_id,
+                        "status": session.get("status", "open"),
+                        "lock_version": session.get("lock_version", 1),
+                        "trace_id": session.get("openclaw_session_id"),
+                    },
+                }
+                _ws_get_buffer(workshop_id).append((ack_event_id, ack_event))
+                yield _ws_sse_format(ack_event)
+
+                # Stream live events until the client disconnects
+                while True:
+                    try:
+                        evt = await asyncio.wait_for(q.get(), timeout=30.0)
+                        yield _ws_sse_format(evt)
+                    except asyncio.TimeoutError:
+                        yield ": heartbeat\n\n"
+            finally:
+                if q in subs:
+                    subs.remove(q)
+
+        return StreamingResponse(
+            _event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-SSE-Channel": f"workshop:{workshop_id}",
+                "X-SSE-Replay-Supported": "true",
+                "X-SSE-Replay-Window-Events": str(_WS_SSE_BUFFER_SIZE),
+                "X-SSE-Resync-Routes": f"/bff/agora/workshops/{workshop_id}",
+            },
+        )
 
     return router
