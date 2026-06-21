@@ -7,8 +7,10 @@
 - Reviewer: `Codex2`
 - Generated: `2026-06-21`
 - Mutates canonical truth: `no`
-- Baseline inspected: `origin/dev`
+- Initial baseline inspected: `origin/dev`
   `b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56`
+- Closeout refresh baseline: `origin/dev`
+  `9880c81584ab3b6985c197916674ad073680dd3d`
 - Previous support packet follow-up 12 was merged through Pantheon PR `#1936`
   at merge commit `519aa95478c74f69813e76ff38d8f0ccc0dc4bba`.
 
@@ -24,12 +26,17 @@ Follow-up 12 recorded that Pantheon PR `#1852` was merged, execute-plans PR
 `#63` was still open and unstable, and local manifest sanity checks still
 failed on generated-types hash mismatch.
 
-This follow-up 13 refreshes the same acceptance surfaces against current
+This follow-up 13 refreshes the same acceptance surfaces against initial
 `origin/dev` `b3b5b1c3`. Since follow-up 12's closeout baseline
 `b97af2eeb2ea618cbf6ac76f1263b8532ba769b3`, no AG-XR/Agora implementation
 paths changed. The only AG-XR support path change in that interval was the
-merged follow-up 12 packet. Parent `AG-XR-003` remains correctly blocked,
-waiting for `Claude2` disposition.
+merged follow-up 12 packet.
+
+Closeout refresh on `2026-06-21` checked current `origin/dev`
+`9880c81584ab3b6985c197916674ad073680dd3d`; from `b3b5b1c3` to that dev tip,
+the AG-XR/Agora implementation paths, this task brief path, and the
+`support/sidecars/AG-XR-003/` path have no diff. Parent `AG-XR-003` remains
+correctly blocked, waiting for `Claude2` disposition.
 
 ## Current Status Snapshot
 
@@ -37,7 +44,7 @@ waiting for `Claude2` disposition.
 |---|---|---|
 | Parent `AG-XR-003` | `blocked`, waiting for `Claude2` | Keep blocked until execute-plans PR `#63` merges and manifest sanity is resolved, or the parent reviewer gives explicit disposition. |
 | Dependency `AG-XR-001A` | Archived `done` | Direct dependency remains satisfied; active blocker is cross-repo compatibility evidence. |
-| This sidecar | `in_progress`, owner `Codex`, reviewer `Codex2` | Packet ready for review after task-scoped commit and PR. |
+| This sidecar | `review_approved`, owner `Codex`, reviewer `Codex2` | Codex2 approved the support-only packet; owner closeout is refreshing PR `#1946` without changing parent blocker truth. |
 | Pantheon PR `#1852` | `MERGED` at merge commit `0765018c838547108fa56fcf089b5e2bbafd4387` | Pantheon-side manifest gate implementation is durable on `dev`. |
 | execute-plans PR `#63` | `OPEN`, head `e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5`, `mergeStateStatus=UNSTABLE` | Cross-repo mirror is not merged; parent acceptance remains blocked. |
 | PR `#63` latest CI run | `27877483718` - `Pantheon FE-BFF Integration Gate`, `failure`, created `2026-06-20T16:43:32Z` | Same failing PR run as follow-up 12; no newer PR run changed the result. |
@@ -51,12 +58,15 @@ waiting for `Claude2` disposition.
 
 | Source | Evidence used |
 |---|---|
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13` | Sidecar active, owner `Codex`, reviewer `Codex2`, support-only artifact path. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13` | Sidecar `review_approved`, owner `Codex`, reviewer `Codex2`, support-only artifact path, and review notes approving support-only scope. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003` | Parent `blocked`, `waiting_for: Claude2`; Pantheon PR `#1852` merged; PR `#63` blocked at integration gate. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-001A` | Direct dependency archived `done`. |
-| `git rev-parse HEAD` / `git rev-parse origin/dev` | Current inspected baseline is `b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56`; task branch is at `origin/dev`. |
+| `git rev-parse HEAD` / `git rev-parse origin/dev` | Initial packet inspected baseline was `b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56`; task branch was at `origin/dev`. |
 | `git diff --name-status b97af2ee..HEAD -- <AG-XR/Agora implementation paths>` | Empty; no AG-XR/Agora implementation change since follow-up 12 closeout baseline. |
 | `git diff --name-status b97af2ee..HEAD -- support/sidecars/AG-XR-003/` | Only `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12.md`; no new parent implementation evidence. |
+| `git rev-parse origin/dev` during closeout refresh | Current dev tip is `9880c81584ab3b6985c197916674ad073680dd3d`. |
+| `git diff --name-status b3b5b1c3..origin/dev -- <AG-XR/Agora implementation paths>` | Empty; dev advancement after initial packet did not change the acceptance surfaces. |
+| `git diff --name-status b3b5b1c3..origin/dev -- support/sidecars/AG-XR-003/ .orchestrator/task-briefs/ag_xr_003_sidecar_acceptance_followup_13.md` | Empty; no AG-XR-003 support/task-brief changes landed on dev while PR `#1946` remained open. |
 | `gh pr view 1936 --repo ajoe734/pantheon` | Follow-up 12 merged at `519aa95478c74f69813e76ff38d8f0ccc0dc4bba`. |
 | `gh pr view 1852 --repo ajoe734/pantheon` | Merged at `0765018c838547108fa56fcf089b5e2bbafd4387`. |
 | `gh pr view 63 --repo ajoe734/execute-plans` | Open, unstable, head `e1cb9125...`, updated `2026-06-20T16:53:49Z`. |
@@ -173,12 +183,17 @@ Durable interpretation:
 Follow-up 13 packet ready:
 support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13.md
 
-Current origin/dev is b3b5b1c3. No AG-XR/Agora implementation paths changed
-since follow-up 12's closeout baseline b97af2ee; the AG-XR support path only
-added follow-up 12. Parent AG-XR-003 remains blocked waiting for Claude2.
+Current origin/dev is 9880c815. No AG-XR/Agora implementation paths changed
+since follow-up 12's closeout baseline b97af2ee; from the initial follow-up 13
+baseline b3b5b1c3 to 9880c815, the AG-XR/Agora implementation paths, this task
+brief path, and AG-XR-003 support path remain unchanged. Parent AG-XR-003
+remains blocked waiting for Claude2.
 Pantheon PR #1852 is merged. execute-plans PR #63 is still open/unstable at
 head e1cb9125, and the latest PR-related integration run remains 27877483718
 (failure, 2026-06-20T16:43:32Z).
+
+Codex2 approval is recorded in ai-status review notes as support-only approval;
+owner closeout should refresh PR #1946 and should not close parent AG-XR-003.
 
 Local validation:
 - verify --allow-pending fails on generated-types hash mismatch
@@ -195,7 +210,7 @@ reviewer/parent-owner intake, not as parent approval.
 
 ## Verification
 
-Commands run while preparing this packet:
+Commands run while preparing the initial packet:
 
 ```bash
 git fetch origin dev
@@ -262,3 +277,40 @@ Results:
   generated-types hash `0244eb11...`, status `pending`, and two frontend
   placeholder blockers.
 - Manifest file hash: `d5143fb19314d761fb5bd82e23d98e15b2058104bd81c93376aec1b02fceb01b`.
+
+Closeout refresh commands:
+
+```bash
+git fetch origin dev
+git rev-parse origin/dev
+# -> 9880c81584ab3b6985c197916674ad073680dd3d
+
+git diff --name-status b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56..origin/dev \
+  -- docs/contracts/agora/ scripts/agora_compat_manifest.py \
+     scripts/test_agora_compat_manifest.py execute-plans/src/lib/bff-v1/agora/ \
+     services/control-plane/specs/agora/ services/control-plane/openapi/ \
+     support/sidecars/AG-XR-003/
+# -> empty
+
+git diff --name-status b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56..origin/dev \
+  -- .orchestrator/task-briefs/ag_xr_003_sidecar_acceptance_followup_13.md
+# -> empty
+
+AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13
+AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003
+AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-001A
+
+gh pr view 63 --repo ajoe734/execute-plans \
+  --json number,title,state,mergeStateStatus,headRefOid,baseRefName,url,isDraft,mergedAt,reviewDecision,updatedAt,statusCheckRollup
+gh run list --repo ajoe734/execute-plans --limit 8 \
+  --json databaseId,displayTitle,status,conclusion,createdAt,headSha,event,workflowName
+```
+
+Closeout refresh results:
+
+- Sidecar status is `review_approved`; Codex2 review notes approve support-only
+  scope and keep parent `AG-XR-003` blocked.
+- Parent `AG-XR-003` remains `blocked`, `waiting_for: Claude2`.
+- `AG-XR-001A` remains archived `done`.
+- execute-plans PR `#63` remains `OPEN`, `UNSTABLE`, head `e1cb9125...`;
+  integration-gate run `27877483718` remains failed.
