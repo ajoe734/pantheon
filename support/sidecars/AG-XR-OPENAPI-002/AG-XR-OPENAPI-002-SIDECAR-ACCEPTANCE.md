@@ -6,8 +6,8 @@
 - Owner: `Codex2`
 - Reviewer: `Codex`
 - Generated: `2026-06-21`
-- Baseline inspected: `origin/dev` / `994dce7df17cc71a65abd516d0371d871b44141a`
-- Parent merge evidence: Pantheon PR `#1983` merged `AG-XR-OPENAPI-002`; implementation commit `f7e0b2b9`
+- Baseline inspected: `origin/dev` / `c1b18d8d0388baa0d7cf64f44391cbd7770f8916`
+- Parent merge evidence: Pantheon PR `#1983` merged implementation commit `f7e0b2b9`; PR `#1985` merged parent closeout commit `0766e51d`
 - Mutates canonical truth: `no`
 
 This is a support artifact only. It does not edit
@@ -17,15 +17,15 @@ workflow, or L1/L2 canonical documents.
 
 ## Purpose
 
-`AG-XR-OPENAPI-002` is in `review_approved` and delivered the additive Agora
-v1.2 contract bundle on top of the frozen v1 and v1.1 surfaces. This sidecar
-packet gives the parent owner/reviewer a compact acceptance checklist,
-dependency map, evidence notes, and reviewer attention list for formal closeout.
+`AG-XR-OPENAPI-002` is closed as `done` and delivered the additive Agora v1.2
+contract bundle on top of the frozen v1 and v1.1 surfaces. This sidecar packet
+gives downstream owners a compact acceptance checklist, dependency map,
+evidence notes, and reviewer context for follow-on implementation work.
 
 The sidecar stance is narrow:
 
-- accept the v1.2 bundle as a contract artifact only after the parent owner
-  preserves the frozen v1/v1.1 boundary and records closeout;
+- accept the v1.2 bundle as a closed contract artifact after the parent owner
+  preserved the frozen v1/v1.1 boundary and recorded closeout;
 - keep implementation work in downstream backend/frontend/runtime tasks;
 - do not use this sidecar as authority to change canonical truth or live
   execution behavior.
@@ -34,8 +34,9 @@ The sidecar stance is narrow:
 
 | Source | Evidence used |
 |---|---|
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-002` | Parent status is `review_approved`; artifacts and acceptance text list the v1.2 OpenAPI, capability manifest, and bundle index. Review notes say v1.2 bundle passed 5 tests and frozen v1/v1.1 were not modified. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE` | Sidecar scope is support-only, owner `Codex2`, reviewer `Codex`, artifact path is this packet. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002` | Parent status is archived `done`; delivery notes list PR `#1985`, closeout commit `0766e51d`, and 5/5 bundle checks with frozen v1/v1.1 diff guard. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE` | Sidecar scope is support-only, owner `Codex2`, reviewer `Codex`, artifact path is this packet. |
+| `.orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md` | Parent review artifact is present on the refreshed `dev` baseline and records an approved review of PR `#1983`, task commit `f7e0b2b9`, 5/5 tests, bundle verifier, and frozen-file diff guard. |
 | `services/control-plane/openapi/agora_v1_2.openapi.yaml` | Confirms OpenAPI 3.1.0, info version 1.2.0, additive v1.2 description, v1.1 extension pointer, v1.2 capability manifest pointer, persistence/private-content/strategy-ref pointers, route inventory, lifecycle filter wording, private-content projection rules, and section 9 error codes. |
 | `services/control-plane/specs/agora/v3/capability_manifest_v1_2.json` | Confirms manifest version 1.2, extends v1.1 manifest, `extension_by: AG-XR-OPENAPI-002`, workshop lifecycle/status-group authority order, private-content rules, strategy-ref rules, and error-code map. |
 | `services/control-plane/specs/agora/bundle_index.v1_2.json` | Confirms bundle version 1.2, exact v1.1 bundle hash, and hashes for six v3 schemas, capability manifest v1.2, and OpenAPI v1.2. |
@@ -49,8 +50,8 @@ The sidecar stance is narrow:
 
 | Surface | Observed state | Acceptance stance |
 |---|---|---|
-| Parent lifecycle | `review_approved`, owner `Codex`, reviewer `Claude2` | Parent owner still needs formal closeout; this sidecar should not mark the parent done. |
-| Review artifact path | Parent status references `.orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md`, but that file is not present in this worktree or the configured status root. | Reviewer should rely on status review notes unless the missing review file is restored before closeout. |
+| Parent lifecycle | archived `done`, owner `Codex`, reviewer `Claude2` | Parent owner completed formal closeout through PR `#1985`; this sidecar remains support-only context for downstream work. |
+| Review artifact path | `.orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md` is present on the refreshed baseline. | PASS; review evidence is durable with the parent closeout record. |
 | OpenAPI v1.2 | `openapi: 3.1.0`, `info.version: 1.2.0`; info extensions point to v1.1 OpenAPI, v1.2 manifest, persistence/private-content/strategy-ref contracts. | Meets additive contract packaging expectation. |
 | Bundle index v1.2 | Extends `bundle_index.v1_1.json` with sha256 `5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee`; includes v3 schema, v1.2 manifest, and v1.2 OpenAPI hashes. | Satisfies exact-byte inheritance model. |
 | Frozen v1.1 hash | `bundle_index.v1_1.json` sha256 is `5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee`; `agora_v1_1.openapi.yaml` sha256 is `16aa660db15a32aaccd63a7f0594abb4339e9ae95afae18353fbee532c2c0749`. | No local diff against `HEAD`; sidecar does not mutate frozen files. |
@@ -74,7 +75,7 @@ The sidecar stance is narrow:
 | v3 schema and manifest files are included in v1.2 bundle | Bundle index includes six v3 schema files plus `capability_manifest_v1_2.json`. | PASS. |
 | Section 9 error codes are visible in contract and manifest | OpenAPI `ErrorResponse` and manifest `error_codes` include private-content, strategy-ref, state, version, and concurrency errors. | PASS. |
 | No runtime / registry / governance implementation is changed by this sidecar | This file is the only intended support artifact. | PASS for sidecar scope. |
-| Review file is durable | Parent status names a review file, but it is absent locally and in the configured status root. | ATTENTION: restore or explicitly waive before parent finalization. |
+| Review file is durable | Parent review file is present on the refreshed baseline and records Claude2 approval. | PASS. |
 
 ## Dependency Map
 
@@ -116,8 +117,8 @@ Durable interpretation:
 
 | Item | Why it matters | Suggested reviewer action |
 |---|---|---|
-| Missing parent review file | `ai-status` references `.orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md`, but the file was not found. | Confirm whether status review notes are sufficient, or ask the reviewer/owner to restore the review artifact before parent `done`. |
-| `origin/dev` advanced during packet prep | Baseline was refreshed to `994dce7d`; the AG-XR v1.2 surfaces did not change in the intervening MGMT/BFF commits. | If reviewing after more dev merges, re-run the focused checks below. |
+| Parent already closed | Parent `AG-XR-OPENAPI-002` is now archived `done`, so this packet should be treated as downstream support context rather than a prerequisite for parent closeout. | Use the packet to seed follow-on implementation acceptance; do not reopen the closed parent from this sidecar. |
+| `origin/dev` advanced during packet prep | Baseline was refreshed to `c1b18d8d`; the AG-XR v1.2 surfaces did not change in the intervening closeout and FE sidecar commits. | If reviewing after more dev merges, re-run the focused checks below. |
 | Scope separation | This packet is not permission to mutate OpenAPI, runtime, registry, governance, broker, or capital paths. | Review only the support packet and parent acceptance mapping. |
 
 ## Suggested Handoff To Reviewer
@@ -126,15 +127,15 @@ Durable interpretation:
 Support-only acceptance packet ready:
 support/sidecars/AG-XR-OPENAPI-002/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE.md
 
-Baseline: origin/dev 994dce7d. Parent AG-XR-OPENAPI-002 is review_approved.
+Baseline: origin/dev c1b18d8d. Parent AG-XR-OPENAPI-002 is archived done.
 Packet verifies the v1.2 acceptance matrix, dependency map, exact-byte v1.1
 inheritance, lifecycle/status_group semantics, server-side private_content_ref
 boundary, owner/management projection split, and section 9 error coverage.
 
-Attention: parent status references review file
-.orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md, but that file
-was not present in this worktree or the configured status root. I treated the
-status review notes as evidence and left this as a reviewer attention item.
+Attention: parent review evidence is now durable at
+.orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md. This packet is
+support-only and should not mutate canonical OpenAPI, runtime, registry,
+governance, broker, or capital paths.
 ```
 
 ## Verification
@@ -143,9 +144,9 @@ Commands run while preparing the packet:
 
 ```bash
 git fetch origin dev
-git merge --ff-only origin/dev
-AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-002
-AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE
+git merge --no-edit origin/dev
+AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002
+AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE
 sha256sum \
   services/control-plane/specs/agora/bundle_index.v1_1.json \
   services/control-plane/openapi/agora_v1_1.openapi.yaml \
