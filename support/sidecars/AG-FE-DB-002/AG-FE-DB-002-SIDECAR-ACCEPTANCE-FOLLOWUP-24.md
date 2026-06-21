@@ -11,9 +11,10 @@
 | Reviewer | `Claude` |
 | Date | `2026-06-21` |
 | Baseline | follow-up 23 archived `done`, PR #2083 merged to `dev` at `a8e7034011d8ee9eede9e78b7df2c52076bb984a` |
-| Current dev | `3566d9e6ee1f531e84c536fd3ff0d4b44e0744c4` (PR #2094) |
+| Current dev | `ca2eba3438a19261d98603623f0abc760726ff1c` (PR #2095 merged the reviewed follow-up 24 packet) |
 | Mutates canonical truth | `false` |
-| Status | Ready for review |
+| Status | Review approved; owner closeout finalization |
+| Review approval | `Claude` approved via `ai-status` at `2026-06-21T15:18:24Z` |
 
 ## Purpose
 
@@ -21,6 +22,11 @@ This packet is a support-only refresh for `AG-FE-DB-002`. It updates the
 acceptance checklist, dependency map, and reviewer handoff after
 `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-23` was reviewed, finalized, and
 archived `done`.
+
+Closeout finalization records that `Claude` approved this support packet. The
+approval confirms the post-followup-23 research/identity deltas do not change
+DB002, preserves the active `execute-plans` delivery blocker, and keeps parent
+`AG-FE-DB-002` blocked pending `Codex` absorption.
 
 The material conclusion is unchanged from follow-up 23:
 
@@ -114,7 +120,7 @@ dependency route.
 | Surface | Observed state | Acceptance consequence |
 |---|---|---|
 | `AG-FE-DB-002` | Active `blocked`; owner `Claude`; reviewer `Claude2`; `waiting_for` `Codex`. | Parent remains blocked until `Codex` records an absorption decision or a new concrete blocker. |
-| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24` | Active `in_progress`; owner `Codex`; reviewer `Claude`; artifact is this packet. | Owner should commit and hand this packet to `Claude` for review. Parent status remains unchanged. |
+| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24` | Active `review_approved`; owner `Codex`; reviewer `Claude`; artifact is this packet. | Owner should finalize the approved support packet through the task PR flow, then mark the sidecar `done`. Parent status remains unchanged. |
 | `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-23` | Archived `done`; PR #2083 merged; Claude2 review preserved. | Follow-up 24 starts from finalized follow-up 23 evidence instead of reopening earlier packets. |
 | `AG-XR-DASH-001` | Archived `done`. | Dashboard v1.1/v1.2 routes, schemas, ETag/If-Match, expected version, idempotency, and 409 semantics remain available in Pantheon. |
 | `AG-XR-OPENAPI-004` | Archived `done`. | Agora v1.3 is complete, but it is not the DB002 blocker. |
@@ -276,28 +282,25 @@ Sidecar-local validation:
 git diff --check -- .orchestrator/task-briefs/ag_fe_db_002_sidecar_acceptance_followup_24.md support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24.md
 ```
 
-## Reviewer Handoff
+## Closeout Finalization
 
-To `Claude`, sidecar reviewer:
+Reviewer `Claude` approved this packet with the following durable conclusion:
 
-Please review this packet for:
+```text
+Review approved: follow-up 24 packet is support-only; it correctly confirms
+the post-followup-23 research/identity deltas do not change DB002, preserves
+the active execute-plans delivery blocker, and keeps parent AG-FE-DB-002
+blocked pending Codex absorption.
+```
 
-1. Support-only boundary: it changes only this sidecar artifact and task brief,
-   and it does not claim parent runtime completion.
-2. Accuracy of the follow-up 23 to current-dev delta, especially that the new
-   Research Sprint backend/handoff merges do not alter DB002 dashboard/editor
-   or frontend compose surfaces.
-3. Correct preservation of the follow-up 23 blocker interpretation: DB002 must
-   not wait for v1.3, but it must wait for AG-FE-DB-001 compose files,
-   dependencies, and generated dashboard route metadata to be present in the
-   active `execute-plans` frontend base.
-4. Completeness of the parent acceptance checklist and dependency map.
-5. Correct parent handoff: parent `AG-FE-DB-002` remains `blocked` and
-   `waiting_for` `Codex`; this packet asks for an absorption/blocker decision,
-   not for parent implementation or closeout.
+Owner closeout keeps the same boundary:
 
-Suggested reviewer approval command:
+1. No canonical truth, runtime, registry, BFF, governance, routing, or parent
+   implementation changes are included.
+2. The finalization commit is limited to this sidecar artifact and the
+   task-scoped brief generated for follow-up 24.
+3. After the finalization PR merges, `Codex` should run:
 
 ```bash
-AI_NAME=Claude ./scripts/ai-status.sh approve AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24 "Review approved: follow-up 24 packet is support-only; it correctly confirms the post-followup-23 research/identity deltas do not change DB002, preserves the active execute-plans delivery blocker, and keeps parent AG-FE-DB-002 blocked pending Codex absorption."
+AI_NAME=Codex ./scripts/ai-status.sh done AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24 "PR <closeout-pr> merged into dev; support-only follow-up 24 finalized after Claude approval; parent AG-FE-DB-002 remains blocked waiting_for Codex absorption of the execute-plans AG-FE-DB-001 delivery blocker."
 ```
