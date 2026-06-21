@@ -8,8 +8,9 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-21` |
-| Status | `ready for Claude review` |
-| Current dev base | `b85ca678fc91dc011b64ea80b47f87c9cf0fc623` |
+| Status | `review approved; owner closeout prepared` |
+| Packet observation base | `b85ca678fc91dc011b64ea80b47f87c9cf0fc623` |
+| Owner closeout start base | `99ae910dfd254b49501c8c9c00f909744fd62fff` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
@@ -23,7 +24,7 @@ This seventeenth followup refreshes the `AG-FE-ID-001` BFF/frontend handoff
 after the previous AG-FE-ID-001 support packet merged and after two
 AG-BE-ID-003 support packets closed.
 
-The material delta from FOLLOWUP-16 is narrow:
+At packet-preparation time, the material delta from FOLLOWUP-16 was narrow:
 
 1. `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16` is archived `done` via
    PR #1925 at merge `b85ca678`.
@@ -34,7 +35,8 @@ The material delta from FOLLOWUP-16 is narrow:
 4. Both AG-BE-ID-003 followups confirm no servant-session implementation
    delta and preserve the same parent blocker: `ServantSessionCreateRequest`
    has no approved public session type field or derivation rule.
-5. Current `origin/dev` and this task branch both point at `b85ca678`.
+5. At packet-preparation time, `origin/dev` and this task branch both pointed
+   at `b85ca678`.
    A focused diff from `b85ca678..HEAD` over the relevant BFF/OpenAPI/Agora
    and support paths is empty.
 6. Parent `AG-FE-ID-001` remains `todo`; the three requested frontend target
@@ -48,7 +50,7 @@ Status commands used `AI_NAME=Codex2`.
 
 | Task | Status | Handoff implication |
 |---|---|---|
-| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-17` | `in_progress` -> ready for review | This packet. |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-17` | `review_approved` -> owner closeout | This packet, with Claude review approval recorded in the review artifact. |
 | `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16` | archived `done`; PR #1925 / merge `b85ca678` | Previous approved AG-FE-ID-001 packet is durable on `dev`. |
 | `AG-FE-ID-001` | `todo`; owner `Claude`, reviewer `Codex`; depends on `AG-FE-000`, `AG-BE-ID-003` | Parent implementation has not started in durable task state. |
 | `AG-BE-ID-002` | archived `done` | `/bff/agora/servant/ensure` remains the merged servant ensure/provision/reconcile surface. |
@@ -94,8 +96,8 @@ readiness.
 | FOLLOWUP-16 closed | Archived `done`; PR #1925 merged at `b85ca678`. | Treat FOLLOWUP-16 as accepted support evidence on `dev`. |
 | AG-BE-ID-003 followup-7 closed | Archived `done`; PR #1924 merged at `d11a6fc9`. | Confirms zero BFF/OpenAPI/Agora implementation delta after followup-6; parent session blocker unchanged. |
 | AG-BE-ID-003 followup-8 closed | Archived `done`; PR #1926 merged at `ccff7df1`. | Reconfirms no new servant-session implementation and keeps frontend/operator gates conservative. |
-| Current dev base | `HEAD` equals `origin/dev` at `b85ca678`. | This packet starts from the latest merged AG-FE-ID-001 support baseline. |
-| No post-b85 relevant delta | `git diff --name-only b85ca678..HEAD` over BFF/OpenAPI/spec/execute-plans Agora/support paths is empty. | No runtime, contract, capability, or frontend source change supersedes FOLLOWUP-16. |
+| Packet observation base | Packet-preparation `HEAD` equaled `origin/dev` at `b85ca678`. | This packet started from the latest merged AG-FE-ID-001 support baseline available at preparation time. |
+| No post-b85 relevant delta at preparation | `git diff --name-only b85ca678..HEAD` over BFF/OpenAPI/spec/execute-plans Agora/support paths was empty at packet preparation time. | No runtime, contract, capability, or frontend source change superseded FOLLOWUP-16 before this packet was written. |
 | Parent AG-FE-ID-001 unchanged | Parent remains `todo`; `AgoraApp.tsx`, `identity.ts`, and `servant.ts` are still missing. | There is still no parent frontend implementation to review or absorb. |
 | Parent AG-BE-ID-003 unchanged | Still `blocked` waiting for `Claude` because no public session type contract or derivation rule is approved. | Parent FE must keep create/message/terminate/stream controls disabled. |
 | AG-XR-003 unchanged | Still `blocked`; execute-plans integration/release gate remains unresolved. | Do not claim strict v1.1 cross-repo compatibility or deployment readiness from sidecar closeout alone. |
@@ -341,14 +343,15 @@ rg -n "ServantSessionCreateRequest|session_type|sessionType|OPENCLAW_UPSTREAM_DE
 Results:
 
 - Branch was correct: `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-17`.
-- `HEAD` and `origin/dev` both resolved to `b85ca678fc91dc011b64ea80b47f87c9cf0fc623`.
+- At packet-preparation time, `HEAD` and `origin/dev` both resolved to
+  `b85ca678fc91dc011b64ea80b47f87c9cf0fc623`.
 - Initial working tree had only this task's untracked generated task brief.
-- Delta from FOLLOWUP-16 observation base `c0af1ff8` to current `HEAD` is
-  limited to support artifacts for AG-BE-ID-003 followups 7/8 and
+- Delta from FOLLOWUP-16 observation base `c0af1ff8` to packet-preparation
+  `HEAD` was limited to support artifacts for AG-BE-ID-003 followups 7/8 and
   AG-FE-ID-001 followup-16; no BFF/OpenAPI/spec/execute-plans Agora source
   changed in the checked pathset.
-- Delta from followup-16 merge `b85ca678` to current `HEAD` is empty in the
-  checked pathset.
+- Delta from followup-16 merge `b85ca678` to packet-preparation `HEAD` was
+  empty in the checked pathset.
 - Parent `AG-FE-ID-001` confirmed `todo`.
 - `AG-BE-ID-002` and `AG-XR-OPENAPI-001` confirmed archived `done`.
 - `AG-BE-ID-003` confirmed `blocked` waiting for `Claude` on the session type
@@ -358,11 +361,41 @@ Results:
 - `AgoraApp.tsx`, `identity.ts`, and `servant.ts` confirmed missing.
 - `execute-plans/src/lib/bff-v1/agora/types.ts` confirmed present.
 
-## 13. Handoff
+## 13. Owner Closeout Addendum
 
-This packet is ready for Claude review. The intended parent use is to absorb
-the current support-only BFF query ledger, disabled-session boundary, and
-frontend shell checklist before any execute-plans code is written for
+Claude approved this packet in
+`support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-17-REVIEW.md`.
+The owner closeout pass rechecked the active task state with
+`AI_NAME=Codex2`, confirmed parent `AG-FE-ID-001` remains `todo`, and confirmed
+`AG-BE-ID-003` remains `blocked` waiting for Claude on the servant-session type
+contract decision.
+
+Closeout start base:
+
+- Before this closeout commit, local `HEAD` and `origin/dev` both resolved to
+  `99ae910dfd254b49501c8c9c00f909744fd62fff`, the merge commit for PR #1927.
+- Local task branch is ahead of `origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-17`
+  by the merged dev commit only before this closeout commit.
+- Dirty files before closeout were task-scoped: this packet, the generated task
+  brief, and the Claude review artifact.
+- No canonical truth, runtime code, OpenAPI, capability manifest, registry,
+  governance, or execute-plans source file is changed by this closeout.
+
+Closeout commands:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-17
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003
+git rev-parse HEAD origin/dev
+git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_17.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-17.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-17-REVIEW.md
+```
+
+## 14. Handoff
+
+This packet is approved for support-only closeout. The intended parent use is
+to absorb the current support-only BFF query ledger, disabled-session boundary,
+and frontend shell checklist before any execute-plans code is written for
 `AG-FE-ID-001`.
 
 The key conclusion is unchanged but fresher: the parent can prepare a strict
