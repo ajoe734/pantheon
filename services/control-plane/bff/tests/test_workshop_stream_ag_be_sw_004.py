@@ -497,9 +497,10 @@ class TestOpenClawDegradedEvent:
         buf = _workshop_sse_buffers.get(wid)
         assert buf is not None
         _, evt = buf[0]
-        assert evt["type"] == "workshop.research.progress"
+        assert evt["type"] == "research.run.progress"
         assert evt["data"]["run_id"] == "run-abc"
-        assert evt["data"]["progress_pct"] == 42.5
+        assert evt["data"]["phase"] == "running"
+        assert evt["data"]["percent"] == 42.5
         assert evt["data"]["message"] == "Backtesting..."
 
 
