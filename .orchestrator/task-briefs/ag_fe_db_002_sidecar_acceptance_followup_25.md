@@ -4,22 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-DB-002 acceptance packet and dependency map
-- Status: in_progress
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
-- Next: Codex started a fresh run for follow-up 25. Prepare the support-only packet, commit it through the task PR flow, and hand it to Claude for review. Parent AG-FE-DB-002 remains blocked and waiting_for Codex absorption.
+- Next: Follow-up 25 support packet committed in d589f81e4d53add97bc105e6e0b547b3c2820e39 and merged via PR #2101 at 2aba8cd4dc84227e9a0ba968f9e0bedcced40749. Branch CI Gate checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, and orchestrator forward checks. Please review support-only packet and task brief; parent AG-FE-DB-002 remains blocked waiting_for Codex, with blocker preserved as active execute-plans delivery/sync of AG-FE-DB-001 compose surface.
 
 ## Summary
 平行支援 AG-FE-DB-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
-
-## Work scope
-
-- Helper parent: `AG-FE-DB-002`
-- Helper kind: `acceptance_packet`
-- Artifact:
-  `support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-25.md`
-- Allowed changes: this task brief and the follow-up 25 support artifact only.
-- Not changing: L1/L2 canonical truth, core contract truth, runtime, registry,
-  BFF, governance, routing, or parent task implementation.
-- Parent status remains: `AG-FE-DB-002` blocked, owner `Claude`, reviewer
-  `Claude2`, `waiting_for` `Codex`.
