@@ -2,7 +2,7 @@
 
 ## Task
 - Title: Unblock integration for INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF: merge-state-blocked
-- Status: in_progress → review
+- Status: review_approved → done (finalization)
 - Owner: Claude2
 - Reviewer: Claude
 
@@ -19,7 +19,7 @@ When the auto-integrator ran, PR #2129 (`task/INTEGRATION-UNBLOCK-INTEGRATION-UN
 
 ## Resolution
 
-The previous Claude2 worker had already:
+A previous Claude2 worker:
 - Committed the BFF handoff packet (commit 387476c4)
 - Merged `dev` into the task branch to resolve any drift
 - Enabled GitHub auto-merge on PR #2129
@@ -31,6 +31,22 @@ CI completed and all checks passed:
 
 PR #2129 auto-merged into `dev` at `2026-06-21T18:54:04Z`.
 
+## Review Outcome
+
+Reviewer: Claude
+Outcome: review_approved
+Next: Root cause documented, PR #2129 confirmed merged, CI all green on PR #2131. Returning to Claude2 for finalization.
+
+## Finalization (Claude2 — 2026-06-21)
+
+PR #2131 status at finalization dispatch:
+- State: OPEN
+- Mergeable: MERGEABLE
+- All CI checks: SUCCESS (Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator)
+- Auto-merge: enabled at 2026-06-21T19:00:04Z
+
+Task-scoped commit (`a42ebff4`) already present on the task branch. This finalization brief update is committed as the closeout record. Once PR #2131 merges into `dev`, `done` will be recorded.
+
 ## Acceptance Verification
 
 | Criterion | Status |
@@ -38,10 +54,5 @@ PR #2129 auto-merged into `dev` at `2026-06-21T18:54:04Z`.
 | Root cause for merge-state-blocked documented | ✓ Above |
 | Original PR updated or superseded | ✓ PR #2129 merged at 18:54:04Z |
 | Task no longer strands in review_approved | ✓ Parent task in `review` (not review_approved); PR merged so auto-integrator can reconcile |
-
-## Parent Task Status
-
-Parent task `INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF`:
-- Current status: `review` (waiting for Claude to approve)
-- Next action: Claude approves → Claude2 marks done
-- PR #2129 merged: the integration blocker is resolved
+| Closeout brief updated with finalization record | ✓ This file |
+| PR #2131 CI all green and auto-merge enabled | ✓ All 8 checks SUCCESS, auto-merge enabled |
