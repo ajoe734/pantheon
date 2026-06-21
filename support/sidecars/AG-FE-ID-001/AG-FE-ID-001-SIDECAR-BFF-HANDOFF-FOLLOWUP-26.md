@@ -9,9 +9,9 @@
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-21` |
 | Status | `in_progress; packet prepared for Claude review` |
-| Current dev base | `0f88261fbd18106589e95600412924380681f02a` |
+| Current dev base | `fa4894300d79254ef45ef293a997c2b95285a4fa` |
 | Previous packet closeout | Followup-25 archived `done`; packet PR `#1993` merged at `0c7eb8082452152dbaa435dfbfc9f1ee0b951e54`; review record PR `#1994` merged at `0f88261fbd18106589e95600412924380681f02a` |
-| New dev delta after followup-25 closeout | None in the checked handoff pathset; `HEAD == origin/dev == 0f88261fbd18106589e95600412924380681f02a` after `git fetch origin --prune` |
+| New dev delta after followup-25 closeout | PR `#1996` merged `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` at `fa4894300d79254ef45ef293a997c2b95285a4fa`; checked delta is support-only and keeps `AG-BE-ID-003` blocked |
 | Execute-plans refs checked | `origin/main` at `7b2f17c4dee8dcafe62c2295504df03aed0ae16e`; `origin/dev` at `7aa4917272212452fe5e4dc99bf2d76fe48eacfd` |
 | Execute-plans compatibility PR | `#63` remains `OPEN` / `UNSTABLE`, head `e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5`; `integration-gate` failed |
 | Mutates canonical truth | `false` |
@@ -30,9 +30,11 @@ The material delta is intentionally small:
 
 1. Followup-25 is archived `done`; its packet and review record are durable on
    `dev` through PR `#1993` and PR `#1994`.
-2. After `git fetch origin --prune`, this task branch and `origin/dev` are
-   still at the same commit. The checked Pantheon handoff pathset has no new
-   delta after followup-25.
+2. After `git fetch origin --prune`, `origin/dev` advanced by PR `#1996`, which
+   merged the support-only `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13`
+   packet. That packet keeps the servant-session type-contract blocker in
+   place and does not add BFF runtime, OpenAPI, manifest, or execute-plans
+   source changes.
 3. Parent `AG-FE-ID-001` remains `todo`; its Phase 0 dependency `AG-FE-000` is
    archived `done`, but backend dependency `AG-BE-ID-003` remains `blocked`
    waiting for `Claude` on the servant-session type-contract decision.
@@ -58,6 +60,7 @@ Status commands used `AI_NAME=Codex`.
 | `AG-FE-ID-001` | `todo`; owner `Claude`, reviewer `Codex`; depends on `AG-FE-000` and `AG-BE-ID-003` | Parent implementation has not started in durable task state. |
 | `AG-FE-000` | archived `done`; main execute-plans deliverable PR `#1771` merged | Entry/build/audience separation is accepted context, but parent target shell/client files are still absent from checked remote trees. |
 | `AG-BE-ID-003` | `blocked`; owner `Codex2`, reviewer `Claude`, waiting for `Claude` | Servant-session create/message/stream/terminate UI remains blocked. |
+| `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | active `review`; PR `#1996` merged into `dev` at `fa489430` | New support packet restates that `AG-BE-ID-003` remains blocked on Claude's servant-session type-contract decision. |
 | `AG-XR-003` | archived `done` | Pantheon-side manifest gate work is closed; execute-plans PR `#63` still records cross-repo compatibility follow-through risk. |
 | `AG-XR-OPENAPI-002` | archived `done`; PR `#1983` implementation and PR `#1985` closeout merged | Additive v1.2 OpenAPI/bundle work is accepted support context, not AG-FE-ID-001 shell/client completion. |
 | `AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE` | archived `done`; PR `#1989` merged | Support-only acceptance packet for v1.2; no AG-FE-ID-001 shell/session unlock. |
@@ -77,13 +80,15 @@ is blocked.
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms parent remains `todo` and depends on `AG-FE-000` plus `AG-BE-ID-003`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-000` | Confirms Phase 0 frontend entry/build/audience dependency is archived `done`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003` | Confirms parent backend session dependency remains `blocked` waiting for `Claude`. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | Confirms the new backend sidecar is in review after PR `#1996` merged; its key conclusion keeps `AG-BE-ID-003` blocked. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003` | Confirms AG-XR-003 is archived `done`, while frontend PR `#63` remains separate follow-through evidence. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002` | Confirms additive v1.2 OpenAPI/bundle work is archived `done`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE` | Confirms the v1.2 acceptance sidecar is archived `done` and support-only. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25.md` | Previous AG-FE-ID-001 approved support baseline. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25-REVIEW.md` | Reviewer-approved facts for the predecessor baseline. |
-| `git log --oneline 0f88261fbd18106589e95600412924380681f02a..origin/dev --decorate` | Empty output after fetch; no new dev commits after followup-25 closeout. |
-| `git diff --name-status 0f88261fbd18106589e95600412924380681f02a..origin/dev -- <checked handoff pathset>` | Empty output; no new Agora BFF/OpenAPI/spec, AG-FE-ID-001 support, AG-BE-ID-003 support, AG-XR support, relevant script, or execute-plans mirror delta. |
+| `git log --oneline 0f88261fbd18106589e95600412924380681f02a..origin/dev --decorate` | Shows PR `#1996` / `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` only. |
+| `git diff --name-status 0f88261fbd18106589e95600412924380681f02a..origin/dev -- <checked handoff pathset>` | Shows only `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md`; no Agora BFF runtime, OpenAPI/spec, manifest, execute-plans mirror, or AG-FE-ID-001 support delta. |
+| `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md` | New backend support packet says v1.2 and FE support closeouts are context, not runtime/session readiness, and `AG-BE-ID-003` remains blocked. |
 | `services/control-plane/bff/agora/router.py` | Confirms runtime `/bff/agora/me` and `/bff/agora/capabilities` route registration. |
 | `services/control-plane/bff/agora/servant/router.py` | Confirms `/bff/agora/servant/ensure` runtime behavior and required headers. |
 | `services/control-plane/bff/tests/test_agora_router.py` | Confirms current servant ensure tests expect 200 profile provisioning/reconcile plus 422/401 failures. |
@@ -101,7 +106,8 @@ Baseline: `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25` review record PR
 | Change | What changed | Parent implication |
 |---|---|---|
 | Followup-25 closed | Archive records sidecar `done`; Claude approved the support-only packet and owner closeout ran after PR `#1994` merged. | Treat followup-25 as accepted support evidence on `dev`. |
-| Pantheon dev delta | None after `0f88261f` in the checked pathset; `HEAD` and `origin/dev` are identical after fetch. | No new BFF route, OpenAPI servant-session decision, canonical contract change, or AG-FE-ID-001 frontend source change supersedes the handoff. |
+| Pantheon dev delta | PR `#1996` added the AG-BE-ID-003 followup-13 support packet after `0f88261f`; checked pathset delta is support-only. | No new BFF route, OpenAPI servant-session decision, canonical contract change, manifest source change, or AG-FE-ID-001 frontend source change supersedes the handoff. |
+| AG-BE-ID-003 sidecar followup-13 | New packet is in `review` and says AG-BE-ID-003 remains blocked on Claude's servant-session type-contract decision. | Reinforces this packet's gating rule rather than unblocking sessions. |
 | Parent AG-FE-ID-001 | Still `todo`. | No parent implementation evidence exists to absorb or review. |
 | Parent dependency AG-FE-000 | Archived `done`. | Entry/build/audience split is available as dependency context, but parent still needs shell and strict clients. |
 | Parent dependency AG-BE-ID-003 | Still `blocked`, waiting for `Claude`. | Session UI and strict session clients remain gated. |
@@ -247,14 +253,16 @@ Commands and results:
 | `git status -sb` | On `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26`; before packet edits only the generated task brief was untracked. |
 | `git branch --show-current` | `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26`. |
 | `git remote -v` | `origin` is `https://github.com/ajoe734/pantheon.git`. |
-| `git fetch origin --prune` | Completed successfully; `HEAD` and `origin/dev` both resolve to `0f88261fbd18106589e95600412924380681f02a`. |
-| `git log --oneline 0f88261fbd18106589e95600412924380681f02a..origin/dev --decorate` | Empty output. |
-| `git diff --name-status 0f88261fbd18106589e95600412924380681f02a..origin/dev -- <checked handoff pathset>` | Empty output. |
+| `git fetch origin --prune` | Completed successfully; `origin/dev` resolves to `fa4894300d79254ef45ef293a997c2b95285a4fa`. |
+| `git merge --no-edit origin/dev` | Merged PR `#1996` support-only AG-BE-ID-003 followup-13 into this task branch before refreshing the packet. |
+| `git log --oneline 0f88261fbd18106589e95600412924380681f02a..origin/dev --decorate` | Shows `fa489430` merge PR `#1996` and `d307dbe9` AG-BE-ID-003 followup-13 packet commit. |
+| `git diff --name-status 0f88261fbd18106589e95600412924380681f02a..origin/dev -- <checked handoff pathset>` | Shows `A support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md` only. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26` | Active `in_progress`, owner `Codex`, reviewer `Claude`, support-only artifact path. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25` | Archived `done`; packet PR `#1993` merged at `0c7eb8082452152dbaa435dfbfc9f1ee0b951e54`; review record PR `#1994` merged at `0f88261fbd18106589e95600412924380681f02a`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001` | Parent `todo`; depends on `AG-FE-000` and `AG-BE-ID-003`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-000` | Archived `done`; execute-plans entry/build/audience split accepted. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003` | Dependency remains `blocked`, waiting for `Claude`. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13` | Active `review`; PR `#1996` merged at `fa489430`; support packet conclusion keeps `AG-BE-ID-003` blocked on the type-contract decision. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003` | Archived `done`; compatibility PR `#63` remains separate frontend follow-through evidence. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002` | Archived `done`; additive v1.2 bundle accepted. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE` | Archived `done`; support-only acceptance packet. |
@@ -273,8 +281,8 @@ Commands and results:
 Claude review focus:
 
 1. Confirm this packet is support-only and does not mutate canonical truth.
-2. Confirm the no-delta conclusion after followup-25 is accurate for the
-   checked Pantheon handoff pathset.
+2. Confirm the post-followup-25 delta conclusion is accurate: PR `#1996`
+   added only AG-BE-ID-003 support material and did not unblock sessions.
 3. Confirm the parent absorption checklist remains conservative: identity,
    capabilities, and servant ensure are usable support context; servant sessions
    remain blocked by `AG-BE-ID-003`.
