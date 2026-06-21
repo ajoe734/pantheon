@@ -11,6 +11,8 @@
   `e5f20720bc5c0fa7eb1e03972db838eb8098b241`
 - PR-prep refresh baseline: `origin/dev`
   `60e3e18c466a0b3b4d28d8a128f28156e42743cd`
+- GitHub behind refresh baseline: `origin/dev`
+  `285a6d6002da982f029d0b8b7447f95f10efc09b`
 - Previous support packet follow-up 13 was merged through Pantheon PR `#1946`
   at merge commit `13f864d5946b4fd2ccdff328a4e0fd359c100cfc`.
 
@@ -37,6 +39,12 @@ fails closed while the frontend runtime commit remains a placeholder.
 During PR preparation, `origin/dev` advanced from `e5f20720` to `60e3e18c`.
 The scoped AG-XR/Agora diff across that interval was empty; the only observed
 dev delta was an unrelated AG-FE-DB-002 sidecar review artifact.
+
+After PR `#1956` opened, GitHub reported the branch `BEHIND`. A second refresh
+merged `origin/dev` `285a6d60`; the scoped AG-XR/Agora diff from `60e3e18c` to
+`285a6d60` was also empty. That dev advancement only added an AG-XR-002A
+sidecar handoff support artifact and does not change this packet's acceptance
+conclusion.
 
 ## Current Status Snapshot
 
@@ -95,6 +103,7 @@ Interpretation:
 | `gh pr view 63 --repo ajoe734/execute-plans` | Cross-repo PR remains open, unstable, head `e1cb9125...`, updated `2026-06-20T16:53:49Z`. |
 | `gh run list --repo ajoe734/execute-plans --limit 5` | Latest PR `#63` run remains `27877483718`, failure. |
 | `git diff --name-status e5f20720..60e3e18c -- <AG-XR/Agora paths>` | Empty; PR-prep dev refresh did not alter this packet's acceptance surfaces. |
+| `git diff --name-status 60e3e18c..285a6d60 -- <AG-XR/Agora paths>` | Empty; GitHub `BEHIND` refresh did not alter this packet's acceptance surfaces. |
 | `python3 scripts/agora_compat_manifest.py verify --allow-pending` | Passes on committed manifest. |
 | `python3 scripts/agora_compat_manifest.py deployment-gate` | Exits non-zero on 3 fail-closed errors. |
 | `python3 -m pytest scripts/test_agora_compat_manifest.py -v` | 4 passed. |
@@ -214,10 +223,10 @@ Durable interpretation:
 Follow-up 14 packet ready:
 support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14.md
 
-Current origin/dev is 60e3e18c. Since follow-up 13 merged in PR #1946,
+Current origin/dev is 285a6d60. Since follow-up 13 merged in PR #1946,
 AG-XR-002A PR #1952 landed local/vendored Agora v1.1 frontend contract updates
-at e5f20720; the later dev refresh to 60e3e18c did not change AG-XR/Agora
-surfaces. Local manifest sanity now passes, manifest pytest is 4/4,
+at e5f20720; the later dev refreshes to 60e3e18c and 285a6d60 did not change
+AG-XR/Agora surfaces. Local manifest sanity now passes, manifest pytest is 4/4,
 contract:drift passes, and build:agora passes after npm ci. The previous
 generated-types mismatch and stale pytest assertion should be considered
 resolved locally.
@@ -247,6 +256,10 @@ git merge --no-edit origin/dev
 git rev-parse origin/dev
 # -> 60e3e18c466a0b3b4d28d8a128f28156e42743cd
 
+git merge --no-edit origin/dev
+git rev-parse origin/dev
+# -> 285a6d6002da982f029d0b8b7447f95f10efc09b
+
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003
 AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-002A
@@ -275,6 +288,12 @@ git diff --name-status e5f20720bc5c0fa7eb1e03972db838eb8098b241..60e3e18c466a0b3
      execute-plans/scripts/ services/control-plane/specs/agora/ \
      services/control-plane/openapi/ support/sidecars/AG-XR-003/
 
+git diff --name-status 60e3e18c466a0b3b4d28d8a128f28156e42743cd..285a6d6002da982f029d0b8b7447f95f10efc09b \
+  -- docs/contracts/agora/ scripts/agora_compat_manifest.py \
+     scripts/test_agora_compat_manifest.py execute-plans/src/lib/bff-v1/agora/ \
+     execute-plans/scripts/ services/control-plane/specs/agora/ \
+     services/control-plane/openapi/ support/sidecars/AG-XR-003/
+
 python3 scripts/agora_compat_manifest.py verify --allow-pending \
   --manifest docs/contracts/agora/dev-compatibility-manifest.json
 python3 scripts/agora_compat_manifest.py deployment-gate \
@@ -292,6 +311,7 @@ Results:
 
 - Initial AG-XR evidence baseline: `e5f20720bc5c0fa7eb1e03972db838eb8098b241`.
 - PR-prep `origin/dev`: `60e3e18c466a0b3b4d28d8a128f28156e42743cd`.
+- GitHub behind-refresh `origin/dev`: `285a6d6002da982f029d0b8b7447f95f10efc09b`.
 - Follow-up 13 PR `#1946`: merged at
   `13f864d5946b4fd2ccdff328a4e0fd359c100cfc`.
 - Pantheon PR `#1852`: merged at
@@ -303,6 +323,7 @@ Results:
 - Scoped AG-XR/Agora implementation diff since follow-up 13 consists of the
   five AG-XR-002A files listed in "Delta Since Follow-up 13".
 - Scoped AG-XR/Agora diff from `e5f20720` to `60e3e18c`: empty.
+- Scoped AG-XR/Agora diff from `60e3e18c` to `285a6d60`: empty.
 - `verify --allow-pending`: passed.
 - `deployment-gate`: exited non-zero on 3 expected fail-closed errors.
 - `write --stdout`: emitted backend commit `e5f20720...`, status `pending`,
