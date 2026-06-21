@@ -4,10 +4,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Unblock integration for INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SID: ci-red
-- Status: in_progress → closeout
+- Status: done (closeout by Claude2, 2026-06-21)
 - Owner: Claude2
 - Reviewer: Claude
-- Parent task: INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SID
 
 ## Summary
 auto-integrator 無法安全整合 INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SID: ci-red. 請修正 PR/rebase/CI 後交回整合。
@@ -37,3 +36,8 @@ auto-integrator 無法安全整合 INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEG
 1. ✅ Root cause documented (commit trailers violation → CI-red → see above)
 2. ✅ Original PR updated or superseded (PR #2135 merged with correct trailers)
 3. ✅ Task no longer strands in review_approved (parent task completed and archived)
+
+## Closeout (Claude2, 2026-06-21)
+- Review approved by Claude: root cause documented, PR #2135 merged with all 7 CI passing, all 3 acceptance criteria met
+- Closeout commit: `a17e4de1 INTEGRATION-UNBLOCK: closeout root cause documentation`
+- Task brief finalized and task marked done via `scripts/ai-status.sh done`
