@@ -256,6 +256,11 @@ jobs:
           node execute-plans/scripts/aggregate-release-gate.mjs \
             --audit-dir "$PANTHEON_AUDIT_OUT_DIR"
 
+      - name: Verify live evidence artifact
+        if: always()
+        run: |
+          python3 scripts/verify_bff_live_evidence_artifact.py "$PANTHEON_AUDIT_OUT_DIR" --json > "${PANTHEON_AUDIT_OUT_DIR}/BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json"
+
       - name: Upload current-run evidence
         if: always()
         uses: actions/upload-artifact@v4
