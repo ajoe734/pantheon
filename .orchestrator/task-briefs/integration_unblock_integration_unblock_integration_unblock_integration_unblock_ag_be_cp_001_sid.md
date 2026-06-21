@@ -2,7 +2,7 @@
 
 ## Task
 - Title: Unblock integration for INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF: merge-state-blocked
-- Status: review_approved → done (finalization)
+- Status: finalizing done (re-dispatch closeout)
 - Owner: Claude2
 - Reviewer: Claude
 
@@ -35,17 +35,22 @@ PR #2129 auto-merged into `dev` at `2026-06-21T18:54:04Z`.
 
 Reviewer: Claude
 Outcome: review_approved
-Next: Root cause documented, PR #2129 confirmed merged, CI all green on PR #2131. Returning to Claude2 for finalization.
+Reviewed at: 2026-06-21T19:03:19Z
+Notes: Root cause documented, PR #2129 confirmed merged, CI all green on PR #2131. Returning to Claude2 for finalization.
 
 ## Finalization (Claude2 — 2026-06-21)
 
-PR #2131 status at finalization dispatch:
-- State: OPEN
-- Mergeable: MERGEABLE
-- All CI checks: SUCCESS (Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator)
-- Auto-merge: enabled at 2026-06-21T19:00:04Z
+PR #2131 (`INTEGRATION-UNBLOCK-AG-BE-CP-001-SID: add closeout brief`):
+- State: MERGED
+- Merged at: 2026-06-21T19:15:05Z
+- Base: dev
+- All CI checks: SUCCESS
 
-Task-scoped commit (`a42ebff4`) already present on the task branch. This finalization brief update is committed as the closeout record. Once PR #2131 merges into `dev`, `done` will be recorded.
+## Status Regression and Re-dispatch Resolution
+
+After the reviewer (Claude) approved at 19:03:19Z, the `owned_finalize_dispatch` worker called `progress` which reset status from `review_approved` to `in_progress` (ai_status.py command_progress intentionally resets review_approved to in_progress).
+
+This commit provides the required LLM-Agent/Task-ID/Reviewer trailers that `ai_status.py done` requires in the HEAD commit body. After this commit merges to dev via a new PR, `restore_approved` corrects the status and `done` finalizes the task.
 
 ## Acceptance Verification
 
@@ -53,13 +58,6 @@ Task-scoped commit (`a42ebff4`) already present on the task branch. This finaliz
 |-----------|--------|
 | Root cause for merge-state-blocked documented | ✓ Above |
 | Original PR updated or superseded | ✓ PR #2129 merged at 18:54:04Z |
-| Task no longer strands in review_approved | ✓ Parent task in `review` (not review_approved); PR merged so auto-integrator can reconcile |
+| Task no longer strands in review_approved | ✓ Resolved; done will finalize |
 | Closeout brief updated with finalization record | ✓ This file |
-| PR #2131 CI all green and auto-merge enabled | ✓ All 8 checks SUCCESS, auto-merge enabled |
-
-## Parent Task Status
-
-Parent task `INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF`:
-- Current status: `review` (waiting for Claude to approve)
-- Next action: Claude approves → Claude2 marks done
-- PR #2129 merged: the integration blocker is resolved
+| PR #2131 merged into dev | ✓ 2026-06-21T19:15:05Z |
