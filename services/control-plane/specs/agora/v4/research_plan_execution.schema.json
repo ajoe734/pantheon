@@ -1,0 +1,257 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/research_plan_execution/v1",
+  "title": "ResearchPlanExecution",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "plan_id",
+    "workshop_id",
+    "strategy_id",
+    "strategy_spec_registry_id",
+    "status",
+    "stages",
+    "no_order_route_proof",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "plan_id": {
+      "type": "string"
+    },
+    "workshop_id": {
+      "type": "string"
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "strategy_spec_registry_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "approved",
+        "running",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "approval": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "not_required"
+          ]
+        },
+        "decided_by": {
+          "type": "string"
+        },
+        "decided_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/stage"
+      }
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "compute_tier": {
+          "type": "string",
+          "enum": [
+            "light",
+            "standard",
+            "heavy"
+          ]
+        },
+        "max_runtime_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_parallel_stages": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "external_data_spend_allowed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "run_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "no_order_route_proof": {
+      "type": "string",
+      "enum": [
+        "research_plan_no_order_route"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "definitions": {
+    "stage": {
+      "type": "object",
+      "required": [
+        "stage_id",
+        "stage_type",
+        "status",
+        "dependencies",
+        "required_capability",
+        "routing"
+      ],
+      "properties": {
+        "stage_id": {
+          "type": "string"
+        },
+        "stage_type": {
+          "type": "string",
+          "enum": [
+            "source_discovery",
+            "data_validation",
+            "prototype_backtest",
+            "alpha_training",
+            "rolling_oos",
+            "econometric_validation",
+            "derivatives_pricing_risk",
+            "policy_training",
+            "parameter_search",
+            "portfolio_synthesis",
+            "robustness_stress",
+            "evidence_synthesis"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "ready",
+            "blocked",
+            "queued",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "skipped"
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_capability": {
+          "type": "string"
+        },
+        "routing": {
+          "type": "object",
+          "required": [
+            "preferred_backend",
+            "fallback_policy"
+          ],
+          "properties": {
+            "preferred_backend": {
+              "type": "string",
+              "enum": [
+                "source_ingestion",
+                "data_validation",
+                "vectorbt",
+                "qlib",
+                "statsmodels",
+                "quantlib",
+                "finrl",
+                "rllib",
+                "ray_tune",
+                "optimizer_svc",
+                "openclaw_result_synthesis"
+              ]
+            },
+            "effective_backend": {
+              "type": "string"
+            },
+            "backend_mode": {
+              "type": "string",
+              "enum": [
+                "real",
+                "fixture",
+                "stub"
+              ]
+            },
+            "fallback_policy": {
+              "type": "string",
+              "enum": [
+                "fail_closed",
+                "explicit_fixture_only"
+              ]
+            },
+            "routing_reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "input_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "output_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "blocking_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
