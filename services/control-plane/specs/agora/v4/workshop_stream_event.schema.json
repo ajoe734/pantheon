@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/workshop_stream_event/v1",
+  "title": "WorkshopStreamEvent",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "event_id",
+    "event_type",
+    "aggregate_type",
+    "aggregate_id",
+    "sequence_no",
+    "event_time",
+    "emitted_at",
+    "trace_id",
+    "idempotency_key",
+    "payload"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "workshop.snapshot",
+        "workshop.message.accepted",
+        "workshop.servant.response.started",
+        "workshop.servant.response.delta",
+        "workshop.servant.response.completed",
+        "workshop.completeness.updated",
+        "workshop.next_question.updated",
+        "workshop.patch.proposed",
+        "workshop.patch.validated",
+        "workshop.version.created",
+        "workshop.version.selected",
+        "workshop.readiness.updated",
+        "research.plan.created",
+        "research.plan.approved",
+        "research.plan.cancelled",
+        "research.run.queued",
+        "research.run.progress",
+        "research.run.completed",
+        "research.run.failed",
+        "consultation.started",
+        "consultation.completed",
+        "workshop.concluded",
+        "workshop.archived",
+        "stream.heartbeat",
+        "stream.error"
+      ]
+    },
+    "aggregate_type": {
+      "type": "string",
+      "enum": [
+        "strategy_workshop"
+      ]
+    },
+    "aggregate_id": {
+      "type": "string"
+    },
+    "sequence_no": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "causal_parent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "event_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "emitted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "data_cutoff": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "owner_private",
+        "owner_and_redacted_management"
+      ]
+    },
+    "payload_schema": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
