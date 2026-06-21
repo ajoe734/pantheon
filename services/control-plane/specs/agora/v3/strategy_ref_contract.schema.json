@@ -1,0 +1,238 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/v3/strategy_ref_contract",
+  "title": "StrategyRefContract",
+  "description": "Canonical contract for Strategy Registry reference fields in Agora workshops. Defines three identities, create-from-draft semantics, free-form semantics, version-link creation, deprecated aliases, and conclude semantics per AG-BE-SW-001 deep-closure §5.",
+
+  "definitions": {
+
+    "strategy_ref_input": {
+      "$id": "#/definitions/strategy_ref_input",
+      "title": "StrategyRefInput",
+      "description": "Optional strategy reference supplied by the caller when creating a workshop from an existing Registry draft. Both fields are optional; omitting both produces a free-form workshop.",
+      "type": "object",
+      "properties": {
+        "strategy_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable strategy identity across versions. When supplied the BFF verifies that the resolved Registry record.strategy_id matches this value; mismatch returns 409 STRATEGY_REFERENCE_MISMATCH."
+        },
+        "strategy_spec_registry_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Immutable Registry record/version ID to link. BFF resolves this record, verifies tenant/user scope, and on success stores strategy_id + active_strategy_spec_registry_id on the workshop. The StrategySpec JSON is NOT copied into workshop tables."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "workshop_strategy_projection": {
+      "$id": "#/definitions/workshop_strategy_projection",
+      "title": "WorkshopStrategyProjection",
+      "description": "Strategy-reference fields on a workshop session response. Represents the workshop's live pointers into the Strategy Registry; not a copy of StrategySpec content.",
+      "type": "object",
+      "properties": {
+        "strategy_id": {
+          "type": ["string", "null"],
+          "description": "Stable strategy identity. NULL when the workshop was created free-form and no Registry draft has been accepted yet."
+        },
+        "strategy_spec_registry_id": {
+          "type": ["string", "null"],
+          "description": "Deprecated alias for active_strategy_spec_registry_id. Emitted for backward compatibility; consumers should prefer active_strategy_spec_registry_id.",
+          "deprecated": true
+        },
+        "active_strategy_spec_registry_id": {
+          "type": ["string", "null"],
+          "description": "Authoritative Registry pointer: the currently selected (active) immutable Registry version. NULL until a Registry version is linked. Selection changes only this pointer; the Registry record itself is not modified."
+        },
+        "active_workshop_version_id": {
+          "type": ["string", "null"],
+          "description": "The currently selected WorkshopVersionLink ID. Changes when the user calls the version-select route."
+        },
+        "selected_version_id": {
+          "type": ["string", "null"],
+          "description": "Deprecated alias for active_workshop_version_id. Emitted for backward compatibility; consumers should prefer active_workshop_version_id.",
+          "deprecated": true
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "workshop_conclude_refs": {
+      "$id": "#/definitions/workshop_conclude_refs",
+      "title": "WorkshopConcludeRefs",
+      "description": "Final strategy reference fields recorded when a workshop is concluded. Conclude stores these immutable pointers but does NOT promote the StrategySpec lifecycle state. Registry/governance transitions (draft → candidate → approved) remain the Strategy Registry's responsibility.",
+      "type": "object",
+      "required": ["final_workshop_version_id", "final_strategy_spec_registry_id", "concluded_at"],
+      "properties": {
+        "final_workshop_version_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The WorkshopVersionLink that represents the concluded Registry version."
+        },
+        "final_strategy_spec_registry_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The immutable Registry version ID at conclusion. This is a reference, not a lifecycle action."
+        },
+        "concluded_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 timestamp of conclusion."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "first_version_link_request": {
+      "$id": "#/definitions/first_version_link_request",
+      "title": "FirstVersionLinkRequest",
+      "description": "Payload for creating the first Registry draft and workshop-version link from a free-form workshop. Uses the existing Strategy Registry draft-create path; the Registry is the single source of truth.",
+      "type": "object",
+      "required": ["strategy_spec_registry_id", "idempotency_key"],
+      "properties": {
+        "strategy_spec_registry_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The newly created Registry record/version ID returned by the Strategy Registry draft-create call. BFF links this into the workshop and updates active_strategy_spec_registry_id."
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Client idempotency key for the version-link creation operation."
+        },
+        "source_event_id": {
+          "type": ["string", "null"],
+          "description": "The workshop event that triggered this version link, if any."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "strategy_ref_error_codes": {
+      "$id": "#/definitions/strategy_ref_error_codes",
+      "title": "StrategyRefErrorCodes",
+      "description": "Error codes for strategy-reference operations.",
+      "type": "string",
+      "enum": [
+        "STRATEGY_REFERENCE_MISMATCH",
+        "STRATEGY_REFERENCE_NOT_FOUND",
+        "WORKSHOP_VERSION_REQUIRED",
+        "WORKSHOP_ALREADY_CONCLUDED",
+        "WORKSHOP_ARCHIVED"
+      ],
+      "x-error-semantics": {
+        "STRATEGY_REFERENCE_MISMATCH": {
+          "http_status": 409,
+          "description": "Supplied strategy_id does not match the strategy_id on the resolved Registry record. Never includes Registry contents in the error response."
+        },
+        "STRATEGY_REFERENCE_NOT_FOUND": {
+          "http_status": 404,
+          "description": "No accessible Registry record found for the supplied strategy_spec_registry_id. Response must not reveal whether the record exists under a different tenant or user."
+        },
+        "WORKSHOP_VERSION_REQUIRED": {
+          "http_status": 409,
+          "description": "Conclude requires an existing workshop-version link; none is present."
+        },
+        "WORKSHOP_ALREADY_CONCLUDED": {
+          "http_status": 409,
+          "description": "Operation rejected because the workshop is already concluded."
+        },
+        "WORKSHOP_ARCHIVED": {
+          "http_status": 409,
+          "description": "Operation rejected because the workshop is archived (terminal state)."
+        }
+      }
+    },
+
+    "create_from_draft_semantics": {
+      "$id": "#/definitions/create_from_draft_semantics",
+      "title": "CreateFromDraftSemantics",
+      "description": "Machine-readable record of the BFF create-from-draft resolution steps per §5.2. NOT a runtime payload; included for contract documentation only.",
+      "type": "object",
+      "properties": {
+        "step_1_resolve_registry_record": {
+          "type": "string",
+          "const": "BFF reads the Strategy Registry record by strategy_spec_registry_id"
+        },
+        "step_2_verify_scope": {
+          "type": "string",
+          "const": "BFF verifies tenant/user scope; missing or unauthorized returns 404/403 without revealing cross-user existence"
+        },
+        "step_3_verify_strategy_id_match": {
+          "type": "string",
+          "const": "If strategy_id was supplied, BFF verifies record.strategy_id matches; mismatch returns 409 STRATEGY_REFERENCE_MISMATCH"
+        },
+        "step_4_store_pointers_only": {
+          "type": "string",
+          "const": "BFF stores strategy_id and active_strategy_spec_registry_id only; StrategySpec JSON is NOT copied into workshop tables"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "free_form_semantics": {
+      "$id": "#/definitions/free_form_semantics",
+      "title": "FreeFormSemantics",
+      "description": "Machine-readable record of free-form workshop creation semantics per §5.3. NOT a runtime payload.",
+      "type": "object",
+      "properties": {
+        "initial_state": {
+          "type": "string",
+          "const": "strategy_id = NULL, active_strategy_spec_registry_id = NULL"
+        },
+        "first_accepted_version": {
+          "type": "string",
+          "const": "Call existing Strategy Registry draft-create; receive strategy_id and strategy_spec_registry_id; insert workshop-version link; update workshop active pointer atomically"
+        },
+        "no_duplicate_strategy_spec": {
+          "type": "string",
+          "const": "Free-form workshops never create a StrategySpec outside the Strategy Registry; the Registry is always the authority"
+        }
+      },
+      "additionalProperties": false
+    }
+
+  },
+
+  "type": "object",
+  "description": "Top-level document. Bundles all strategy-reference contract definitions for machine-readable consumption by BFF, contract tests, and code generators.",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.2",
+      "description": "Version of this contract document."
+    },
+    "governed_by": {
+      "type": "string",
+      "const": "AG-BE-SW-001_deep_design_closure_2026-06-21.md §5"
+    },
+    "three_canonical_identities": {
+      "type": "object",
+      "description": "The three stable identifiers that relate a workshop to the Strategy Registry.",
+      "properties": {
+        "strategy_id": {
+          "type": "string",
+          "description": "Stable strategy identity across all Registry versions. Set once from the Registry record; does not change when the operator selects a different Registry version."
+        },
+        "strategy_spec_registry_id": {
+          "type": "string",
+          "description": "Immutable Registry record/version ID. Each draft, revision, or accepted version has its own strategy_spec_registry_id. A workshop stores only a pointer to this ID."
+        },
+        "active_strategy_spec_registry_id": {
+          "type": "string",
+          "description": "The currently selected Registry version on the workshop session. Mutable; changes when the user selects a different version. This is the live pointer; active_workshop_version_id is its companion workshop-side identifier."
+        }
+      },
+      "additionalProperties": false
+    },
+    "strategy_ref_input": { "$ref": "#/definitions/strategy_ref_input" },
+    "workshop_strategy_projection": { "$ref": "#/definitions/workshop_strategy_projection" },
+    "workshop_conclude_refs": { "$ref": "#/definitions/workshop_conclude_refs" },
+    "first_version_link_request": { "$ref": "#/definitions/first_version_link_request" },
+    "strategy_ref_error_codes": { "$ref": "#/definitions/strategy_ref_error_codes" },
+    "create_from_draft_semantics": { "$ref": "#/definitions/create_from_draft_semantics" },
+    "free_form_semantics": { "$ref": "#/definitions/free_form_semantics" }
+  },
+  "additionalProperties": false
+}
