@@ -79,6 +79,7 @@ def _strict_sse_reconnect_bearer(
     detail_ok: bool = True,
     duplicate_observed: bool = False,
     lineage_ok: bool = True,
+    event_type_link_ok: bool = True,
 ):
     expected_event_ids = [f"evt-{index}" for index in range(2, 2 + attempt_count)]
     cursor_event_ids = [f"evt-{index}" for index in range(1, 1 + attempt_count)]
@@ -90,8 +91,10 @@ def _strict_sse_reconnect_bearer(
         ok = detail_ok or index != attempt_count - 1
         attempts.append(
             {
+                "mode": "bearer_polyfill",
                 "ok": ok,
                 "attempt": index + 1,
+                "url_path": "/bff/events/stream?channel=approval",
                 "cursor_event_id": f"evt-{index + 1}",
                 "expected_replayed_event_id": expected_event_ids[index],
                 "observed_replayed_event_id": observed_event_ids[index],
@@ -109,7 +112,16 @@ def _strict_sse_reconnect_bearer(
                 },
                 "first_event": {
                     "id": observed_event_ids[index],
-                    "data": {"id": observed_event_ids[index], "type": "approval.decided"},
+                    "event": (
+                        "approval.decided"
+                        if event_type_link_ok or index != attempt_count - 1
+                        else "approval.mismatched"
+                    ),
+                    "data": {
+                        "id": observed_event_ids[index],
+                        "type": "approval.decided",
+                        "timestamp": f"2026-06-20T00:00:0{index}Z",
+                    },
                     "shape_checks": {
                         "id_line_matches_data_id": True,
                         "event_line_matches_data_type": True,
@@ -937,6 +949,83 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
     )
     assert sse_check["status"] == "fail"
     assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+
+
+def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    (current_run / "BFF-CONSOL-011-sse-replay-smoke.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-CONSOL-011",
+                "channel": "approval",
+                "strict_live_evidence": True,
+                "strict_live_evidence_requirements": {"min_reconnect_attempts": 5},
+                "summary": {"passed": True},
+                "soak": {
+                    "enabled": True,
+                    "seconds": 75.0,
+                    "min_heartbeats": 1,
+                    "bearer_polyfill": {
+                        "ok": True,
+                        "missing_expected_event_ids": [],
+                        "blocks": {
+                            "heartbeat_count": 2,
+                            "duplicate_event_ids": [],
+                        },
+                    },
+                },
+                "reconnect_sequence": {
+                    "bearer_polyfill": _strict_sse_reconnect_bearer(event_type_link_ok=False),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads(
+        (current_run / "release-gate-summary.json").read_text(encoding="utf-8")
+    )
+    sse_check = next(
+        check
+        for check in summary["gates"]["3"]
+        if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
+    )
+    assert sse_check["status"] == "fail"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_path: Path) -> None:
     if shutil.which("node") is None:
