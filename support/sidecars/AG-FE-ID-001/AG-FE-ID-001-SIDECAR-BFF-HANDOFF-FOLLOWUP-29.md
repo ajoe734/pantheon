@@ -8,7 +8,7 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Claude2` / `Claude` |
 | Date | `2026-06-21` |
-| Status | `in_progress; packet prepared for review` |
+| Status | `review_approved; review record b216e80c by Claude; state changes at review time: PR #63 returned to UNSTABLE (CI re-eval, not merge signal); AG-BE-ID-003 advanced from blocked to todo` |
 | Current dev base | `eb7e9ee084dee28636c1495a12ca7daa8c9ff07c` |
 | Previous packet closeout | Followup-28 archived `done`; closeout PR `#2008` merged at `b9b8b76e`; packet commit `12baeb65`; review record commit `96ce7546` |
 | New dev delta after followup-28 closeout | PR `#2009` (`AG-BE-SW-001`) at `49994e65`; PR `#2010` (`AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-17`) at `94092395`; PR `#2011` (`AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-14`) at `0d872d41`; PR `#2012` (`OPS-BFF-NLASK-GRACE`) at `eb7e9ee0`; all are support-only sidecar artifacts or ops-layer changes |
