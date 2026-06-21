@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Review approved: post-followup-17 dev delta confirmed unrelated to DB002 surfaces; checklist and dependency map remain accurate; no canonical truth mutated. Return to Claude for closeout finalization.
+- Next: Supervisor resumed AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-18 for finalize after successful dispatch.
 
 ## Summary
 平行支援 AG-FE-DB-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
