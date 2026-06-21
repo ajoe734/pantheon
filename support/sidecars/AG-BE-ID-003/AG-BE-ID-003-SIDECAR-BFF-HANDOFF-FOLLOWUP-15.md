@@ -9,9 +9,9 @@
 | Sidecar owner / reviewer | `Claude` / `Claude2` |
 | Date | `2026-06-21` |
 | Status | `in_progress; packet prepared for review` |
-| Current dev base | `eb7e9ee084dee28636c1495a12ca7daa8c9ff07c` |
+| Current dev base | `7bab8c5d5289f33ae427fa0bbba293ddb6495ac2` |
 | Previous sidecar closeout | Followup-14 archived `done`; closeout PR `#2011` merged at `0d872d414517a2adc292553791beff02ff31731f` |
-| New relevant dev delta | AG-BE-SW-001 workshop session/event persistence (PR `#2009`) and OPS-BFF-NLASK-GRACE nl/ask grace reduction (PR `#2012`) only |
+| New relevant dev delta | AG-BE-SW-001 workshop session/event persistence (PR `#2009`) and OPS-BFF-NLASK-GRACE nl/ask grace reduction (PR `#2012`) only; two subsequent PRs (MGMT-LIVE-EVIDENCE-PREFLIGHT-DIAG `#2015` and AGENT-USABILITY-OPENCLAW iterative OODA proof `#2016`) do not touch servant-session or AG-BE-ID-003 surfaces |
 | Execute-plans compatibility PR | `#63` remains `OPEN` / `UNSTABLE`; `integration-gate` failed |
 | Mutates canonical truth | `false` |
 
@@ -104,6 +104,8 @@ Baseline: followup-14 closeout PR `#2011` merged at
 | AG-BE-SW-001 closed | PR `#2009` merged workshop session/event persistence (`strategy_workshop/router.py`, `store.py`, `__init__.py`, tests) and registered routes in `main.py`. | Workshop strategy routes are separate from servant sessions; no AG-BE-ID-003 unblock. |
 | OPS-BFF-NLASK-GRACE | PR `#2012` lowered `_MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS` from `12.0` to `3.0` in `main.py`. | Management nl/ask operational tweak; no servant-session implication. |
 | Checked BFF/OpenAPI/spec paths | No changed files in the post-followup-14 checked pathset for servant sessions, OpenAPI, or AG-BE-ID-003 support paths. | No new evidence unblocks AG-BE-ID-003. |
+| MGMT-LIVE-EVIDENCE-PREFLIGHT-DIAG (PR `#2015`) | Adds BFF live evidence preflight scripts (`write_bff_live_evidence_preflight.py`, `test_write_bff_live_evidence_preflight.py`), updates release-gate aggregation in `execute-plans/scripts/aggregate-release-gate.mjs`, and adds CI workflow steps. | Management/ops surface only; no servant-session or AG-BE-ID-003 path changes. |
+| AGENT-USABILITY-OPENCLAW iterative OODA proof (PR `#2016`) | Expands `services/persona/openclaw_adapter_backed_flow.py` with iterative OODA validation proof and adds accompanying test. | Persona/OpenClaw adapter backed flow; separate from BFF servant-session routes and AG-BE-ID-003 contract surfaces. |
 | `ServantSessionCreateRequest` | v1.1 and v1.2 still expose only `intent`, `strategy_ref`, and open `metadata`, with `additionalProperties: false` at top level. | Strict clients still cannot send undeclared top-level `session_type`, `sessionType`, or `session_kind`. |
 | Runtime servant sessions | Targeted BFF grep found no `servant/sessions`, `/bff/agora/servant/sessions`, `ServantSession`, or `OPENCLAW_UPSTREAM_DEGRADED`. | Parent still needs implementation after the contract decision. |
 | Execute-plans PR `#63` | Still `OPEN` / `UNSTABLE`; `integration-gate` failed. | Frontend compatibility follow-through remains a separate risk. |
@@ -283,8 +285,14 @@ git -C /home/lupin/code/execute-plans ls-tree -r --name-only origin/dev -- src/a
 
 Results:
 
-- Current branch is `task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15`,
-  refreshed with `origin/dev` at `eb7e9ee084dee28636c1495a12ca7daa8c9ff07c`.
+- Current branch is `task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15`.
+  Packet initially prepared against `origin/dev` at `eb7e9ee0`; updated before
+  handoff after `git fetch origin` confirmed dev advanced to
+  `7bab8c5d5289f33ae427fa0bbba293ddb6495ac2` via PR `#2015`
+  (MGMT-LIVE-EVIDENCE-PREFLIGHT-DIAG) and PR `#2016`
+  (AGENT-USABILITY-OPENCLAW iterative OODA proof). Checked pathset diff
+  `eb7e9ee0..origin/dev` confirmed no servant-session or AG-BE-ID-003 surface
+  changes in either new commit.
 - Before packet edits, `git status -sb` showed only the generated task brief as
   untracked.
 - Parent `AG-BE-ID-003` remains active `blocked`, waiting for `Claude`.
