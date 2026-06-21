@@ -1311,6 +1311,8 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "--reconnect-attempts 5" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
+    assert "scripts/verify_bff_live_evidence_artifact.py" in text
+    assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
     assert "path: .lovable/audits/current-run" in text
     assert ".lovable/audits/*.md" not in text
     assert ".lovable/audits/historical" not in text
@@ -1361,6 +1363,8 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "--reconnect-attempts 5" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
+    assert "scripts/verify_bff_live_evidence_artifact.py" in text
+    assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
     assert "path: .lovable/audits/current-run" in text
     assert ".lovable/audits/*.md" not in text
     assert ".lovable/audits/historical" not in text
