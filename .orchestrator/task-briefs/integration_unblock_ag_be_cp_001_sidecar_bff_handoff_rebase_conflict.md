@@ -47,3 +47,4 @@ The `task/AG-BE-CP-001-SIDECAR-BFF-HANDOFF` branch diverged from `dev` during de
 - `support/sidecars/AG-BE-CP-001/AG-BE-CP-001-SIDECAR-BFF-HANDOFF.md` (original sidecar, merged)
 - `ai-task-archive/tasks/AG-BE-CP-001-SIDECAR-BFF-HANDOFF.json` (archive record)
 - PR #2109 (merged)
+- PR #2115 (this closeout; merged pending)
