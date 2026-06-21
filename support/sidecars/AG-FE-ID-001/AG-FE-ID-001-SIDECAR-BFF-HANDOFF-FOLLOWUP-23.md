@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-21` |
 | Status | `in_progress; packet ready for reviewer handoff after PR merge` |
-| Current dev base | `fe6136c80b20ae57d525191db0120a845b62d2a7` |
+| Current dev base | `994dce7df17cc71a65abd516d0371d871b44141a` |
 | Previous AG-FE-ID-001 sidecar closeout merge | `a93a26b980757ca96ebd6d76979f2a8409495c67` |
 | Previous AG-FE-ID-001 packet PR | `#1955` merged at `a2d16e4c2758c7efc8e75be6da3fbd063eab364d` |
 | Previous AG-FE-ID-001 closeout PR | `#1977` merged at `a93a26b980757ca96ebd6d76979f2a8409495c67` |
@@ -18,6 +18,7 @@
 | New AG-XR-OPENAPI-002 implementation merge | PR `#1983` merged at `dffa0ee5a0f310e20ab423749441ec7e032fdbdb` |
 | Latest unrelated dev refresh | `a9347b7a942e17da05ac13d31c74cf64cdf3feea` updated AG-DES-SW-PRIV sidecar review support text |
 | Latest GitHub behind refresh | `fe6136c80b20ae57d525191db0120a845b62d2a7` added Management/release-gate upload-path test coverage outside this handoff scope |
+| Latest BFF runtime refresh | `994dce7df17cc71a65abd516d0371d871b44141a` updated Management `nl/ask` async context/audit handling outside `/bff/agora/*` servant-session routes |
 | Execute-plans refs checked | `origin/main` at `7b2f17c4dee8dcafe62c2295504df03aed0ae16e`; `origin/dev` at `7aa4917272212452fe5e4dc99bf2d76fe48eacfd` |
 | Mutates canonical truth | `false` |
 
@@ -116,6 +117,7 @@ merged into `dev` at `a93a26b980757ca96ebd6d76979f2a8409495c67`.
 | AG-XR-OPENAPI-002 PR #1983 landed | Merges the additive v1.2 OpenAPI/capability/bundle implementation and bundle tests. | Parent should treat it as review-pending v1.2 contract context, not an implemented AG-FE-ID-001 frontend shell/client. |
 | AG-DES-SW-PRIV review followup refreshed | `dffa0ee5..a9347b7a` updates AG-DES-SW-PRIV sidecar review support text only. | No AG-FE-ID-001 BFF/frontend handoff implication in the checked pathset. |
 | Management upload-path refresh landed | `a9347b7a..fe6136c8` adds `scripts/test_release_gate_current_run.py`. | No AG-FE-ID-001 BFF/frontend handoff implication in the checked pathset. |
+| Management `nl/ask` async refresh landed | `fe6136c8..994dce7d` changes `services/control-plane/bff/main.py` inside `bff_management_nl_ask` context/audit handling. | BFF runtime changed, but outside the `/bff/agora/*` identity/servant/session handoff route family. |
 | v1.2 servant-session create shape checked | `ServantSessionCreateRequest` in v1.2 still lacks a public session type field, matching v1.1. | AG-BE-ID-003 type-contract blocker remains. |
 | AG-BE-ID-003 followup-12 closed | Closeout PR `#1980` merged at `ff92e8cb`; task archive says parent AG-BE-ID-003 remains blocked. | Reinforces that frontend session controls must stay disabled. |
 | AG-DES-SW-PRIV support material landed | Private-content design/task/support updates landed in task briefs. | No direct AG-FE-ID-001 shell/client implementation impact. |
@@ -265,6 +267,7 @@ Commands and results:
 | `git merge --ff-only origin/dev` | Fast-forwarded the task branch to current `origin/dev` at `dffa0ee5` after AG-XR-OPENAPI-002 PR `#1983` merged. |
 | `git merge --ff-only origin/dev` after latest fetch | Fast-forwarded the task branch to current `origin/dev` at `a9347b7a`; the new diff only touched AG-DES-SW-PRIV sidecar review support text. |
 | `git merge origin/dev --no-edit` after PR `#1986` reported `BEHIND` | Merged current `origin/dev` at `fe6136c8`; the new checked diff only added `scripts/test_release_gate_current_run.py` outside this handoff scope. |
+| `git merge origin/dev --no-edit` after PR `#1986` again reported `BEHIND` | Merged current `origin/dev` at `994dce7d`; focused diff shows Management `nl/ask` async context/audit handling only. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-23` | Active `in_progress`, owner `Codex`, reviewer `Claude`, support-only artifact path. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001` | Parent `todo`; depends on `AG-FE-000` and `AG-BE-ID-003`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003` | Dependency remains `blocked`, waiting for `Claude`. |
@@ -274,7 +277,8 @@ Commands and results:
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002` | Active `review`, additive v1.2 OpenAPI/bundle work merged in PR `#1983` and awaiting review. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-REVIEW` | Active `in_progress`, separate review-support sidecar. |
 | `git diff --name-status a93a26b980757ca96ebd6d76979f2a8409495c67..origin/dev -- <checked handoff pathset>` | Shows dependency/support and v1.2 workshop/private-content/storage material; no AG-FE-ID-001 shell/client implementation. |
-| `python3 -m pytest services/control-plane/bff/tests/test_agora_router.py integrations/openclaw/test_persona_agent_sync.py services/control-plane/bff/tests/test_agora_identity_scope.py` | `35 passed in 15.39s`. |
+| `python3 -m pytest services/control-plane/bff/tests/test_agora_router.py integrations/openclaw/test_persona_agent_sync.py services/control-plane/bff/tests/test_agora_identity_scope.py` | `35 passed in 14.78s` after the `994dce7d` BFF refresh. |
+| `git diff -U0 fe6136c80b20ae57d525191db0120a845b62d2a7..origin/dev -- services/control-plane/bff/main.py \| rg -n "agora\|servant\|session\|management/nl\|nl/ask\|context\|async\|OpenClaw\|assistant"` | Shows only `bff_management_nl_ask` async context/audit handling, outside the Agora servant-session route family. |
 | `python3 scripts/agora_schema_bundle.py --verify` | OK for frozen Agora schemas, capability manifest, and `openapi/agora_v1.openapi.yaml`. |
 | `python3 -c "import pathlib, yaml; yaml.safe_load(pathlib.Path('services/control-plane/openapi/agora_v1_1.openapi.yaml').read_text()); yaml.safe_load(pathlib.Path('services/control-plane/openapi/agora_v1_2.openapi.yaml').read_text())"` | Passed with no output. |
 | `python3 scripts/agora_compat_manifest.py verify --allow-pending --manifest docs/contracts/agora/dev-compatibility-manifest.json` | `ok docs/contracts/agora/dev-compatibility-manifest.json`. |
@@ -301,7 +305,7 @@ Claude should review this packet as support-only. The review basis is:
 
 1. Followup-22 is archived `done` through packet PR `#1955` and closeout PR
    `#1977`.
-2. Current `origin/dev` is `fe6136c8`.
+2. Current `origin/dev` is `994dce7d`.
 3. New dependency-side support (`AG-BE-ID-003` followup-12) is archived `done`
    and explicitly leaves the parent `AG-BE-ID-003` blocker unchanged.
 4. AG-XR-003 is archived `done`, but execute-plans PR `#63` remains
