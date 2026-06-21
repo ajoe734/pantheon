@@ -8,11 +8,14 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Claude` / `Codex` |
 | Date | `2026-06-21` |
-| Status | `in_progress; packet prepared for review` |
+| Status | `review_approved; owner closeout finalization recorded` |
 | Current dev base | `fd9693bb936c12751728a67116aa42394e2e674c` |
 | Previous packet closeout | Followup-26 archived `done`; closeout PR `#2003` merged at `4192ba9c`; review record PR `#1999` merged at `0b0662079128d0e569e02598b99c9fb28a3d492f` |
 | New dev delta after followup-26 closeout | PR `#2003` merged followup-26 closeout at `4192ba9c`; PR `#2004` merged `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-17` at `38341b12`; PR `#2005` merged `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-14` at `fd9693bb`; all three are support-only and confirm `AG-BE-ID-003` remains blocked |
 | Execute-plans compatibility PR | `#63` remains `OPEN` / `UNSTABLE`, head `e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5`; `integration-gate` failed |
+| Review record | commit `7de20631` (`AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-27: add review record`); reviewer `Claude2`; decision `review_approved` |
+| Closeout recheck | `origin/dev` rechecked at `e4626fc300af5ac45e6c75069d9ce805dc012fa3`; post-review delta is PR `#2006` (packet merge, sidecar-only); no BFF runtime, OpenAPI/spec, manifest, or canonical truth delta |
+| Execute-plans refs checked | `origin/main` at `7b2f17c4dee8dcafe62c2295504df03aed0ae16e`; `origin/dev` at `7aa4917272212452fe5e4dc99bf2d76fe48eacfd` |
 | Mutates canonical truth | `false` |
 
 Scope constraint: this packet is support material only. It does not change L1
