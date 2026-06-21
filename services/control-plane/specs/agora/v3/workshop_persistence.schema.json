@@ -1,0 +1,331 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/v3/workshop_persistence",
+  "title": "WorkshopPersistenceContract",
+  "description": "Machine-readable persistence contract for Agora Strategy Workshop tables, lifecycle checks, redacted message-event storage, and required Postgres indexes. Raw private content is never represented in this schema or in the database rows.",
+  "type": "object",
+  "required": ["schema_version", "governed_by", "idempotency_aggregate_type"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.2"
+    },
+    "governed_by": {
+      "type": "string",
+      "const": "AG-BE-SW-001_deep_design_closure_2026-06-21.md §6-§8"
+    },
+    "idempotency_aggregate_type": {
+      "type": "string",
+      "const": "strategy_workshop",
+      "description": "Workshop mutations reuse the existing BFF/foundation idempotency primitives with this aggregate type; this contract does not define a separate idempotency subsystem."
+    }
+  },
+  "definitions": {
+    "workshop_status": {
+      "type": "string",
+      "enum": ["open", "in_review", "concluded", "archived"],
+      "x-db-check": "status IN ('open','in_review','concluded','archived')"
+    },
+    "strategy_workshop_session_row": {
+      "type": "object",
+      "required": [
+        "workshop_id",
+        "tenant_id",
+        "user_id",
+        "servant_persona_id",
+        "status",
+        "lock_version",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "workshop_id": {"type": "string"},
+        "tenant_id": {"type": "string"},
+        "user_id": {"type": "string"},
+        "servant_persona_id": {"type": "string"},
+        "openclaw_session_id": {"type": ["string", "null"]},
+        "strategy_id": {"type": ["string", "null"]},
+        "active_strategy_spec_registry_id": {"type": ["string", "null"]},
+        "active_workshop_version_id": {"type": ["string", "null"]},
+        "final_strategy_spec_registry_id": {"type": ["string", "null"]},
+        "final_workshop_version_id": {"type": ["string", "null"]},
+        "status": {"$ref": "#/definitions/workshop_status"},
+        "lock_version": {"type": "integer", "minimum": 1, "default": 1},
+        "title": {"type": ["string", "null"]},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "concluded_at": {"type": ["string", "null"], "format": "date-time"},
+        "archived_at": {"type": ["string", "null"], "format": "date-time"}
+      },
+      "additionalProperties": false,
+      "x-db-table": "strategy_workshop_session",
+      "x-db-primary-key": ["workshop_id"]
+    },
+    "strategy_workshop_event_row": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "workshop_id",
+        "sequence_no",
+        "actor_type",
+        "event_type",
+        "payload_refs_json",
+        "trace_id",
+        "request_id",
+        "created_at"
+      ],
+      "properties": {
+        "event_id": {"type": "string"},
+        "workshop_id": {"type": "string"},
+        "sequence_no": {"type": "integer", "minimum": 1},
+        "actor_type": {"type": "string"},
+        "actor_ref": {"type": ["string", "null"]},
+        "event_type": {"type": "string"},
+        "private_content_ref": {"type": ["string", "null"]},
+        "redacted_summary": {"type": ["string", "null"]},
+        "redaction_policy_version": {"type": ["string", "null"]},
+        "payload_refs_json": {"type": "array", "default": []},
+        "trace_id": {"type": "string"},
+        "request_id": {"type": "string"},
+        "created_at": {"type": "string", "format": "date-time"}
+      },
+      "if": {
+        "properties": {"event_type": {"const": "message"}}
+      },
+      "then": {
+        "required": ["private_content_ref", "redacted_summary", "redaction_policy_version"],
+        "properties": {
+          "private_content_ref": {"type": "string"},
+          "redacted_summary": {"type": "string"},
+          "redaction_policy_version": {"type": "string"}
+        }
+      },
+      "additionalProperties": false,
+      "x-db-table": "strategy_workshop_event",
+      "x-db-primary-key": ["event_id"],
+      "x-db-foreign-keys": [
+        {"columns": ["workshop_id"], "references": "strategy_workshop_session(workshop_id)"}
+      ],
+      "x-db-unique-constraints": [
+        {"name": "ux_workshop_event_sequence", "columns": ["workshop_id", "sequence_no"]}
+      ],
+      "x-db-checks": [
+        {
+          "name": "ck_strategy_workshop_event_message_redaction",
+          "expression": "event_type <> 'message' OR (private_content_ref IS NOT NULL AND redacted_summary IS NOT NULL AND redaction_policy_version IS NOT NULL)"
+        }
+      ]
+    },
+    "strategy_workshop_version_link_row": {
+      "type": "object",
+      "required": [
+        "workshop_version_id",
+        "workshop_id",
+        "strategy_id",
+        "strategy_spec_registry_id",
+        "sequence_no",
+        "created_by",
+        "created_at"
+      ],
+      "properties": {
+        "workshop_version_id": {"type": "string"},
+        "workshop_id": {"type": "string"},
+        "strategy_id": {"type": "string"},
+        "strategy_spec_registry_id": {"type": "string"},
+        "parent_workshop_version_id": {"type": ["string", "null"]},
+        "source_event_id": {"type": ["string", "null"]},
+        "sequence_no": {"type": "integer", "minimum": 1},
+        "created_by": {"type": "string"},
+        "created_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false,
+      "x-db-table": "strategy_workshop_version_link",
+      "x-db-primary-key": ["workshop_version_id"],
+      "x-db-foreign-keys": [
+        {"columns": ["workshop_id"], "references": "strategy_workshop_session(workshop_id)"}
+      ],
+      "x-db-unique-constraints": [
+        {"name": "ux_workshop_version_sequence", "columns": ["workshop_id", "sequence_no"]},
+        {"name": "ux_workshop_registry_version", "columns": ["workshop_id", "strategy_spec_registry_id"]}
+      ]
+    },
+    "strategy_completeness_snapshot_row": {
+      "type": "object",
+      "required": [
+        "snapshot_id",
+        "workshop_id",
+        "assessment_version",
+        "state_map_json",
+        "blocking_items_json",
+        "created_at"
+      ],
+      "properties": {
+        "snapshot_id": {"type": "string"},
+        "workshop_id": {"type": "string"},
+        "workshop_version_id": {"type": ["string", "null"]},
+        "assessment_version": {"type": "integer", "minimum": 1},
+        "state_map_json": {"type": "object"},
+        "blocking_items_json": {"type": "array"},
+        "next_question_json": {"type": ["object", "null"]},
+        "created_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false,
+      "x-db-table": "strategy_completeness_snapshot",
+      "x-db-primary-key": ["snapshot_id"],
+      "x-db-foreign-keys": [
+        {"columns": ["workshop_id"], "references": "strategy_workshop_session(workshop_id)"}
+      ],
+      "x-db-unique-constraints": [
+        {"name": "ux_workshop_completeness_version", "columns": ["workshop_id", "assessment_version"]}
+      ]
+    },
+    "agora_private_content_object_row": {
+      "type": "object",
+      "required": [
+        "private_content_ref",
+        "tenant_id",
+        "owner_user_id",
+        "workshop_id",
+        "object_uri",
+        "ciphertext_sha256",
+        "encrypted_dek",
+        "kek_key_version",
+        "content_type",
+        "retention_class",
+        "state",
+        "created_at"
+      ],
+      "properties": {
+        "private_content_ref": {"type": "string"},
+        "tenant_id": {"type": "string"},
+        "owner_user_id": {"type": "string"},
+        "workshop_id": {"type": "string"},
+        "event_id": {"type": ["string", "null"]},
+        "object_uri": {"type": "string"},
+        "ciphertext_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "encrypted_dek": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "Encrypted DEK bytes represented as base64 in JSON projections. The database column type is bytea."
+        },
+        "kek_key_version": {"type": "string"},
+        "content_type": {"type": "string"},
+        "retention_class": {"type": "string"},
+        "expires_at": {"type": ["string", "null"], "format": "date-time"},
+        "state": {"type": "string"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "deleted_at": {"type": ["string", "null"], "format": "date-time"}
+      },
+      "additionalProperties": false,
+      "x-db-table": "agora_private_content_object",
+      "x-db-primary-key": ["private_content_ref"],
+      "x-plaintext-policy": "No plaintext body or plaintext hash is stored."
+    }
+  },
+  "x-required-indexes": [
+    {
+      "name": "ix_workshop_user_status_updated",
+      "table": "strategy_workshop_session",
+      "columns": ["tenant_id", "user_id", "status", "updated_at DESC"]
+    },
+    {
+      "name": "ix_workshop_servant_status_updated",
+      "table": "strategy_workshop_session",
+      "columns": ["servant_persona_id", "status", "updated_at DESC"]
+    },
+    {
+      "name": "ix_workshop_strategy_updated",
+      "table": "strategy_workshop_session",
+      "columns": ["strategy_id", "updated_at DESC"],
+      "where": "strategy_id IS NOT NULL"
+    },
+    {
+      "name": "ix_workshop_active_registry_ref",
+      "table": "strategy_workshop_session",
+      "columns": ["active_strategy_spec_registry_id"],
+      "where": "active_strategy_spec_registry_id IS NOT NULL"
+    },
+    {
+      "name": "ux_workshop_openclaw_session",
+      "table": "strategy_workshop_session",
+      "unique": true,
+      "columns": ["openclaw_session_id"],
+      "where": "openclaw_session_id IS NOT NULL"
+    },
+    {
+      "name": "ux_workshop_event_sequence",
+      "table": "strategy_workshop_event",
+      "unique": true,
+      "columns": ["workshop_id", "sequence_no"]
+    },
+    {
+      "name": "ix_workshop_event_created",
+      "table": "strategy_workshop_event",
+      "columns": ["workshop_id", "created_at", "sequence_no"]
+    },
+    {
+      "name": "ix_workshop_event_trace",
+      "table": "strategy_workshop_event",
+      "columns": ["trace_id"]
+    },
+    {
+      "name": "ux_workshop_event_private_ref",
+      "table": "strategy_workshop_event",
+      "unique": true,
+      "columns": ["private_content_ref"],
+      "where": "private_content_ref IS NOT NULL"
+    },
+    {
+      "name": "ux_workshop_version_sequence",
+      "table": "strategy_workshop_version_link",
+      "unique": true,
+      "columns": ["workshop_id", "sequence_no"]
+    },
+    {
+      "name": "ux_workshop_registry_version",
+      "table": "strategy_workshop_version_link",
+      "unique": true,
+      "columns": ["workshop_id", "strategy_spec_registry_id"]
+    },
+    {
+      "name": "ix_workshop_version_strategy",
+      "table": "strategy_workshop_version_link",
+      "columns": ["strategy_id", "created_at DESC"]
+    },
+    {
+      "name": "ux_workshop_completeness_version",
+      "table": "strategy_completeness_snapshot",
+      "unique": true,
+      "columns": ["workshop_id", "assessment_version"]
+    },
+    {
+      "name": "ix_workshop_completeness_latest",
+      "table": "strategy_completeness_snapshot",
+      "columns": ["workshop_id", "created_at DESC"]
+    },
+    {
+      "name": "ux_private_content_object_uri",
+      "table": "agora_private_content_object",
+      "unique": true,
+      "columns": ["object_uri"]
+    },
+    {
+      "name": "ix_private_content_owner_expiry",
+      "table": "agora_private_content_object",
+      "columns": ["tenant_id", "owner_user_id", "expires_at"],
+      "where": "state = 'active'"
+    },
+    {
+      "name": "ix_private_content_workshop_created",
+      "table": "agora_private_content_object",
+      "columns": ["workshop_id", "created_at DESC"]
+    },
+    {
+      "name": "ix_private_content_expiry_gc",
+      "table": "agora_private_content_object",
+      "columns": ["expires_at"],
+      "where": "state = 'active' AND expires_at IS NOT NULL"
+    }
+  ],
+  "additionalProperties": false
+}
