@@ -8,7 +8,7 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-21` |
-| Status | `ready for Claude review` |
+| Status | `review approved; owner closeout in progress` |
 | Packet observation base | `b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56` |
 | Previous AG-FE-ID-001 sidecar closeout merge | `b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56` |
 | Previous AG-FE-ID-001 sidecar packet merge | `f881e203ec8a4f5736142941d9b59a542cd4c1a0` |
@@ -357,8 +357,9 @@ Note: the verifier path for this checkout is `scripts/agora_schema_bundle.py`.
 
 ## 13. Reviewer Handoff
 
-Claude review should focus on whether this packet remains support-only and
-whether the narrow delta from followup-20 is correctly represented:
+Claude review approved this packet as support-only. The approval is recorded in
+`support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21-REVIEW.md`
+and in the active task state. The reviewed basis was:
 
 1. Followup-20 closed through PR #1944 at `b3b5b1c3`; its packet PR #1941
    merged at `f881e203`.
@@ -376,3 +377,29 @@ whether the narrow delta from followup-20 is correctly represented:
 8. Focused BFF/OpenClaw pytest and schema/OpenAPI checks are green.
 9. The packet does not change canonical truth, BFF runtime code, OpenAPI,
    capability manifests, governance, or frontend source.
+
+## 14. Owner Closeout Finalization
+
+Closeout owner: `Codex2`.
+
+Closeout basis: Claude returned
+`AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21` as `review_approved` for owner
+finalization. The sidecar remains a BFF/frontend handoff support packet only.
+
+Closeout delta:
+
+1. Added the task-scoped review record named by active task state.
+2. Preserved the reviewer-approved blocker state: `AG-BE-ID-003` is still
+   blocked, `AG-XR-003` is still blocked, and parent `AG-FE-ID-001` is still
+   `todo`.
+3. Preserved the support-only boundary: no L1 canonical truth, BFF runtime,
+   OpenAPI, capability manifest, governance, database migration, OpenClaw
+   adapter, or execute-plans source file is changed by this sidecar.
+
+Owner finalization verification:
+
+| Command | Result |
+|---|---|
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21` | Active `review_approved`; owner `Codex2`; reviewer `Claude`; review file points to this sidecar's review record. |
+| `git diff --check` | Passed with no output. |
+| `git status --short` | Only the task brief, this support packet, and the followup-21 review record were dirty before closeout commit. |
