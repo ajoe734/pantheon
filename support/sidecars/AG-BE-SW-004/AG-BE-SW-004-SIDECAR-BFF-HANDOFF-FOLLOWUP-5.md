@@ -32,7 +32,7 @@ gated on `AG-XR-OPENAPI-004`.
 | `AI_NAME=Claude ./scripts/ai-status.sh show AG-DES-SSE-001` | `review_approved`; deliverable `services/control-plane/specs/agora/v4/workshop_stream_event.schema.json` landed. |
 | `AI_NAME=Claude ./scripts/ai-status.sh show AG-XR-OPENAPI-004` | `todo`; v1.3 bundle merge (OpenAPI + capability manifest + `bundle_index.v1_3.json` hashes) not yet merged to `dev`. |
 | `services/control-plane/openapi/agora_v1_3.openapi.yaml` | v1.3 OpenAPI extension exists; `/bff/agora/workshops/{id}/stream` typed as `WorkshopStreamEvent` SSE. |
-| `services/control-plane/specs/agora/v4/workshop_stream_event.schema.json` | 24 typed event types defined; full envelope with `event_id`, `event_type`, `aggregate_type`, `sequence_no`, `causal_parent_id`, `trace_id`, `idempotency_key`, `data_cutoff`, `visibility`, `payload_schema`, `payload`. |
+| `services/control-plane/specs/agora/v4/workshop_stream_event.schema.json` | 25 typed event types defined; full envelope with `event_id`, `event_type`, `aggregate_type`, `sequence_no`, `causal_parent_id`, `trace_id`, `idempotency_key`, `data_cutoff`, `visibility`, `payload_schema`, `payload`. |
 | `services/control-plane/specs/agora/bundle_index.v1_3.json` | Bundle index with SHA256 hashes for v4 schemas, OpenAPI, and manifest; references `bundle_index.v1_2.json` as base. |
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/03_workshop_sse_contract.md` | §C1–C9 typed SSE aggregate contract: event catalog, latency SLA, cursor contract, replay window, heartbeat, error payload, and frontend rules. |
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/07_dispatch_unblock_matrix.md` | `AG-BE-SW-004` remains gated until SSE event schema/OpenAPI merged (i.e., after `AG-XR-OPENAPI-004` is done). |
@@ -101,7 +101,7 @@ The prior follow-up 4 recommendation was to keep `AG-BE-SW-004` blocked pending 
 Once both conditions are met, the parent owner may implement `/bff/agora/workshops/{id}/stream` against the merged schema and OpenAPI without opening a new blocker.
 
 The parent should not implement:
-- New event types beyond the 24 in the v4 catalogue.
+- New event types beyond the 25 in the v4 catalogue.
 - New payload fields not in the `workshop_stream_event.schema.json` envelope or the referenced `payload_schema` docs.
 - A different cursor format than `sequence_no`.
 - `OPENCLAW_UPSTREAM_DEGRADED` as a stream event (not promoted; use `stream.error` with a BFF-owned error code instead).
@@ -189,7 +189,7 @@ Claude2 review should verify:
 |---|---|
 | Scope | Only this support artifact changes. |
 | Canonical truth | No L1/L2 docs, OpenAPI, schemas, runtime, registry/governance, or frontend files changed. |
-| Factual alignment | `v4/workshop_stream_event.schema.json` exists and contains the 24 event types listed. `bundle_index.v1_3.json` exists. `AG-DES-SSE-001` is `review_approved`. `AG-XR-OPENAPI-004` is `todo`. Parent `AG-BE-SW-004` is `todo`. BFF `/stream` is still `501` stub. |
+| Factual alignment | `v4/workshop_stream_event.schema.json` exists and contains the 25 event types listed. `bundle_index.v1_3.json` exists. `AG-DES-SSE-001` is `review_approved`. `AG-XR-OPENAPI-004` is `todo`. Parent `AG-BE-SW-004` is `todo`. BFF `/stream` is still `501` stub. |
 | Delta accuracy | Follow-up 5 accurately represents the state shift from `blocked` to `gated`. |
 | Prior packet alignment | Follow-up 5 composes with the initial packet and follow-ups 2/3/4 without superseding them. |
 
@@ -232,7 +232,7 @@ Observed results:
 | `ai-status.sh show AG-BE-SW-004` | PASS; parent is `todo`, gated on `AG-XR-OPENAPI-004`. |
 | `ai-status.sh show AG-DES-SSE-001` | PASS; `review_approved`, artifact is `v4/workshop_stream_event.schema.json`. |
 | `ai-status.sh show AG-XR-OPENAPI-004` | PASS; `todo`, owner `Claude2`, not yet merged. |
-| `json.tool` on `workshop_stream_event.schema.json` | PASS; schema parses; 24 `event_type` enum values confirmed. |
+| `json.tool` on `workshop_stream_event.schema.json` | PASS; schema parses; 25 `event_type` enum values confirmed. |
 | `json.tool` on `bundle_index.v1_3.json` | PASS; bundle index parses; `workshop_stream_event.schema.json` SHA256 entry present. |
 | `rg -n "[ \t]+$" ...FOLLOWUP-5.md` | PASS; no trailing whitespace matches. |
 | `git diff --check -- ...FOLLOWUP-5.md` | PASS; no whitespace errors. |
