@@ -23,6 +23,12 @@ info:
       private store; management projections never include raw content.
     - The v3 workshop_persistence schema records the five Postgres tables and
       all required indexes from the design closure.
+    - ServantSessionCreateRequest accepts optional session_type
+      (enum: interactive | trainer | research_task, default interactive).
+      Aligns with design-closure C1 common envelope; strategy-dialogue allows
+      interactive and trainer modes. additionalProperties remains false;
+      intent, strategy_ref, and metadata are unchanged.
+    - Authority order: v1.2 ServantSessionCreateRequest shape supersedes v1.1.
 
     v1.1 capability families remain present:
 
@@ -57,7 +63,7 @@ info:
   x-private-content-contract: "services/control-plane/specs/agora/v3/workshop_storage_contract.schema.json"
   x-strategy-ref-contract: "services/control-plane/specs/agora/v3/strategy_ref_contract.schema.json"
   x-base-frozen-by: "AG-XR-001"
-  x-extension-by: "AG-XR-OPENAPI-002"
+  x-extension-by: "AG-XR-OPENAPI-003"
 
 servers:
   - url: "{bff_base}"
@@ -230,6 +236,8 @@ components:
       description: >-
         Request to open a new servant-facilitated session. The BFF maps this to
         the OpenClaw adapter agent session lifecycle.
+        v1.2 adds optional session_type (C1 common envelope alignment).
+        Authority order: this v1.2 shape supersedes the v1.1 definition.
       properties:
         intent:
           type: string
@@ -237,6 +245,15 @@ components:
         strategy_ref:
           type: string
           description: Optional reference to the strategy context for this session.
+        session_type:
+          type: string
+          enum: [interactive, trainer, research_task]
+          default: interactive
+          description: >-
+            Session operating mode. interactive is the default conversational
+            session; trainer enables supervised-learning feedback collection;
+            research_task scopes the session to a specific research objective.
+            strategy-dialogue allows interactive and trainer modes.
         metadata:
           type: object
           additionalProperties: true
