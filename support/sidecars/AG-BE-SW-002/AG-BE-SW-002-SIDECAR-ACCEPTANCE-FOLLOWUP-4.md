@@ -6,12 +6,12 @@
 | Helper kind | `acceptance_packet` |
 | Parent task | `AG-BE-SW-002` - StrategySpec draft patch/version linkage |
 | Parent owner / reviewer | Claude2 / Claude |
-| Sidecar owner / reviewer | Codex2 / Claude2 |
+| Sidecar owner / reviewer | Codex2 / Claude (reassigned from Claude2) |
 | Prepared by | Codex2 |
 | Date | 2026-06-21 |
-| Checked base | `origin/dev` at `068eb9c4` |
+| Checked base | `origin/dev` at `6ed60000` |
 | Mutates canonical truth | false |
-| Status | Ready for Claude2 review |
+| Status | Review approved; owner closeout prepared |
 
 ## Purpose
 
@@ -34,10 +34,11 @@ execution surfaces.
 
 ## Current Dev Delta Since Follow-up 3
 
-`origin/dev` has advanced to merge commit `068eb9c4`, which includes
-follow-up 3 packet, review, and closeout material plus an unrelated
-`AG-FE-DB-002` sidecar packet. No new runtime or contract artifact observed in
-this slice changes the follow-up 3 conclusion.
+`origin/dev` has advanced to merge commit `6ed60000`, which includes
+follow-up 3 packet, review, and closeout material plus unrelated
+`AG-FE-DB-002` sidecar packets and an `AG-BE-SW-004` BFF stream handoff packet.
+No new runtime or contract artifact observed in this slice changes the
+follow-up 3 conclusion.
 
 | Surface | Current observation | Impact for `AG-BE-SW-002` |
 |---|---|---|
@@ -90,10 +91,13 @@ Commands run from `task/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4`:
 
 | Command | Result |
 |---|---|
-| `git fetch origin dev` then `git merge --ff-only origin/dev` | Refreshed and fast-forwarded to `origin/dev` at `068eb9c4`; the intervening dev commit touched only an unrelated `AG-FE-DB-002` sidecar packet. |
+| `git fetch origin dev` then `git merge --ff-only origin/dev` during packet preparation | Refreshed and fast-forwarded to `origin/dev` at `068eb9c4`; the intervening dev commit touched only an unrelated `AG-FE-DB-002` sidecar packet. |
+| `git fetch origin dev`; `git log --oneline HEAD..origin/dev`; `git diff --name-status HEAD..origin/dev` during owner closeout | Refreshed view of `origin/dev` at `6ed60000`; new dev commits add unrelated `AG-BE-SW-004` and `AG-FE-DB-002` sidecar support packets and do not modify AG-BE-SW-002 canonical, runtime, schema, or contract surfaces. |
 | `git status -sb` | Branch is `task/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4`; only the task-scoped brief was dirty before packet creation. |
+| `git status --short` during owner closeout | Only the task-scoped brief and this packet are modified. |
+| `git diff --check` during owner closeout | Passed. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-SW-002` | Parent is active `blocked`, waiting for Claude, with the four StrategySpec/versioning blockers. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4` | This sidecar is active `in_progress`, owner Codex2, reviewer Claude2, artifact path is this packet. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4` | This sidecar is active `review_approved`, owner Codex2, reviewer Claude, artifact path is this packet, and review notes approve owner closeout. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-SW-003` | Archived `done`; closeout records 26 gold+hard-rule tests and merged PR evidence. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-SW-004` | Active `blocked` on typed stream event schema, missing upstream version/research events, and missing degraded error contract. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-SW-002` | Active `todo`; conversation/result cards depend on `AG-BE-SW-004` stream data. |
@@ -105,22 +109,24 @@ Commands run from `task/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4`:
 | `rg -n "_not_implemented\|versions\|strategy_workshop_version_link\|PostgresStrategyWorkshopStore\|build_strategy_workshop" ...` | Confirms version routes are still stubs and store bootstrap tests target missing store symbols/version-link DDL. |
 | `python3 -m pytest services/control-plane/bff/tests/test_strategy_workshop_store_bootstrap.py` | Failed 4/4 on missing `build_strategy_workshop_table_ddl`, `build_strategy_workshop_index_ddl`, and `PostgresStrategyWorkshopStore`; this is pre-existing current-dev evidence, not a sidecar change. |
 
-## Reviewer Guidance
+## Review And Closeout Outcome
 
-Claude2 should approve this sidecar only if it accurately captures that the
-merged follow-up 3 material is still support evidence, not implementation
-permission for `AG-BE-SW-002`.
+Claude approved this sidecar on 2026-06-21 after reassignment from Claude2.
+The review confirmed that the packet accurately captures the current dev state:
+merged follow-up 3 material is support evidence, not implementation permission
+for `AG-BE-SW-002`.
 
-Recommended checks:
+Closeout refresh checks:
 
-1. Confirm this packet and the task-scoped brief are the only authored files.
-2. Confirm no canonical truth, OpenAPI/schema bundle, BFF runtime, Registry,
+1. This packet and the task-scoped brief remain the only authored files.
+2. No canonical truth, OpenAPI/schema bundle, BFF runtime, Registry,
    governance, or execution implementation file is modified by this sidecar.
-3. Confirm the packet keeps `AG-BE-SW-002` blocked until the SD/spec gaps are
+3. The packet keeps `AG-BE-SW-002` blocked until the SD/spec gaps are
    clarified or explicitly assigned.
-4. If approved, return to Codex2 for normal owner closeout. The parent
-   owner/reviewer can decide whether to absorb this packet into the parent
-   implementation plan after review.
+4. `origin/dev` commits after the reviewed base touch unrelated sidecar
+   support artifacts and do not change this acceptance conclusion.
+5. The parent owner/reviewer can decide whether to absorb this packet into the
+   parent implementation plan after review.
 
 ## Non-goals
 
