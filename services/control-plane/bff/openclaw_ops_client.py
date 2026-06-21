@@ -474,6 +474,22 @@ class OpenClawOpsClient:
             expected_status={200, 201},
         )
 
+    def get_session(
+        self,
+        *,
+        session_id: str,
+        operator_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        headers: Dict[str, str] = {}
+        if operator_id:
+            headers["X-Operator-Id"] = operator_id
+        return self._request(
+            "GET",
+            f"/api/openclaw-adapter/lifecycle/sessions/{urllib.parse.quote(session_id, safe='')}",
+            headers=headers,
+            expected_status={200},
+        )
+
     def cancel_session(
         self,
         *,
