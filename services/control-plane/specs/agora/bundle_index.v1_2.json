@@ -1,0 +1,15 @@
+{
+  "bundle_version": "1.2",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_1.json",
+    "bundle_version": "1.1",
+    "bundle_index_sha256": "5f875202966d1e373ab325b7107de8355798f1e3f55cdac2548aa74607a821ee"
+  },
+  "files": {
+    "specs/agora/v3/strategy_ref_contract.schema.json": "1e456372c394d2d256fdcaaee1fd2f1e4ab4829ffbf18e3432dc78e242d497e0",
+    "specs/agora/v3/workshop_event.schema.json": "cea5fe3c9360fd50710ef7f68d84b155d7720ea27c52617cd298604dd6c5c5f3",
+    "specs/agora/v3/workshop_version_link.schema.json": "70e4ce55ce55a4417bb869f27ce35e05408a05a909ea08941a2b3ad5b16b7313",
+    "specs/agora/v3/workshop_persistence.schema.json": "fb62e17f64311e5090577dd3b9b43be599faee12aee9ac9241660d99a095fa3b",
+    "openapi/agora_v1_2.openapi.yaml": "6cd58855b5ade55a13ae05a9c6d3b9a8ee3c366261cd42ed2d521ea0a08a2c1d"
+  }
+}
