@@ -17,3 +17,4 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Sidecar artifact committed: support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF.md
 - No canonical truth, BFF runtime, schema, OpenAPI, or frontend files changed
 - All CI checks green for task-owned commits
+- PR auto-merge enabled; pending dev merge
