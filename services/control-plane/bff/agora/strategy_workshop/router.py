@@ -150,8 +150,17 @@ def create_strategy_workshop_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
         scope = _scope(authorization, x_tenant_id)
-        # Idempotency enforcement: reject duplicate keys for the same user+tenant+endpoint
-        if idempotency_key and hasattr(store, "check_and_record_idempotency_key"):
+        # Idempotency-Key is mandatory for all write operations on this endpoint.
+        if idempotency_key is None:
+            from models import ErrorCode
+            raise bff_error(
+                400, ErrorCode.VALIDATION_FAILED,
+                "Idempotency-Key header is required",
+                "missing_idempotency_key",
+                suggestion="Supply a UUID v4 in the Idempotency-Key request header",
+            )
+        # Reject duplicate keys for the same user+tenant+endpoint.
+        if hasattr(store, "check_and_record_idempotency_key"):
             idem_scope = f"{scope.user_id}:{scope.tenant_id}:POST:/bff/agora/workshops"
             if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
                 from models import ErrorCode
@@ -235,6 +244,24 @@ def create_strategy_workshop_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
         scope = _scope(authorization, x_tenant_id)
+        # If-Match is mandatory: mutations without a precondition are rejected (RFC 6585 §428).
+        if if_match is None:
+            from models import ErrorCode
+            raise bff_error(
+                428, ErrorCode.PRECONDITION_FAILED,
+                "If-Match header is required for workshop mutations",
+                "missing_if_match",
+                suggestion="GET the workshop first and supply the returned ETag in If-Match",
+            )
+        # Idempotency-Key is mandatory for all write operations on this endpoint.
+        if idempotency_key is None:
+            from models import ErrorCode
+            raise bff_error(
+                400, ErrorCode.VALIDATION_FAILED,
+                "Idempotency-Key header is required",
+                "missing_idempotency_key",
+                suggestion="Supply a UUID v4 in the Idempotency-Key request header",
+            )
         session = store.get_session(workshop_id)
         if session is None:
             from models import ErrorCode
@@ -245,7 +272,7 @@ def create_strategy_workshop_router(
         # If-Match concurrency enforcement: reject stale ETag with 409.
         lock_version = session.get("lock_version", 1)
         current_etag = f'W/"workshop:{workshop_id}:v{lock_version}"'
-        if if_match is not None and if_match != current_etag:
+        if if_match != current_etag:
             from models import ErrorCode
             raise bff_error(
                 409, ErrorCode.RESOURCE_CONFLICT,
@@ -253,8 +280,8 @@ def create_strategy_workshop_router(
                 f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
                 details_extra={"current_etag": current_etag},
             )
-        # Idempotency enforcement: reject duplicate keys for the same user+workshop+endpoint
-        if idempotency_key and hasattr(store, "check_and_record_idempotency_key"):
+        # Reject duplicate keys for the same user+workshop+endpoint.
+        if hasattr(store, "check_and_record_idempotency_key"):
             idem_scope = (
                 f"{scope.user_id}:{scope.tenant_id}:{workshop_id}"
                 f":POST:/bff/agora/workshops/messages"

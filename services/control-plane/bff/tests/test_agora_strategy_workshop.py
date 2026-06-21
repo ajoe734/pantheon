@@ -282,6 +282,16 @@ def _workshop_client(monkeypatch):
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
+def _get_current_etag(client, workshop_id: str) -> str:
+    """Fetch the current ETag for a workshop (required before each POST /messages)."""
+    resp = client.get(
+        f"/bff/agora/workshops/{workshop_id}",
+        headers={"Authorization": _OPERATOR_AUTH},
+    )
+    assert resp.status_code == 200, f"ETag fetch failed: {resp.text}"
+    return resp.headers["etag"]
+
+
 class TestWorkshopRouterEndpoints:
     def test_list_workshops_returns_envelope(self, monkeypatch):
         client = _workshop_client(monkeypatch)
@@ -382,11 +392,13 @@ class TestWorkshopRouterEndpoints:
         )
         workshop_id = create_resp.json()["data"]["workshop_id"]
 
+        current_etag = _get_current_etag(client, workshop_id)
         msg_resp = client.post(
             f"/bff/agora/workshops/{workshop_id}/messages",
             headers={
                 "Authorization": _OPERATOR_AUTH,
                 "Idempotency-Key": "idem-msg-002",
+                "If-Match": current_etag,
                 "Content-Type": "application/json",
             },
             json={"content": "Follow-up message"},
@@ -409,13 +421,15 @@ class TestWorkshopRouterEndpoints:
         )
         workshop_id = create_resp.json()["data"]["workshop_id"]
 
-        # Post additional messages
+        # Post additional messages — fetch fresh ETag before each mutation.
         for i in range(2):
+            current_etag = _get_current_etag(client, workshop_id)
             client.post(
                 f"/bff/agora/workshops/{workshop_id}/messages",
                 headers={
                     "Authorization": _OPERATOR_AUTH,
                     "Idempotency-Key": f"idem-ev-msg-{i}",
+                    "If-Match": current_etag,
                     "Content-Type": "application/json",
                 },
                 json={"content": f"Message {i}"},
@@ -737,11 +751,13 @@ class TestWorkshopPrivacyContract:
         )
         workshop_id = create_resp.json()["data"]["workshop_id"]
 
+        current_etag = _get_current_etag(client, workshop_id)
         msg_resp = client.post(
             f"/bff/agora/workshops/{workshop_id}/messages",
             headers={
                 "Authorization": _OPERATOR_AUTH,
                 "Idempotency-Key": "idem-priv-msg-001",
+                "If-Match": current_etag,
                 "Content-Type": "application/json",
             },
             json={"content": raw_content},
@@ -828,3 +844,86 @@ class TestMemoryWorkshopStoreConcurrencyHelpers:
         store.check_and_record_idempotency_key("scope-c:user1", "shared-key")
         seen = store.check_and_record_idempotency_key("scope-c:user2", "shared-key")
         assert seen is False, "Different scopes must not share idempotency key state"
+
+
+# --------------------------------------------------------------------------- #
+# Mandatory-header enforcement tests (AG-BE-SW-001 review-requested fixes)
+# --------------------------------------------------------------------------- #
+
+class TestWorkshopMandatoryHeaderEnforcement:
+    """Verify that the router rejects requests with missing required headers."""
+
+    def test_create_workshop_without_idempotency_key_returns_400(self, monkeypatch):
+        """POST /workshops without Idempotency-Key must return 400."""
+        client = _workshop_client(monkeypatch)
+        resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Content-Type": "application/json",
+                # Deliberately no Idempotency-Key
+            },
+            json={"initial_message": "Should be rejected"},
+        )
+        assert resp.status_code == 400, (
+            f"Missing Idempotency-Key must return 400, got {resp.status_code}: {resp.text}"
+        )
+
+    def test_post_message_without_if_match_returns_428(self, monkeypatch):
+        """POST /messages without If-Match must return 428 (Precondition Required)."""
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-enf-create-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "Enforcement test"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        resp = client.post(
+            f"/bff/agora/workshops/{workshop_id}/messages",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-enf-msg-001",
+                "Content-Type": "application/json",
+                # Deliberately no If-Match
+            },
+            json={"content": "Should be rejected"},
+        )
+        assert resp.status_code == 428, (
+            f"Missing If-Match must return 428, got {resp.status_code}: {resp.text}"
+        )
+
+    def test_post_message_without_idempotency_key_returns_400(self, monkeypatch):
+        """POST /messages without Idempotency-Key must return 400."""
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-enf-create-002",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "Enforcement test 2"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+        current_etag = _get_current_etag(client, workshop_id)
+
+        resp = client.post(
+            f"/bff/agora/workshops/{workshop_id}/messages",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "If-Match": current_etag,
+                "Content-Type": "application/json",
+                # Deliberately no Idempotency-Key
+            },
+            json={"content": "Should be rejected"},
+        )
+        assert resp.status_code == 400, (
+            f"Missing Idempotency-Key must return 400, got {resp.status_code}: {resp.text}"
+        )

@@ -251,6 +251,7 @@ class PostgresWorkshopStore:
         self._st = f'{q}."strategy_workshop_session"'
         self._et = f'{q}."strategy_workshop_event"'
         self._cst = f'{q}."strategy_completeness_snapshot"'
+        self._ikt = f'{q}."workshop_idempotency_key"'
         self._bootstrap()
 
     # -- internal --
@@ -305,7 +306,8 @@ class PostgresWorkshopStore:
             conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._et} (
                     event_id            TEXT PRIMARY KEY,
-                    workshop_id         TEXT NOT NULL,
+                    workshop_id         TEXT NOT NULL
+                        REFERENCES {self._st}(workshop_id),
                     sequence_no         INTEGER NOT NULL,
                     actor_type          TEXT NOT NULL,
                     event_type          TEXT NOT NULL,
@@ -321,11 +323,25 @@ class PostgresWorkshopStore:
                 CREATE INDEX IF NOT EXISTS idx_ws_event_workshop_created
                     ON {self._et} (workshop_id, created_at)
             """)
+            # Add FK for existing tables that were created before this constraint was added.
+            try:
+                conn.execute(f"""
+                    ALTER TABLE {self._et}
+                        ADD CONSTRAINT fk_ws_event_session
+                        FOREIGN KEY (workshop_id)
+                        REFERENCES {self._st}(workshop_id)
+                """)
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") not in ("42710", "42P16"):
+                    raise
+                if hasattr(conn, "rollback"):
+                    conn.rollback()
 
             conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._cst} (
                     snapshot_id         TEXT PRIMARY KEY,
-                    workshop_id         TEXT NOT NULL,
+                    workshop_id         TEXT NOT NULL
+                        REFERENCES {self._st}(workshop_id),
                     strategy_version_id TEXT,
                     state_map_json      JSONB,
                     blocking_items_json JSONB,
@@ -336,6 +352,28 @@ class PostgresWorkshopStore:
             conn.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_ws_snapshot_workshop_created
                     ON {self._cst} (workshop_id, created_at)
+            """)
+            # Add FK for existing tables that were created before this constraint was added.
+            try:
+                conn.execute(f"""
+                    ALTER TABLE {self._cst}
+                        ADD CONSTRAINT fk_ws_snapshot_session
+                        FOREIGN KEY (workshop_id)
+                        REFERENCES {self._st}(workshop_id)
+                """)
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") not in ("42710", "42P16"):
+                    raise
+                if hasattr(conn, "rollback"):
+                    conn.rollback()
+
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._ikt} (
+                    scope               TEXT NOT NULL,
+                    idempotency_key     TEXT NOT NULL,
+                    recorded_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT pk_ws_idempotency_key PRIMARY KEY (scope, idempotency_key)
+                )
             """)
 
     # --- session ---
@@ -408,8 +446,24 @@ class PostgresWorkshopStore:
         return row[0] if row else 1
 
     def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
-        """Return True if duplicate; False if first occurrence (and record it)."""
-        return False  # Postgres dedup left for a dedicated idempotency table migration
+        """Return True if duplicate; False if first occurrence (and record it).
+
+        Uses INSERT ... ON CONFLICT DO NOTHING for atomic first-write-wins dedup.
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                INSERT INTO {self._ikt} (scope, idempotency_key, recorded_at)
+                VALUES (%s, %s, now())
+                ON CONFLICT DO NOTHING
+                RETURNING 1
+                """,
+                (scope, key),
+            )
+            row = cur.fetchone()
+        # RETURNING row present → first occurrence (new insert).
+        # RETURNING row absent → conflict (duplicate key).
+        return row is None
 
     def list_sessions(
         self,
