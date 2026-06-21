@@ -13,7 +13,7 @@
 | Previous sidecar closeout merge | `bfb6b1c640db2a19a3ce025aa8d29982b9164a0b` |
 | Previous reviewed packet merge | `9880c81584ab3b6985c197916674ad073680dd3d` |
 | Reviewed packet PR | `#1964` merged at `321414475757e663317c194522adc76c37f7b3d7` |
-| Closeout PR refresh base | `origin/dev` at `d63c0eb47275072f6ccceca8dd218f9ff5cb8d75` after PR `#1980` reported `BEHIND` |
+| Closeout PR refresh base | `origin/dev` at `0841c0f9e2dfe39aa8c1486bc4f9b8c87a22d684` after PR `#1980` reported `BEHIND` |
 | New relevant dev merge | `e5f20720` / PR `#1952` for `AG-XR-002A` |
 | New relevant sidecar merge | `285a6d60` / PR `#1954` for `AG-XR-002A-SIDECAR-BFF-HANDOFF` |
 | New compatibility support merge | `e7d75a11` / PR `#1956` for `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` |
@@ -76,7 +76,7 @@ is formally archived with `AI_NAME=Codex ./scripts/ai-status.sh done`. No L1
 truth, OpenAPI, BFF runtime, route registry, governance, database, OpenClaw
 adapter, compatibility manifest source, or execute-plans source path is changed
 by this closeout. PR #1980 initially reported `BEHIND`; the branch was refreshed
-by merging `origin/dev` at `d63c0eb47275072f6ccceca8dd218f9ff5cb8d75`, then
+by merging `origin/dev` at `0841c0f9e2dfe39aa8c1486bc4f9b8c87a22d684`, then
 this task-owned closeout refresh note was recorded so the final branch HEAD
 continues to carry the task id and required trailers.
 
@@ -422,7 +422,7 @@ Result:
 - `HEAD` is already contained in `origin/dev`; a separate closeout commit will
   carry only this accepted-review record.
 - PR #1980 initially reported `BEHIND`; the branch was refreshed by merging
-  `origin/dev` at `d63c0eb47275072f6ccceca8dd218f9ff5cb8d75`.
+  `origin/dev` at `0841c0f9e2dfe39aa8c1486bc4f9b8c87a22d684`.
 - `git diff --check` passed for the closeout artifact paths.
 - placeholder scan returned no matches.
 
