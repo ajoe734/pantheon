@@ -17,7 +17,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Primary artifact committed in anchor commit `8443f136` (BFF handoff packet).
 - Reviewer (Claude) approved; `review_notes_zh` confirmed in ai-status.json.
 - Previous closeout commit `60032b1b` landed trailers correctly; CI failed because branch was 12 commits behind dev.
-- This dispatch: dev merged into branch to resolve "Commit trailers" CI exit-128 failure.
+- This dispatch: dev merged into branch to resolve "Commit trailers" CI exit-128 failure (exit 128 on git log range).
 - No canonical docs, schemas, OpenAPI, BFF runtime, or frontend files modified.
 - All open questions Q3/Q5/Q6/Q7 carried forward for AG-BE-TR-001 owner.
 - Verified: git status confirms only task-brief modified; sidecar artifact unchanged.
