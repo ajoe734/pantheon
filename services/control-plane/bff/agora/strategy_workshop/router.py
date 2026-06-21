@@ -30,7 +30,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from .store import make_workshop_store
@@ -150,6 +150,15 @@ def create_strategy_workshop_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
         scope = _scope(authorization, x_tenant_id)
+        # Idempotency enforcement: reject duplicate keys for the same user+tenant+endpoint
+        if idempotency_key and hasattr(store, "check_and_record_idempotency_key"):
+            idem_scope = f"{scope.user_id}:{scope.tenant_id}:POST:/bff/agora/workshops"
+            if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
+                from models import ErrorCode
+                raise bff_error(
+                    409, ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Duplicate Idempotency-Key", idempotency_key,
+                )
         workshop_id = str(uuid.uuid4())
         session = store.create_session({
             "workshop_id": workshop_id,
@@ -159,13 +168,17 @@ def create_strategy_workshop_router(
             "active_strategy_spec_registry_id": body.strategy_spec_ref,
             "status": "open",
         })
-        # Record the initial message as the first event (redacted_summary = first message)
+        # Privacy rule: raw initial_message must NOT appear in the event payload.
+        # In production this content goes to the encrypted private-content store;
+        # here we generate a stub ref and leave redacted_summary empty.
+        initial_event_id = str(uuid.uuid4())
         store.create_event({
+            "event_id": initial_event_id,
             "workshop_id": workshop_id,
             "actor_type": "operator",
             "event_type": "message",
-            "private_content_ref": None,
-            "redacted_summary": body.initial_message[:500] if body.initial_message else None,
+            "private_content_ref": f"priv-content-stub://{initial_event_id}",
+            "redacted_summary": None,
         })
         return {
             "data": session,
@@ -182,6 +195,7 @@ def create_strategy_workshop_router(
     @router.get("/bff/agora/workshops/{workshop_id}")
     def get_workshop(
         workshop_id: str,
+        response: Response,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
@@ -195,7 +209,9 @@ def create_strategy_workshop_router(
             from models import ErrorCode
             raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop not owned by caller", workshop_id)
         lock_version = session.get("lock_version", 1)
-        etag = f'W/"{workshop_id}:v{lock_version}"'
+        # ETag format: W/"workshop:{id}:v{lock_version}" per contract §B Concurrency
+        etag = f'W/"workshop:{workshop_id}:v{lock_version}"'
+        response.headers["ETag"] = etag
         return {
             "data": session,
             "meta": {
@@ -226,16 +242,44 @@ def create_strategy_workshop_router(
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
             from models import ErrorCode
             raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop not owned by caller", workshop_id)
-        # Append event: private content goes to private_content_ref (not stored here);
-        # redacted_summary holds a truncated visible summary.
+        # If-Match concurrency enforcement: reject stale ETag with 409.
+        lock_version = session.get("lock_version", 1)
+        current_etag = f'W/"workshop:{workshop_id}:v{lock_version}"'
+        if if_match is not None and if_match != current_etag:
+            from models import ErrorCode
+            raise bff_error(
+                409, ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent modification: ETag mismatch",
+                f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
+                details_extra={"current_etag": current_etag},
+            )
+        # Idempotency enforcement: reject duplicate keys for the same user+workshop+endpoint
+        if idempotency_key and hasattr(store, "check_and_record_idempotency_key"):
+            idem_scope = (
+                f"{scope.user_id}:{scope.tenant_id}:{workshop_id}"
+                f":POST:/bff/agora/workshops/messages"
+            )
+            if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
+                from models import ErrorCode
+                raise bff_error(
+                    409, ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Duplicate Idempotency-Key", idempotency_key,
+                )
+        # Privacy rule: raw message content must NOT appear in the event payload.
+        # In production the content is handed off to the encrypted private-content store;
+        # here we generate a stub ref and leave redacted_summary empty.
+        event_id = str(uuid.uuid4())
         event = store.create_event({
+            "event_id": event_id,
             "workshop_id": workshop_id,
             "actor_type": "operator",
             "event_type": "message",
-            "private_content_ref": None,
-            "redacted_summary": body.content[:500] if body.content else None,
+            "private_content_ref": f"priv-content-stub://{event_id}",
+            "redacted_summary": None,
             "payload_refs_json": body.attachment_refs or None,
         })
+        # Bump lock_version so subsequent If-Match checks use the new version
+        store.update_session_lock_version(workshop_id)
         return {
             "data": {"event_id": event["event_id"], "sequence_no": event["sequence_no"]},
             "meta": {

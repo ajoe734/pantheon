@@ -93,6 +93,7 @@ class MemoryWorkshopStore:
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._events: Dict[str, List[Dict[str, Any]]] = {}
         self._snapshots: Dict[str, List[Dict[str, Any]]] = {}
+        self._idempotency_keys: Dict[str, bool] = {}
         self._lock = threading.Lock()
 
     # --- session ---
@@ -121,6 +122,28 @@ class MemoryWorkshopStore:
         with self._lock:
             row = self._sessions.get(workshop_id)
             return dict(row) if row else None
+
+    def update_session_lock_version(self, workshop_id: str) -> int:
+        with self._lock:
+            session = self._sessions.get(workshop_id)
+            if session is None:
+                return 1
+            session["lock_version"] = session.get("lock_version", 1) + 1
+            session["updated_at"] = _utc_now()
+            return session["lock_version"]
+
+    def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
+        """Return True if the key was already seen (duplicate); False if it is new.
+
+        The key is recorded on first call so subsequent calls return True.
+        scope should encode user+tenant+endpoint to avoid cross-user conflicts.
+        """
+        composite = f"{scope}:{key}"
+        with self._lock:
+            if composite in self._idempotency_keys:
+                return True
+            self._idempotency_keys[composite] = True
+            return False
 
     def list_sessions(
         self,
@@ -368,6 +391,25 @@ class PostgresWorkshopStore:
             )
             row = cur.fetchone()
         return _row_to_dict(row, _SESSION_COLS) if row is not None else None
+
+    def update_session_lock_version(self, workshop_id: str) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                UPDATE {self._st}
+                   SET lock_version = lock_version + 1,
+                       updated_at   = now()
+                 WHERE workshop_id = %s
+                RETURNING lock_version
+                """,
+                (workshop_id,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else 1
+
+    def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
+        """Return True if duplicate; False if first occurrence (and record it)."""
+        return False  # Postgres dedup left for a dedicated idempotency table migration
 
     def list_sessions(
         self,

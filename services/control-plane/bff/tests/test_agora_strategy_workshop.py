@@ -513,3 +513,318 @@ class TestWorkshopRouterEndpoints:
             workshop_store=store,
         )
         assert router is not None
+
+
+# --------------------------------------------------------------------------- #
+# Contract tests for concurrency (ETag/If-Match) and privacy (private_content_ref)
+# AG-BE-SW-001 review-requested changes
+# --------------------------------------------------------------------------- #
+
+class TestWorkshopConcurrencyContract:
+    """ETag must be in the HTTP response header with the correct format.
+    Stale If-Match on mutations must return 409 RESOURCE_CONFLICT.
+    """
+
+    def test_get_workshop_returns_etag_response_header(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-etag-hdr-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "ETag header test"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        get_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        # ETag MUST be in the HTTP response header, not just in meta
+        assert "etag" in get_resp.headers, (
+            "ETag must be set as an HTTP response header"
+        )
+
+    def test_get_workshop_etag_header_format(self, monkeypatch):
+        """ETag format must be W/\"workshop:{id}:v{N}\" per contract §B."""
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-etag-fmt-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "ETag format test"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        get_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        etag = get_resp.headers.get("etag", "")
+        # Must match W/"workshop:{id}:v{N}"
+        expected_prefix = f'W/"workshop:{workshop_id}:v'
+        assert etag.startswith(expected_prefix), (
+            f"ETag {etag!r} must start with {expected_prefix!r}"
+        )
+        assert etag.endswith('"'), f"ETag {etag!r} must end with closing quote"
+
+    def test_post_message_with_stale_if_match_returns_409(self, monkeypatch):
+        """Stale ETag in If-Match must be rejected with 409."""
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-stale-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "Stale ETag test"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        stale_etag = f'W/"workshop:{workshop_id}:v0"'  # version 0 is always stale
+        msg_resp = client.post(
+            f"/bff/agora/workshops/{workshop_id}/messages",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-stale-msg-001",
+                "If-Match": stale_etag,
+                "Content-Type": "application/json",
+            },
+            json={"content": "Should be rejected"},
+        )
+        assert msg_resp.status_code == 409, (
+            f"Stale ETag must return 409, got {msg_resp.status_code}: {msg_resp.text}"
+        )
+
+    def test_post_message_with_matching_if_match_succeeds(self, monkeypatch):
+        """Correct If-Match must allow the mutation through."""
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-match-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "Correct ETag test"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        # Fetch current ETag from the GET response header
+        get_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        current_etag = get_resp.headers["etag"]
+
+        msg_resp = client.post(
+            f"/bff/agora/workshops/{workshop_id}/messages",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-match-msg-001",
+                "If-Match": current_etag,
+                "Content-Type": "application/json",
+            },
+            json={"content": "Should be accepted"},
+        )
+        assert msg_resp.status_code == 202, (
+            f"Matching ETag must succeed, got {msg_resp.status_code}: {msg_resp.text}"
+        )
+
+    def test_lock_version_increments_after_message(self, monkeypatch):
+        """GET ETag version number must increase after a successful mutation."""
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-lock-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "Lock version test"},
+        )
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        etag_before = client.get(
+            f"/bff/agora/workshops/{workshop_id}",
+            headers={"Authorization": _OPERATOR_AUTH},
+        ).headers["etag"]
+
+        client.post(
+            f"/bff/agora/workshops/{workshop_id}/messages",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-lock-msg-001",
+                "If-Match": etag_before,
+                "Content-Type": "application/json",
+            },
+            json={"content": "Bump lock"},
+        )
+
+        etag_after = client.get(
+            f"/bff/agora/workshops/{workshop_id}",
+            headers={"Authorization": _OPERATOR_AUTH},
+        ).headers["etag"]
+
+        assert etag_before != etag_after, (
+            "ETag must change after a successful mutation"
+        )
+
+
+class TestWorkshopPrivacyContract:
+    """Events from message/create paths must carry private_content_ref.
+    Raw message content must never appear as the redacted_summary.
+    """
+
+    def test_initial_event_has_private_content_ref(self, monkeypatch):
+        """create_workshop must generate private_content_ref for the initial event."""
+        client = _workshop_client(monkeypatch)
+        raw_content = "Discuss alpha decay strategy with high information ratio"
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-priv-init-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": raw_content},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        ev_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}/events",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert ev_resp.status_code == 200, ev_resp.text
+        events = ev_resp.json()["data"]
+        assert len(events) >= 1, "Initial event must exist"
+        initial = events[0]
+
+        assert initial.get("private_content_ref") is not None, (
+            "Initial event must have private_content_ref (not None)"
+        )
+        # Raw content must NOT appear in redacted_summary
+        redacted = initial.get("redacted_summary")
+        assert redacted != raw_content, (
+            "Raw initial_message must NOT be stored verbatim in redacted_summary"
+        )
+
+    def test_post_message_event_has_private_content_ref(self, monkeypatch):
+        """POST /messages must generate private_content_ref; raw content must not appear."""
+        client = _workshop_client(monkeypatch)
+        raw_content = "Increase position sizing on mean-reversion signals"
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-priv-msg-create-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "Workshop for privacy test"},
+        )
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        msg_resp = client.post(
+            f"/bff/agora/workshops/{workshop_id}/messages",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-priv-msg-001",
+                "Content-Type": "application/json",
+            },
+            json={"content": raw_content},
+        )
+        assert msg_resp.status_code == 202, msg_resp.text
+
+        ev_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}/events",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        events = ev_resp.json()["data"]
+        # Find the operator message event (last one is the posted message)
+        operator_events = [e for e in events if e.get("actor_type") == "operator"]
+        assert len(operator_events) >= 2, "At least 2 operator events expected"
+        posted_event = operator_events[-1]
+
+        assert posted_event.get("private_content_ref") is not None, (
+            "Posted message event must have private_content_ref (not None)"
+        )
+        redacted = posted_event.get("redacted_summary")
+        assert redacted != raw_content, (
+            "Raw message content must NOT be stored verbatim in redacted_summary"
+        )
+
+    def test_event_list_never_exposes_private_content_key(self, monkeypatch):
+        """Event list must not expose a 'private_content' key (raw content field)."""
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-priv-nokey-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "Privacy no-key test"},
+        )
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        ev_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}/events",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        for event in ev_resp.json()["data"]:
+            assert "private_content" not in event, (
+                "Event payload must not expose raw private_content key"
+            )
+
+
+class TestMemoryWorkshopStoreConcurrencyHelpers:
+    """Unit tests for the new store helpers added in AG-BE-SW-001 review pass."""
+
+    def _store(self):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        return MemoryWorkshopStore()
+
+    def test_update_session_lock_version_increments(self):
+        store = self._store()
+        store.create_session({"workshop_id": "ws-lv-01", "tenant_id": "t1", "user_id": "u1"})
+        v1 = store.update_session_lock_version("ws-lv-01")
+        v2 = store.update_session_lock_version("ws-lv-01")
+        assert v1 == 2
+        assert v2 == 3
+        session = store.get_session("ws-lv-01")
+        assert session["lock_version"] == 3
+
+    def test_update_session_lock_version_unknown_returns_1(self):
+        store = self._store()
+        result = store.update_session_lock_version("no-such-ws")
+        assert result == 1
+
+    def test_idempotency_key_first_call_returns_false(self):
+        store = self._store()
+        seen = store.check_and_record_idempotency_key("scope-a", "key-001")
+        assert seen is False
+
+    def test_idempotency_key_duplicate_call_returns_true(self):
+        store = self._store()
+        store.check_and_record_idempotency_key("scope-b", "key-002")
+        seen = store.check_and_record_idempotency_key("scope-b", "key-002")
+        assert seen is True
+
+    def test_idempotency_key_different_scopes_do_not_collide(self):
+        store = self._store()
+        store.check_and_record_idempotency_key("scope-c:user1", "shared-key")
+        seen = store.check_and_record_idempotency_key("scope-c:user2", "shared-key")
+        assert seen is False, "Different scopes must not share idempotency key state"
