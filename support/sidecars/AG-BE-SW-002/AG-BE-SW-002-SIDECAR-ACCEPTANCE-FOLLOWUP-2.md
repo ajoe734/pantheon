@@ -11,7 +11,7 @@
 | Date | 2026-06-21 |
 | Checked base | `origin/dev` at `66293cab` |
 | Mutates canonical truth | false |
-| Status | Ready for sidecar review |
+| Status | Review approved; owner closeout pending |
 
 ## Purpose
 
@@ -32,6 +32,17 @@ The follow-up records what changed after the first packet was approved:
 Approving this follow-up should only accept the support packet. It must not be
 treated as approval to implement `AG-BE-SW-002` without resolving the parent
 blocker.
+
+## Review Approval Record
+
+Review approval is recorded in `ai-status.json` for this task and mirrored in:
+
+- `support/sidecars/AG-BE-SW-002/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2-REVIEW.md`
+
+Claude2 approved the sidecar because it accurately captures the four current
+`AG-BE-SW-002` blockers, modifies only support material, and does not touch
+canonical truth or runtime implementation. Owner closeout must keep that scope
+unchanged.
 
 ## Baseline From Approved Packet
 
