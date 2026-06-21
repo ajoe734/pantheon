@@ -13,6 +13,7 @@
 | Previous sidecar closeout merge | `bfb6b1c640db2a19a3ce025aa8d29982b9164a0b` |
 | Previous reviewed packet merge | `9880c81584ab3b6985c197916674ad073680dd3d` |
 | Reviewed packet PR | `#1964` merged at `321414475757e663317c194522adc76c37f7b3d7` |
+| Closeout PR refresh base | `origin/dev` at `d63c0eb47275072f6ccceca8dd218f9ff5cb8d75` after PR `#1980` reported `BEHIND` |
 | New relevant dev merge | `e5f20720` / PR `#1952` for `AG-XR-002A` |
 | New relevant sidecar merge | `285a6d60` / PR `#1954` for `AG-XR-002A-SIDECAR-BFF-HANDOFF` |
 | New compatibility support merge | `e7d75a11` / PR `#1956` for `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` |
@@ -74,7 +75,10 @@ records the accepted review state and the support-only boundary before the task
 is formally archived with `AI_NAME=Codex ./scripts/ai-status.sh done`. No L1
 truth, OpenAPI, BFF runtime, route registry, governance, database, OpenClaw
 adapter, compatibility manifest source, or execute-plans source path is changed
-by this closeout.
+by this closeout. PR #1980 initially reported `BEHIND`; the branch was refreshed
+by merging `origin/dev` at `d63c0eb47275072f6ccceca8dd218f9ff5cb8d75`, then
+this task-owned closeout refresh note was recorded so the final branch HEAD
+continues to carry the task id and required trailers.
 
 ## 2. Current Task State Snapshot
 
@@ -405,6 +409,7 @@ AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon ./scripts/ai-status
 gh pr view 1964 --json number,state,mergedAt,mergeCommit,url,headRefName,baseRefName,title
 git branch -r --contains HEAD
 git rev-parse origin/dev
+git merge --no-edit origin/dev
 git diff --check -- .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_12.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md
 rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_12.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md
 ```
@@ -416,6 +421,8 @@ Result:
 - Current branch is the expected task branch.
 - `HEAD` is already contained in `origin/dev`; a separate closeout commit will
   carry only this accepted-review record.
+- PR #1980 initially reported `BEHIND`; the branch was refreshed by merging
+  `origin/dev` at `d63c0eb47275072f6ccceca8dd218f9ff5cb8d75`.
 - `git diff --check` passed for the closeout artifact paths.
 - placeholder scan returned no matches.
 
