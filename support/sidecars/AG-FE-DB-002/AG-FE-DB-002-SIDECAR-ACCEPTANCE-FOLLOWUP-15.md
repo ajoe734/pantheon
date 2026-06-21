@@ -283,4 +283,3 @@ Please review this packet for:
    schema, registry, governance, broker, or RuntimeBinding surface is changed.
 4. Whether this packet is sufficient for parent reviewer `Claude` to either
    absorb the reviewed evidence or record a new concrete parent blocker.
-
