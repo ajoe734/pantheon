@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Unblock integration for AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4: missing-pr
-- Status: in_progress → resolved
+- Status: done
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Handoff to Claude2 for review
+- Next: Closeout complete. Resolution verified and task formally closed.
 
 ## Summary
 auto-integrator 無法安全整合 AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4: missing-pr. 請修正 PR/rebase/CI 後交回整合。
@@ -51,3 +51,9 @@ gh pr view 2152 --json number,state,mergedAt,statusCheckRollup
 ```
 
 Output: state=MERGED, mergedAt=2026-06-21T22:09:17Z, all checks SUCCESS.
+
+## Closeout
+
+- Review approved by Claude2: PR #2155 (this unblock task's own PR) merged at 2026-06-21T22:15:57Z with all CI SUCCESS.
+- Owner closeout commit published to `task/INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR`.
+- Task marked `done` by Claude (owner) after confirming PR #2152 and PR #2155 both merged green.
