@@ -1,0 +1,236 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/strategy_readiness/v1",
+  "title": "StrategyReadinessAssessment",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "assessment_id",
+    "workshop_id",
+    "strategy_id",
+    "workshop_version_id",
+    "strategy_spec_registry_id",
+    "gates",
+    "assessed_at",
+    "assessment_version"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "assessment_id": {
+      "type": "string",
+      "pattern": "^ready_[A-Za-z0-9_-]+$"
+    },
+    "workshop_id": {
+      "type": "string"
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "workshop_version_id": {
+      "type": "string"
+    },
+    "strategy_spec_registry_id": {
+      "type": "string"
+    },
+    "assessment_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "gates": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/definitions/gate"
+      }
+    },
+    "highest_ready_gate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "preliminary_research",
+        "full_validation",
+        "trading_room",
+        null
+      ]
+    },
+    "staleness_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "assessed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/evidence_ref"
+      }
+    }
+  },
+  "definitions": {
+    "gate": {
+      "type": "object",
+      "required": [
+        "gate",
+        "state",
+        "requirements"
+      ],
+      "properties": {
+        "gate": {
+          "type": "string",
+          "enum": [
+            "preliminary_research",
+            "full_validation",
+            "trading_room"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "not_assessed",
+            "blocked",
+            "conditional",
+            "ready",
+            "stale"
+          ]
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/requirement"
+          }
+        },
+        "blocking_requirement_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "conditional_assumptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evaluated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "requirement": {
+      "type": "object",
+      "required": [
+        "requirement_id",
+        "title",
+        "hardness",
+        "state"
+      ],
+      "properties": {
+        "requirement_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "hardness": {
+          "type": "string",
+          "enum": [
+            "hard",
+            "soft"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "missing",
+            "partial",
+            "satisfied",
+            "waived",
+            "stale"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/evidence_ref"
+          }
+        },
+        "waiver": {
+          "type": "object",
+          "properties": {
+            "waived_by": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "expires_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_ref": {
+      "type": "object",
+      "required": [
+        "ref_type",
+        "ref_id"
+      ],
+      "properties": {
+        "ref_type": {
+          "type": "string",
+          "enum": [
+            "evidence_bundle",
+            "evidence_item",
+            "source_record",
+            "citation",
+            "experiment_artifact",
+            "registry_entry",
+            "consult_memo",
+            "research_run",
+            "telemetry_snapshot",
+            "market_context"
+          ]
+        },
+        "ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "data_cutoff": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

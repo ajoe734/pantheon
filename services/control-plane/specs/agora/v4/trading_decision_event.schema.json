@@ -1,0 +1,441 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/trading_decision_event/v1",
+  "title": "TradingDecisionEvent",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "decision_event_id",
+    "event_kind",
+    "origin",
+    "strategy_id",
+    "strategy_spec_registry_id",
+    "subject",
+    "state",
+    "triggered_at",
+    "confidence",
+    "probability",
+    "expected_value",
+    "rationale",
+    "risk_notes",
+    "evidence_refs",
+    "invalidation",
+    "suggested_action",
+    "no_order_route_proof"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "decision_event_id": {
+      "type": "string"
+    },
+    "dedupe_key": {
+      "type": "string"
+    },
+    "event_kind": {
+      "type": "string",
+      "enum": [
+        "entry",
+        "add",
+        "reduce",
+        "exit",
+        "review"
+      ]
+    },
+    "origin": {
+      "type": "string",
+      "enum": [
+        "strategy_signal",
+        "risk_rule",
+        "position_rule",
+        "servant_analysis",
+        "trader_request"
+      ]
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "strategy_spec_registry_id": {
+      "type": "string"
+    },
+    "candidate_ref": {
+      "type": "string"
+    },
+    "position_ref": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "symbol"
+      ],
+      "properties": {
+        "symbol": {
+          "type": "string"
+        },
+        "asset_class": {
+          "type": "string"
+        },
+        "venue": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "approaching",
+        "triggered",
+        "pending_review",
+        "decided",
+        "expired",
+        "invalidated",
+        "superseded"
+      ]
+    },
+    "trigger": {
+      "type": "object",
+      "properties": {
+        "rule_id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "current_value": {},
+        "threshold": {},
+        "distance_to_trigger": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "triggered_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "confidence": {
+      "type": "object",
+      "required": [
+        "value",
+        "basis",
+        "calibration_state"
+      ],
+      "properties": {
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "basis": {
+          "type": "string",
+          "enum": [
+            "model",
+            "statistical",
+            "heuristic",
+            "mixed"
+          ]
+        },
+        "calibration_state": {
+          "type": "string",
+          "enum": [
+            "calibrated",
+            "partially_calibrated",
+            "uncalibrated"
+          ]
+        },
+        "sample_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_ref": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "probability": {
+      "type": "object",
+      "required": [
+        "target_outcome",
+        "horizon",
+        "value"
+      ],
+      "properties": {
+        "target_outcome": {
+          "type": "string"
+        },
+        "horizon": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "ci_lower": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "ci_upper": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "model_ref": {
+          "type": "string"
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "expected_value": {
+      "type": "object",
+      "required": [
+        "horizon",
+        "unit",
+        "gross",
+        "cost",
+        "net",
+        "downside"
+      ],
+      "properties": {
+        "horizon": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "pct_return",
+            "currency",
+            "risk_units"
+          ]
+        },
+        "gross": {
+          "type": "number"
+        },
+        "cost": {
+          "type": "number"
+        },
+        "net": {
+          "type": "number"
+        },
+        "downside": {
+          "type": "number"
+        },
+        "expected_shortfall": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rationale": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "claim",
+          "confidence"
+        ],
+        "properties": {
+          "claim": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/evidence_ref"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "risk_notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "severity",
+          "domain",
+          "summary"
+        ],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "watch",
+              "warning",
+              "high",
+              "critical"
+            ]
+          },
+          "domain": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "mitigation": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/evidence_ref"
+      }
+    },
+    "invalidation": {
+      "type": "object",
+      "required": [
+        "conditions",
+        "current_state"
+      ],
+      "properties": {
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "current_state": {
+          "type": "string",
+          "enum": [
+            "valid",
+            "watch",
+            "invalidated"
+          ]
+        },
+        "last_checked_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "suggested_action": {
+      "type": "string",
+      "enum": [
+        "enter",
+        "add",
+        "reduce",
+        "exit",
+        "review",
+        "no_action"
+      ]
+    },
+    "suggested_size": {
+      "type": "object",
+      "properties": {
+        "size_hint": {
+          "type": "string",
+          "enum": [
+            "small",
+            "medium",
+            "large",
+            "full_position"
+          ]
+        },
+        "portfolio_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "non_binding": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "position_snapshot": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "decision_state": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved_by_trader",
+        "rejected_by_trader",
+        "deferred",
+        "expired",
+        "handed_off",
+        "superseded"
+      ]
+    },
+    "data_cutoff": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "no_order_route_proof": {
+      "type": "string",
+      "enum": [
+        "agora_decision_support_only"
+      ]
+    }
+  },
+  "definitions": {
+    "evidence_ref": {
+      "type": "object",
+      "required": [
+        "ref_type",
+        "ref_id"
+      ],
+      "properties": {
+        "ref_type": {
+          "type": "string",
+          "enum": [
+            "evidence_bundle",
+            "evidence_item",
+            "source_record",
+            "citation",
+            "experiment_artifact",
+            "registry_entry",
+            "consult_memo",
+            "research_run",
+            "telemetry_snapshot",
+            "market_context"
+          ]
+        },
+        "ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "data_cutoff": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
