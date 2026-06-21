@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-ID-001 BFF and frontend handoff packet
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude
-- Next: Prepare support-only handoff packet and route it to Claude for review.
+- Next: Followup-18 support packet approved by Claude; review artifact at FOLLOWUP-18-REVIEW.md committed d3ed5755 and merged via PR #1930; all checklist items pass; AG-BE-ID-003 session contract blocker unchanged; target files AgoraApp.tsx identity.ts servant.ts still absent from both origin/main and origin/dev; execute-plans branch ambiguity and stale local checkout correctly flagged; owner Codex2 may proceed to done.
 
 ## Summary
 平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
@@ -23,8 +23,12 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Worker Notes
 - `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-18`
-  reports this task as active `in_progress`, owner `Codex2`, reviewer `Claude`.
+  reports this task as active `review_approved`, owner `Codex2`, reviewer
+  `Claude`.
 - Branch confirmed:
   `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-18`.
+- Claude approved the support packet in
+  `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-18-REVIEW.md`;
+  the review artifact was merged through PR #1930 at `428289dd`.
 - `current-work.md` and the full `ai-activity-log.jsonl` were not read for this
   task brief refresh.
