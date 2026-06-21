@@ -22,3 +22,5 @@ __all__ = [
     "SCHEMA_ENV",
     "DEFAULT_SCHEMA",
 ]
+
+VERSION = "1.0"
