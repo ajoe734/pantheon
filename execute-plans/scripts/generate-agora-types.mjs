@@ -364,7 +364,17 @@ function tsType(schema, level = 0, context = {}) {
 }
 
 function schemaTypeName(schema, relativePath) {
+  if (relativePath === "specs/agora/widget_spec.schema.json") {
+    return "WidgetSpecV1";
+  }
   return schema.title || pascalCase(path.basename(relativePath));
+}
+
+function schemaTypeAliases(relativePath, generatedName) {
+  if (relativePath === "specs/agora/widget_spec.schema.json" && generatedName === "WidgetSpecV1") {
+    return ["WidgetSpec"];
+  }
+  return [];
 }
 
 function renderConstArray(name, values) {
@@ -437,11 +447,18 @@ function renderTypes({ snapshot, schemas, capabilities, operations }) {
       lines.push(`export type ${entry.name} = ${body};`);
     }
     lines.push("");
+    for (const alias of schemaTypeAliases(entry.relativePath, entry.name)) {
+      lines.push(`export type ${alias} = ${entry.name};`);
+      lines.push("");
+    }
   }
 
   lines.push("export interface AgoraSchemaMap {");
   for (const entry of schemaEntries) {
     lines.push(`  ${entry.name}: ${entry.name};`);
+    for (const alias of schemaTypeAliases(entry.relativePath, entry.name)) {
+      lines.push(`  ${alias}: ${alias};`);
+    }
   }
   lines.push("}");
   lines.push("");

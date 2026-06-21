@@ -56,8 +56,17 @@ def test_write_manifest_records_current_v1_1_hashes(tmp_path: Path) -> None:
     assert {"name": "agora.dashboard.v2", "version": "2.0", "required": True} in manifest[
         "required_capabilities"
     ]
+    assert manifest["frontend"]["generated_types_sha256"] == _generated_types_sha(
+        ROOT / "execute-plans",
+        [
+            "src/lib/bff-v1/agora/contract-snapshot.json",
+            "src/lib/bff-v1/agora/types.ts",
+        ],
+    )
     assert manifest["compatibility_status"] == "pending"
-    assert "frontend-generated-types-not-agora-v1.1" in manifest["blocking_reasons"]
+    assert "frontend-generated-types-not-agora-v1.1" not in manifest["blocking_reasons"]
+    assert "frontend-generated-contract-commit-placeholder" in manifest["blocking_reasons"]
+    assert "frontend-runtime-commit-placeholder" in manifest["blocking_reasons"]
 
 
 def test_verify_allows_pending_but_deployment_gate_fails_closed(tmp_path: Path) -> None:
@@ -107,3 +116,8 @@ def test_generated_types_hash_algorithm_sorts_relative_paths(tmp_path: Path) -> 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _generated_types_sha(frontend_root: Path, paths: list[str]) -> str:
+    lines = "".join(f"{path}\t{_sha256(frontend_root / path)}\n" for path in sorted(paths))
+    return hashlib.sha256(lines.encode("utf-8")).hexdigest()

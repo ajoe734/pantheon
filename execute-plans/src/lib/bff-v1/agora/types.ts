@@ -1175,7 +1175,7 @@ export interface DashboardRecipe {
   metadata?: Record<string, unknown>;
 }
 
-export interface WidgetSpec {
+export interface WidgetSpecV1 {
   spec_version: "1.0";
   widget_id: string;
   widget_type: "market_summary" | "signal_list" | "candidate_pool" | "research_task_list" | "persona_status" | "watchlist" | "insight_feed" | "alert_triage" | "session_history" | "decision_journal" | "postmortem_feed" | "custom";
@@ -1198,6 +1198,8 @@ export interface WidgetSpec {
   updated_at?: string;
   metadata?: Record<string, unknown>;
 }
+
+export type WidgetSpec = WidgetSpecV1;
 
 export interface TradingEvent {
   spec_version: "1.0";
@@ -1450,6 +1452,7 @@ export interface AgoraSchemaMap {
   ResearchRunSummary: ResearchRunSummary;
   CandidatePool: CandidatePool;
   DashboardRecipe: DashboardRecipe;
+  WidgetSpecV1: WidgetSpecV1;
   WidgetSpec: WidgetSpec;
   TradingEvent: TradingEvent;
   TradingIntent: TradingIntent;
@@ -1461,5 +1464,5 @@ export interface AgoraSchemaMap {
   AgoraCrossRepoCompatibilityManifest: AgoraCrossRepoCompatibilityManifest;
 }
 
-export type AgoraSchemaName = "AgoraUserScope" | "ServantProfile" | "StrategyWorkshop" | "StrategyCompleteness" | "ResearchPlan" | "ResearchRunSummary" | "CandidatePool" | "DashboardRecipe" | "WidgetSpec" | "TradingEvent" | "TradingIntent" | "ShadowDecision" | "PersonalizationEvent" | "WidgetSpecV2" | "ChartSpecV1" | "DashboardRecipeV2" | "AgoraCrossRepoCompatibilityManifest";
+export type AgoraSchemaName = "AgoraUserScope" | "ServantProfile" | "StrategyWorkshop" | "StrategyCompleteness" | "ResearchPlan" | "ResearchRunSummary" | "CandidatePool" | "DashboardRecipe" | "WidgetSpecV1" | "TradingEvent" | "TradingIntent" | "ShadowDecision" | "PersonalizationEvent" | "WidgetSpecV2" | "ChartSpecV1" | "DashboardRecipeV2" | "AgoraCrossRepoCompatibilityManifest";
 export type AgoraSchema = AgoraSchemaMap[keyof AgoraSchemaMap];
