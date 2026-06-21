@@ -1,0 +1,208 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/v3/workshop_event",
+  "title": "WorkshopEvent",
+  "description": "Canonical event envelope for a strategy_workshop_event row. Covers all event_type variants including version-link events. Private content is represented only by private_content_ref and redacted_summary; raw content never appears here.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "workshop_id",
+    "sequence_no",
+    "actor_type",
+    "event_type",
+    "trace_id",
+    "request_id",
+    "created_at"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Immutable event identifier."
+    },
+    "workshop_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Workshop this event belongs to."
+    },
+    "sequence_no": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing event counter within the workshop. Unique per (workshop_id, sequence_no)."
+    },
+    "actor_type": {
+      "type": "string",
+      "enum": ["user", "servant_persona", "system"],
+      "description": "Category of actor that produced this event."
+    },
+    "actor_ref": {
+      "type": ["string", "null"],
+      "description": "Opaque reference to the specific actor (user_id or persona_id). Null for system-generated events."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "message",
+        "version_created",
+        "version_selected",
+        "research_dispatched",
+        "consultation_started",
+        "status_changed",
+        "concluded",
+        "archived"
+      ],
+      "description": "Discriminator for the event payload shape. See per-type conditional schemas below."
+    },
+
+    "private_content_ref": {
+      "type": ["string", "null"],
+      "pattern": "^pcnt_[A-Z0-9]{26}$",
+      "description": "Opaque reference to encrypted private content in the PrivateContentStore. Present only for event_type=message when the actor submitted content. The reference does not encode tenant, user, workshop, or object-store path. Required together with redacted_summary and redaction_policy_version when event_type is message."
+    },
+    "redacted_summary": {
+      "type": ["string", "null"],
+      "description": "BFF-generated redacted summary of the private content. Required when private_content_ref is set. Never contains raw content."
+    },
+    "redaction_policy_version": {
+      "type": ["string", "null"],
+      "description": "Version identifier for the redaction policy applied. Required when private_content_ref is set."
+    },
+
+    "version_link": {
+      "type": ["object", "null"],
+      "description": "Populated for event_type in {version_created, version_selected}. Records which Registry version was linked or selected.",
+      "required": [
+        "workshop_version_id",
+        "strategy_id",
+        "strategy_spec_registry_id"
+      ],
+      "properties": {
+        "workshop_version_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ID of the WorkshopVersionLink created or selected by this event."
+        },
+        "strategy_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable strategy identity resolved from the Registry record."
+        },
+        "strategy_spec_registry_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Immutable Registry version ID that this link points to. The StrategySpec document lives in the Registry; it is not copied here."
+        },
+        "parent_workshop_version_id": {
+          "type": ["string", "null"],
+          "description": "Previous WorkshopVersionLink in this workshop, or null for the first version."
+        },
+        "sequence_no": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Version sequence counter within the workshop."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "conclude_refs": {
+      "type": ["object", "null"],
+      "description": "Populated for event_type=concluded. Records the final strategy reference pointers. Conclude does NOT promote the StrategySpec lifecycle; Registry/governance transitions remain the Strategy Registry's responsibility.",
+      "required": [
+        "final_workshop_version_id",
+        "final_strategy_spec_registry_id"
+      ],
+      "properties": {
+        "final_workshop_version_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The WorkshopVersionLink representing the final accepted Registry version."
+        },
+        "final_strategy_spec_registry_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The immutable Registry version ID at conclusion. Stored as a reference only."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "status_change": {
+      "type": ["object", "null"],
+      "description": "Populated for event_type=status_changed. Records the lifecycle transition.",
+      "required": ["from_status", "to_status"],
+      "properties": {
+        "from_status": {
+          "type": "string",
+          "enum": ["open", "in_review", "concluded", "archived"]
+        },
+        "to_status": {
+          "type": "string",
+          "enum": ["open", "in_review", "concluded", "archived"]
+        },
+        "audit_reason": {
+          "type": ["string", "null"],
+          "description": "Required when reopening (in_review → open). Must be supplied with the If-Match header on the mutation request."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "payload_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref_id"],
+        "properties": {
+          "ref_type": {
+            "type": "string",
+            "enum": [
+              "research_plan",
+              "research_run",
+              "consultation_request",
+              "candidate_artifact",
+              "experiment_run"
+            ]
+          },
+          "ref_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "default": [],
+      "description": "Structured references to related objects (research plans, consultation requests, etc.). Never contains StrategySpec JSON."
+    },
+
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Distributed trace ID for correlating this event with BFF and upstream service spans."
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Idempotent request ID from the inbound BFF request header."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when this event was created."
+    }
+  },
+
+  "if": {
+    "properties": { "event_type": { "const": "message" } }
+  },
+  "then": {
+    "required": ["private_content_ref", "redacted_summary", "redaction_policy_version"],
+    "properties": {
+      "private_content_ref": { "type": "string" },
+      "redacted_summary": { "type": "string" },
+      "redaction_policy_version": { "type": "string" }
+    }
+  },
+
+  "additionalProperties": false
+}
