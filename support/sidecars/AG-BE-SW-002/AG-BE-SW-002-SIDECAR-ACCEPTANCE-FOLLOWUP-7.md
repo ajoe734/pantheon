@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | Codex / Claude2 |
 | Prepared by | Codex |
 | Date | 2026-06-21 |
-| Checked base | `origin/dev` at `4e4677fc` |
+| Checked base | `origin/dev` at `75c75b71` |
 | Mutates canonical truth | false |
 | Status | Prepared for reviewer handoff |
 
@@ -39,15 +39,17 @@ execution surfaces.
 
 ## Current Dev Delta Since Follow-up 6 Review
 
-`origin/dev` is at merge commit `4e4677fc`. The delta from the follow-up 6
-review observation point `7e028ab2` is only follow-up 6 closeout material:
+`origin/dev` is at merge commit `75c75b71`. The delta from the follow-up 6
+review observation point `7e028ab2` contains follow-up 6 closeout material plus
+one unrelated Management AI live-evidence cleanup:
 
 | New dev material | Impact for `AG-BE-SW-002` |
 |---|---|
 | `.orchestrator/task-briefs/ag_be_sw_002_sidecar_acceptance_followup_6.md` | Records follow-up 6 closeout context only. |
 | `support/sidecars/AG-BE-SW-002/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-6-REVIEW.md` | Makes the follow-up 6 reviewer approval durable and keeps the parent blocker intact. |
+| `.github/workflows/stage-0-ci.yml` and `scripts/test_release_gate_current_run.py` | Unrelated `MGMT-LIVE-EVIDENCE-NO-BLANK-RACE-DEFAULTS` cleanup; no StrategySpec, workshop, BFF route, Registry, or persistence impact. |
 
-No new runtime or contract artifact observed in this slice changes the
+No new AG-BE-SW-002 runtime or contract artifact observed in this slice changes the
 follow-up 6 conclusion.
 
 | Surface | Current observation | Impact for `AG-BE-SW-002` |
@@ -107,10 +109,10 @@ Commands run from `task/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-7`:
 | `git status -sb` | Branch is `task/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-7`; only the task-scoped follow-up 7 brief was dirty before packet creation. |
 | `git branch --show-current` | Confirmed expected task branch. |
 | `git remote -v` | Remote is `origin https://github.com/ajoe734/pantheon.git`. |
-| `git fetch origin dev` | Refreshed `origin/dev`; branch HEAD is aligned with `origin/dev` at `4e4677fc`. |
-| `git rev-parse --short HEAD` and `git rev-parse --short origin/dev` | Both resolve to `4e4677fc`. |
-| `git log --oneline 7e028ab2..origin/dev` | Shows only follow-up 6 closeout commits and PR #2044 merge: `ad1cf1c0`, `c54b5672`, `4e4677fc`. |
-| `git diff --name-status 7e028ab2..origin/dev` | Only modifies the follow-up 6 task brief and adds the follow-up 6 review file. |
+| `git fetch origin dev` | Refreshed `origin/dev` to `75c75b71`; task branch later merged `origin/dev` cleanly at task merge commit `db14d587`. |
+| `git rev-parse --short HEAD` and `git rev-parse --short origin/dev` | Resolved to task branch `db14d587` after the dev merge and `origin/dev` `75c75b71`. |
+| `git log --oneline 7e028ab2..origin/dev` | Shows follow-up 6 closeout/merge (`ad1cf1c0`, `c54b5672`, `4e4677fc`) plus unrelated `MGMT-LIVE-EVIDENCE-NO-BLANK-RACE-DEFAULTS` cleanup (`7e8e7015`, `75c75b71`). |
+| `git diff --name-status 7e028ab2..origin/dev` | Only modifies the follow-up 6 task brief, adds the follow-up 6 review file, and changes `.github/workflows/stage-0-ci.yml` plus `scripts/test_release_gate_current_run.py` for unrelated release-gate cleanup. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-7` | This sidecar is active `in_progress`, owner Codex, reviewer Claude2, artifact path is this packet. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-6` | Follow-up 6 is archived `done`; closeout records PR #2044 merged into `dev` at `4e4677fc`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-SW-002` | Parent is active `blocked`, waiting for Claude, with the four StrategySpec/versioning blockers. |
@@ -135,8 +137,9 @@ Requested review by `Claude2`:
 
 1. Confirm this packet preserves the support-only boundary and does not change
    canonical truth or implementation surfaces.
-2. Confirm the `origin/dev@4e4677fc` delta is accurately described as follow-up
-   6 support/review/closeout material only.
+2. Confirm the `origin/dev@75c75b71` delta is accurately described as follow-up
+   6 support/review/closeout material plus unrelated Management AI release-gate
+   cleanup only.
 3. Confirm the acceptance delta should keep `AG-BE-SW-002` blocked until the
    StrategySpec versioning, patch grammar, Registry draft-create, and
    version-link store questions are resolved.
