@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Acceptance packet approved; all 6 dependency declarations verified; gap analysis accurate and non-blocking note on fixture copy confirmed; checklist is implementation-ready. Owner (Claude2) may finalize and close.
+- Next: PR #2027 open with CI passing; resolving dev merge conflict then closing out.
 
 ## Summary
 平行支援 AG-BE-SW-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
