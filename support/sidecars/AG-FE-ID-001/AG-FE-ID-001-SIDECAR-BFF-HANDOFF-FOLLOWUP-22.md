@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-21` |
 | Status | `in_progress; ready for sidecar review after packet PR merge` |
-| Packet observation base | `285a6d6002da982f029d0b8b7447f95f10efc09b` |
+| Packet observation base | `e7d75a1161545aa0c2f696882e45fc13ff4bdf35` |
 | Previous AG-FE-ID-001 sidecar closeout merge | `7cfa8a4f84c6aced1e4b66c661fd9d7f78779e2c` |
 | Previous AG-FE-ID-001 sidecar packet merge | `97cfbdd5037a2cbe20143f24c2775954824e275a` |
 | Previous AG-FE-ID-001 sidecar closeout commit | `971b84aefabe9b9d843aa08baafeefd85a89714b` |
@@ -26,31 +26,33 @@ execute-plans source files.
 This twenty-second followup refreshes the `AG-FE-ID-001` BFF/frontend handoff
 after `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21` closed through PR #1949.
 
-The material delta from followup-21 is narrow: support closeouts plus one
-AG-XR-002A contract/type refresh that improves compatibility evidence but does
-not implement the AG-FE-ID-001 shell/client files.
+The material delta from followup-21 is narrow: support closeouts, AG-XR
+support packets, and one AG-XR-002A contract/type refresh that improves
+compatibility evidence but does not implement the AG-FE-ID-001 shell/client
+files.
 
 1. Followup-21 is archived `done`. Its packet PR #1945 merged at
    `97cfbdd5037a2cbe20143f24c2775954824e275a`, and its closeout PR #1949
    merged into `dev` at `7cfa8a4f84c6aced1e4b66c661fd9d7f78779e2c`.
 2. Current `origin/dev` resolves to
-   `285a6d6002da982f029d0b8b7447f95f10efc09b`. This task branch merged that
-   dev tip after PR #1955 became `BEHIND`.
-3. A focused diff from `285a6d60..origin/dev` over BFF/OpenAPI/Agora specs,
+   `e7d75a1161545aa0c2f696882e45fc13ff4bdf35`. This task branch merged that
+   dev tip after PR #1955 became `BEHIND` again.
+3. A focused diff from `e7d75a11..origin/dev` over BFF/OpenAPI/Agora specs,
    docs/contracts, AG-FE-ID-001 support, AG-BE-ID-003 support, AG-XR-003
    support, and execute-plans mirror paths is empty.
 4. A focused diff from followup-21's closeout merge
    `7cfa8a4f84c6aced1e4b66c661fd9d7f78779e2c..origin/dev` contains
    AG-BE-ID-003 followup-11 closeout support material plus AG-XR-002A
-   compatibility manifest/type-generation updates. No BFF runtime, OpenAPI
-   route, Agora schema, AG-FE-ID-001 support, or AG-FE-ID-001 frontend shell
-   file changed after followup-21 closeout.
+   compatibility manifest/type-generation updates plus AG-XR-003 followup-14
+   support material. No BFF runtime, OpenAPI route, Agora schema,
+   AG-FE-ID-001 support, or AG-FE-ID-001 frontend shell file changed after
+   followup-21 closeout.
 5. A wider focused diff from followup-21's observation base
    `b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56..origin/dev` contains
    AG-FE-ID-001 followup-21 packet/review, AG-BE-ID-003 followup-11 support,
-   AG-XR-003 followup-13 support, and the AG-XR-002A contract/type refresh. No
-   BFF runtime, OpenAPI route, Agora schema, or AG-FE-ID-001 frontend shell
-   change supersedes the approved followup-21 handoff.
+   AG-XR-003 followup-13/followup-14 support, and the AG-XR-002A contract/type
+   refresh. No BFF runtime, OpenAPI route, Agora schema, or AG-FE-ID-001
+   frontend shell change supersedes the approved followup-21 handoff.
 6. Parent `AG-FE-ID-001` remains `todo`.
 7. Parent dependency `AG-BE-ID-003` remains `blocked`, waiting for `Claude` on
    the servant session type-contract decision.
@@ -81,7 +83,12 @@ not implement the AG-FE-ID-001 shell/client files.
    `AG-XR-002A-SIDECAR-BFF-HANDOFF` support material at `285a6d60`. That
    packet is useful AG-XR context, but it is not an AG-FE-ID-001 runtime or
    frontend shell implementation and does not unblock `AG-BE-ID-003`.
-15. `execute-plans` remote refs were refreshed. `origin/HEAD` still points to
+15. After `285a6d60`, `origin/dev` advanced through
+   `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` support material at
+   `e7d75a11`. That packet refreshes AG-XR-003 acceptance evidence and still
+   keeps execute-plans PR #63/runtime pin/deployment gate disposition as the
+   compatibility blocker.
+16. `execute-plans` remote refs were refreshed. `origin/HEAD` still points to
    `origin/main`, `origin/dev` still exists, and the three parent target files
    remain absent from both checked remote trees: `AgoraApp.tsx`, `identity.ts`,
    and `servant.ts`.
@@ -105,7 +112,8 @@ Status commands used `AI_NAME=Codex2`.
 | `AG-XR-002A` | active `in_progress`; implementation merge `e5f20720` visible on `dev` | Pantheon mirror v1.1 frontend contract/type refresh is present, but task closeout is not recorded and execute-plans PR #63 remains open. |
 | `AG-XR-002A-SIDECAR-BFF-HANDOFF` | active `review`; packet PR #1954 merged at `285a6d60` | Support-only AG-XR handoff context is available, but it does not implement AG-FE-ID-001 shell/client files. |
 | `AG-XR-003` | active row is not `done`; current `next` still keeps compatibility closeout gated | Do not claim strict v1.1 cross-repo compatibility or deployment readiness. |
-| `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13` | archived `done`; PR #1946 / merge `13f864d5` | Latest compatibility support packet kept parent AG-XR-003 blocked; AG-XR-002A updates the manifest/type evidence, but execute-plans PR #63 and deployment gate remain unresolved. |
+| `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13` | archived `done`; PR #1946 / merge `13f864d5` | Previous compatibility support packet kept parent AG-XR-003 blocked before AG-XR-002A refreshed manifest/type evidence. |
+| `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` | active `review`; PR #1956 / merge `e7d75a11` | Latest compatibility support packet says local pending-state sanity is green, but execute-plans PR #63/runtime pin/deployment gate disposition still blocks parent closeout. |
 
 Dependency honesty rule: parent `AG-FE-ID-001` still depends on
 `AG-BE-ID-003`. The frontend may show identity and servant-profile readiness,
@@ -127,18 +135,21 @@ but it must not claim interactive, trainer, or research-task session readiness.
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-002A` | Confirms active task state and validated v1.1 frontend contract refresh commit visible on `dev`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-002A-SIDECAR-BFF-HANDOFF` | Confirms active `review` sidecar state and support-only packet scope. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003` | Confirms AG-XR-003 is not closed and remains gated by frontend/type/deployment disposition. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13` | Confirms latest AG-XR support packet is archived `done` through PR #1946 and preserved the parent blocker before AG-XR-002A refreshed type/hash evidence. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13` | Confirms the previous AG-XR support packet is archived `done` through PR #1946 and preserved the parent blocker before AG-XR-002A refreshed type/hash evidence. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` | Confirms active `review` sidecar state, PR #1956 merge at `e7d75a11`, and unchanged PR #63/runtime pin/deployment gate blocker. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21.md` | Previous approved AG-FE-ID-001 support baseline and closeout notes. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21-REVIEW.md` | Claude's review record for followup-21. |
 | `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11.md` | Latest dependency-side session-gate support packet. |
-| `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13.md` | Latest compatibility-gate support packet. |
-| `git diff --name-only 285a6d6002da982f029d0b8b7447f95f10efc09b..origin/dev -- ...` | Empty output: no checked handoff-path delta after merging current `origin/dev`. |
+| `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13.md` | Previous compatibility-gate support packet. |
+| `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14.md` | Latest compatibility-gate support packet. |
+| `git diff --name-only e7d75a1161545aa0c2f696882e45fc13ff4bdf35..origin/dev -- ...` | Empty output: no checked handoff-path delta after merging current `origin/dev`. |
+| `git diff --name-only 285a6d6002da982f029d0b8b7447f95f10efc09b..origin/dev -- ...` | Shows `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14.md`. |
 | `git diff --name-only 60e3e18c466a0b3b4d28d8a128f28156e42743cd..origin/dev -- support/sidecars/AG-XR-002A ...` | Shows `support/sidecars/AG-XR-002A/AG-XR-002A-SIDECAR-BFF-HANDOFF.md`. |
 | `git diff --name-only e5f20720bc5c0fa7eb1e03972db838eb8098b241..origin/dev -- ...` | Empty output for this checked handoff pathset; the intervening dev change is outside AG-FE-ID-001/BFF/OpenAPI/execute-plans scope. |
 | `git diff --name-only f6b61c6d2046926819adf8bd750865397c8a8f7f..origin/dev -- ...` | Shows the `AG-XR-002A` contract/type refresh: dev compatibility manifest, execute-plans type generation/drift scripts, generated Agora types, and manifest tests. |
 | `git diff --name-only bfb6b1c640db2a19a3ce025aa8d29982b9164a0b..origin/dev -- ...` | Shows the AG-XR-002A contract/type refresh in this checked handoff pathset; the AG-FE-DB-002 support packet is outside this pathset. |
 | `git diff --name-only 7cfa8a4f84c6aced1e4b66c661fd9d7f78779e2c..origin/dev -- ...` | Shows AG-BE-ID-003 followup-11 closeout support plus AG-XR-002A manifest/type-generation/test updates. |
-| `git diff --name-only b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56..origin/dev -- ...` | Shows AG-FE-ID-001 followup-21 packet/review, AG-BE-ID-003 followup-11, AG-XR-003 followup-13, and AG-XR-002A manifest/type-generation/test updates. |
+| `git diff --name-only b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56..origin/dev -- ...` | Shows AG-FE-ID-001 followup-21 packet/review, AG-BE-ID-003 followup-11, AG-XR-003 followup-13/followup-14, and AG-XR-002A manifest/type-generation/test updates. |
 | Target file probes against `/home/lupin/code/execute-plans` `origin/main` and `origin/dev` | Confirms the parent frontend target files are still absent from refreshed frontend remote trees. |
 | Focused BFF/OpenClaw pytest, schema bundle verify, OpenAPI YAML load, and route spot checks | Confirms current BFF identity/servant evidence and frozen bundle remain green. |
 
@@ -149,14 +160,15 @@ but it must not claim interactive, trainer, or research-task session readiness.
 | Change | What changed | Parent implication |
 |---|---|---|
 | FOLLOWUP-21 closed | Archived `done`; packet PR #1945 merged at `97cfbdd5`; closeout PR #1949 merged at `7cfa8a4f`. | Treat FOLLOWUP-21 as accepted support evidence on `dev`. |
-| Current dev base | `origin/dev` is `285a6d60`; this branch merged that dev tip after PR #1955 became behind. | The packet is refreshed against the latest visible `dev` tip. |
-| Post-followup-21 closeout pathset | `7cfa8a4f..origin/dev` over the checked handoff pathset shows AG-BE-ID-003 followup-11 closeout support plus AG-XR-002A manifest/type-generation/test updates. | No post-followup-21 BFF runtime, OpenAPI route, Agora schema, AG-FE-ID-001 support, or AG-FE-ID-001 shell/client file changed. |
-| Current-tip pathset | `285a6d60..origin/dev` over the checked handoff pathset is empty. | No additional visible delta after the branch refresh. |
+| Current dev base | `origin/dev` is `e7d75a11`; this branch merged that dev tip after PR #1955 became behind again. | The packet is refreshed against the latest visible `dev` tip. |
+| Post-followup-21 closeout pathset | `7cfa8a4f..origin/dev` over the checked handoff pathset shows AG-BE-ID-003 followup-11 closeout support, AG-XR-002A manifest/type-generation/test updates, and AG-XR-003 followup-14 support. | No post-followup-21 BFF runtime, OpenAPI route, Agora schema, AG-FE-ID-001 support, or AG-FE-ID-001 shell/client file changed. |
+| Current-tip pathset | `e7d75a11..origin/dev` over the checked handoff pathset is empty. | No additional visible delta after the branch refresh. |
 | Unrelated dev advancement | `bfb6b1c6..f6b61c6d` added `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-12.md` outside this checked handoff pathset. | No AG-FE-ID-001 BFF/frontend implication. |
 | Additional unrelated review | `e5f20720..60e3e18c` added `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-12-REVIEW.md` outside this checked handoff pathset. | No AG-FE-ID-001 BFF/frontend implication. |
 | AG-XR-002A sidecar handoff | `60e3e18c..285a6d60` added `support/sidecars/AG-XR-002A/AG-XR-002A-SIDECAR-BFF-HANDOFF.md`. | Useful AG-XR support context, but no AG-FE-ID-001 runtime/frontend shell implementation. |
+| AG-XR-003 followup-14 | `285a6d60..e7d75a11` added `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14.md`. | Latest AG-XR support keeps deployment readiness gated by execute-plans PR #63/runtime pin/deployment gate disposition. |
 | AG-XR-002A landed | `f6b61c6d..origin/dev` updated `docs/contracts/agora/dev-compatibility-manifest.json`, execute-plans contract generation/drift scripts, generated Agora `types.ts`, and manifest tests. | The previous generated-types hash mismatch is no longer the current local blocker; parent still cannot claim deployment readiness because AG-XR-003 and execute-plans PR #63 remain open/gated. |
-| Wider pathset from followup-21 observation base | `b3b5b1c3..origin/dev` shows AG-FE-ID-001 followup-21 packet/review, AG-BE-ID-003 followup-11, AG-XR-003 followup-13 support, and AG-XR-002A manifest/type-generation/test updates. | The new AG-XR evidence improves local type/hash sanity but preserves the AG-FE-ID-001 session and deployment gates. |
+| Wider pathset from followup-21 observation base | `b3b5b1c3..origin/dev` shows AG-FE-ID-001 followup-21 packet/review, AG-BE-ID-003 followup-11, AG-XR-003 followup-13/followup-14 support, and AG-XR-002A manifest/type-generation/test updates. | The new AG-XR evidence improves local type/hash sanity but preserves the AG-FE-ID-001 session and deployment gates. |
 | AG-BE-ID-003 followup-11 closed | The support artifact is archived `done` through PR #1950 at `bfb6b1c6`. | Supersedes followup-21's temporal note that no artifact existed, but does not unblock sessions. |
 | AG-XR followup-13 closed | Archived `done`; its generated-types hash mismatch note is partly superseded by AG-XR-002A, but PR #63 remains open/unstable. | Compatibility/deployment readiness remains gated. |
 | Execute-plans remote probe | `origin/main` at `7b2f17c4` and `origin/dev` at `7aa49172` still lack `src/agora/AgoraApp.tsx`, `src/lib/bff-v1/agora/identity.ts`, and `src/lib/bff-v1/agora/servant.ts`. | Parent still needs to add the requested shell/client files or open a blocker. |
@@ -372,25 +384,27 @@ Commands and results:
 
 | Command | Result |
 |---|---|
-| `git status -sb` | On `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22`; after fast-forwarding to `origin/dev`, only the task brief and this packet were dirty. |
+| `git status -sb` | On `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22`; after merging current `origin/dev`, only this packet was dirty. |
 | `git branch --show-current` | `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22`. |
 | `git remote -v` | `origin` is `https://github.com/ajoe734/pantheon.git`. |
 | `git fetch origin --prune` | Completed successfully. |
-| `git ls-remote origin refs/heads/dev` | `285a6d6002da982f029d0b8b7447f95f10efc09b`. |
-| `git merge origin/dev --no-edit` | Merged current `origin/dev` after PR #1955 became behind; added support-only `AG-XR-002A-SIDECAR-BFF-HANDOFF.md` from PR #1954. |
-| `git rev-parse HEAD origin/dev` | `HEAD` was merge commit `c9554d9e66f6bfa6cb3a156ef44a2d20b73edca6`; `origin/dev` was `285a6d6002da982f029d0b8b7447f95f10efc09b`. |
-| `git diff --name-only 285a6d6002da982f029d0b8b7447f95f10efc09b..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003 support/sidecars/AG-XR-003 execute-plans scripts/test_agora_compat_manifest.py` | Empty output. |
+| `git ls-remote origin refs/heads/dev` | First returned `285a6d6002da982f029d0b8b7447f95f10efc09b`; after PR #1956 merged, returned `e7d75a1161545aa0c2f696882e45fc13ff4bdf35`. |
+| `git merge origin/dev --no-edit` | Merged current `origin/dev` after PR #1955 became behind; first added support-only `AG-XR-002A-SIDECAR-BFF-HANDOFF.md` from PR #1954, then added support-only `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14.md` from PR #1956. |
+| `git rev-parse HEAD origin/dev` | After the latest merge, `HEAD` was merge commit `860b71533ebb0653ce333ec7ce8b91dd6c914229`; `origin/dev` was `e7d75a1161545aa0c2f696882e45fc13ff4bdf35`. |
+| `git diff --name-only e7d75a1161545aa0c2f696882e45fc13ff4bdf35..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003 support/sidecars/AG-XR-003 execute-plans scripts/test_agora_compat_manifest.py` | Empty output. |
+| `git diff --name-only 285a6d6002da982f029d0b8b7447f95f10efc09b..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003 support/sidecars/AG-XR-003 execute-plans scripts/test_agora_compat_manifest.py` | `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14.md`. |
 | `git diff --name-only 60e3e18c466a0b3b4d28d8a128f28156e42743cd..origin/dev -- support/sidecars/AG-XR-002A` | `support/sidecars/AG-XR-002A/AG-XR-002A-SIDECAR-BFF-HANDOFF.md`. |
 | `git diff --name-only e5f20720bc5c0fa7eb1e03972db838eb8098b241..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003 support/sidecars/AG-XR-003 execute-plans scripts/test_agora_compat_manifest.py` | Empty output for this checked handoff pathset. |
 | `git diff --name-only f6b61c6d2046926819adf8bd750865397c8a8f7f..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003 support/sidecars/AG-XR-003 execute-plans scripts/test_agora_compat_manifest.py` | `docs/contracts/agora/dev-compatibility-manifest.json`; `execute-plans/scripts/contract-drift-check.mjs`; `execute-plans/scripts/generate-agora-types.mjs`; `execute-plans/src/lib/bff-v1/agora/types.ts`; `scripts/test_agora_compat_manifest.py`. |
 | `git diff --name-only 7cfa8a4f84c6aced1e4b66c661fd9d7f78779e2c..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003 support/sidecars/AG-XR-003 execute-plans scripts/test_agora_compat_manifest.py` | `docs/contracts/agora/dev-compatibility-manifest.json`; `execute-plans/scripts/contract-drift-check.mjs`; `execute-plans/scripts/generate-agora-types.mjs`; `execute-plans/src/lib/bff-v1/agora/types.ts`; `scripts/test_agora_compat_manifest.py`; `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11.md`. |
-| `git diff --name-only b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003 support/sidecars/AG-XR-003 execute-plans scripts/test_agora_compat_manifest.py` | `docs/contracts/agora/dev-compatibility-manifest.json`; `execute-plans/scripts/contract-drift-check.mjs`; `execute-plans/scripts/generate-agora-types.mjs`; `execute-plans/src/lib/bff-v1/agora/types.ts`; `scripts/test_agora_compat_manifest.py`; `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11.md`; `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21-REVIEW.md`; `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21.md`; `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13.md`. |
+| `git diff --name-only b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56..origin/dev -- services/control-plane/bff services/control-plane/openapi services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-FE-ID-001 support/sidecars/AG-BE-ID-003 support/sidecars/AG-XR-003 execute-plans scripts/test_agora_compat_manifest.py` | `docs/contracts/agora/dev-compatibility-manifest.json`; `execute-plans/scripts/contract-drift-check.mjs`; `execute-plans/scripts/generate-agora-types.mjs`; `execute-plans/src/lib/bff-v1/agora/types.ts`; `scripts/test_agora_compat_manifest.py`; `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11.md`; `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21-REVIEW.md`; `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21.md`; `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13.md`; `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14.md`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22` | Active `in_progress`, owner `Codex2`, reviewer `Claude`, support-only artifact. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21` | Archived `done`; closeout PR #1949 merged at `7cfa8a4f`; support-only scope remained unchanged. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001` | Parent `todo`, owner `Claude`, reviewer `Codex`, depends on `AG-FE-000` and `AG-BE-ID-003`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003` | Parent dependency still `blocked`, waiting for `Claude`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11` | Archived `done`; closeout PR #1950 merged at `bfb6b1c6`; review notes keep parent AG-BE-ID-003 blocked. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13` | Archived `done`; pre-AG-XR-002A support packet kept parent compatibility gated. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` | Active `review`; support-only followup-14 packet merged in PR #1956 at `e7d75a1161545aa0c2f696882e45fc13ff4bdf35`; parent remains gated on execute-plans PR #63/runtime pin/deployment gate disposition. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-002A` | Active `in_progress`; status notes validated Agora v1.1 frontend contract refresh commit `08b8c96d` visible on `dev`. |
 | `python3 scripts/agora_compat_manifest.py verify --allow-pending --manifest docs/contracts/agora/dev-compatibility-manifest.json` | `ok docs/contracts/agora/dev-compatibility-manifest.json`. |
 | `python3 scripts/agora_compat_manifest.py deployment-gate --manifest docs/contracts/agora/dev-compatibility-manifest.json` | Exit 1; expected fail-closed errors: compatibility status must be compatible, frontend runtime commit is a placeholder, and blocking reasons must be empty. |
@@ -416,14 +430,15 @@ Claude should review this packet as support-only. The review basis is:
 
 1. Followup-21 closed through PR #1949 at `7cfa8a4f`; its packet PR #1945
    merged at `97cfbdd5`.
-2. Current dev base is `285a6d60`, after this task branch merged current
-   `origin/dev` into PR #1955.
+2. Current dev base is `e7d75a11`, after this task branch merged current
+   `origin/dev` into PR #1955 again.
 3. The checked pathset delta after followup-21 closeout is AG-BE-ID-003
    followup-11 closeout support plus AG-XR-002A manifest/type-generation/test
-   updates.
+   updates plus AG-XR-003 followup-14 support.
 4. The checked pathset delta from followup-21's observation base `b3b5b1c3`
    is AG-FE-ID-001 followup-21, AG-BE-ID-003 followup-11, AG-XR-003 followup-13
-   support, plus AG-XR-002A manifest/type-generation/test updates.
+   and followup-14 support, plus AG-XR-002A manifest/type-generation/test
+   updates.
 5. Parent `AG-FE-ID-001` remains `todo`.
 6. `AG-BE-ID-003` remains blocked; `AG-BE-ID-003` followup-11 closeout
    does not unblock session runtime.
@@ -436,12 +451,15 @@ Claude should review this packet as support-only. The review basis is:
    has no AG-FE-ID-001 BFF/frontend implication.
 10. `60e3e18c..285a6d60` is AG-XR-002A sidecar support handoff material and
     has no AG-FE-ID-001 runtime/frontend shell implication.
-11. AG-XR compatibility/deployment readiness remains gated by execute-plans PR
+11. `285a6d60..e7d75a11` is AG-XR-003 followup-14 support material; it keeps
+    compatibility closeout gated on execute-plans PR #63/runtime pin/deployment
+    gate disposition.
+12. AG-XR compatibility/deployment readiness remains gated by execute-plans PR
    #63, which is still open/unstable with integration-gate failure.
-12. Execute-plans target files `AgoraApp.tsx`, `identity.ts`, and `servant.ts`
+13. Execute-plans target files `AgoraApp.tsx`, `identity.ts`, and `servant.ts`
    remain absent from both checked frontend remote trees.
-13. Focused BFF/OpenClaw pytest, schema/OpenAPI checks, manifest verify,
+14. Focused BFF/OpenClaw pytest, schema/OpenAPI checks, manifest verify,
     contract drift, and manifest pytest are green; deployment gate still fails
     closed for pending compatibility.
-14. The packet does not change canonical truth, BFF runtime code, OpenAPI,
+15. The packet does not change canonical truth, BFF runtime code, OpenAPI,
    capability manifests, governance, or frontend source.
