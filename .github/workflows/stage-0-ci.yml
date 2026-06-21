@@ -197,6 +197,7 @@ jobs:
       PANTHEON_FRONTEND_SHA: ${{ github.sha }}
       PANTHEON_BFF_SHA: ${{ github.sha }}
       PANTHEON_RELEASE_GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      PANTHEON_LIVE_EVIDENCE_ENVIRONMENT: ${{ inputs.environment }}
       PANTHEON_BFF_SMOKE_BEARER_TOKEN: ${{ secrets.PANTHEON_BFF_SMOKE_BEARER_TOKEN }}
       PANTHEON_BFF_RBAC_TOKENS_JSON: ${{ secrets.PANTHEON_BFF_RBAC_TOKENS_JSON }}
       PANTHEON_BFF_APPROVAL_RACE_TOKEN_A: ${{ secrets.PANTHEON_BFF_APPROVAL_RACE_TOKEN_A }}
