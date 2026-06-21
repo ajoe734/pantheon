@@ -8,7 +8,7 @@
 | Parent owner / reviewer | `Codex2` / `Claude` |
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-21` |
-| Status | `review_ready` |
+| Status | `review_approved; owner_closeout` |
 | Current dev base | `159ec96b204090ec30b907562fd02f99e3311f63` |
 | Previous sidecar closeout merge | `6a7b391f7fcea6273c8536f357b3b3d563dc86ed` |
 | Previous packet merge | `7169f6b1eafb52474188ae69a4fee8681b2fc6a3` |
@@ -317,3 +317,24 @@ sed -n '1,260p' support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-F
 ```
 
 No runtime tests were run because this sidecar changes only support artifacts.
+
+## 13. Owner Closeout Note
+
+Codex2 approved this sidecar packet as support-only. PR #1940 merged at
+`997644ad1186ee9bbe3913f3e8ea447239a04cf0` with green GitHub checks, and the
+review notes confirm the packet changed only the followup-10 support path after
+the checked `159ec96b` base.
+
+This closeout note does not broaden the handoff. `AG-BE-ID-003` remains
+blocked on the servant session type-contract decision, `AG-FE-ID-001` remains
+gated on the parent runtime/session contract and compatibility disposition,
+and this sidecar still does not change canonical truth or runtime code.
+
+Closeout verification:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10
+gh pr view 1940 --json number,state,headRefName,baseRefName,mergeCommit,url,statusCheckRollup
+git merge-base --is-ancestor 997644ad1186ee9bbe3913f3e8ea447239a04cf0 origin/dev
+git show --stat --oneline --decorate --no-renames 73d6be67
+```
