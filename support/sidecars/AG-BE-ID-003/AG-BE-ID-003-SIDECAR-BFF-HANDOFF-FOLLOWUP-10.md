@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-21` |
 | Status | `review_ready` |
-| Current dev base | `b97af2eeb2ea618cbf6ac76f1263b8532ba769b3` |
+| Current dev base | `519aa95478c74f69813e76ff38d8f0ccc0dc4bba` |
 | Previous sidecar closeout merge | `6a7b391f7fcea6273c8536f357b3b3d563dc86ed` |
 | Previous packet merge | `7169f6b1eafb52474188ae69a4fee8681b2fc6a3` |
 | Mutates canonical truth | `false` |
@@ -26,12 +26,13 @@ Followup 9 is archived `done`. Its support packet PR #1932 merged at
 merged at `6a7b391f7fcea6273c8536f357b3b3d563dc86ed`.
 
 Current `origin/dev` for this followup is
-`b97af2eeb2ea618cbf6ac76f1263b8532ba769b3`. Since the followup-9 closeout
-merge, `dev` advanced through AG-FE-ID-001 followup-19 review and closeout
-support commits. A focused path check from `6a7b391f..origin/dev` shows no
-changes in the BFF, OpenAPI, Agora spec, compatibility manifest,
-AG-BE-ID-003 support path, or execute-plans Agora mirror paths checked for this
-handoff.
+`519aa95478c74f69813e76ff38d8f0ccc0dc4bba`. Since the followup-9 closeout
+merge, `dev` advanced through AG-FE-DB-002 support closeout,
+AG-FE-ID-001 followup-19 review/closeout support commits, and AG-XR-003
+acceptance followup-12 support closeout. A focused path check from
+`6a7b391f..origin/dev` shows no changes in the BFF, OpenAPI, Agora spec,
+compatibility manifest, AG-BE-ID-003 support path, or execute-plans Agora
+mirror paths checked for this handoff.
 
 This packet therefore carries no implementation delta. It refreshes the parent
 and frontend handoff with the latest task state, keeps the parent blocked on
@@ -70,7 +71,8 @@ trainer, or research-task session readiness while `AG-BE-ID-003` is blocked.
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003` | Confirms compatibility manifest/deployment gate remains blocked. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-19` | Confirms latest frontend support packet is archived `done` through closeout PR #1938. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms frontend parent remains `todo` and still depends on `AG-BE-ID-003`. |
-| `git rev-parse origin/dev` and `git rev-parse HEAD` | Confirms this task branch is at current `origin/dev`, `b97af2ee`. |
+| `git rev-parse origin/dev` and `git rev-parse HEAD` | Confirms this task branch is at current `origin/dev`, `519aa954`. |
+| `git log --oneline 6a7b391f..origin/dev` | Shows AG-FE-DB-002, AG-FE-ID-001, and AG-XR-003 support/acceptance closeouts after followup 9. |
 | `git log --oneline 6a7b391f..origin/dev -- ...` | No post-followup-9 commits touched the checked BFF/OpenAPI/Agora/spec/compatibility/AG-BE-ID-003/execute-plans Agora pathset. |
 | `git diff --name-only 6a7b391f..origin/dev -- ...` | Empty for the checked parent handoff pathset. |
 | `git log --oneline 6a7b391f..origin/dev -- support/sidecars/AG-FE-ID-001 ...` | Shows only AG-FE-ID-001 followup-19 review and closeout support commits after followup 9. |
@@ -88,10 +90,10 @@ trainer, or research-task session readiness while `AG-BE-ID-003` is blocked.
 | Change | What changed | Parent implication |
 |---|---|---|
 | Followup 9 closed | Archived `done`; support PR #1932 and closeout PR #1935 are merged. | Treat followup 9 as accepted support evidence. |
-| Dev advanced to `b97af2ee` | AG-FE-ID-001 followup-19 review and closeout support commits landed. | Additional frontend support context landed, but no BFF/runtime/contract/session implementation changed. |
+| Dev advanced to `519aa954` | AG-FE-DB-002 support closeout, AG-FE-ID-001 followup-19 review/closeout, and AG-XR-003 acceptance followup-12 support closeout landed. | Additional support context landed, but no BFF/runtime/contract/session implementation changed in the checked parent pathset. |
 | Checked parent pathset | No diff from `6a7b391f..origin/dev` over BFF, OpenAPI, Agora specs, compatibility manifest, AG-BE-ID-003 support, or execute-plans Agora mirror. | No new evidence unblocks AG-BE-ID-003. |
 | Frontend support state | AG-FE-ID-001 followup-19 says the parent remains `todo`; checked execute-plans target files remain absent from `origin/main` and `origin/dev`. | Frontend remains downstream and must not enable servant-session UI before AG-BE-ID-003 lands. |
-| Cross-repo compatibility | AG-XR-003 remains blocked; dev compatibility manifest remains `pending`. | Strict v1.1 release/readiness claims stay gated. |
+| Cross-repo compatibility | AG-XR-003 remains blocked even after its followup-12 support closeout; dev compatibility manifest remains `pending`. | Strict v1.1 release/readiness claims stay gated. |
 
 ## 5. Contract Decision Request
 
@@ -151,7 +153,7 @@ session clients. It reinforces the downstream gate rather than unblocking it.
 
 ## 7. Current Route Evidence
 
-| Surface | Current observation at dev `b97af2ee` | Readiness impact |
+| Surface | Current observation at dev `519aa954` | Readiness impact |
 |---|---|---|
 | OpenAPI v1.1 | Defines `POST /bff/agora/servant/sessions`, get, messages, terminate, and stream. | Route family exists on paper. |
 | OpenAPI create body | References `ServantSessionCreateRequest`, which lacks a session type field. | Blocks strict create UI and parent implementation review. |
@@ -296,6 +298,7 @@ AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLO
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001
 git rev-parse origin/dev
 git rev-parse HEAD
+git log --oneline 6a7b391f7fcea6273c8536f357b3b3d563dc86ed..origin/dev
 git log --oneline 6a7b391f7fcea6273c8536f357b3b3d563dc86ed..origin/dev -- services/control-plane/openapi services/control-plane/bff services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-BE-ID-003 execute-plans/src/lib/bff-v1/agora
 git diff --name-only 6a7b391f7fcea6273c8536f357b3b3d563dc86ed..origin/dev -- services/control-plane/openapi services/control-plane/bff services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-BE-ID-003 execute-plans/src/lib/bff-v1/agora
 git log --oneline 6a7b391f7fcea6273c8536f357b3b3d563dc86ed..origin/dev -- support/sidecars/AG-FE-ID-001 .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_19.md
