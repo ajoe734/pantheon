@@ -28,6 +28,7 @@ OPENCLAW_ADAPTER_PROVIDER_PATH = "/api/openclaw-adapter/assistant/providers/open
 OPENCLAW_ADAPTER_PROVIDER = "openclaw"
 OPENCLAW_OPS_CLIENT_CLASS = "OpenClawOpsClient"
 FLOW_SCHEMA_VERSION = "persona-openclaw-adapter-backed-flow.v1"
+OODA_ITERATION_SCHEMA_VERSION = "persona-openclaw-adapter-backed-ooda-iteration.v1"
 
 OSS_COMPONENTS = (
     "openclaw",
@@ -320,15 +321,90 @@ def run_openclaw_adapter_backed_persona_flow_validations(
     }
 
 
+def run_openclaw_adapter_backed_ooda_iteration_validations(
+    *,
+    cycle_count: int = 100,
+    episode_id: str = "persona-openclaw-ooda-episode-001",
+    client_factory: ClientFactory | None = None,
+) -> dict[str, Any]:
+    """Run one sequential adapter-backed OODA episode across many feedback cycles."""
+
+    specs = build_openclaw_adapter_backed_specs(case_count=cycle_count)
+    cycles: list[dict[str, Any]] = []
+    previous_cycle: dict[str, Any] | None = None
+    for cycle_no, spec in enumerate(specs, start=1):
+        cycle = run_openclaw_adapter_backed_persona_case(
+            spec,
+            client=_client_for_spec(spec, client_factory=client_factory),
+            episode_id=episode_id,
+            cycle_no=cycle_no,
+            previous_cycle=previous_cycle,
+        )
+        cycles.append(cycle)
+        previous_cycle = cycle
+
+    case_validations = [validate_openclaw_adapter_backed_persona_case(cycle) for cycle in cycles]
+    episode_validation = validate_openclaw_adapter_backed_ooda_episode(
+        {
+            "schema_version": OODA_ITERATION_SCHEMA_VERSION,
+            "episode_id": episode_id,
+            "cycles": cycles,
+        }
+    )
+    covered_related_components = {
+        component
+        for cycle in cycles
+        for component in cycle["triggering_oss_response"]["related_components"]
+    }
+    summary = {
+        "schema_version": OODA_ITERATION_SCHEMA_VERSION,
+        "episode_id": episode_id,
+        "cycle_count": len(cycles),
+        "passed_case_count": sum(1 for item in case_validations if item["passed"]),
+        "episode_passed": episode_validation["passed"],
+        "adapter_invocation_count": sum(
+            1 for cycle in cycles if cycle.get("adapter_exchange", {}).get("invoked") is True
+        ),
+        "provider_response_count": sum(1 for cycle in cycles if cycle.get("provider_response", {}).get("ref")),
+        "iteration_link_count": sum(
+            1
+            for cycle in cycles
+            if cycle.get("ooda_iteration", {}).get("request_consumes_previous_cycle") is True
+        ),
+        "unique_request_hash_count": len(
+            {cycle["adapter_exchange"]["request_hash"] for cycle in cycles}
+        ),
+        "covered_related_components": sorted(covered_related_components),
+        "all_oss_components_covered": set(OSS_COMPONENTS).issubset(covered_related_components),
+    }
+    return {
+        "schema_version": OODA_ITERATION_SCHEMA_VERSION,
+        "summary": summary,
+        "episode_id": episode_id,
+        "cycles": cycles,
+        "case_validations": case_validations,
+        "episode_validation": episode_validation,
+    }
+
+
 def run_openclaw_adapter_backed_persona_case(
     spec: AdapterBackedPersonaFlowSpec,
     *,
     client: AssistantProviderClient | None = None,
+    episode_id: str | None = None,
+    cycle_no: int | None = None,
+    previous_cycle: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one adapter-backed case and return the full persona decision record."""
 
     provider_client = client or _client_for_spec(spec, client_factory=None)
-    persona_request = _persona_request_for_spec(spec)
+    iteration_context = _iteration_context_for_spec(
+        spec,
+        episode_id=episode_id,
+        cycle_no=cycle_no,
+        previous_cycle=previous_cycle,
+    )
+    persona_request = _persona_request_for_spec(spec, iteration_context=iteration_context)
     adapter_body = _adapter_body_for_persona_request(persona_request)
     request_hash = stable_json_hash(adapter_body)
     persona_request["adapter_request_hash"] = request_hash
@@ -409,6 +485,7 @@ def run_openclaw_adapter_backed_persona_case(
             "realistic_trigger": spec.scenario.realistic_trigger,
         },
         "alpha_seed": _seed_to_dict(spec.seed),
+        "ooda_iteration": iteration_context,
         "validation_plan": _validation_plan(spec),
         "persona_request": persona_request,
         "adapter_exchange": adapter_exchange,
@@ -421,6 +498,172 @@ def run_openclaw_adapter_backed_persona_case(
     }
     case["validation"] = validate_openclaw_adapter_backed_persona_case(case)
     return case
+
+
+def validate_openclaw_adapter_backed_ooda_episode(episode: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate that sequential OODA cycles consume the previous cycle's response."""
+
+    errors: list[str] = []
+    cycles = episode.get("cycles")
+    if not isinstance(cycles, list) or not cycles:
+        return {
+            "episode_id": str(episode.get("episode_id") or ""),
+            "passed": False,
+            "errors": ["episode.cycles are required"],
+        }
+
+    episode_id = str(episode.get("episode_id") or "")
+    request_hashes: set[str] = set()
+    for index, cycle in enumerate(cycles):
+        if not isinstance(cycle, Mapping):
+            errors.append(f"cycle {index + 1} must be a mapping")
+            continue
+        case_validation = validate_openclaw_adapter_backed_persona_case(cycle)
+        if not case_validation["passed"]:
+            errors.extend(f"{cycle.get('case_id')}: {error}" for error in case_validation["errors"])
+
+        iteration = _mapping(cycle.get("ooda_iteration"))
+        persona_request = _mapping(cycle.get("persona_request"))
+        context_pack = _mapping(persona_request.get("context_pack"))
+        adapter_body = _mapping(_mapping(cycle.get("adapter_exchange")).get("body"))
+        adapter_context = _mapping(adapter_body.get("context_pack"))
+        metadata = _mapping(adapter_body.get("metadata"))
+        provider = _mapping(cycle.get("provider_response"))
+        decision_trace = _mapping(cycle.get("decision_trace"))
+        ooda = _mapping(decision_trace.get("ooda"))
+        observe = _mapping(ooda.get("observe"))
+        orient = _mapping(ooda.get("orient"))
+        decide = _mapping(ooda.get("decide"))
+        act = _mapping(ooda.get("act"))
+        reasoning = _mapping(cycle.get("persona_reasoning"))
+        generation = _mapping(cycle.get("candidate_generation"))
+        selected = _mapping(decision_trace.get("selected_candidate"))
+        request_hash = str(_mapping(cycle.get("adapter_exchange")).get("request_hash") or "")
+        if request_hash:
+            request_hashes.add(request_hash)
+
+        _require(iteration.get("episode_id") == episode_id, errors, f"{cycle.get('case_id')}: episode_id mismatch")
+        _require(
+            iteration.get("cycle_no") == index + 1,
+            errors,
+            f"{cycle.get('case_id')}: ooda_iteration.cycle_no must be sequential",
+        )
+        _require(
+            provider.get("ref") in _strings(act.get("evidence_refs")),
+            errors,
+            f"{cycle.get('case_id')}: OODA act evidence_refs must include current provider response",
+        )
+
+        context_iteration = _mapping(context_pack.get("ooda_iteration"))
+        adapter_context_iteration = _mapping(adapter_context.get("ooda_iteration"))
+        _require(
+            context_iteration == iteration,
+            errors,
+            f"{cycle.get('case_id')}: persona context_pack must carry the OODA iteration context",
+        )
+        _require(
+            adapter_context_iteration == iteration,
+            errors,
+            f"{cycle.get('case_id')}: adapter context_pack must carry the OODA iteration context",
+        )
+        _require(
+            metadata.get("ooda_episode_id") == episode_id,
+            errors,
+            f"{cycle.get('case_id')}: adapter metadata must include ooda_episode_id",
+        )
+        _require(
+            metadata.get("ooda_cycle_no") == index + 1,
+            errors,
+            f"{cycle.get('case_id')}: adapter metadata must include ooda_cycle_no",
+        )
+
+        if index == 0:
+            _require(
+                iteration.get("request_consumes_previous_cycle") is False,
+                errors,
+                f"{cycle.get('case_id')}: first cycle must not claim previous-cycle consumption",
+            )
+            _require(
+                not iteration.get("previous_provider_response_ref"),
+                errors,
+                f"{cycle.get('case_id')}: first cycle must not have previous provider response",
+            )
+            continue
+
+        previous = cycles[index - 1]
+        if not isinstance(previous, Mapping):
+            continue
+        previous_decision = _mapping(previous.get("decision_trace"))
+        previous_ooda = _mapping(previous_decision.get("ooda"))
+        previous_act = _mapping(previous_ooda.get("act"))
+        previous_provider_ref = str(_mapping(previous.get("provider_response")).get("ref") or "")
+        previous_decision_ref = str(previous_decision.get("trace_ref") or "")
+        previous_action_ref = str(previous_act.get("handoff_ref") or "")
+        previous_action = str(previous_act.get("next_action") or "")
+        carry_refs = {
+            previous_provider_ref,
+            previous_decision_ref,
+            previous_action_ref,
+        }
+        _require(
+            iteration.get("request_consumes_previous_cycle") is True,
+            errors,
+            f"{cycle.get('case_id')}: cycle must consume previous cycle",
+        )
+        _require(
+            iteration.get("previous_provider_response_ref") == previous_provider_ref,
+            errors,
+            f"{cycle.get('case_id')}: previous provider response ref was not carried forward",
+        )
+        _require(
+            iteration.get("previous_decision_trace_ref") == previous_decision_ref,
+            errors,
+            f"{cycle.get('case_id')}: previous decision trace ref was not carried forward",
+        )
+        _require(
+            iteration.get("previous_action_ref") == previous_action_ref,
+            errors,
+            f"{cycle.get('case_id')}: previous action ref was not carried forward",
+        )
+        _require(
+            iteration.get("previous_selected_action") == previous_action,
+            errors,
+            f"{cycle.get('case_id')}: previous selected action was not carried forward",
+        )
+
+        consumed_refs = set(_strings(context_pack.get("source_refs")))
+        consumed_refs.update(_strings(_mapping(observe.get("feedback_from_previous_cycle")).get("input_refs")))
+        consumed_refs.update(_strings(orient.get("input_refs")))
+        consumed_refs.update(_strings(decide.get("evidence_refs")))
+        consumed_refs.update(_strings(reasoning.get("input_refs")))
+        consumed_refs.update(_strings(generation.get("input_refs")))
+        consumed_refs.update(_strings(selected.get("evidence_refs")))
+        _require(
+            carry_refs.issubset(consumed_refs),
+            errors,
+            f"{cycle.get('case_id')}: next OODA cycle must consume previous response, decision, and action refs",
+        )
+        _require(
+            metadata.get("previous_provider_response_ref") == previous_provider_ref,
+            errors,
+            f"{cycle.get('case_id')}: adapter metadata must carry previous provider response",
+        )
+        _require(
+            metadata.get("previous_action_ref") == previous_action_ref,
+            errors,
+            f"{cycle.get('case_id')}: adapter metadata must carry previous action ref",
+        )
+
+    _require(
+        len(request_hashes) == len(cycles),
+        errors,
+        "every OODA cycle must have a distinct adapter request hash",
+    )
+    return {
+        "episode_id": episode_id,
+        "passed": not errors,
+        "errors": errors,
+    }
 
 
 def validate_openclaw_adapter_backed_persona_case(case: Mapping[str, Any]) -> dict[str, Any]:
@@ -584,16 +827,23 @@ def _client_for_spec(
     return client_class()
 
 
-def _persona_request_for_spec(spec: AdapterBackedPersonaFlowSpec) -> dict[str, Any]:
+def _persona_request_for_spec(
+    spec: AdapterBackedPersonaFlowSpec,
+    *,
+    iteration_context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     seed = spec.seed
+    iteration = _mapping(iteration_context)
     operator_id = f"operator-{seed.key}-{spec.case_no:03d}"
     trace_id = f"trace-{spec.case_id}"
     triggering_oss_ref = f"oss://{spec.scenario.primary_component}/{spec.case_id}"
     alpha_seed_ref = f"alpha-seed://{seed.key}"
+    carryover_refs = _strings(iteration.get("carryover_refs"))
     context_pack = {
         "context_pack_id": f"ctx-{spec.case_id}",
         "persona_id": "persona-alpha",
         "case_id": spec.case_id,
+        "ooda_iteration": iteration,
         "ooda_phase": spec.depth.ooda_phase,
         "depth_id": spec.depth.depth_id,
         "validation_focus": spec.depth.validation_focus,
@@ -608,16 +858,32 @@ def _persona_request_for_spec(spec: AdapterBackedPersonaFlowSpec) -> dict[str, A
             seed.evidence_path,
             *seed.source_dataset_refs,
             triggering_oss_ref,
+            *carryover_refs,
         ],
         "requested_persona_work": spec.depth.expected_persona_work,
         "validation_plan": _validation_plan(spec),
     }
+    if iteration.get("request_consumes_previous_cycle"):
+        context_pack["previous_cycle_feedback"] = {
+            "previous_provider_response_ref": iteration.get("previous_provider_response_ref"),
+            "previous_decision_trace_ref": iteration.get("previous_decision_trace_ref"),
+            "previous_action_ref": iteration.get("previous_action_ref"),
+            "previous_selected_action": iteration.get("previous_selected_action"),
+            "required_next_ooda_step": "observe_previous_feedback_then_orient",
+        }
     prompt = (
         f"Persona persona-alpha case {spec.case_no:03d}: route this request through OpenClaw. "
         f"Use alpha seed {seed.key} ({seed.strategy_id}) and OSS trigger "
         f"{spec.scenario.primary_component}. Depth={spec.depth.depth_id}. "
         f"Return a decision-ready next action for {spec.scenario.decision_action}."
     )
+    if iteration.get("request_consumes_previous_cycle"):
+        prompt = (
+            f"{prompt} Continue OODA episode {iteration.get('episode_id')} cycle "
+            f"{iteration.get('cycle_no')} by consuming previous provider response "
+            f"{iteration.get('previous_provider_response_ref')} and previous action "
+            f"{iteration.get('previous_selected_action')}."
+        )
     metadata = {
         "validation_family": FLOW_SCHEMA_VERSION,
         "case_id": spec.case_id,
@@ -629,6 +895,11 @@ def _persona_request_for_spec(spec: AdapterBackedPersonaFlowSpec) -> dict[str, A
         "related_components": list(spec.scenario.related_components),
         "depth_id": spec.depth.depth_id,
         "scenario_id": spec.scenario.scenario_id,
+        "ooda_episode_id": iteration.get("episode_id"),
+        "ooda_cycle_no": iteration.get("cycle_no"),
+        "request_consumes_previous_cycle": iteration.get("request_consumes_previous_cycle") is True,
+        "previous_provider_response_ref": iteration.get("previous_provider_response_ref"),
+        "previous_action_ref": iteration.get("previous_action_ref"),
     }
     return {
         "request_ref": f"persona-request://{spec.case_id}",
@@ -643,7 +914,7 @@ def _persona_request_for_spec(spec: AdapterBackedPersonaFlowSpec) -> dict[str, A
             {
                 "role": "user",
                 "content": prompt,
-                "refs": [alpha_seed_ref, triggering_oss_ref],
+                "refs": [alpha_seed_ref, triggering_oss_ref, *carryover_refs],
             }
         ],
         "attachments": [
@@ -655,6 +926,53 @@ def _persona_request_for_spec(spec: AdapterBackedPersonaFlowSpec) -> dict[str, A
         ],
     }
 
+
+def _iteration_context_for_spec(
+    spec: AdapterBackedPersonaFlowSpec,
+    *,
+    episode_id: str | None,
+    cycle_no: int | None,
+    previous_cycle: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    resolved_episode_id = episode_id or f"single-cycle-{spec.case_id}"
+    resolved_cycle_no = int(cycle_no or 1)
+    context: dict[str, Any] = {
+        "episode_id": resolved_episode_id,
+        "cycle_no": resolved_cycle_no,
+        "case_id": spec.case_id,
+        "request_consumes_previous_cycle": False,
+        "previous_case_id": None,
+        "previous_provider_response_ref": None,
+        "previous_decision_trace_ref": None,
+        "previous_action_ref": None,
+        "previous_selected_action": None,
+        "carryover_refs": [],
+    }
+    if not previous_cycle:
+        return context
+
+    previous_decision = _mapping(previous_cycle.get("decision_trace"))
+    previous_ooda = _mapping(previous_decision.get("ooda"))
+    previous_act = _mapping(previous_ooda.get("act"))
+    previous_provider_ref = str(_mapping(previous_cycle.get("provider_response")).get("ref") or "")
+    previous_decision_ref = str(previous_decision.get("trace_ref") or "")
+    previous_action_ref = str(previous_act.get("handoff_ref") or "")
+    context.update(
+        {
+            "request_consumes_previous_cycle": True,
+            "previous_case_id": previous_cycle.get("case_id"),
+            "previous_provider_response_ref": previous_provider_ref,
+            "previous_decision_trace_ref": previous_decision_ref,
+            "previous_action_ref": previous_action_ref,
+            "previous_selected_action": previous_act.get("next_action"),
+            "carryover_refs": [
+                previous_provider_ref,
+                previous_decision_ref,
+                previous_action_ref,
+            ],
+        }
+    )
+    return context
 
 def _adapter_body_for_persona_request(persona_request: Mapping[str, Any]) -> dict[str, Any]:
     return {
@@ -766,6 +1084,8 @@ def _persona_reasoning(
         triggering_oss_response["response_ref"],
         f"alpha-seed://{spec.seed.key}",
     ]
+    input_refs.extend(_strings(_mapping(persona_request.get("context_pack")).get("source_refs")))
+    input_refs = list(dict.fromkeys(input_refs))
     return {
         "reasoning_ref": f"persona-reasoning://{spec.case_id}",
         "model": "persona-alpha-openclaw-response-consumer",
@@ -798,6 +1118,8 @@ def _candidate_generation(
         alpha_seed_ref,
         oss_ref,
     ]
+    input_refs.extend(_strings(_mapping(persona_request.get("context_pack")).get("source_refs")))
+    input_refs = list(dict.fromkeys(input_refs))
     actions = (
         spec.scenario.decision_action,
         f"deepen_{spec.scenario.primary_component}_evidence",
@@ -885,13 +1207,17 @@ def _decision_trace(
         if candidate["candidate_id"] == selected_id
     )
     provider_ref = provider_response["ref"]
+    iteration = _mapping(_mapping(persona_request.get("context_pack")).get("ooda_iteration"))
+    carryover_refs = _strings(iteration.get("carryover_refs"))
     evidence_refs = [
         provider_ref,
         triggering_oss_response["response_ref"],
         f"alpha-seed://{spec.seed.key}",
         candidate_generation["generation_ref"],
         scorer["scorer_ref"],
+        *carryover_refs,
     ]
+    selected["evidence_refs"] = list(dict.fromkeys([*selected.get("evidence_refs", []), *carryover_refs]))
     return {
         "trace_ref": f"persona-decision-trace://{spec.case_id}",
         "adapter_backed": True,
@@ -904,15 +1230,20 @@ def _decision_trace(
             "triggering_oss_response_ref": triggering_oss_response["response_ref"],
             "candidate_generation_ref": candidate_generation["generation_ref"],
             "scorer_ref": scorer["scorer_ref"],
+            "previous_cycle_refs": carryover_refs,
         },
         "ooda": {
             "observe": {
                 "request_ref": persona_request["request_ref"],
                 "response_ref": provider_ref,
                 "triggering_oss_response_ref": triggering_oss_response["response_ref"],
+                "feedback_from_previous_cycle": {
+                    "consumed": bool(carryover_refs),
+                    "input_refs": carryover_refs,
+                },
             },
             "orient": {
-                "input_refs": [provider_ref, triggering_oss_response["response_ref"]],
+                "input_refs": [provider_ref, triggering_oss_response["response_ref"], *carryover_refs],
                 "output_ref": f"persona-orient://{spec.case_id}",
             },
             "decide": {
@@ -925,6 +1256,7 @@ def _decision_trace(
                 "next_action": selected["action"],
                 "handoff_ref": f"persona-next-action://{spec.case_id}/{selected['action']}",
                 "evidence_refs": evidence_refs,
+                "produces_next_observe_refs": [provider_ref, f"persona-decision-trace://{spec.case_id}"],
             },
         },
     }

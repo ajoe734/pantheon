@@ -37,6 +37,8 @@ REQUIRED_INPUT_NAMES = (
     "TWO_MAN_RACE_ID",
     "SOAK_SECONDS",
 )
+DEFAULT_REPOSITORY = "ajoe734/pantheon"
+DEFAULT_WORKFLOW_NAME = "Pantheon Stage 0 CI"
 
 
 def utc_now() -> str:
@@ -175,6 +177,51 @@ def inspect_approval_race_tokens(token_a: str, token_b: str) -> tuple[dict[str, 
     }, invalid
 
 
+def workflow_repository() -> str:
+    return os.environ.get("GITHUB_REPOSITORY", "").strip() or DEFAULT_REPOSITORY
+
+
+def live_evidence_environment() -> str:
+    return os.environ.get("PANTHEON_LIVE_EVIDENCE_ENVIRONMENT", "").strip() or "dev"
+
+
+def build_operator_remediation(missing: list[str], invalid: list[dict[str, str]], args: argparse.Namespace) -> dict[str, Any]:
+    repository = workflow_repository()
+    environment = live_evidence_environment()
+    secret_names = list(REQUIRED_SECRET_ENV_VARS)
+    return {
+        "github_environment": environment,
+        "repository": repository,
+        "required_secret_names": secret_names,
+        "missing_secret_names": [name for name in missing if name in REQUIRED_SECRET_ENV_VARS],
+        "missing_workflow_inputs": [name for name in missing if name in REQUIRED_INPUT_NAMES],
+        "invalid_inputs": invalid,
+        "secret_set_commands": [
+            f"gh secret set {name} --repo {repository} --env {environment} < /secure/path/{name}.txt"
+            for name in secret_names
+        ],
+        "workflow_dispatch": {
+            "recommended_workflow": DEFAULT_WORKFLOW_NAME,
+            "mode": "live-evidence",
+            "environment": environment,
+            "run_command_template": (
+                f"gh workflow run \"{DEFAULT_WORKFLOW_NAME}\" --repo {repository} --ref dev "
+                f"-f mode=live-evidence -f environment={environment} "
+                f"-f bff_base_url={args.base_url.strip() or '<bff-base-url>'} "
+                "-f approval_race_id=<expendable-approval-id> "
+                "-f two_man_race_id=<expendable-intervention-id> "
+                f"-f soak_seconds={args.soak_seconds.strip() or '75'}"
+            ),
+        },
+        "notes": [
+            "Set secrets on the selected GitHub environment, not only at repository scope.",
+            "PANTHEON_BFF_RBAC_TOKENS_JSON must include viewer, operator, reviewer, approver, admin, empty, and unknown labels.",
+            "Use expendable approval/intervention ids for live race probes.",
+            "Do not write bearer token values into artifacts, issues, logs, or workflow inputs.",
+        ],
+    }
+
+
 def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     required = [*REQUIRED_SECRET_ENV_VARS, *REQUIRED_INPUT_NAMES]
     present_map = {
@@ -198,11 +245,13 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     ]
     invalid.extend(rbac_invalid)
     invalid.extend(approval_race_invalid)
+    remediation = build_operator_remediation(missing, invalid, args)
 
     return {
         "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
         "strict_live_evidence_preflight": True,
         "generated_at": utc_now(),
+        "github_environment": remediation["github_environment"],
         "target_url": args.base_url.strip(),
         "approval_race_id_present": present(args.approval_race_id),
         "two_man_race_id_present": present(args.two_man_race_id),
@@ -216,6 +265,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "present": present_map,
         "missing": missing,
         "invalid": invalid,
+        "operator_remediation": remediation,
         "output_scope": ".lovable/audits/current-run",
         "secret_values_written": False,
     }

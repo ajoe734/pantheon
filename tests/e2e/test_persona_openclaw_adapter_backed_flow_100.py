@@ -12,14 +12,17 @@ from unittest import mock
 
 from services.persona.openclaw_adapter_backed_flow import (
     FLOW_SCHEMA_VERSION,
+    OODA_ITERATION_SCHEMA_VERSION,
     OPENCLAW_ADAPTER_PROVIDER_PATH,
     OSS_COMPONENTS,
     assert_openclaw_adapter_backed_persona_case,
     build_openclaw_adapter_backed_specs,
     load_openclaw_ops_client_class,
+    run_openclaw_adapter_backed_ooda_iteration_validations,
     run_openclaw_adapter_backed_persona_case,
     run_openclaw_adapter_backed_persona_flow_validations,
     stable_json_hash,
+    validate_openclaw_adapter_backed_ooda_episode,
     validate_openclaw_adapter_backed_persona_case,
 )
 
@@ -358,6 +361,180 @@ def test_100_adapter_backed_persona_openclaw_cases_are_distinct_and_usable() -> 
         text = evidence.read_text(encoding="utf-8")
         for anchor in seed["anchors"]:
             assert anchor in text
+
+
+def test_100_adapter_backed_persona_openclaw_ooda_cycles_iterate_response_to_next_request() -> None:
+    calls: list[dict[str, Any]] = []
+    provider_calls: list[dict[str, Any]] = []
+    episode_id = "persona-openclaw-ooda-iteration-e2e"
+    load_openclaw_ops_client_class()
+    adapter_main = _load_adapter_main()
+
+    with mock.patch.object(
+        adapter_main._OPENCLAW_AGENT_PROVIDER.__class__,
+        "invoke",
+        _fake_provider_invoke(provider_calls),
+    ):
+        with mock.patch(
+            "openclaw_ops_client.urllib.request.urlopen",
+            _adapter_route_backed_openclaw_transport(calls),
+        ):
+            run = run_openclaw_adapter_backed_ooda_iteration_validations(
+                cycle_count=100,
+                episode_id=episode_id,
+                client_factory=lambda _spec: _client_factory(),
+            )
+
+    summary = run["summary"]
+    assert summary["schema_version"] == OODA_ITERATION_SCHEMA_VERSION
+    assert summary["episode_id"] == episode_id
+    assert summary["cycle_count"] == 100
+    assert summary["passed_case_count"] == 100
+    assert summary["episode_passed"] is True
+    assert summary["adapter_invocation_count"] == 100
+    assert summary["provider_response_count"] == 100
+    assert summary["iteration_link_count"] == 99
+    assert summary["unique_request_hash_count"] == 100
+    assert summary["all_oss_components_covered"] is True
+    assert set(OSS_COMPONENTS).issubset(set(summary["covered_related_components"]))
+    assert len(calls) == 100
+    assert len(provider_calls) == 100
+    assert all(call["adapter_route_executed"] is True for call in calls)
+    assert all(call["adapter_route_status_code"] == 200 for call in calls)
+
+    cycles = run["cycles"]
+    required_ooda_stages = {"observe", "orient", "decide", "act"}
+    for index, cycle in enumerate(cycles):
+        assert_openclaw_adapter_backed_persona_case(cycle)
+        assert required_ooda_stages.issubset(set(cycle["decision_trace"]["ooda"]))
+        assert cycle["ooda_iteration"]["episode_id"] == episode_id
+        assert cycle["ooda_iteration"]["cycle_no"] == index + 1
+        assert calls[index]["body"]["context_pack"]["ooda_iteration"] == cycle["ooda_iteration"]
+        assert calls[index]["body"]["metadata"]["ooda_episode_id"] == episode_id
+        assert calls[index]["body"]["metadata"]["ooda_cycle_no"] == index + 1
+        assert provider_calls[index]["metadata"]["ooda_episode_id"] == episode_id
+        assert provider_calls[index]["metadata"]["ooda_cycle_no"] == index + 1
+
+        if index == 0:
+            assert cycle["ooda_iteration"]["request_consumes_previous_cycle"] is False
+            assert cycle["decision_trace"]["ooda"]["observe"]["feedback_from_previous_cycle"]["consumed"] is False
+            continue
+
+        previous = cycles[index - 1]
+        previous_provider_ref = previous["provider_response"]["ref"]
+        previous_decision_ref = previous["decision_trace"]["trace_ref"]
+        previous_act = previous["decision_trace"]["ooda"]["act"]
+        previous_action_ref = previous_act["handoff_ref"]
+        expected_carryover_refs = {
+            previous_provider_ref,
+            previous_decision_ref,
+            previous_action_ref,
+        }
+        iteration = cycle["ooda_iteration"]
+        assert iteration["request_consumes_previous_cycle"] is True
+        assert iteration["previous_case_id"] == previous["case_id"]
+        assert iteration["previous_provider_response_ref"] == previous_provider_ref
+        assert iteration["previous_decision_trace_ref"] == previous_decision_ref
+        assert iteration["previous_action_ref"] == previous_action_ref
+        assert iteration["previous_selected_action"] == previous_act["next_action"]
+        assert set(iteration["carryover_refs"]) == expected_carryover_refs
+
+        assert previous_provider_ref in calls[index]["body"]["prompt"]
+        assert previous_provider_ref in calls[index]["body"]["context_pack"]["source_refs"]
+        assert calls[index]["body"]["metadata"]["previous_provider_response_ref"] == previous_provider_ref
+        assert calls[index]["body"]["metadata"]["previous_action_ref"] == previous_action_ref
+        assert provider_calls[index]["metadata"]["previous_provider_response_ref"] == previous_provider_ref
+        assert provider_calls[index]["metadata"]["previous_action_ref"] == previous_action_ref
+
+        assert previous_provider_ref in cycle["persona_reasoning"]["input_refs"]
+        assert previous_provider_ref in cycle["candidate_generation"]["input_refs"]
+        assert previous_provider_ref in cycle["decision_trace"]["selected_candidate"]["evidence_refs"]
+        assert previous_provider_ref in cycle["decision_trace"]["evidence_refs"]
+        assert previous_provider_ref in cycle["decision_trace"]["decision_inputs"]["previous_cycle_refs"]
+        assert cycle["decision_trace"]["ooda"]["observe"]["feedback_from_previous_cycle"]["consumed"] is True
+        assert previous_provider_ref in cycle["decision_trace"]["ooda"]["observe"]["feedback_from_previous_cycle"]["input_refs"]
+        assert previous_provider_ref in cycle["decision_trace"]["ooda"]["orient"]["input_refs"]
+        assert previous_provider_ref in cycle["decision_trace"]["ooda"]["decide"]["evidence_refs"]
+        assert previous_provider_ref in cycle["decision_trace"]["ooda"]["act"]["evidence_refs"]
+        assert calls[index]["request_hash"] != calls[index - 1]["request_hash"]
+
+    assert run["episode_validation"]["passed"] is True
+
+
+def test_ooda_episode_fails_when_next_cycle_does_not_consume_previous_response() -> None:
+    calls: list[dict[str, Any]] = []
+    provider_calls: list[dict[str, Any]] = []
+    load_openclaw_ops_client_class()
+    adapter_main = _load_adapter_main()
+
+    with mock.patch.object(
+        adapter_main._OPENCLAW_AGENT_PROVIDER.__class__,
+        "invoke",
+        _fake_provider_invoke(provider_calls),
+    ):
+        with mock.patch(
+            "openclaw_ops_client.urllib.request.urlopen",
+            _adapter_route_backed_openclaw_transport(calls),
+        ):
+            run = run_openclaw_adapter_backed_ooda_iteration_validations(
+                cycle_count=3,
+                episode_id="persona-openclaw-ooda-broken-link",
+                client_factory=lambda _spec: _client_factory(),
+            )
+
+    assert run["episode_validation"]["passed"] is True
+    assert len(calls) == 3
+    assert len(provider_calls) == 3
+
+    broken = json.loads(
+        json.dumps(
+            {
+                "schema_version": run["schema_version"],
+                "episode_id": run["episode_id"],
+                "cycles": run["cycles"],
+            }
+        )
+    )
+    previous_provider_ref = broken["cycles"][0]["provider_response"]["ref"]
+    next_cycle = broken["cycles"][1]
+
+    def remove_ref(values: list[str]) -> list[str]:
+        return [value for value in values if value != previous_provider_ref]
+
+    next_cycle["persona_request"]["context_pack"]["source_refs"] = remove_ref(
+        next_cycle["persona_request"]["context_pack"]["source_refs"]
+    )
+    next_cycle["adapter_exchange"]["body"]["context_pack"]["source_refs"] = remove_ref(
+        next_cycle["adapter_exchange"]["body"]["context_pack"]["source_refs"]
+    )
+    next_cycle["persona_reasoning"]["input_refs"] = remove_ref(next_cycle["persona_reasoning"]["input_refs"])
+    next_cycle["candidate_generation"]["input_refs"] = remove_ref(
+        next_cycle["candidate_generation"]["input_refs"]
+    )
+    next_cycle["decision_trace"]["selected_candidate"]["evidence_refs"] = remove_ref(
+        next_cycle["decision_trace"]["selected_candidate"]["evidence_refs"]
+    )
+    next_cycle["decision_trace"]["evidence_refs"] = remove_ref(next_cycle["decision_trace"]["evidence_refs"])
+    next_cycle["decision_trace"]["decision_inputs"]["previous_cycle_refs"] = remove_ref(
+        next_cycle["decision_trace"]["decision_inputs"]["previous_cycle_refs"]
+    )
+    next_cycle["decision_trace"]["ooda"]["observe"]["feedback_from_previous_cycle"]["input_refs"] = remove_ref(
+        next_cycle["decision_trace"]["ooda"]["observe"]["feedback_from_previous_cycle"]["input_refs"]
+    )
+    next_cycle["decision_trace"]["ooda"]["orient"]["input_refs"] = remove_ref(
+        next_cycle["decision_trace"]["ooda"]["orient"]["input_refs"]
+    )
+    next_cycle["decision_trace"]["ooda"]["decide"]["evidence_refs"] = remove_ref(
+        next_cycle["decision_trace"]["ooda"]["decide"]["evidence_refs"]
+    )
+    next_cycle["decision_trace"]["ooda"]["act"]["evidence_refs"] = remove_ref(
+        next_cycle["decision_trace"]["ooda"]["act"]["evidence_refs"]
+    )
+
+    validation = validate_openclaw_adapter_backed_ooda_episode(broken)
+
+    assert validation["passed"] is False
+    assert any("next OODA cycle must consume previous response" in error for error in validation["errors"])
 
 
 def test_hardcoded_openclaw_artifact_without_adapter_invocation_fails() -> None:

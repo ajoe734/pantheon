@@ -616,6 +616,122 @@ def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path
     assert ".lovable/audits/historical" not in json.dumps(summary)
 
 
+def test_release_gate_surfaces_live_preflight_remediation_when_strict_probes_do_not_run(tmp_path: Path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("node is required to execute aggregate-release-gate.mjs")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "execute-plans" / "scripts" / "aggregate-release-gate.mjs"
+    current_run = tmp_path / ".lovable" / "audits" / "current-run"
+    current_run.mkdir(parents=True)
+    (current_run / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
+                "strict_live_evidence_preflight": True,
+                "github_environment": "dev",
+                "target_url": "https://bff.example.test",
+                "missing": [
+                    "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+                    "PANTHEON_BFF_RBAC_TOKENS_JSON",
+                    "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A",
+                    "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B",
+                    "APPROVAL_RACE_ID",
+                    "TWO_MAN_RACE_ID",
+                ],
+                "invalid": [],
+                "operator_remediation": {
+                    "github_environment": "dev",
+                    "repository": "ajoe734/pantheon",
+                    "missing_secret_names": [
+                        "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+                        "PANTHEON_BFF_RBAC_TOKENS_JSON",
+                        "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A",
+                        "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B",
+                    ],
+                    "missing_workflow_inputs": ["APPROVAL_RACE_ID", "TWO_MAN_RACE_ID"],
+                    "secret_set_commands": [
+                        "gh secret set PANTHEON_BFF_SMOKE_BEARER_TOKEN --repo ajoe734/pantheon --env dev < /secure/path/PANTHEON_BFF_SMOKE_BEARER_TOKEN.txt",
+                        "gh secret set PANTHEON_BFF_RBAC_TOKENS_JSON --repo ajoe734/pantheon --env dev < /secure/path/PANTHEON_BFF_RBAC_TOKENS_JSON.txt",
+                        "gh secret set PANTHEON_BFF_APPROVAL_RACE_TOKEN_A --repo ajoe734/pantheon --env dev < /secure/path/PANTHEON_BFF_APPROVAL_RACE_TOKEN_A.txt",
+                        "gh secret set PANTHEON_BFF_APPROVAL_RACE_TOKEN_B --repo ajoe734/pantheon --env dev < /secure/path/PANTHEON_BFF_APPROVAL_RACE_TOKEN_B.txt",
+                    ],
+                    "workflow_dispatch": {
+                        "recommended_workflow": "Pantheon Stage 0 CI",
+                        "mode": "live-evidence",
+                        "environment": "dev",
+                    },
+                },
+                "secret_values_written": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {
+            "PANTHEON_AUDIT_OUT_DIR",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_OUT",
+            "PANTHEON_RELEASE_GATE_CHECKLIST_TEMPLATE",
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+            "BFF_AUTH_TOKEN",
+            "PANTHEON_TEST_OIDC_PATH",
+        }
+    }
+    env.update(
+        {
+            "PANTHEON_FRONTEND_SHA": "f" * 40,
+            "PANTHEON_BFF_SHA": "b" * 40,
+            "PANTHEON_BFF_BASE_URL": "https://bff.example.test",
+            "PANTHEON_RELEASE_GATE_RUN_URL": "https://github.example/run/1",
+        }
+    )
+
+    result = subprocess.run(
+        ["node", str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout
+
+    summary = json.loads((current_run / "release-gate-summary.json").read_text(encoding="utf-8"))
+    gate0 = summary["gates"]["0"]
+    gate3 = summary["gates"]["3"]
+    auth_check = next(
+        check
+        for check in gate0
+        if check["label"] == "Auth token or test OIDC path available for authenticated smoke."
+    )
+    rbac_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict bearer RBAC matrix evidence passed."
+    )
+    sse_check = next(
+        check
+        for check in gate3
+        if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
+    )
+
+    assert auth_check["status"] == "fail"
+    assert rbac_check["status"] == "fail"
+    assert sse_check["status"] == "fail"
+    assert auth_check["evidence"].endswith("BFF-LIVE-EVIDENCE-PREFLIGHT.json")
+    assert rbac_check["evidence"].endswith("BFF-LIVE-EVIDENCE-PREFLIGHT.json")
+    assert "strict live preflight failed" in auth_check["note"]
+    assert "missingSecrets:PANTHEON_BFF_SMOKE_BEARER_TOKEN" in auth_check["note"]
+    assert "missingInputs:APPROVAL_RACE_ID,TWO_MAN_RACE_ID" in rbac_check["note"]
+    assert "environment:dev" in sse_check["note"]
+    assert "workflow:Pantheon Stage 0 CI" in sse_check["note"]
+    assert "remediationCommands:4" in sse_check["note"]
+    assert "smoke-secret" not in json.dumps(summary)
+
+
 def test_integration_gate_uploads_only_current_run_audits() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workflow = repo_root / "execute-plans" / ".github" / "workflows" / "pantheon-integration-gate.yml"
@@ -1165,6 +1281,7 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "name: BFF Live Evidence Gate" in text
     assert "workflow_dispatch" in text
     assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
+    assert "PANTHEON_LIVE_EVIDENCE_ENVIRONMENT: ${{ inputs.environment }}" in text
     assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in text
     assert "PANTHEON_BFF_RBAC_TOKENS_JSON" in text
     assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A" in text
@@ -1208,6 +1325,7 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "github.event_name == 'workflow_dispatch' && inputs.mode == 'live-evidence'" in text
     assert "github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence'" in text
     assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
+    assert "PANTHEON_LIVE_EVIDENCE_ENVIRONMENT: ${{ inputs.environment }}" in text
     assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in text
     assert "PANTHEON_BFF_RBAC_TOKENS_JSON" in text
     assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A" in text
