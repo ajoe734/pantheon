@@ -56,3 +56,10 @@ Task-scoped commit (`a42ebff4`) already present on the task branch. This finaliz
 | Task no longer strands in review_approved | ✓ Parent task in `review` (not review_approved); PR merged so auto-integrator can reconcile |
 | Closeout brief updated with finalization record | ✓ This file |
 | PR #2131 CI all green and auto-merge enabled | ✓ All 8 checks SUCCESS, auto-merge enabled |
+
+## Parent Task Status
+
+Parent task `INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF`:
+- Current status: `review` (waiting for Claude to approve)
+- Next action: Claude approves → Claude2 marks done
+- PR #2129 merged: the integration blocker is resolved
