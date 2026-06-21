@@ -9,7 +9,7 @@
 **Sidecar owner:** `Claude`
 **Sidecar reviewer:** `Claude2`
 **Generated:** `2026-06-21`
-**Status:** `draft; pending Claude2 review`
+**Status:** `approved by Claude2 (2026-06-21); ready for parent reviewer of AG-DES-CARD-001`
 
 > **Scope notice.** This packet is a support artifact only.
 > It does not modify canonical truth (L1 policy, OpenAPI contracts, schemas, or service implementations).
