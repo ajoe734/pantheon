@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-21` |
 | Status | `in_progress; packet ready for reviewer handoff after PR merge` |
-| Current dev base | `994dce7df17cc71a65abd516d0371d871b44141a` |
+| Current dev base | `5c67f2855f0daf11655e9bec06bbfa78cddc43aa` |
 | Previous AG-FE-ID-001 sidecar closeout merge | `a93a26b980757ca96ebd6d76979f2a8409495c67` |
 | Previous AG-FE-ID-001 packet PR | `#1955` merged at `a2d16e4c2758c7efc8e75be6da3fbd063eab364d` |
 | Previous AG-FE-ID-001 closeout PR | `#1977` merged at `a93a26b980757ca96ebd6d76979f2a8409495c67` |
@@ -19,6 +19,7 @@
 | Latest unrelated dev refresh | `a9347b7a942e17da05ac13d31c74cf64cdf3feea` updated AG-DES-SW-PRIV sidecar review support text |
 | Latest GitHub behind refresh | `fe6136c80b20ae57d525191db0120a845b62d2a7` added Management/release-gate upload-path test coverage outside this handoff scope |
 | Latest BFF runtime refresh | `994dce7df17cc71a65abd516d0371d871b44141a` updated Management `nl/ask` async context/audit handling outside `/bff/agora/*` servant-session routes |
+| AG-XR-OPENAPI-002 closeout | PR `#1985` merged at `5c67f2855f0daf11655e9bec06bbfa78cddc43aa`; task archived `done` |
 | Execute-plans refs checked | `origin/main` at `7b2f17c4dee8dcafe62c2295504df03aed0ae16e`; `origin/dev` at `7aa4917272212452fe5e4dc99bf2d76fe48eacfd` |
 | Mutates canonical truth | `false` |
 
@@ -68,7 +69,7 @@ Status commands used `AI_NAME=Codex`.
 | `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12` | archived `done`; PR `#1964`, closeout PR `#1980` merged | New dependency-side support packet reinforces the same type-contract blocker. |
 | `AG-XR-003` | archived `done` | Pantheon-side manifest gate work is closed; deployment readiness still requires the separate execute-plans/runtime-pin follow-through recorded in review material. |
 | `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` | archived `done`; PR `#1976` merged | Latest support evidence says local sanity is green, while PR `#63` and frontend runtime pin remain open risks. |
-| `AG-XR-OPENAPI-002` | active `review`; owner `Codex`, reviewer `Claude2`; PR `#1983` merged | Additive v1.2 OpenAPI/bundle work is awaiting review and is not parent AG-FE-ID-001 shell/client completion. |
+| `AG-XR-OPENAPI-002` | archived `done`; PR `#1983` implementation and PR `#1985` closeout merged | Additive v1.2 OpenAPI/bundle work is accepted, but it is not parent AG-FE-ID-001 shell/client completion. |
 | `AG-XR-OPENAPI-002-SIDECAR-REVIEW` | active `in_progress`; owner `Antigravity`, reviewer `Codex` | Separate review-support packet for AG-XR-OPENAPI-002; not an AG-FE-ID-001 artifact. |
 
 Dependency honesty rule: `AG-FE-ID-001` may continue to use identity,
@@ -87,8 +88,9 @@ claim interactive, trainer, or research-task session readiness while
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12` | Confirms dependency-side support packet is archived `done` but keeps the parent blocker unchanged. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003` | Confirms AG-XR-003 is archived `done`; use its archive/review packet for terminal truth. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` | Confirms followup-14 is archived `done` after Claude review and owner closeout. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002` | Confirms additive v1.2 OpenAPI/bundle work is active `review` after PR `#1983` merged. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002` | Confirms additive v1.2 OpenAPI/bundle work is archived `done` after PR `#1985` merged. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-002-SIDECAR-REVIEW` | Confirms separate AG-XR-OPENAPI-002 review-support sidecar is active `in_progress`. |
+| `.orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md` | Confirms Claude2 approved the additive v1.2 bundle; frozen v1/v1.1 files untouched and 5/5 tests passed. |
 | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22.md` | Previous AG-FE-ID-001 support baseline. |
 | `support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-12.md` | Latest dependency-side servant-session type-contract blocker packet. |
 | `support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-REVIEW.md` | Consolidated AG-XR-003 review/lifecycle summary after parent closeout. |
@@ -118,6 +120,7 @@ merged into `dev` at `a93a26b980757ca96ebd6d76979f2a8409495c67`.
 | AG-DES-SW-PRIV review followup refreshed | `dffa0ee5..a9347b7a` updates AG-DES-SW-PRIV sidecar review support text only. | No AG-FE-ID-001 BFF/frontend handoff implication in the checked pathset. |
 | Management upload-path refresh landed | `a9347b7a..fe6136c8` adds `scripts/test_release_gate_current_run.py`. | No AG-FE-ID-001 BFF/frontend handoff implication in the checked pathset. |
 | Management `nl/ask` async refresh landed | `fe6136c8..994dce7d` changes `services/control-plane/bff/main.py` inside `bff_management_nl_ask` context/audit handling. | BFF runtime changed, but outside the `/bff/agora/*` identity/servant/session handoff route family. |
+| AG-XR-OPENAPI-002 closed | `994dce7d..5c67f285` adds the AG-XR-OPENAPI-002 task brief and Claude2 review artifact. | v1.2 bundle is accepted support context, but still not an AG-FE-ID-001 frontend shell/client implementation. |
 | v1.2 servant-session create shape checked | `ServantSessionCreateRequest` in v1.2 still lacks a public session type field, matching v1.1. | AG-BE-ID-003 type-contract blocker remains. |
 | AG-BE-ID-003 followup-12 closed | Closeout PR `#1980` merged at `ff92e8cb`; task archive says parent AG-BE-ID-003 remains blocked. | Reinforces that frontend session controls must stay disabled. |
 | AG-DES-SW-PRIV support material landed | Private-content design/task/support updates landed in task briefs. | No direct AG-FE-ID-001 shell/client implementation impact. |
@@ -268,6 +271,7 @@ Commands and results:
 | `git merge --ff-only origin/dev` after latest fetch | Fast-forwarded the task branch to current `origin/dev` at `a9347b7a`; the new diff only touched AG-DES-SW-PRIV sidecar review support text. |
 | `git merge origin/dev --no-edit` after PR `#1986` reported `BEHIND` | Merged current `origin/dev` at `fe6136c8`; the new checked diff only added `scripts/test_release_gate_current_run.py` outside this handoff scope. |
 | `git merge origin/dev --no-edit` after PR `#1986` again reported `BEHIND` | Merged current `origin/dev` at `994dce7d`; focused diff shows Management `nl/ask` async context/audit handling only. |
+| `git merge origin/dev --no-edit` after PR `#1986` again reported `BEHIND` | Merged current `origin/dev` at `5c67f285`; new checked files are AG-XR-OPENAPI-002 task brief/review closeout evidence. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-23` | Active `in_progress`, owner `Codex`, reviewer `Claude`, support-only artifact path. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001` | Parent `todo`; depends on `AG-FE-000` and `AG-BE-ID-003`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003` | Dependency remains `blocked`, waiting for `Claude`. |
@@ -305,16 +309,16 @@ Claude should review this packet as support-only. The review basis is:
 
 1. Followup-22 is archived `done` through packet PR `#1955` and closeout PR
    `#1977`.
-2. Current `origin/dev` is `994dce7d`.
+2. Current `origin/dev` is `5c67f285`.
 3. New dependency-side support (`AG-BE-ID-003` followup-12) is archived `done`
    and explicitly leaves the parent `AG-BE-ID-003` blocker unchanged.
 4. AG-XR-003 is archived `done`, but execute-plans PR `#63` remains
    `OPEN`/`UNSTABLE` and the committed manifest still has a placeholder
    frontend runtime commit.
 5. Additive v1.2 Strategy Workshop/private-content/storage/capability material
-   from AG-XR-OPENAPI-002 is in review and is not an AG-FE-ID-001 shell/client
-   implementation; it also does not solve the servant-session type-contract
-   decision.
+   from AG-XR-OPENAPI-002 is now archived `done` and is useful support
+   context, but it is not an AG-FE-ID-001 shell/client implementation and does
+   not solve the servant-session type-contract decision.
 6. The parent frontend target files remain absent from checked execute-plans
    remote trees.
 7. Focused BFF/OpenClaw pytest, schema/OpenAPI checks, manifest verify,
