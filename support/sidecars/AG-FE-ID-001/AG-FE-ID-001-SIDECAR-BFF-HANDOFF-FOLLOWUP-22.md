@@ -8,8 +8,11 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-21` |
-| Status | `in_progress; ready for sidecar review after packet PR merge` |
+| Status | `review_approved; owner closeout finalization pending PR merge` |
 | Packet observation base | `270340d3471bf14d6cb5d12f47328c30c2ca45d3` |
+| Packet PR | `#1955` merged at `a2d16e4c2758c7efc8e75be6da3fbd063eab364d` |
+| Review artifact | `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22-REVIEW.md` |
+| Review commit | `1ef8af6a801ba7a8c9431462f92a2c8afeff4510` |
 | Previous AG-FE-ID-001 sidecar closeout merge | `7cfa8a4f84c6aced1e4b66c661fd9d7f78779e2c` |
 | Previous AG-FE-ID-001 sidecar packet merge | `97cfbdd5037a2cbe20143f24c2775954824e275a` |
 | Previous AG-FE-ID-001 sidecar closeout commit | `971b84aefabe9b9d843aa08baafeefd85a89714b` |
@@ -510,3 +513,38 @@ Claude should review this packet as support-only. The review basis is:
     closed for pending compatibility.
 19. The packet does not change canonical truth, BFF runtime code, OpenAPI,
    capability manifests, governance, or frontend source.
+
+## 14. Owner Closeout Finalization
+
+Claude approved this support-only packet in
+`support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22-REVIEW.md`.
+The packet PR `#1955` is already merged into `dev` at
+`a2d16e4c2758c7efc8e75be6da3fbd063eab364d`; the review artifact commit
+`1ef8af6a801ba7a8c9431462f92a2c8afeff4510` is the review-approved state being
+carried into the owner closeout PR.
+
+Closeout scope remains support-only. This finalization updates the task-scoped
+packet and generated task brief only; it does not change L1 canonical truth,
+BFF runtime code, OpenAPI, Agora schemas, capability manifests, governance,
+OpenClaw adapter code, database migrations, route registries, or execute-plans
+source.
+
+Focused owner closeout checks:
+
+| Command | Result |
+|---|---|
+| `git status -sb` | On `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22`; task-owned closeout docs only. |
+| `git branch --show-current` | `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22`. |
+| `git remote -v` | `origin` is `https://github.com/ajoe734/pantheon.git`. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22` | Active `review_approved`, owner `Codex2`, reviewer `Claude`, support-only artifact and review file recorded. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001` | Parent remains `todo`; owner `Claude`, reviewer `Codex`, still depends on `AG-FE-000` and `AG-BE-ID-003`. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003` | Dependency remains `blocked`, waiting for `Claude`. |
+| `git diff --check` | Passed with no output. |
+
+After the owner closeout PR merges, run the required final state transition:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh done AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22 "<message>"
+```
+
+The task must not be considered `done` before that merge.
