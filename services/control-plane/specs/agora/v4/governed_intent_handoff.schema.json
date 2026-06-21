@@ -1,0 +1,228 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/governed_intent_handoff/v1",
+  "title": "GovernedIntentHandoff",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "handoff_id",
+    "intent_id",
+    "requested_stage",
+    "handoff_type",
+    "state",
+    "strategy_id",
+    "strategy_spec_registry_id",
+    "requested_by",
+    "evidence_refs",
+    "no_order_route_proof",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "handoff_id": {
+      "type": "string"
+    },
+    "intent_id": {
+      "type": "string"
+    },
+    "decision_event_id": {
+      "type": "string"
+    },
+    "requested_stage": {
+      "type": "string",
+      "enum": [
+        "shadow",
+        "paper",
+        "canary",
+        "live"
+      ]
+    },
+    "handoff_type": {
+      "type": "string",
+      "enum": [
+        "shadow_start",
+        "paper_validation_request",
+        "promotion_review_request"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "submitted",
+        "accepted",
+        "rejected",
+        "expired",
+        "withdrawn",
+        "converted"
+      ]
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "strategy_spec_registry_id": {
+      "type": "string"
+    },
+    "requested_by": {
+      "$ref": "#/definitions/actor"
+    },
+    "target_queue": {
+      "type": "string",
+      "enum": [
+        "shadow_research",
+        "management_governance",
+        "promotion_review"
+      ]
+    },
+    "required_gate_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "action_proposal": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "enter",
+            "add",
+            "reduce",
+            "exit",
+            "review"
+          ]
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "size_hint": {
+          "type": "string"
+        },
+        "portfolio_pct": {
+          "type": "number"
+        },
+        "non_binding": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "risk_summary": {
+      "type": "string"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/evidence_ref"
+      }
+    },
+    "management_handoff_ref": {
+      "type": "string"
+    },
+    "deployment_plan_ref": {
+      "type": "string"
+    },
+    "runtime_binding_ref": {
+      "type": "string"
+    },
+    "no_order_route_proof": {
+      "type": "string",
+      "enum": [
+        "agora_request_only_no_order_route"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "definitions": {
+    "actor": {
+      "type": "object",
+      "required": [
+        "actor_type",
+        "actor_ref"
+      ],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": [
+            "trader",
+            "agora_servant",
+            "institutional_persona",
+            "system"
+          ]
+        },
+        "actor_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_ref": {
+      "type": "object",
+      "required": [
+        "ref_type",
+        "ref_id"
+      ],
+      "properties": {
+        "ref_type": {
+          "type": "string",
+          "enum": [
+            "evidence_bundle",
+            "evidence_item",
+            "source_record",
+            "citation",
+            "experiment_artifact",
+            "registry_entry",
+            "consult_memo",
+            "research_run",
+            "telemetry_snapshot",
+            "market_context"
+          ]
+        },
+        "ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "data_cutoff": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
