@@ -9,12 +9,13 @@
 | Sidecar owner / reviewer | Codex2 / Claude |
 | Date | 2026-06-21 |
 | Mutates canonical truth | false |
-| Status | Ready for reviewer handoff |
+| Status | Reviewer approved; owner closeout refresh |
 
-This is a support-only follow-up packet. It does not modify L1 canonical truth,
-runtime code, registry/governance implementation, OpenAPI bundles, database
-migrations, or the parent task branch. The parent owner decides whether and how
-to use this packet during `AG-DES-SW-PRIV-001` finalization.
+This is a support-only follow-up packet. It was reviewer-approved by Claude and
+this closeout refresh updates the merge facts after both the sidecar packet PR
+and the parent task PR landed. It does not modify L1 canonical truth, runtime
+code, registry/governance implementation, OpenAPI bundles, database migrations,
+or the parent task branch.
 
 ---
 
@@ -22,22 +23,24 @@ to use this packet during `AG-DES-SW-PRIV-001` finalization.
 
 | Surface | State observed | Evidence |
 |---|---|---|
-| Parent task status | `review_approved` in centralized `ai-status.json` | Owner `Claude`, reviewer `Codex`; next action is owner closeout. |
-| Parent branch | `origin/task/AG-DES-SW-PRIV-001` at `26420cef` | Three commits ahead of current `origin/dev`: `24d36481`, `ad583335`, `26420cef`. |
-| Current `origin/dev` | Does not yet contain `services/control-plane/privacy/` | Current dev tip observed at `7271174c`; parent branch is still unmerged. |
-| Existing sidecars | Acceptance and review support packets already merged to dev | `AG-DES-SW-PRIV-001-SIDECAR-ACCEPTANCE.md`, `AG-DES-SW-PRIV-001-SIDECAR-REVIEW.md`. |
-| This sidecar | Support packet only | This file is the deliverable; no canonical/runtime edits. |
+| Parent PR | Merged to `dev` via PR #1979 at `539e41841e6d9fab11dd18e00aa7bcd8e3da14ba` | `gh pr view 1979` reports `MERGED` at 2026-06-21T04:28:48Z with required checks successful. |
+| Parent files on `origin/dev` | `services/control-plane/privacy/` and the two private-content v3 schemas are present | `git ls-tree -r --name-only origin/dev ...` lists the privacy package and schema files. |
+| This sidecar PR | Merged to `dev` via PR #1981 at `548cdaf55b68025977823c20ed71eae2d5a694f1` | `gh pr view task/AG-DES-SW-PRIV-001-SIDECAR-REVIEW-FOLLOWUP-2` reports `MERGED` at 2026-06-21T04:26:59Z with required checks successful. |
+| Existing sidecars | Acceptance, review, and follow-up support packets are support-only records | `AG-DES-SW-PRIV-001-SIDECAR-ACCEPTANCE.md`, `AG-DES-SW-PRIV-001-SIDECAR-REVIEW.md`, and this file. |
+| Status record caveat | The checked-out `ai-status.json` and `origin/dev:ai-status.json` do not contain this sidecar task id | `jq '.tasks[] | select(.id=="AG-DES-SW-PRIV-001-SIDECAR-REVIEW-FOLLOWUP-2")'` returned no object. |
+| This closeout refresh | Support packet and task brief only | No canonical/runtime files are in scope. |
 
-Important distinction: the parent branch contains the private-content contract
-artifacts, but current `origin/dev` does not until the parent PR merges. Do not
-treat the parent task as delivered to dev before owner closeout and merge.
+Important distinction: the earlier reviewer-handoff snapshot was taken before
+the parent PR merge. As of this owner closeout refresh, the parent
+private-content contract files are on `origin/dev`; the parent PR merge, not
+this sidecar, is the delivery event for those files.
 
 ---
 
-## 2. Parent Branch Evidence Summary
+## 2. Parent Branch / Dev Evidence Summary
 
-`git diff --stat origin/dev...origin/task/AG-DES-SW-PRIV-001` shows nine added
-files and 1291 insertions:
+`git show --stat --oneline 539e4184` shows the parent PR merge added nine files
+and 1291 insertions:
 
 | File | Purpose |
 |---|---|
@@ -51,8 +54,8 @@ files and 1291 insertions:
 | `services/control-plane/specs/agora/v3/private_content_ref.schema.json` | `pcnt_<ULID>` opaque ref schema. |
 | `services/control-plane/specs/agora/v3/workshop_storage_contract.schema.json` | Storage, redaction, encryption envelope, audit, write-sequence, DB row, and error-code contract schema. |
 
-No frozen v1 or v1.1 bundle files appear in the parent branch diff. The parent
-branch does not modify `agora_v1.openapi.yaml`, `agora_v1_1.openapi.yaml`,
+No frozen v1 or v1.1 bundle files appear in the parent merge diff. The parent
+merge does not modify `agora_v1.openapi.yaml`, `agora_v1_1.openapi.yaml`,
 `bundle_index.json`, or `bundle_index.v1_1.json`.
 
 ---
@@ -84,7 +87,7 @@ KMS provisioning remains an ops dependency called out in the parent code.
 ## 4. Reviewer Fix Already Applied
 
 Codex reviewed parent commit `24d36481` and fixed one concrete issue in
-`ad583335`:
+`ad583335`; the merged parent PR includes this reviewer fix:
 
 - The dev/test DEK wrapping path was not invertible; `_encrypt_content()` then
   `_decrypt_content()` failed with `cryptography.exceptions.InvalidTag`.
@@ -106,9 +109,10 @@ task branch.
 
 ## 5. Verification Record
 
-This sidecar did not rerun parent branch tests in the current worktree because
-current `origin/dev` does not contain the parent privacy files. It verified the
-parent branch by read-only git inspection.
+The original sidecar handoff verified the parent branch by read-only git
+inspection because `origin/dev` did not yet contain the parent privacy files.
+At this owner closeout refresh, both relevant PRs have merged, so the current
+verification focus is merge truth and sidecar boundary truth.
 
 Parent reviewer recorded these commands as passing on the parent branch:
 
@@ -122,7 +126,7 @@ python3 -m py_compile services/control-plane/privacy/private_content_models.py s
 Reviewer-recorded result: 7 privacy contract tests passed; both v3 schemas
 parsed; the privacy Python files compiled.
 
-This sidecar also checked:
+This sidecar also checked during the original handoff:
 
 ```bash
 git diff --name-status origin/dev...origin/task/AG-DES-SW-PRIV-001
@@ -133,24 +137,45 @@ The first command shows only the nine parent task files listed in section 2.
 The second command returned no matches, supporting the frozen-bundle non-change
 claim.
 
+Owner closeout refresh checked:
+
+```bash
+gh pr view 1979 --json number,state,mergedAt,mergeCommit,url,headRefName,baseRefName,statusCheckRollup
+gh pr view task/AG-DES-SW-PRIV-001-SIDECAR-REVIEW-FOLLOWUP-2 --json number,state,mergedAt,mergeCommit,url,headRefName,baseRefName,isDraft,autoMergeRequest,reviewDecision,statusCheckRollup
+git show --stat --oneline --decorate 539e4184
+git diff --name-status 548cdaf5..539e4184
+git ls-tree -r --name-only origin/dev services/control-plane/privacy services/control-plane/specs/agora/v3/private_content_ref.schema.json services/control-plane/specs/agora/v3/workshop_storage_contract.schema.json
+git show origin/dev:services/control-plane/specs/agora/v3/private_content_ref.schema.json | python3 -m json.tool >/dev/null
+git show origin/dev:services/control-plane/specs/agora/v3/workshop_storage_contract.schema.json | python3 -m json.tool >/dev/null
+git show origin/dev:ai-status.json | jq '.tasks[] | select(.id=="AG-DES-SW-PRIV-001-SIDECAR-REVIEW-FOLLOWUP-2")'
+```
+
+Results: PR #1979 and PR #1981 are merged with required checks successful;
+`origin/dev` contains the parent privacy files; the parent merge diff is the
+nine-file contract surface listed above; both private-content schema blobs on
+`origin/dev` parse as JSON; and this sidecar task id is absent from the
+checked-out status file and from `origin/dev:ai-status.json`.
+
 ---
 
 ## 6. Handoff to Claude
 
-Requested sidecar review outcome: approve this packet if it accurately captures
-the parent branch evidence and keeps the sidecar boundary support-only.
+Claude approved this sidecar for owner closeout. The closeout responsibility is
+now limited to making this support artifact durable and attempting the normal
+`done` status transition after the closeout PR merges.
 
 Recommended parent closeout use:
 
-1. During `AG-DES-SW-PRIV-001` finalization, confirm parent branch tip
-   `26420cef` still includes reviewer fix `ad583335`.
-2. Confirm the parent PR merge is the event that brings `services/control-plane/privacy/`
-   and the two private-content v3 schemas into `dev`.
-3. Keep `AG-BE-SW-001` blocked until all required design artifacts for the
-   SW-001 bundle are merged, not merely review-approved.
-4. Treat production KMS provisioning, real object-store persistence, and runtime
+1. Treat parent PR #1979 merge commit `539e4184` as the event that brought
+   `services/control-plane/privacy/` and the two private-content v3 schemas into
+   `dev`.
+2. Keep `AG-BE-SW-001` gated on all required SW-001 design artifacts being
+   merged, not merely review-approved.
+3. Treat production KMS provisioning, real object-store persistence, and runtime
    BFF wiring as downstream implementation/ops work, not as delivered by this
    design sidecar.
+4. Do not use this sidecar by itself as evidence that canonical runtime behavior
+   changed; it is only a review packet and evidence summary.
 
 ---
 
@@ -158,7 +183,7 @@ Recommended parent closeout use:
 
 This sidecar does not:
 
-- approve or merge `AG-DES-SW-PRIV-001`;
+- approve or merge `AG-DES-SW-PRIV-001`; that happened separately via PR #1979;
 - change parent task status;
 - modify parent branch files;
 - modify frozen v1/v1.1 OpenAPI or bundle indexes;
