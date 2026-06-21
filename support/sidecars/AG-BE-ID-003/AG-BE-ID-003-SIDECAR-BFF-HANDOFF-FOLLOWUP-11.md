@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-21` |
 | Status | `in_progress; ready for sidecar review after packet PR merge` |
-| Current dev base | `97cfbdd5037a2cbe20143f24c2775954824e275a` |
+| Current dev base | `a9b66f6a36817743d7fcd9e28f750093c1a3220f` |
 | Previous sidecar closeout merge | `c009f0a5774a81af0686b3a6e4eda21881918e0e` |
 | Previous packet merge | `997644ad1186ee9bbe3913f3e8ea447239a04cf0` |
 | Mutates canonical truth | `false` |
@@ -26,10 +26,11 @@ Followup 10 is archived `done`. Its packet PR #1940 merged at
 merged at `c009f0a5774a81af0686b3a6e4eda21881918e0e`.
 
 Current `origin/dev` for this followup is
-`97cfbdd5037a2cbe20143f24c2775954824e275a`. Since the followup-10 closeout,
+`a9b66f6a36817743d7fcd9e28f750093c1a3220f`. Since the followup-10 closeout,
 `dev` advanced only through `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20`
 review/closeout support material and `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21`
-packet support material. A focused path check from
+packet support material, plus unrelated `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-11`
+support material. A focused path check from
 `c009f0a5..origin/dev` shows no changes in the BFF, OpenAPI, Agora specs,
 compatibility manifest, AG-BE-ID-003 support path, or execute-plans Agora
 mirror paths checked for this handoff.
@@ -37,7 +38,8 @@ mirror paths checked for this handoff.
 This packet therefore carries no implementation delta. It refreshes the parent
 and frontend handoff with the latest task state, records that the downstream
 frontend followup-20 packet is archived `done`, records that followup-21 is a
-support-only frontend review packet, and keeps parent
+support-only frontend review packet, records that the AG-FE-DB-002 followup has
+no session-facade implication, and keeps parent
 `AG-BE-ID-003` blocked on the servant session type-contract decision.
 
 This packet does not approve, reopen, or implement parent `AG-BE-ID-003`.
@@ -79,8 +81,8 @@ trainer, or research-task session readiness while `AG-BE-ID-003` is blocked.
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20` | Confirms latest frontend support packet is archived `done` through PR #1944. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-21` | Confirms latest frontend support packet is in `review`, with PR #1945 merged and no runtime/OpenAPI/frontend source delta. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms frontend parent remains `todo` and still depends on `AG-BE-ID-003`. |
-| `git rev-parse origin/dev` and `git rev-parse HEAD` | Confirms this task branch was refreshed against current `origin/dev`, `97cfbdd5`. |
-| `git log --oneline c009f0a5..origin/dev` | Shows only AG-FE-ID-001 followup-20 review/closeout material and followup-21 packet material after followup 10 closeout. |
+| `git rev-parse origin/dev` and `git rev-parse HEAD` | Confirms this task branch was refreshed against current `origin/dev`, `a9b66f6a`. |
+| `git log --oneline c009f0a5..origin/dev` | Shows only AG-FE-ID-001 followup-20 review/closeout material, followup-21 packet material, and unrelated AG-FE-DB-002 followup-11 support material after followup 10 closeout. |
 | `git log --oneline c009f0a5..origin/dev -- ...` | No post-followup-10 commits touched the checked BFF/OpenAPI/Agora/spec/compatibility/AG-BE-ID-003/execute-plans Agora pathset. |
 | `git diff --name-only c009f0a5..origin/dev -- ...` | Empty for the checked parent handoff pathset. |
 | `git log --oneline c009f0a5..origin/dev -- support/sidecars/AG-FE-ID-001 ...` | Shows AG-FE-ID-001 followup-20 review/closeout support commits and followup-21 support packet after followup 10. |
@@ -97,9 +99,10 @@ trainer, or research-task session readiness while `AG-BE-ID-003` is blocked.
 | Change | What changed | Parent implication |
 |---|---|---|
 | Followup 10 closed | Archived `done`; packet PR #1940 and closeout PR #1943 are merged. | Treat followup 10 as accepted support evidence. |
-| Dev advanced to `97cfbdd5` | AG-FE-ID-001 followup-20 review/closeout and followup-21 packet support material landed. | Additional frontend support context landed, but no BFF/runtime/contract/session implementation changed in the checked parent pathset. |
+| Dev advanced to `a9b66f6a` | AG-FE-ID-001 followup-20 review/closeout, followup-21 packet support material, and unrelated AG-FE-DB-002 followup-11 support material landed. | Additional support context landed, but no BFF/runtime/contract/session implementation changed in the checked parent pathset. |
 | Checked parent pathset | No diff from `c009f0a5..origin/dev` over BFF, OpenAPI, Agora specs, compatibility manifest, AG-BE-ID-003 support, or execute-plans Agora mirror. | No new evidence unblocks AG-BE-ID-003. |
 | Frontend support state | AG-FE-ID-001 followup-20 is archived `done`; followup-21 is in `review`; parent `AG-FE-ID-001` remains `todo`. | Frontend remains downstream and must not enable servant-session UI before AG-BE-ID-003 lands. |
+| Unrelated FE DB support | AG-FE-DB-002 followup-11 landed as support-only acceptance material. | No AG-BE-ID-003 BFF/session or AG-FE-ID-001 session handoff implication. |
 | Followup-20 temporal note | That FE packet was written while AG-BE-ID-003 followup-10 was in `review`; current status root now archives followup-10 as `done`. | This packet supersedes that narrow status detail but not the dependency gate. |
 | Followup-21 temporal note | That FE packet says AG-BE-ID-003 followup-11 was active under `Antigravity` with no artifact. Current status root now has followup-11 owned by `Codex`, and this packet is the artifact. | This packet supersedes that narrow sidecar-status detail; it still does not unblock the parent. |
 | Cross-repo compatibility | AG-XR-003 remains blocked; dev compatibility manifest remains `pending`. | Strict v1.1 release/readiness claims stay gated. |
@@ -163,7 +166,7 @@ than unblocking it.
 
 ## 7. Current Route Evidence
 
-| Surface | Current observation at dev `97cfbdd5` | Readiness impact |
+| Surface | Current observation at dev `a9b66f6a` | Readiness impact |
 |---|---|---|
 | OpenAPI v1.1 | Defines `POST /bff/agora/servant/sessions`, get, messages, terminate, and stream. | Route family exists on paper. |
 | OpenAPI create body | References `ServantSessionCreateRequest`, which lacks a session type field. | Blocks strict create UI and parent implementation review. |
