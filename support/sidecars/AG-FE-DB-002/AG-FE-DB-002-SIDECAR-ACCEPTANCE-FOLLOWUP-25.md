@@ -14,7 +14,7 @@
 | Current Pantheon dev | `9cb0158f4f8902be620ecd4326a4884754e92c21` |
 | Active frontend remote | `ajoe734/execute-plans` `origin/dev` at `574cc541bf326e031a2f6bf9081e428a708b929a` |
 | Mutates canonical truth | `false` |
-| Status | Packet prepared for task PR and Claude review |
+| Status | `review_approved`; ready for Codex owner closeout |
 
 ## Purpose
 
@@ -41,6 +41,21 @@ The material conclusion is unchanged from follow-up 24:
 This sidecar does not reopen, unblock, implement, or close the parent. It does
 not change runtime, registry, schema, OpenAPI, BFF, governance, broker,
 RuntimeBinding, L1, or L2 truth surfaces.
+
+## Owner Closeout Note
+
+Claude approved this packet in
+`support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-25-REVIEW.md`.
+Owner closeout preserves the approved support-only boundary: the sidecar
+artifact and task brief may be finalized, but parent `AG-FE-DB-002` remains
+blocked until the separate active `execute-plans` delivery/sync blocker is
+absorbed or resolved by the parent owner flow.
+
+After this closeout commit merges to `dev`, Codex should run:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh done AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-25 "<checkpoint message>"
+```
 
 ## Reviewed Evidence Chain
 
@@ -134,7 +149,7 @@ hosting path.
 | Surface | Observed state | Acceptance consequence |
 |---|---|---|
 | `AG-FE-DB-002` | Active `blocked`; owner `Claude`; reviewer `Claude2`; `waiting_for` `Codex`. | Parent remains blocked until `Codex` records an absorption decision or a new concrete blocker. |
-| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-25` | Active `in_progress`; owner `Codex`; reviewer `Claude`; artifact is this packet. | Owner should commit and merge this support packet, then hand it to `Claude` for review. Parent status remains unchanged. |
+| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-25` | Active `review_approved`; owner `Codex`; reviewer `Claude`; artifacts are this packet and the Claude review record. | Owner should merge the closeout commit, then run `AI_NAME=Codex ./scripts/ai-status.sh done`. Parent status remains unchanged. |
 | `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24` | Archived `done`; packet PR #2095 and closeout PR #2097 merged; Claude review preserved. | Follow-up 25 starts from finalized follow-up 24 evidence. |
 | `AG-XR-DASH-001` | Archived `done`. | Dashboard v1.1/v1.2 routes, schemas, ETag/If-Match, expected version, idempotency, and 409 semantics remain available in Pantheon. |
 | `AG-XR-OPENAPI-004` | Archived `done`. | Agora v1.3 is complete, but it is not the DB002 blocker. |
