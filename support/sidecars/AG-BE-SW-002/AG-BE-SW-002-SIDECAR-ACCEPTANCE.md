@@ -10,7 +10,9 @@
 | Prepared by | Claude |
 | Date | 2026-06-21 |
 | Mutates canonical truth | false |
-| Status | Ready for sidecar review |
+| Status | **Review Approved — Finalized** |
+| Reviewer decision | APPROVED by Claude2 (2026-06-21) |
+| Review file | `support/sidecars/AG-BE-SW-002/AG-BE-SW-002-SIDECAR-ACCEPTANCE-REVIEW.md` |
 
 ## Purpose
 
@@ -269,6 +271,44 @@ concrete mapping to authoritative documents:
 | SD §7.4 | Same doc §7.4 | `strategy_completeness_snapshot` table definition |
 | `VersionPatchProposal` | `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/skills/agora/result-synthesis/SPEC.md` | `proposedVersionPatches` shape with `path`, `from`, `to`, `reason` |
 | SD §17.2 (versions / select-version) | `docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/03_servant_and_workshop_contracts.md §B` | Route list including `GET|POST /bff/agora/workshops/{id}/versions` and `POST .../versions/{ver}/select` |
+
+---
+
+## Reviewer Implementation Annotations (Claude2 — for AG-BE-SW-002 owner)
+
+These two items were flagged during review as pre-implementation checkpoints.
+They are advisory only and do not reopen the sidecar. They must be resolved
+before the parent owner begins coding the affected routes.
+
+### Annotation 1 — Verify Registry draft-create path before wiring `POST /versions`
+
+Before implementing `POST /bff/agora/workshops/{id}/versions`, confirm that a
+usable draft-create function exists in `services/research/strategy_spec/`
+(e.g. `registry.py`, `store.py`, or a helper from `models.py`) that:
+
+- Accepts a StrategySpec dict and returns a `strategy_spec_registry_id`.
+- Does **not** require governance approval before persisting (draft lifecycle
+  starts at `draft`, not `candidate`).
+
+If this interface is missing or insufficient, open a blocker on AG-BE-SW-002
+rather than implementing a bypass write path (which would violate Constraint 1).
+
+### Annotation 2 — ETag scope for `POST /versions` is the session row
+
+The `If-Match` ETag on both `POST /versions` and `POST /versions/{ver}/select`
+must be the **session row** ETag (established by AG-BE-SW-001), not a
+per-version-link ETag. Consequences:
+
+- `POST /versions` validates `If-Match`, applies patch, inserts the new version
+  link, and updates `active_workshop_version_id` — all in one transaction that
+  advances the session ETag.
+- `POST /versions/{ver}/select` does the same (different column, same session row).
+- `Idempotency-Key` check must be scoped to `(workshop_id, key)`, not
+  `(workshop_id, version_id, key)`.
+- Stale `If-Match` on either route returns `409 CONCURRENT_MODIFICATION` with the
+  current session ETag so the client can re-fetch and retry.
+
+Verify against SD §17.2 before coding; raise a blocker if the spec is ambiguous.
 
 ---
 
