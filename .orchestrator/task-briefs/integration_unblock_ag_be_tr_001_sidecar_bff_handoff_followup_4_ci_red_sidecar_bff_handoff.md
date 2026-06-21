@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED BFF and frontend handoff packet
-- Status: todo
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Auto-reassigned ownership from Copilot to Claude2 after repeated Copilot quota terminal: 402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}} (Request ID: B566:2873B6:A84800:C34257:6A386054). Task returned to todo until Claude2 starts a fresh run.
+- Next: BFF handoff packet for CI-red unblock context approved for AG-BE-TR-001 owner absorption.
 
 ## Summary
 平行支援 INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。

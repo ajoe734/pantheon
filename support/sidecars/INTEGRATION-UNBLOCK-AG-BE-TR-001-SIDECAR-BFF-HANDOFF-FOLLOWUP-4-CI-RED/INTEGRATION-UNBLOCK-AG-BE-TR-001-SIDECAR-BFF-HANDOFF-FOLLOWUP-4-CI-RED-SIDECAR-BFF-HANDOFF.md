@@ -231,7 +231,7 @@ git log --oneline -5
 # bec62694 Merge pull request #2150 from ajoe734/task/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-3
 
 AI_NAME=Claude2 python3 scripts/ai_status.py show INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF
-# in_progress; owner Claude2; reviewer Claude
+# review_approved; owner Claude2; reviewer Claude
 
 AI_NAME=Claude2 python3 scripts/ai_status.py show INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED
 # review_approved; owner Claude; reviewer Claude2
