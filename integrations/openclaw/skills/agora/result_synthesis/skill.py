@@ -8,6 +8,18 @@ Evidence-grounding enforcement (task AG-BE-RS-004 hard rule):
   An output with verdict != "insufficient" but empty evidence_refs is
   blocked with INSUFFICIENT_EVIDENCE rather than returned to the caller.
 
+Output evidence_refs scope enforcement:
+  Output evidence_refs are validated against the input evidence_refs scope.
+  Any ref returned by the adapter that was not in the input scope is an
+  invented ref and is filtered out.  If filtering empties the refs for a
+  non-insufficient verdict, the result is blocked with INSUFFICIENT_EVIDENCE.
+
+VersionPatchProposal schema enforcement:
+  Each entry in proposed_version_patches is validated against the v1.3
+  VersionPatchProposal JSON schema (services/control-plane/specs/agora/v4/
+  version_patch_proposal.schema.json).  Any schema violation blocks the
+  result with PATCH_SCHEMA_INVALID.
+
 Hard rules (C1 SPEC §Common Hard Rules + result-synthesis §Rules):
   - All conclusions grounded in evidence_refs; no ungrounded claims.
   - Must not represent stub/fixture results as production proof.
@@ -19,8 +31,17 @@ Hard rules (C1 SPEC §Common Hard Rules + result-synthesis §Rules):
 """
 from __future__ import annotations
 
+import json
+import pathlib
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
+
+try:
+    import jsonschema as _jsonschema
+    _JSONSCHEMA_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _jsonschema = None  # type: ignore[assignment]
+    _JSONSCHEMA_AVAILABLE = False
 
 from pydantic import BaseModel, Field
 
@@ -31,8 +52,10 @@ from pydantic import BaseModel, Field
 INPUT_SCHEMA_INVALID = "INPUT_SCHEMA_INVALID"
 SYNTHESIS_ADAPTER_UNAVAILABLE = "SYNTHESIS_ADAPTER_UNAVAILABLE"
 INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+PATCH_SCHEMA_INVALID = "PATCH_SCHEMA_INVALID"
 
 STUB_RESULT_NOT_PRODUCTION_PROOF = "STUB_RESULT_NOT_PRODUCTION_PROOF"
+INVENTED_EVIDENCE_REF = "INVENTED_EVIDENCE_REF"
 
 # Backend modes that are not production-proof
 _NON_PRODUCTION_MODES: frozenset[str] = frozenset({"stub", "fixture"})
@@ -41,6 +64,68 @@ _NON_PRODUCTION_MODES: frozenset[str] = frozenset({"stub", "fixture"})
 _EVIDENCE_REQUIRED_VERDICTS: frozenset[str] = frozenset({
     "promising", "needs_revision", "reject",
 })
+
+# ---------------------------------------------------------------------------
+# v1.3 VersionPatchProposal schema
+# ---------------------------------------------------------------------------
+# Path computed from this file's location (5 levels up = repo root).
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[5]
+_VPP_SCHEMA_PATH = (
+    _REPO_ROOT
+    / "services/control-plane/specs/agora/v4/version_patch_proposal.schema.json"
+)
+
+
+def _load_vpp_schema() -> Optional[Dict[str, Any]]:
+    try:
+        return json.loads(_VPP_SCHEMA_PATH.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+_VPP_SCHEMA: Optional[Dict[str, Any]] = _load_vpp_schema()
+
+
+def _validate_proposed_patches(patches: List[Any]) -> List[str]:
+    """Validate each entry in proposed_version_patches against the v1.3 schema.
+
+    Returns a list of human-readable error messages.  An empty list means all
+    patches are valid.  A non-empty list means at least one patch is invalid
+    and the caller should block with PATCH_SCHEMA_INVALID.
+    """
+    if not patches:
+        return []
+    if not _JSONSCHEMA_AVAILABLE:
+        return [
+            "jsonschema library unavailable — cannot validate proposed_version_patches "
+            "against v1.3 VersionPatchProposal schema"
+        ]
+    if _VPP_SCHEMA is None:
+        return [
+            f"v1.3 VersionPatchProposal schema could not be loaded from "
+            f"{_VPP_SCHEMA_PATH} — cannot validate proposed_version_patches"
+        ]
+    errors: List[str] = []
+    validator = _jsonschema.Draft7Validator(_VPP_SCHEMA)
+    for i, patch in enumerate(patches):
+        for error in sorted(validator.iter_errors(patch), key=lambda e: list(e.path)):
+            errors.append(f"patch[{i}]: {error.message}")
+    return errors
+
+
+def _filter_evidence_scope(
+    output_refs: List[str],
+    input_scope: List[str],
+) -> Tuple[List[str], List[str]]:
+    """Filter output evidence refs to those present in the input scope.
+
+    Returns (valid_refs, invented_refs).  Invented refs are output refs that
+    were not provided in the caller's input evidence scope.
+    """
+    scope_set = set(input_scope)
+    valid = [r for r in output_refs if r in scope_set]
+    invented = [r for r in output_refs if r not in scope_set]
+    return valid, invented
 
 
 # ---------------------------------------------------------------------------
@@ -133,9 +218,19 @@ def run_result_synthesis(
       from stub-only runs is downgraded to "needs_revision" because stub/smoke results
       must not be presented as production proof (C1 result-synthesis §Rules).
 
+    Evidence scope enforcement:
+      Output evidence_refs are filtered to the input evidence scope.  Any ref
+      not present in the input evidence_refs is treated as an invented ref,
+      filtered out, and logged as an INVENTED_EVIDENCE_REF warning.
+
     Evidence grounding enforcement:
-      If the adapter returns a non-insufficient verdict but empty evidence_refs,
-      the result is blocked with INSUFFICIENT_EVIDENCE rather than forwarded.
+      If the adapter returns a non-insufficient verdict but the scope-filtered
+      evidence_refs are empty, the result is blocked with INSUFFICIENT_EVIDENCE
+      rather than forwarded.
+
+    VersionPatchProposal schema enforcement:
+      Each entry in proposed_version_patches is validated against the v1.3
+      VersionPatchProposal schema.  Any schema violation blocks with PATCH_SCHEMA_INVALID.
 
     Conflict preservation (golden eval 3):
       unresolved_decisions from the adapter are passed through verbatim; the skill
@@ -229,19 +324,41 @@ def run_result_synthesis(
         if verdict == "promising" and all(m in _NON_PRODUCTION_MODES for m in run_modes):
             verdict = "needs_revision"
 
-    # Step 5: Evidence grounding check — non-insufficient verdict requires evidence_refs
+    # Step 5: Evidence scope enforcement — filter output refs to input scope
+    # Invented refs (not in the caller's input evidence_refs) are filtered out.
+    output_evidence_refs, invented_refs = _filter_evidence_scope(
+        output_evidence_refs, input_data.evidence_refs
+    )
+    if invented_refs:
+        warnings.append(
+            f"{INVENTED_EVIDENCE_REF}: adapter returned {len(invented_refs)} evidence "
+            f"ref(s) not present in the input evidence scope, filtered out: {invented_refs}. "
+            "Only refs provided in the input evidence_refs may ground synthesis conclusions."
+        )
+
+    # Step 6: Evidence grounding check — non-insufficient verdict requires evidence_refs
     if verdict in _EVIDENCE_REQUIRED_VERDICTS and not output_evidence_refs:
         return ResultSynthesisOutput(
             status="blocked",
             blocking_reasons=[INSUFFICIENT_EVIDENCE],
-            warnings=[
-                f"Synthesis returned verdict='{verdict}' but evidence_refs is empty. "
+            warnings=warnings + [
+                f"Synthesis returned verdict='{verdict}' but evidence_refs is empty "
+                "(after filtering to input scope). "
                 "Every non-insufficient verdict must be grounded in evidence_refs. "
                 "Refusing to return an ungrounded conclusion."
             ],
         )
 
-    # Step 6: Validate verdict is a recognised enum value
+    # Step 7: VersionPatchProposal schema validation
+    patch_errors = _validate_proposed_patches(proposed_patches)
+    if patch_errors:
+        return ResultSynthesisOutput(
+            status="blocked",
+            blocking_reasons=[PATCH_SCHEMA_INVALID],
+            warnings=warnings + patch_errors,
+        )
+
+    # Step 8: Validate verdict is a recognised enum value
     valid_verdicts = {"promising", "needs_revision", "insufficient", "reject"}
     if verdict not in valid_verdicts:
         verdict = "insufficient"

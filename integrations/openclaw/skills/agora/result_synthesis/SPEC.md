@@ -77,8 +77,17 @@ Enforced by `run_result_synthesis()`:
 
 1. `research_run_refs` must be non-empty (INPUT_SCHEMA_INVALID).
 2. `evidence_refs` in input must be non-empty (INPUT_SCHEMA_INVALID).
-3. If `verdict != "insufficient"`, output `evidence_refs` must be non-empty; otherwise blocked as INSUFFICIENT_EVIDENCE.
-4. If synthesis adapter reports any research run with backend `mode == "stub"` or `"fixture"`, a STUB_RESULT_NOT_PRODUCTION_PROOF warning is emitted and verdict is downgraded to `needs_revision` or `insufficient`.
+3. Output `evidence_refs` are filtered to the **input evidence scope**: any ref returned by the adapter that was not present in the caller's input `evidence_refs` is treated as an invented ref, removed from the output, and logged as an INVENTED_EVIDENCE_REF warning.
+4. If `verdict != "insufficient"`, the scope-filtered output `evidence_refs` must be non-empty; otherwise blocked as INSUFFICIENT_EVIDENCE.
+5. If synthesis adapter reports any research run with backend `mode == "stub"` or `"fixture"`, a STUB_RESULT_NOT_PRODUCTION_PROOF warning is emitted and verdict is downgraded to `needs_revision` or `insufficient`.
+
+## VersionPatchProposal Schema Enforcement
+
+Each entry in `proposed_version_patches` is validated against the v1.3 VersionPatchProposal JSON schema:
+
+`services/control-plane/specs/agora/v4/version_patch_proposal.schema.json`
+
+Any schema violation (missing required field, invalid pattern, unknown additional property, etc.) blocks the result with PATCH_SCHEMA_INVALID. Schema validation uses `jsonschema.Draft7Validator`.
 
 ---
 
@@ -90,13 +99,15 @@ Per C1 SPEC §5:
 |---|---|
 | `INPUT_SCHEMA_INVALID` | `research_run_refs` or input `evidence_refs` is empty |
 | `SYNTHESIS_ADAPTER_UNAVAILABLE` | `synthesis_adapter=None` (degraded mode) |
-| `INSUFFICIENT_EVIDENCE` | Adapter returned non-insufficient verdict but empty `evidence_refs` |
+| `INSUFFICIENT_EVIDENCE` | Non-insufficient verdict but scope-filtered output `evidence_refs` is empty |
+| `PATCH_SCHEMA_INVALID` | Any entry in `proposed_version_patches` fails v1.3 VersionPatchProposal schema |
 
 Warnings (non-blocking):
 
 | Warning | Trigger |
 |---|---|
 | `STUB_RESULT_NOT_PRODUCTION_PROOF` | Any research run reported with backend mode stub/fixture |
+| `INVENTED_EVIDENCE_REF` | Adapter returned refs not in input evidence scope; they were filtered out |
 
 ---
 

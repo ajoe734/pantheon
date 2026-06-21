@@ -13,8 +13,10 @@ Additional tests:
   - Mixed real+stub run: warning emitted but verdict not downgraded (real run present)
   - Ungrounded non-insufficient verdict: blocked, INSUFFICIENT_EVIDENCE
   - Conflicts preserved verbatim in unresolved_decisions
-  - Proposed patches forwarded with base_version, rationale, revalidation_plan
+  - Proposed patches validated against v1.3 VersionPatchProposal schema; invalid → blocked
   - Unknown verdict enum downgraded to insufficient
+  - Invented output evidence_refs (not in input scope) filtered out; warning emitted
+  - All output refs invented + non-insufficient verdict → blocked INSUFFICIENT_EVIDENCE
 """
 from __future__ import annotations
 
@@ -26,6 +28,8 @@ import pytest
 from integrations.openclaw.skills.agora.result_synthesis.skill import (
     INPUT_SCHEMA_INVALID,
     INSUFFICIENT_EVIDENCE,
+    INVENTED_EVIDENCE_REF,
+    PATCH_SCHEMA_INVALID,
     STUB_RESULT_NOT_PRODUCTION_PROOF,
     SYNTHESIS_ADAPTER_UNAVAILABLE,
     ResultSynthesisInput,
@@ -52,6 +56,31 @@ def _valid_input(
         evidence_refs=evidence_refs if evidence_refs is not None else ["ev-001"],
         user_decision_style_ref=user_decision_style_ref,
     )
+
+
+def _valid_patch(**overrides: Any) -> Dict[str, Any]:
+    """Return a minimal valid v1.3 VersionPatchProposal for use in tests."""
+    base: Dict[str, Any] = {
+        "spec_version": "1.0",
+        "proposal_id": "vpp_test001",
+        "workshop_id": "ws-test001",
+        "strategy_id": "strat-momentum-v4",
+        "base_workshop_version_id": "wv-001",
+        "base_strategy_spec_registry_id": "reg-strat-001",
+        # 64-char hex string (required pattern)
+        "base_document_sha256": "a" * 64,
+        "proposed_by": {"actor_type": "agora_servant", "actor_ref": "servant-synthesis"},
+        "source_event_ids": ["evt-001"],
+        "patch_format": "rfc6902-restricted-v1",
+        "operations": [
+            {"op": "replace", "path": "/title", "value": "Updated strategy title"},
+        ],
+        "rationale": "Raise entry threshold to improve liquidity profile",
+        "status": "draft",
+        "created_at": "2026-06-21T00:00:00Z",
+    }
+    base.update(overrides)
+    return base
 
 
 def _mock_adapter(
@@ -101,14 +130,36 @@ def test_golden_eval_1_v3_v4_threshold_liquidity():
         "max_drawdown_v4": -0.12,
     }
     proposed_patches = [
-        {
-            "proposal_id": "vpp_test001",
-            "base_version_id": "wv-001",
-            "rationale": "Raise entry threshold 0.03→0.05 to improve liquidity profile",
-            "predicted_effects": ["reduce trade count by ~20%", "improve liquidity_score by ~0.15"],
-            "revalidation_plan": "Re-run rolling OOS on 2024–2026 with new threshold",
-            "evidence_refs": ["ev-backtest-v4-001", "ev-oos-v4-002"],
-        }
+        _valid_patch(
+            proposal_id="vpp_eval1_001",
+            base_workshop_version_id="wv-001",
+            rationale="Raise entry threshold 0.03→0.05 to improve liquidity profile",
+            predicted_effects=[
+                {
+                    "metric": "liquidity_score",
+                    "direction": "increase",
+                    "basis": "prior_backtest",
+                    "confidence": 0.75,
+                },
+                {
+                    "metric": "trade_count",
+                    "direction": "decrease",
+                    "basis": "heuristic",
+                    "confidence": 0.80,
+                },
+            ],
+            operations=[
+                {
+                    "op": "replace",
+                    "path": "/execution_profile",
+                    "value": {"entry_threshold": 0.05},
+                },
+            ],
+            evidence_refs=[
+                {"ref_type": "research_run", "ref_id": "ev-backtest-v4-001"},
+                {"ref_type": "research_run", "ref_id": "ev-oos-v4-002"},
+            ],
+        )
     ]
 
     adapter = _mock_adapter(
@@ -145,13 +196,13 @@ def test_golden_eval_1_v3_v4_threshold_liquidity():
     # Evidence grounded
     assert len(result.evidence_refs) > 0
 
-    # Proposed patch has required fields
+    # Proposed patch has required v1.3 schema fields
     assert len(result.proposed_version_patches) == 1
     patch = result.proposed_version_patches[0]
-    assert "base_version_id" in patch
+    assert "base_workshop_version_id" in patch
     assert "rationale" in patch
     assert "predicted_effects" in patch
-    assert "revalidation_plan" in patch
+    assert "operations" in patch
 
     assert result.blocking_reasons == []
     assert result.warnings == []
@@ -413,9 +464,10 @@ def test_insufficient_verdict_empty_evidence_refs_allowed():
 
 def test_stub_only_run_emits_warning_and_downgrades_promising():
     """All runs in stub mode: STUB_RESULT_NOT_PRODUCTION_PROOF warning; promising → needs_revision."""
+    # evidence_refs matches input scope so scope filtering does not block
     adapter = _mock_adapter(
         verdict="promising",
-        evidence_refs=["ev-stub-001"],
+        evidence_refs=["ev-001"],
         run_modes=["stub"],
     )
 
@@ -433,9 +485,10 @@ def test_stub_only_run_emits_warning_and_downgrades_promising():
 
 def test_fixture_only_run_emits_warning_and_downgrades_promising():
     """All runs in fixture mode: warning emitted; promising downgraded."""
+    # evidence_refs matches input scope so scope filtering does not block
     adapter = _mock_adapter(
         verdict="promising",
-        evidence_refs=["ev-fixture-001"],
+        evidence_refs=["ev-001"],
         run_modes=["fixture"],
     )
 
@@ -486,6 +539,151 @@ def test_mixed_real_and_stub_run_warning_emitted_verdict_preserved():
 
 
 # ---------------------------------------------------------------------------
+# Invented evidence ref filtering (scope enforcement)
+# ---------------------------------------------------------------------------
+
+def test_invented_evidence_ref_filtered_warning_emitted():
+    """Adapter returns a ref not in the input scope: it is filtered and an INVENTED_EVIDENCE_REF warning is emitted."""
+    adapter = _mock_adapter(
+        verdict="promising",
+        # "ev-invented-001" is NOT in the input scope ["ev-001"]
+        evidence_refs=["ev-001", "ev-invented-001"],
+        run_modes=["real"],
+    )
+
+    result = run_result_synthesis(
+        _valid_input(evidence_refs=["ev-001"]),
+        synthesis_adapter=adapter,
+    )
+
+    assert result.status == "completed"
+    assert result.verdict == "promising"
+    # Invented ref filtered out; only "ev-001" remains
+    assert result.evidence_refs == ["ev-001"]
+    assert any(INVENTED_EVIDENCE_REF in w for w in result.warnings)
+
+
+def test_invented_evidence_ref_all_invented_non_insufficient_blocked():
+    """All output evidence_refs are invented (not in input scope) + non-insufficient verdict → BLOCKED."""
+    adapter = _mock_adapter(
+        verdict="promising",
+        # Neither ref is in the input scope ["ev-001"]
+        evidence_refs=["ev-invented-a", "ev-invented-b"],
+        run_modes=["real"],
+    )
+
+    result = run_result_synthesis(
+        _valid_input(evidence_refs=["ev-001"]),
+        synthesis_adapter=adapter,
+    )
+
+    assert result.status == "blocked"
+    assert INSUFFICIENT_EVIDENCE in result.blocking_reasons
+
+
+def test_invented_evidence_ref_all_invented_insufficient_allowed():
+    """All output evidence_refs are invented but verdict is insufficient → allowed (no grounding needed)."""
+    adapter = _mock_adapter(
+        verdict="insufficient",
+        evidence_refs=["ev-invented-x"],
+        run_modes=["real"],
+    )
+
+    result = run_result_synthesis(
+        _valid_input(evidence_refs=["ev-001"]),
+        synthesis_adapter=adapter,
+    )
+
+    # insufficient does not require evidence; filtered refs are empty but that is fine
+    assert result.status == "completed"
+    assert result.verdict == "insufficient"
+    assert result.evidence_refs == []
+    assert any(INVENTED_EVIDENCE_REF in w for w in result.warnings)
+
+
+# ---------------------------------------------------------------------------
+# VersionPatchProposal schema validation
+# ---------------------------------------------------------------------------
+
+def test_invalid_patch_schema_blocked():
+    """Adapter returns a patch that does not conform to v1.3 VersionPatchProposal schema → BLOCKED."""
+    bad_patch = {
+        # Missing many required fields (workshop_id, strategy_id, source_event_ids, etc.)
+        "proposal_id": "vpp_bad",
+        "rationale": "Some rationale",
+    }
+    adapter = _mock_adapter(
+        verdict="promising",
+        proposed_patches=[bad_patch],
+        evidence_refs=["ev-001"],
+    )
+
+    result = run_result_synthesis(
+        _valid_input(),
+        synthesis_adapter=adapter,
+    )
+
+    assert result.status == "blocked"
+    assert PATCH_SCHEMA_INVALID in result.blocking_reasons
+    # Warnings should describe the schema violations
+    assert len(result.warnings) >= 1
+    assert any("patch[0]" in w for w in result.warnings)
+
+
+def test_invalid_patch_extra_field_blocked():
+    """Patch with additionalProperties (not in schema) is rejected."""
+    bad_patch = {
+        **_valid_patch(),
+        "revalidation_plan": "Re-run OOS next quarter",  # not in v1.3 schema
+    }
+    adapter = _mock_adapter(
+        verdict="promising",
+        proposed_patches=[bad_patch],
+        evidence_refs=["ev-001"],
+    )
+
+    result = run_result_synthesis(
+        _valid_input(),
+        synthesis_adapter=adapter,
+    )
+
+    assert result.status == "blocked"
+    assert PATCH_SCHEMA_INVALID in result.blocking_reasons
+
+
+def test_valid_patch_passes_schema_validation():
+    """A fully-valid v1.3 VersionPatchProposal passes schema validation and is forwarded."""
+    patch = _valid_patch()
+    adapter = _mock_adapter(
+        verdict="promising",
+        proposed_patches=[patch],
+        evidence_refs=["ev-001"],
+    )
+
+    result = run_result_synthesis(
+        _valid_input(),
+        synthesis_adapter=adapter,
+    )
+
+    assert result.status == "completed"
+    assert result.proposed_version_patches == [patch]
+    assert PATCH_SCHEMA_INVALID not in result.blocking_reasons
+
+
+def test_no_patches_skips_schema_validation():
+    """Empty proposed_patches list: schema validation is skipped; result is completed."""
+    adapter = _mock_adapter(verdict="promising", proposed_patches=[], evidence_refs=["ev-001"])
+
+    result = run_result_synthesis(
+        _valid_input(),
+        synthesis_adapter=adapter,
+    )
+
+    assert result.status == "completed"
+    assert result.proposed_version_patches == []
+
+
+# ---------------------------------------------------------------------------
 # Conflict preservation
 # ---------------------------------------------------------------------------
 
@@ -507,30 +705,31 @@ def test_unresolved_decisions_passed_through_verbatim():
 
 
 # ---------------------------------------------------------------------------
-# Proposed patch forwarding
+# Proposed patch forwarding (valid schema)
 # ---------------------------------------------------------------------------
 
 def test_proposed_patches_forwarded():
-    """Proposed patches from adapter are forwarded unchanged in proposed_version_patches."""
-    patches = [
-        {
-            "proposal_id": "vpp_001",
-            "base_version_id": "wv-001",
-            "rationale": "Adjust stop-loss threshold",
-            "predicted_effects": ["reduce max_drawdown by 5%"],
-            "revalidation_plan": "Re-run OOS on 2025 data",
-            "evidence_refs": ["ev-001"],
-        }
-    ]
+    """Proposed patches conforming to v1.3 schema are forwarded unchanged."""
+    patch = _valid_patch(
+        proposal_id="vpp_fwd001",
+        rationale="Adjust stop-loss threshold",
+        predicted_effects=[
+            {"metric": "max_drawdown", "direction": "decrease", "basis": "prior_backtest", "confidence": 0.7},
+        ],
+        operations=[
+            {"op": "replace", "path": "/execution_profile", "value": {"stop_loss": 0.05}},
+        ],
+    )
 
-    adapter = _mock_adapter(proposed_patches=patches, evidence_refs=["ev-001"])
+    adapter = _mock_adapter(proposed_patches=[patch], evidence_refs=["ev-001"])
 
     result = run_result_synthesis(
         _valid_input(),
         synthesis_adapter=adapter,
     )
 
-    assert result.proposed_version_patches == patches
+    assert result.status == "completed"
+    assert result.proposed_version_patches == [patch]
 
 
 # ---------------------------------------------------------------------------
