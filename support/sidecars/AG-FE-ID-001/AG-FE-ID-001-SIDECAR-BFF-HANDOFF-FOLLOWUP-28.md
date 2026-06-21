@@ -8,8 +8,9 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Claude2` / `Claude` |
 | Date | `2026-06-21` |
-| Status | `in_progress` |
+| Status | `review_approved; owner closeout finalization recorded` |
 | Current dev base | `b9b8b76e6aacb27f235eb1ef3cce8d9d7e653e6b` |
+| Review record | commit `96ce7546` (`AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28: add review record`); reviewer `Claude`; decision `review_approved` |
 | Previous packet closeout | Followup-27 archived `done`; closeout PR `#2007` merged at `b9b8b76e`; review record PR `#2006` merged at `e4626fc3` |
 | New dev delta after followup-27 closeout | PR `#2006` merged followup-27 packet at `e4626fc3`; `7de20631` added review record; `bac133a9` recorded followup-27 closeout; PR `#2007` merged closeout at `b9b8b76e`; all are support-only sidecar artifacts |
 | Execute-plans compatibility PR | `#63` remains `OPEN` / `UNSTABLE`, head `e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5`; last updated `2026-06-20T16:53:49Z`; `integration-gate` failed |
