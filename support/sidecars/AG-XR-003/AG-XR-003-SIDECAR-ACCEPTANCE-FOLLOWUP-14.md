@@ -4,7 +4,7 @@
 - Helper task: `AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14`
 - Helper kind: `acceptance_packet`
 - Owner: `Codex2`
-- Reviewer: `Codex`
+- Reviewer: `Claude`
 - Generated: `2026-06-21`
 - Mutates canonical truth: `no`
 - Inspected baseline: `origin/dev`
@@ -32,9 +32,10 @@ Follow-up 14 refreshes the same acceptance surfaces after `origin/dev` advanced
 through AG-XR-002A PR `#1952`. That merge changes the AG-XR acceptance state:
 the local Pantheon/vendored frontend snapshot now verifies against Agora v1.1,
 the stale manifest pytest failure is resolved, and local `contract:drift` plus
-`build:agora` pass. The parent is still not ready for done closeout because the
-real execute-plans PR `#63` remains open/unstable and the deployment gate still
-fails closed while the frontend runtime commit remains a placeholder.
+`build:agora` pass. At packet review time, the parent still had unresolved
+cross-repo/runtime-pin acceptance risk because the real execute-plans PR `#63`
+remained open/unstable and the deployment gate still failed closed while the
+frontend runtime commit remained a placeholder.
 
 During PR preparation, `origin/dev` advanced from `e5f20720` to `60e3e18c`.
 The scoped AG-XR/Agora diff across that interval was empty; the only observed
@@ -46,13 +47,32 @@ merged `origin/dev` `285a6d60`; the scoped AG-XR/Agora diff from `60e3e18c` to
 sidecar handoff support artifact and does not change this packet's acceptance
 conclusion.
 
+## Closeout Refresh
+
+Codex2 finalization on `2026-06-21` rechecked the lifecycle state after review
+approval:
+
+- This sidecar is active `review_approved`, owner `Codex2`, reviewer `Claude`.
+- Review notes are recorded in
+  `support/sidecars/AG-XR-003/REVIEW-AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14.md`.
+- Pantheon PR `#1956` merged this packet into `dev` at merge commit
+  `e7d75a1161545aa0c2f696882e45fc13ff4bdf35`.
+- `AG-XR-002A` is now archived `done`; its status lifecycle cleanup happened
+  after this packet was prepared.
+- Parent `AG-XR-003` is now archived `done` by its owning lane. This sidecar
+  remains support evidence only and does not modify or define parent canonical
+  closeout truth.
+- execute-plans PR `#63` remains `OPEN` and `UNSTABLE` at head
+  `e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5`; its PR check
+  `27877483718` is still failed.
+
 ## Current Status Snapshot
 
 | Surface | Current state | Sidecar stance |
 |---|---|---|
-| Parent `AG-XR-003` | Active state says `todo`, owner `Codex`, reviewer `Claude2`; `next` still says work is done but awaits AG-XR-002A/type regeneration and live/perf disposition. | Treat parent state as stale/incomplete, not ready for `done`. |
+| Parent `AG-XR-003` | Archived `done` after this packet was prepared. | Parent closeout is outside this sidecar's authority; use the parent archive for terminal truth. |
 | Dependency `AG-XR-001A` | Archived `done`. | Direct contract-extension dependency remains satisfied. |
-| Follow-up dependency `AG-XR-002A` | Active state still says `in_progress`, but Pantheon PR `#1952` merged to `dev` at `e5f20720`. | Implementation evidence landed; status lifecycle still needs owner/reviewer cleanup. |
+| Follow-up dependency `AG-XR-002A` | Archived `done`; Pantheon PR `#1952` merged to `dev` at `e5f20720`. | Implementation evidence and status lifecycle are now both closed. |
 | Previous support packet | Follow-up 13 merged in Pantheon PR `#1946` at `13f864d5`. | This packet records only the delta after that merge. |
 | Pantheon PR `#1852` | `MERGED` at `0765018c838547108fa56fcf089b5e2bbafd4387`. | Pantheon-side manifest gate implementation remains durable. |
 | Pantheon PR `#1952` | `MERGED` at `e5f20720bc5c0fa7eb1e03972db838eb8098b241`. | Local/vendored Agora v1.1 frontend contract refresh is now on `dev`. |
@@ -93,9 +113,9 @@ Interpretation:
 
 | Source | Evidence used |
 |---|---|
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` | Sidecar is active, owner `Codex2`, reviewer `Codex`, support-only artifact path. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003` | Parent remains active `todo`; `next` says AG-XR-002A/type regeneration and live/perf disposition still gate closeout. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-002A` | Status board still says `in_progress` even though PR `#1952` is merged. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-14` | Sidecar is active `review_approved`, owner `Codex2`, reviewer `Claude`, support-only artifact path. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003` | Parent is archived `done`; parent terminal truth is outside this support packet. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-002A` | Dependency is archived `done`; PR `#1952` landed and lifecycle cleanup is complete. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-001A` | Direct dependency is archived `done`. |
 | `gh pr view 1946 --repo ajoe734/pantheon` | Follow-up 13 merged at `13f864d5946b4fd2ccdff328a4e0fd359c100cfc`. |
 | `gh pr view 1852 --repo ajoe734/pantheon` | Parent Pantheon implementation PR merged at `0765018c838547108fa56fcf089b5e2bbafd4387`. |
@@ -179,9 +199,9 @@ Durable interpretation:
   green.
 - The real execute-plans mirror PR `#63` has not merged and still has a failed
   integration gate.
-- Parent `AG-XR-003` should not close until the cross-repo PR/runtime pin and
-  deployment gate readiness are explicitly resolved or dispositioned by its
-  reviewer.
+- Parent `AG-XR-003` has since been archived `done` by its owner/reviewer. This
+  packet remains a support artifact recording the acceptance evidence and
+  cross-repo/runtime-pin risk observed during sidecar review.
 
 ## Updated Parent Acceptance Checklist
 
@@ -195,7 +215,7 @@ Durable interpretation:
 | execute-plans mirror exists and can merge | PR `#63` is open and unstable. | Not satisfied. |
 | Frontend runtime commit is pinned | Committed manifest still uses all-zero `frontend.runtime_commit`. | Not satisfied. |
 | Deployment gate can pass | Fails closed on pending status, frontend runtime placeholder, and non-empty blockers. | Not satisfied. |
-| Status lifecycle is coherent | AG-XR-002A is merged but active state remains `in_progress`; AG-XR-003 active state remains `todo` with stale `next`. | Needs owner/reviewer cleanup before closeout. |
+| Status lifecycle is coherent | AG-XR-002A and AG-XR-003 are both now archived `done`; this sidecar remains active `review_approved` pending owner closeout. | Satisfied after finalization commit and `done` status closeout. |
 | Scope boundary preserved | This sidecar adds only support material and does not touch runtime, registry, governance, broker, live capital, or canonical truth. | Satisfied for sidecar scope. |
 
 ## Reviewer Rejection Criteria
@@ -231,12 +251,11 @@ contract:drift passes, and build:agora passes after npm ci. The previous
 generated-types mismatch and stale pytest assertion should be considered
 resolved locally.
 
-Do not close parent AG-XR-003 yet. execute-plans PR #63 remains OPEN/UNSTABLE
-at head e1cb9125 with failed integration-gate run 27877483718. The committed
-manifest remains pending and still has an all-zero frontend.runtime_commit, so
-deployment-gate correctly fails closed on 3 errors. AG-XR-002A also still needs
-status lifecycle cleanup because ai-status reports it in_progress despite PR
-#1952 being merged.
+At review time, do not treat this packet by itself as parent closeout approval:
+execute-plans PR #63 remains OPEN/UNSTABLE at head e1cb9125 with failed
+integration-gate run 27877483718. The committed manifest remains pending and
+still has an all-zero frontend.runtime_commit, so deployment-gate correctly
+fails closed on 3 errors.
 
 This sidecar changes only support material and should be used as
 reviewer/parent-owner intake, not as parent approval.
