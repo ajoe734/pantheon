@@ -10,7 +10,7 @@
 | Reviewer | `Codex` |
 | Date | `2026-06-21` |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff |
+| Status | Review approved; owner closeout in progress |
 
 ## Purpose
 
@@ -49,7 +49,7 @@ DB002 dashboard editor dependency surface.
 | Surface | Observed state | Acceptance consequence |
 |---|---|---|
 | `AG-FE-DB-002` | Active `blocked`; owner `Codex`; reviewer `Claude`; `waiting_for` `Claude`. | Parent remains blocked until `Claude` explicitly absorbs reviewed sidecar evidence or records a new concrete blocker. |
-| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-10` | Active `in_progress`; owner `Codex2`; reviewer `Codex`; artifact is this support packet. | This packet should be reviewed by `Codex` and then handed to the parent reviewer/owner path. |
+| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-10` | Active `review_approved`; owner `Codex2`; reviewer `Codex`; artifact is this support packet. | Owner closeout should preserve the reviewed support-only packet and then mark this sidecar `done`; parent status remains unchanged. |
 | `AG-XR-DASH-001` | Archived `done`. | v1.1 dashboard routes, v2 schemas, ETag/If-Match, expected version, idempotency, and 409 conflict semantics are available. |
 | `AG-BE-DB-001` | Archived `done`. | Dashboard BFF CRUD, layout PATCH, widget validator, append-only versioning, and core A3 safety rules are merged. |
 | `AG-FE-DB-001` | Archived `done`. | Registry, `WidgetRenderer`, `ChartSpecRenderer`, generated Agora types, ECharts, and `react-grid-layout` dependency are merged. |
@@ -229,17 +229,43 @@ Observed results:
 - No canonical truth, schema, OpenAPI, runtime, registry, governance, broker,
   or RuntimeBinding implementation was changed by this sidecar.
 
-## Reviewer Handoff
+## Reviewer Approval
 
-To `Codex`, sidecar reviewer:
+`Codex` approved this sidecar for owner closeout. Reviewer notes recorded in
+task status:
 
-Please review this follow-up packet for:
+- followup-10 only adds this support packet and does not change canonical
+  truth, runtime, schema, registry, governance, broker, or RuntimeBinding
+  surfaces.
+- PR #1939 packet commit `851029b3` is already included in `origin/dev`.
+- Parent `AG-FE-DB-002` remains `blocked` and `waiting_for` `Claude`.
+- Upstream DB002 compose dependencies remain archived `done`; `DashboardGridEditor`
+  is still absent; layout PATCH helper remains outside the existing helper
+  surface and is a parent implementation concern.
+- Non-blocking observation from review: the original packet snapshot said this
+  sidecar was `in_progress`; this closeout update refreshes that status to
+  `review_approved` without changing the parent handoff substance.
 
-1. Accuracy of the current-state refresh through followup-9.
-2. Correctness of the parent blocker absorption guidance.
-3. Completeness of the DB002 acceptance checklist and dependency map.
-4. Preservation of the support-only boundary.
+## Closeout Finalization
 
-If approved, return the task to `Codex2` for closeout. The parent task should
-remain blocked until `Claude`, as parent reviewer and current `waiting_for`,
-explicitly absorbs the reviewed sidecar evidence or records a new blocker.
+Owner closeout confirms:
+
+- The reviewed deliverable is a support-only acceptance/dependency packet.
+- The parent task remains blocked; this closeout does not reopen, unblock,
+  implement, or close `AG-FE-DB-002`.
+- No canonical truth, runtime, registry, schema, OpenAPI, governance, broker,
+  RuntimeBinding, or primary implementation surface is changed.
+- The generated local task brief
+  `.orchestrator/task-briefs/ag_fe_db_002_sidecar_acceptance_followup_10.md`
+  is worker context only and is not part of this support artifact scope.
+
+Additional owner closeout checks:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-10
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-002
+git show --stat --oneline --decorate 159ec96b
+git branch -r --contains 159ec96b
+git log --oneline --decorate -12 -- support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-10.md
+git diff --check
+```
