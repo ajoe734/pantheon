@@ -10,9 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional
+import threading
+import uuid
+from typing import Any, Callable, Dict, Iterable, Iterator, Literal, Mapping, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 from ..models import (
@@ -23,18 +27,114 @@ from ..models import (
     ServantCapabilitySummary,
     ServantProfile,
 )
+from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 
 _SERVANT_CAPABILITY = "agora.servant.v1"
+_SERVANT_SESSION_CAPABILITY = "agora.session.v1"
 _SERVANT_POLICY_REFS = [
     "docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/03_servant_and_workshop_contracts.md",
 ]
-_PROHIBITED_AUTHORITY = {"runtime_binding", "broker_order", "capital_binding"}
+_PROHIBITED_AUTHORITY = ("runtime_binding", "broker_order", "capital_binding")
 _PROFILE_STATUSES = {"active", "suspended", "paper_only", "shadow_only", "retired"}
+_OPENCLAW_DEGRADED_CODE = "OPENCLAW_UPSTREAM_DEGRADED"
+_SERVANT_EVENT_LOCK = threading.RLock()
+_SERVANT_SESSION_EVENTS: Dict[str, list[Dict[str, Any]]] = {}
+
+
+class ServantSessionCreateRequest(BaseModel):
+    """v1.2 ServantSessionCreateRequest.
+
+    Mirrors services/control-plane/openapi/agora_v1_2.openapi.yaml. The body is
+    optional at the route layer; an omitted body is equivalent to `{}` and
+    therefore defaults to an interactive session.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    intent: Optional[str] = None
+    strategy_ref: Optional[str] = None
+    session_type: Literal["interactive", "trainer", "research_task"] = "interactive"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ServantMessageRequest(BaseModel):
+    """v1/v1.2 ServantMessageRequest."""
+
+    model_config = {"extra": "forbid"}
+
+    content: str = Field(min_length=1)
+    attachment_refs: list[str] = Field(default_factory=list)
 
 
 def _json_clone(value: Any) -> Any:
     return json.loads(json.dumps(value))
+
+
+def _new_prefixed_id(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:16]}"
+
+
+def _request_id(value: Optional[str]) -> str:
+    clean = str(value or "").strip()
+    return clean or _new_prefixed_id("req")
+
+
+def _trace_id(value: Optional[str]) -> str:
+    clean = str(value or "").strip()
+    return clean or _new_prefixed_id("trace")
+
+
+def _audit_fields(
+    *,
+    scope: Any,
+    persona_id: str,
+    session_id: str,
+    request_id: str,
+    trace_id: str,
+) -> Dict[str, str]:
+    return {
+        "trace_id": trace_id,
+        "request_id": request_id,
+        "actor_id": str(getattr(scope, "operator_id", "") or ""),
+        "user_id": str(getattr(scope, "user_id", "") or ""),
+        "persona_id": str(persona_id or ""),
+        "session_id": str(session_id or ""),
+    }
+
+
+def _record_servant_event(session_id: str, event_type: str, data: Mapping[str, Any]) -> Dict[str, Any]:
+    event = {
+        "id": _new_prefixed_id("evt-servant"),
+        "type": event_type,
+        "data": _json_clone(dict(data)),
+    }
+    with _SERVANT_EVENT_LOCK:
+        _SERVANT_SESSION_EVENTS.setdefault(session_id, []).append(event)
+    return event
+
+
+def _events_for_session(session_id: str, last_event_id: Optional[str] = None) -> list[Dict[str, Any]]:
+    with _SERVANT_EVENT_LOCK:
+        events = list(_SERVANT_SESSION_EVENTS.get(session_id, []))
+    if not last_event_id:
+        return events
+    for idx, event in enumerate(events):
+        if event.get("id") == last_event_id:
+            return events[idx + 1 :]
+    return events
+
+
+def _format_sse(event: Mapping[str, Any]) -> str:
+    return "\n".join(
+        [
+            f"id: {event.get('id')}",
+            f"event: {event.get('type')}",
+            f"data: {json.dumps(event.get('data') or {}, ensure_ascii=True)}",
+            "",
+            "",
+        ]
+    )
 
 
 def _string_list(value: Any) -> list[str]:
@@ -333,6 +433,200 @@ def _raise_scope_error(exc: AgoraScopeResolutionError, bff_error: Callable[..., 
     )
 
 
+def _servant_profile_for_scope(
+    *,
+    read_store: Any,
+    scope: Any,
+    bff_error: Callable[..., HTTPException],
+) -> ServantProfile:
+    persona_id = _stable_servant_persona_id(
+        tenant_id=scope.tenant_id,
+        agora_user_id=scope.user_id,
+    )
+    existing = _find_servant_persona(
+        read_store,
+        tenant_id=scope.tenant_id,
+        agora_user_id=scope.user_id,
+        expected_persona_id=persona_id,
+    )
+    if existing is None:
+        from models import ErrorCode
+
+        raise bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Agora servant is not provisioned",
+            "Call POST /bff/agora/servant/ensure before opening servant sessions",
+            precondition_failed="servant_profile",
+        )
+    policy = AgoraServantPolicy()
+    capability_summary = _capability_summary(scope, existing)
+    return _profile_from_persona(
+        existing,
+        scope=scope,
+        capability_summary=capability_summary,
+        policy=policy,
+    )
+
+
+def _scope_for_servant_session(
+    *,
+    extract_identity: Callable[..., Any],
+    require_read_role: Callable[..., None],
+    bff_error: Callable[..., HTTPException],
+    utc_now: Callable[[], str],
+    authorization: Optional[str],
+    x_tenant_id: Optional[str] = None,
+    x_pantheon_tenant: Optional[str] = None,
+) -> Any:
+    identity = extract_identity(authorization)
+    require_read_role(identity)
+    try:
+        return resolve_agora_user_scope(
+            identity,
+            utc_now=utc_now,
+            requested_tenant_id=x_tenant_id or x_pantheon_tenant,
+        )
+    except AgoraScopeResolutionError as exc:
+        _raise_scope_error(exc, bff_error)
+
+
+def _openclaw_error_code(exc: OpenClawOpsClientError) -> Any:
+    from models import ErrorCode
+
+    if exc.status_code == 404:
+        return ErrorCode.RESOURCE_NOT_FOUND
+    if exc.status_code == 409:
+        return ErrorCode.RESOURCE_CONFLICT
+    if exc.status_code in {400, 422}:
+        return ErrorCode.VALIDATION_FAILED
+    if exc.status_code in {0, 503, 504}:
+        return ErrorCode.DEPENDENCY_UNAVAILABLE
+    return ErrorCode.UPSTREAM_ERROR
+
+
+def _raise_openclaw_error(
+    exc: OpenClawOpsClientError,
+    *,
+    bff_error: Callable[..., HTTPException],
+    message: str,
+    precondition_failed: str,
+    audit: Optional[Mapping[str, Any]] = None,
+) -> None:
+    details: Dict[str, Any] = {
+        "upstream": {
+            "code": _OPENCLAW_DEGRADED_CODE,
+            "source_error_code": exc.error_code,
+            "status_code": exc.status_code,
+            "message": exc.message,
+        }
+    }
+    if audit is not None:
+        details["audit"] = dict(audit)
+    raise bff_error(
+        exc.status_code if exc.status_code else 503,
+        _openclaw_error_code(exc),
+        message,
+        exc.message,
+        precondition_failed=precondition_failed,
+        details_extra=details,
+    )
+
+
+def _session_record(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    candidates = [
+        payload.get("session"),
+        (payload.get("data") or {}).get("session") if isinstance(payload.get("data"), dict) else None,
+        payload,
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            return _json_clone(candidate)
+    return {}
+
+
+def _session_id_from_record(record: Mapping[str, Any]) -> str:
+    return str(record.get("session_id") or record.get("id") or "").strip()
+
+
+def _session_type_from_record(record: Mapping[str, Any]) -> str:
+    context_bundle = record.get("context_bundle") if isinstance(record.get("context_bundle"), dict) else {}
+    return str(record.get("session_type") or context_bundle.get("session_type") or "interactive")
+
+
+def _session_belongs_to_scope(record: Mapping[str, Any], *, scope: Any, profile: ServantProfile) -> bool:
+    operator_id = str(record.get("operator_id") or "").strip()
+    agent_id = str(record.get("agent_id") or "").strip()
+    if operator_id and operator_id != scope.operator_id:
+        return False
+    if agent_id and agent_id != profile.persona_id:
+        return False
+    return True
+
+
+def _session_view(record: Mapping[str, Any], *, profile: ServantProfile) -> Dict[str, Any]:
+    session_id = _session_id_from_record(record)
+    context_bundle = record.get("context_bundle") if isinstance(record.get("context_bundle"), dict) else {}
+    state = str(record.get("state") or record.get("status") or "unknown")
+    return {
+        "session_id": session_id,
+        "openclaw_session_id": record.get("upstream_session_id"),
+        "servant_persona_id": profile.persona_id,
+        "session_type": _session_type_from_record(record),
+        "status": state,
+        "state": state,
+        "intent": context_bundle.get("intent"),
+        "strategy_ref": context_bundle.get("strategy_ref"),
+        "metadata": context_bundle.get("metadata") if isinstance(context_bundle.get("metadata"), dict) else {},
+        "created_at": record.get("created_at"),
+        "updated_at": record.get("updated_at"),
+        "links": {
+            "self": f"/bff/agora/servant/sessions/{session_id}",
+            "messages": f"/bff/agora/servant/sessions/{session_id}/messages",
+            "terminate": f"/bff/agora/servant/sessions/{session_id}/terminate",
+            "stream": f"/bff/agora/servant/sessions/{session_id}/stream",
+        },
+        "openclaw_lifecycle": {
+            "state": state,
+            "agent_id": record.get("agent_id"),
+            "operator_id": record.get("operator_id"),
+            "last_error": record.get("last_error"),
+        },
+    }
+
+
+def _provider_answer_from(data: Mapping[str, Any]) -> Optional[str]:
+    for key in ("output", "answer"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    provider = data.get("provider")
+    if isinstance(provider, dict):
+        value = provider.get("answer")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _servant_meta(
+    *,
+    now: str,
+    scope: Any,
+    capability: str,
+    audit: Mapping[str, Any],
+    extra: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    meta = {
+        "snapshot_at": now,
+        "capability": capability,
+        "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+        "audit": dict(audit),
+    }
+    if extra:
+        meta.update(_json_clone(dict(extra)))
+    return meta
+
+
 def create_servant_router(
     *,
     extract_identity: Callable[..., Any],
@@ -342,7 +636,7 @@ def create_servant_router(
     get_read_store: Callable[[], Any],
     sync_servant_agent: Callable[[Mapping[str, Any]], Mapping[str, Any]],
 ) -> APIRouter:
-    router = APIRouter(tags=["agora-identity"])
+    router = APIRouter(tags=["agora-servant"])
 
     @router.post("/bff/agora/servant/ensure")
     def agora_servant_ensure(
@@ -453,5 +747,496 @@ def create_servant_router(
         payload["meta"]["request_id"] = request_id
         payload["meta"]["idempotency_key"] = idempotency_key
         return payload
+
+    @router.post("/bff/agora/servant/sessions", status_code=201)
+    def create_servant_session(
+        body: Optional[ServantSessionCreateRequest] = Body(default=None),
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        scope = _scope_for_servant_session(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+        )
+        _require_header(idempotency_key, "Idempotency-Key", bff_error)
+        request_id = _require_header(x_request_id, "X-Request-Id", bff_error)
+        trace_id = _trace_id(x_trace_id)
+        profile = _servant_profile_for_scope(
+            read_store=get_read_store(),
+            scope=scope,
+            bff_error=bff_error,
+        )
+        request = body or ServantSessionCreateRequest()
+        now = utc_now()
+        context_bundle = {
+            "capability": _SERVANT_CAPABILITY,
+            "session_type": request.session_type,
+            "intent": request.intent,
+            "strategy_ref": request.strategy_ref,
+            "metadata": _json_clone(request.metadata),
+            "audit": _audit_fields(
+                scope=scope,
+                persona_id=profile.persona_id,
+                session_id="pending",
+                request_id=request_id,
+                trace_id=trace_id,
+            ),
+            "safety": {
+                "execution_authority": "none",
+                "prohibited_authority": list(_PROHIBITED_AUTHORITY),
+            },
+        }
+        try:
+            raw = OpenClawOpsClient().create_session(
+                agent_id=profile.persona_id,
+                session_type=request.session_type,
+                operator_id=scope.operator_id,
+                idempotency_key=str(idempotency_key),
+                context_bundle=context_bundle,
+            )
+        except OpenClawOpsClientError as exc:
+            audit = _audit_fields(
+                scope=scope,
+                persona_id=profile.persona_id,
+                session_id="pending",
+                request_id=request_id,
+                trace_id=trace_id,
+            )
+            _raise_openclaw_error(
+                exc,
+                bff_error=bff_error,
+                message="OpenClaw servant session creation failed",
+                precondition_failed="openclaw_session_create",
+                audit=audit,
+            )
+        record = _session_record(raw)
+        session_id = _session_id_from_record(record)
+        audit = _audit_fields(
+            scope=scope,
+            persona_id=profile.persona_id,
+            session_id=session_id,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        _record_servant_event(
+            session_id,
+            "servant.session.created",
+            {
+                "session_id": session_id,
+                "session_type": request.session_type,
+                "servant_persona_id": profile.persona_id,
+                "audit": audit,
+            },
+        )
+        return {
+            "data": _session_view(record, profile=profile),
+            "meta": _servant_meta(
+                now=now,
+                scope=scope,
+                capability=_SERVANT_CAPABILITY,
+                audit=audit,
+                extra={"idempotency_key": idempotency_key},
+            ),
+        }
+
+    @router.get("/bff/agora/servant/sessions/{session_id}")
+    def get_servant_session(
+        session_id: str,
+        authorization: Optional[str] = Header(default=None),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        scope = _scope_for_servant_session(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+        )
+        profile = _servant_profile_for_scope(
+            read_store=get_read_store(),
+            scope=scope,
+            bff_error=bff_error,
+        )
+        request_id = _request_id(x_request_id)
+        trace_id = _trace_id(x_trace_id)
+        audit = _audit_fields(
+            scope=scope,
+            persona_id=profile.persona_id,
+            session_id=session_id,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        try:
+            raw = OpenClawOpsClient().get_session(
+                session_id=session_id,
+                operator_id=scope.operator_id,
+            )
+        except OpenClawOpsClientError as exc:
+            _raise_openclaw_error(
+                exc,
+                bff_error=bff_error,
+                message="OpenClaw servant session lookup failed",
+                precondition_failed="openclaw_session_get",
+                audit=audit,
+            )
+        record = _session_record(raw)
+        if not _session_belongs_to_scope(record, scope=scope, profile=profile):
+            from models import ErrorCode
+
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Servant session not found",
+                "Session is not visible in the current Agora user scope",
+                precondition_failed="session_id",
+                details_extra={"audit": audit},
+            )
+        return {
+            "data": _session_view(record, profile=profile),
+            "meta": _servant_meta(
+                now=utc_now(),
+                scope=scope,
+                capability=_SERVANT_CAPABILITY,
+                audit=audit,
+            ),
+        }
+
+    @router.post("/bff/agora/servant/sessions/{session_id}/messages", status_code=202)
+    def post_servant_session_message(
+        session_id: str,
+        body: ServantMessageRequest,
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        scope = _scope_for_servant_session(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+        )
+        _require_header(idempotency_key, "Idempotency-Key", bff_error)
+        request_id = _require_header(x_request_id, "X-Request-Id", bff_error)
+        trace_id = _trace_id(x_trace_id)
+        profile = _servant_profile_for_scope(
+            read_store=get_read_store(),
+            scope=scope,
+            bff_error=bff_error,
+        )
+        audit = _audit_fields(
+            scope=scope,
+            persona_id=profile.persona_id,
+            session_id=session_id,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        try:
+            raw = OpenClawOpsClient().get_session(
+                session_id=session_id,
+                operator_id=scope.operator_id,
+            )
+        except OpenClawOpsClientError as exc:
+            _raise_openclaw_error(
+                exc,
+                bff_error=bff_error,
+                message="OpenClaw servant session lookup failed",
+                precondition_failed="openclaw_session_get",
+                audit=audit,
+            )
+        record = _session_record(raw)
+        if not _session_belongs_to_scope(record, scope=scope, profile=profile):
+            from models import ErrorCode
+
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Servant session not found",
+                "Session is not visible in the current Agora user scope",
+                precondition_failed="session_id",
+                details_extra={"audit": audit},
+            )
+        state = str(record.get("state") or record.get("status") or "").lower()
+        if state in {"canceled", "cancelled", "failed"}:
+            from models import ErrorCode
+
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Servant session cannot accept messages",
+                f"Session state is {state}",
+                precondition_failed="session_state",
+                details_extra={"audit": audit},
+            )
+        message_id = _new_prefixed_id("servant-msg")
+        session_type = _session_type_from_record(record)
+        provider_status = "accepted"
+        provider_answer: Optional[str] = None
+        provider_error: Optional[Dict[str, Any]] = None
+        try:
+            provider_raw = OpenClawOpsClient().invoke_assistant_provider(
+                provider="openclaw",
+                mode="user",
+                prompt=body.content,
+                context_pack={
+                    "source": "agora.servant.session",
+                    "session_id": session_id,
+                    "session_type": session_type,
+                    "servant_persona_id": profile.persona_id,
+                    "audit": audit,
+                },
+                operator_id=scope.operator_id,
+                metadata={
+                    "audit": audit,
+                    "session_type": session_type,
+                    "servant_persona_id": profile.persona_id,
+                    "openclaw_lifecycle_session_id": session_id,
+                },
+                trace_id=trace_id,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": body.content,
+                        "attachment_refs": list(body.attachment_refs),
+                    }
+                ],
+                attachments=[{"ref": ref} for ref in body.attachment_refs],
+            )
+            data = provider_raw.get("data") if isinstance(provider_raw, dict) else {}
+            if isinstance(data, dict):
+                provider_answer = _provider_answer_from(data)
+                provider_status = str(data.get("status") or provider_raw.get("status") or "accepted")
+            else:
+                provider_status = (
+                    str(provider_raw.get("status") or "accepted")
+                    if isinstance(provider_raw, dict)
+                    else "accepted"
+                )
+        except OpenClawOpsClientError as exc:
+            provider_status = "degraded"
+            provider_error = {
+                "code": _OPENCLAW_DEGRADED_CODE,
+                "source_error_code": exc.error_code,
+                "status_code": exc.status_code,
+                "message": exc.message,
+            }
+        _record_servant_event(
+            session_id,
+            "servant.message.completed" if provider_status != "degraded" else "servant.message.degraded",
+            {
+                "session_id": session_id,
+                "message_id": message_id,
+                "provider_status": provider_status,
+                "answer": provider_answer,
+                "error": provider_error,
+                "audit": audit,
+            },
+        )
+        return {
+            "status": "accepted",
+            "data": {
+                "message_id": message_id,
+                "session_id": session_id,
+                "session_type": session_type,
+                "servant_persona_id": profile.persona_id,
+                "provider": {
+                    "status": provider_status,
+                    "answer": provider_answer,
+                    "error": provider_error,
+                },
+            },
+            "meta": _servant_meta(
+                now=utc_now(),
+                scope=scope,
+                capability=_SERVANT_SESSION_CAPABILITY,
+                audit=audit,
+                extra={"idempotency_key": idempotency_key},
+            ),
+        }
+
+    @router.post("/bff/agora/servant/sessions/{session_id}/terminate")
+    def terminate_servant_session(
+        session_id: str,
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        scope = _scope_for_servant_session(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+        )
+        _require_header(idempotency_key, "Idempotency-Key", bff_error)
+        request_id = _request_id(x_request_id)
+        trace_id = _trace_id(x_trace_id)
+        profile = _servant_profile_for_scope(
+            read_store=get_read_store(),
+            scope=scope,
+            bff_error=bff_error,
+        )
+        audit = _audit_fields(
+            scope=scope,
+            persona_id=profile.persona_id,
+            session_id=session_id,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        try:
+            raw = OpenClawOpsClient().cancel_session(
+                session_id=session_id,
+                operator_id=scope.operator_id,
+                idempotency_key=str(idempotency_key),
+            )
+        except OpenClawOpsClientError as exc:
+            _raise_openclaw_error(
+                exc,
+                bff_error=bff_error,
+                message="OpenClaw servant session termination failed",
+                precondition_failed="openclaw_session_terminate",
+                audit=audit,
+            )
+        record = _session_record(raw)
+        if not _session_belongs_to_scope(record, scope=scope, profile=profile):
+            from models import ErrorCode
+
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Servant session not found",
+                "Session is not visible in the current Agora user scope",
+                precondition_failed="session_id",
+                details_extra={"audit": audit},
+            )
+        _record_servant_event(
+            session_id,
+            "servant.session.terminated",
+            {
+                "session_id": session_id,
+                "status": record.get("state") or record.get("status") or "canceled",
+                "audit": audit,
+            },
+        )
+        return {
+            "data": _session_view(record, profile=profile),
+            "meta": _servant_meta(
+                now=utc_now(),
+                scope=scope,
+                capability=_SERVANT_CAPABILITY,
+                audit=audit,
+                extra={"idempotency_key": idempotency_key},
+            ),
+        }
+
+    @router.get("/bff/agora/servant/sessions/{session_id}/stream")
+    def stream_servant_session(
+        session_id: str,
+        authorization: Optional[str] = Header(default=None),
+        last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> StreamingResponse:
+        scope = _scope_for_servant_session(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+        )
+        profile = _servant_profile_for_scope(
+            read_store=get_read_store(),
+            scope=scope,
+            bff_error=bff_error,
+        )
+        request_id = _request_id(x_request_id)
+        trace_id = _trace_id(x_trace_id)
+        audit = _audit_fields(
+            scope=scope,
+            persona_id=profile.persona_id,
+            session_id=session_id,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        try:
+            raw = OpenClawOpsClient().get_session(
+                session_id=session_id,
+                operator_id=scope.operator_id,
+            )
+        except OpenClawOpsClientError as exc:
+            _raise_openclaw_error(
+                exc,
+                bff_error=bff_error,
+                message="OpenClaw servant session lookup failed",
+                precondition_failed="openclaw_session_get",
+                audit=audit,
+            )
+        record = _session_record(raw)
+        if not _session_belongs_to_scope(record, scope=scope, profile=profile):
+            from models import ErrorCode
+
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Servant session not found",
+                "Session is not visible in the current Agora user scope",
+                precondition_failed="session_id",
+                details_extra={"audit": audit},
+            )
+
+        def _iter_events() -> Iterator[str]:
+            replay_events = _events_for_session(session_id, last_event_id)
+            if not replay_events:
+                yield _format_sse(
+                    {
+                        "id": _new_prefixed_id("evt-servant"),
+                        "type": "servant.session.snapshot",
+                        "data": {
+                            "session_id": session_id,
+                            "status": record.get("state") or record.get("status") or "unknown",
+                            "audit": audit,
+                        },
+                    }
+                )
+                return
+            for event in replay_events:
+                yield _format_sse(event)
+
+        return StreamingResponse(
+            _iter_events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-SSE-Channel": f"agora-servant:{session_id}",
+            },
+        )
 
     return router
