@@ -6,7 +6,7 @@
   "type": "string",
   "pattern": "^pcnt_[0-9A-HJKMNP-TV-Z]{26}$",
   "examples": [
-    "pcnt_01HZQRSTUVWXYZ0123456789AB"
+    "pcnt_01KVM5JZBQZ1W50SPRG6S0850M"
   ],
   "x-ag-task": "AG-DES-SW-PRIV-001",
   "x-frozen": false

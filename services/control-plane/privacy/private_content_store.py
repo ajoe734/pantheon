@@ -8,7 +8,6 @@ The dev KEK must never be committed.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Protocol
@@ -152,8 +151,8 @@ class _DevKeyProvider:
     Safety guards:
     - Refuses to operate when PANTHEON_ENV == 'production'.
     - KEK is read from the environment only; must never be committed to source.
-    - AES-256-GCM for DEK-wrapping is simulated here with HMAC-SHA256 for
-      simplicity in the dev path; production providers use real KMS wrap.
+    - DEK wrapping uses AES-256-GCM with the injected dev KEK; production
+      providers use real KMS/HSM wrap.
     """
 
     _ENV_VAR = "AGORA_PRIVATE_CONTENT_DEV_KEK"
@@ -185,13 +184,18 @@ class _DevKeyProvider:
         self._root_key: bytes = key_bytes
 
     def wrap_dek(self, dek: bytes, aad: bytes) -> tuple[bytes, str]:
-        """Wrap DEK using HMAC-SHA256(root_key, aad || dek) XOR dek as envelope.
+        """Wrap DEK using AES-256-GCM(root_key, dek, aad) for dev/test.
 
-        This is a dev-only approximation; production uses KMS AES-256-GCM wrapping.
+        encrypted_dek is encoded as wrapping_nonce || ciphertext || tag.
         """
-        wrapping_key = hmac.new(self._root_key, aad + dek, hashlib.sha256).digest()
-        # Simple XOR envelope sufficient for dev determinism testing
-        encrypted_dek = bytes(a ^ b for a, b in zip(dek, wrapping_key[: len(dek)]))
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        wrapping_nonce = os.urandom(12)
+        encrypted_dek = wrapping_nonce + AESGCM(self._root_key).encrypt(
+            wrapping_nonce,
+            dek,
+            aad,
+        )
         return encrypted_dek, self._KEY_VERSION
 
     def unwrap_dek(
@@ -204,20 +208,18 @@ class _DevKeyProvider:
             raise PrivateContentStoreUnavailable(
                 f"Unknown KEK version: {kek_key_version}"
             )
-        # Recover DEK by reversing the XOR envelope.
-        # We need the original DEK to compute the wrapping key, so we use
-        # the length hint from encrypted_dek.
-        dek_len = len(encrypted_dek)
-        # Iterative recover: XOR encrypted_dek with HMAC(root, aad || candidate_dek).
-        # For this simple dev scheme, encrypted_dek ^ wrapping_key = dek,
-        # so we need one more step using a known length and the wrapping key seed.
-        # Implementation: HMAC(root, aad + encrypted_dek_xor_round) — see wrap_dek.
-        # Because dek XOR wrapping_key(aad,dek) is not directly invertible without
-        # the original dek, we store a deterministic lookup using aad only for dev.
-        # Production KMS wrapping is invertible via KMS.Decrypt; this path is test-only.
-        # Re-derive using HMAC(root, aad) as a simplified unwrap for dev.
-        derived = hmac.new(self._root_key, aad, hashlib.sha256).digest()
-        return bytes(a ^ b for a, b in zip(encrypted_dek, derived[:dek_len]))
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        if len(encrypted_dek) < 29:
+            raise PrivateContentStoreUnavailable("Malformed encrypted DEK envelope.")
+        wrapping_nonce = encrypted_dek[:12]
+        wrapped_dek = encrypted_dek[12:]
+        try:
+            return AESGCM(self._root_key).decrypt(wrapping_nonce, wrapped_dek, aad)
+        except Exception as exc:  # pragma: no cover - exact crypto exception varies
+            raise PrivateContentStoreUnavailable(
+                "Unable to unwrap encrypted DEK."
+            ) from exc
 
 
 # ---------------------------------------------------------------------------
