@@ -40,10 +40,10 @@ All prior DB002 support packets are durable and reviewed:
 | `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-9` | `done` PR #1933/#1937 | Current-dev acceptance refresh through followup-8 and closeout record |
 | `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-10` | `done` PR #1942 | Current-dev acceptance refresh through followup-9 and closeout record |
 
-Current `origin/dev` has advanced to `b3b5b1c3` after followup-10 through
+Current `origin/dev` has advanced to `97cfbdd5` after followup-10 through
 unrelated sidecar merges, including `AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10`
-and `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20`. These merges do not change
-the DB002 dashboard editor dependency surface.
+and `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20/21`. These merges do not
+change the DB002 dashboard editor dependency surface.
 
 ## Current State Snapshot
 
@@ -203,6 +203,9 @@ AI_NAME=Codex2 ./scripts/ai-status.sh show AG-E2E-TR-001
 AI_NAME=Codex2 ./scripts/ai-status.sh progress AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-11 "Confirmed task branch and current dev checkpoint b3b5b1c3; preparing support-only DB002 acceptance/dependency packet. Parent AG-FE-DB-002 remains blocked waiting_for Claude; no canonical/runtime changes planned."
 git fetch origin
 git merge --ff-only origin/dev
+git log --oneline --decorate HEAD..origin/dev
+git show --stat --oneline --decorate origin/dev
+git merge --no-edit origin/dev
 test -f execute-plans/src/agora/dashboard/DashboardGridEditor.tsx
 rg -n 'react-grid-layout|@types/react-grid-layout|echarts|echarts-for-react' execute-plans/package.json
 rg -n 'validateWidgetSpecAgainstRegistry|WidgetRenderer|DashboardRecipeV2|PersonalizationEvent|move_widget|resize_widget|replace_chart_spec|expected_version|If-Match|Idempotency' execute-plans/src/agora execute-plans/src/lib/bff-v1/agora services/control-plane/specs/agora docs/04/pantheon_agora_cross_repo_2026-06-20 -S
@@ -212,8 +215,8 @@ git log --oneline -12 HEAD
 
 Observed results:
 
-- Branch is `task/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-11` at current
-  `origin/dev` checkpoint `b3b5b1c3`.
+- Branch is `task/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-11` refreshed onto
+  current `origin/dev` checkpoint `97cfbdd5`.
 - Only pre-existing dirty entry before authoring was the generated
   task-scoped brief
   `.orchestrator/task-briefs/ag_fe_db_002_sidecar_acceptance_followup_11.md`.
