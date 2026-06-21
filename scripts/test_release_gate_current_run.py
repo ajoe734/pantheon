@@ -27,6 +27,12 @@ def _upload_artifact_paths(step: dict) -> list[str]:
     return [line.strip() for line in raw_path.splitlines() if line.strip()]
 
 
+def _workflow_dispatch_inputs(workflow_path: Path) -> dict:
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    on_config = workflow.get("on") or workflow.get(True)
+    return on_config["workflow_dispatch"]["inputs"]
+
+
 def _assert_current_run_is_only_uploaded_audit_path(paths: list[str]) -> None:
     audit_paths = [path for path in paths if path.startswith(".lovable/audits")]
     assert audit_paths == [".lovable/audits/current-run"]
@@ -1277,9 +1283,14 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     repo_root = Path(__file__).resolve().parents[1]
     workflow = repo_root / ".github" / "workflows" / "bff-live-evidence-gate.yml"
     text = workflow.read_text(encoding="utf-8")
+    dispatch_inputs = _workflow_dispatch_inputs(workflow)
 
     assert "name: BFF Live Evidence Gate" in text
     assert "workflow_dispatch" in text
+    assert dispatch_inputs["approval_race_id"]["required"] is True
+    assert dispatch_inputs["two_man_race_id"]["required"] is True
+    assert "default" not in dispatch_inputs["approval_race_id"]
+    assert "default" not in dispatch_inputs["two_man_race_id"]
     assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
     assert "PANTHEON_LIVE_EVIDENCE_ENVIRONMENT: ${{ inputs.environment }}" in text
     assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in text
@@ -1300,6 +1311,8 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "--reconnect-attempts 5" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
+    assert "scripts/verify_bff_live_evidence_artifact.py" in text
+    assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
     assert "path: .lovable/audits/current-run" in text
     assert ".lovable/audits/*.md" not in text
     assert ".lovable/audits/historical" not in text
@@ -1315,11 +1328,17 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     repo_root = Path(__file__).resolve().parents[1]
     workflow = repo_root / ".github" / "workflows" / "stage-0-ci.yml"
     text = workflow.read_text(encoding="utf-8")
+    dispatch_inputs = _workflow_dispatch_inputs(workflow)
 
     assert "workflow_dispatch:" in text
     assert "mode:" in text
     assert "- live-evidence" in text
     assert "approval_race_id:" in text
+    assert "two_man_race_id:" in text
+    assert dispatch_inputs["approval_race_id"]["required"] is True
+    assert dispatch_inputs["two_man_race_id"]["required"] is True
+    assert "default" not in dispatch_inputs["approval_race_id"]
+    assert "default" not in dispatch_inputs["two_man_race_id"]
     assert "soak_seconds:" in text
     assert "live-evidence:" in text
     assert "github.event_name == 'workflow_dispatch' && inputs.mode == 'live-evidence'" in text
@@ -1344,6 +1363,8 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "--reconnect-attempts 5" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
+    assert "scripts/verify_bff_live_evidence_artifact.py" in text
+    assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
     assert "path: .lovable/audits/current-run" in text
     assert ".lovable/audits/*.md" not in text
     assert ".lovable/audits/historical" not in text
