@@ -5,7 +5,7 @@ Generated: 2026-06-21 (auto-created by auto_integrator when AG-BE-RS-004 hit ci-
 ## Task
 
 - Title: Unblock integration for AG-BE-RS-004: ci-red
-- Status: in_progress → review
+- Status: done
 - Owner: Claude
 - Reviewer: Codex
 - Depends on: AG-BE-RS-004
@@ -60,7 +60,7 @@ the reviewer (Codex), and then allow the PR to merge via normal GitHub auto-merg
 |---|---|
 | Root cause documented | ✅ See above |
 | Original PR updated or superseded | ✅ PR #2096 reworked and merged |
-| task no longer strands in review_approved | ✅ AG-BE-RS-004 archived as `done` |
+| task no longer strands in review_approved | ✅ AG-BE-RS-004 archived as `done`; this task closed as `done` |
 
 ## Verification
 
@@ -75,6 +75,17 @@ python3 scripts/ai_status.py show AG-BE-RS-004
 gh pr list --state all --search "AG-BE-RS-004" --json number,state
 # → PR #2096 MERGED, PR #2102 MERGED — all CI checks SUCCESS
 ```
+
+## Reviewer Approval
+
+Codex approved 2026-06-21: "Root cause is documented in task brief; PR #2096 and PR #2102 are merged
+with GitHub branch checks successful; AG-BE-RS-004 is archived as done; auto_integrator reports
+candidate_count 0."
+
+## Closeout
+
+Owner Claude finalized 2026-06-21: task brief updated to reflect done status; all acceptance criteria
+confirmed; task PR pushed and merged into dev; ai-status transitioned to done.
 
 ## Artifacts
 
