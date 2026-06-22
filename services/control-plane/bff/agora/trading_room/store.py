@@ -4,7 +4,8 @@ Provides simple dict-backed stores for TradingDecisionEvent and TradingIntent
 records within a single BFF process.  Not durable — each restart starts empty.
 
 Safety invariant: this module never persists broker orders, RuntimeBinding
-mutations, or capital binding changes.  Every record has no_order_route_proof.
+mutations, or capital binding changes.  Every persisted decision, intent, and
+handoff record has the canonical no_order_route_proof for its schema.
 """
 from __future__ import annotations
 
@@ -17,7 +18,11 @@ class TradingRoomStore:
     def __init__(self) -> None:
         self._decision_events: Dict[str, Dict[str, Any]] = {}
         self._intents: Dict[str, Dict[str, Any]] = {}
+        self._intent_states: Dict[str, str] = {}
+        self._handoffs: Dict[str, Dict[str, Any]] = {}
+        self._handoffs_by_intent: Dict[str, List[str]] = {}
         self._trader_decisions: Dict[str, List[Dict[str, Any]]] = {}
+        self._idempotency_keys: Dict[str, bool] = {}
 
     # ------------------------------------------------------------------
     # Decision events
@@ -98,13 +103,97 @@ class TradingRoomStore:
     # Trading intents
     # ------------------------------------------------------------------
 
-    def upsert_intent(self, intent: Dict[str, Any]) -> Dict[str, Any]:
+    _REQUIRED_INTENT_PROOF = "agora_intent_record_only"
+    _REQUIRED_HANDOFF_PROOF = "agora_request_only_no_order_route"
+
+    def upsert_intent(self, intent: Dict[str, Any], *, state: str = "draft") -> Dict[str, Any]:
+        proof = intent.get("no_order_route_proof")
+        if proof != self._REQUIRED_INTENT_PROOF:
+            raise ValueError(
+                f"D1 safety invariant: TradingIntent.no_order_route_proof must be "
+                f"'{self._REQUIRED_INTENT_PROOF}', got {proof!r}"
+            )
         intent_id = intent["intent_id"]
-        self._intents[intent_id] = intent
-        return intent
+        self._intents[intent_id] = dict(intent)
+        self._intent_states[intent_id] = state
+        return self._intents[intent_id]
 
     def get_intent(self, intent_id: str) -> Optional[Dict[str, Any]]:
         return self._intents.get(intent_id)
+
+    def get_intent_state(self, intent_id: str) -> Optional[str]:
+        if intent_id not in self._intents:
+            return None
+        return self._intent_states.get(intent_id, "draft")
+
+    def set_intent_state(self, intent_id: str, state: str) -> Optional[Dict[str, Any]]:
+        if intent_id not in self._intents:
+            return None
+        self._intent_states[intent_id] = state
+        return self._intents[intent_id]
+
+    # ------------------------------------------------------------------
+    # Governed intent handoffs
+    # ------------------------------------------------------------------
+
+    def upsert_handoff(self, handoff: Dict[str, Any]) -> Dict[str, Any]:
+        proof = handoff.get("no_order_route_proof")
+        if proof != self._REQUIRED_HANDOFF_PROOF:
+            raise ValueError(
+                f"D1 safety invariant: GovernedIntentHandoff.no_order_route_proof must be "
+                f"'{self._REQUIRED_HANDOFF_PROOF}', got {proof!r}"
+            )
+        intent_id = handoff["intent_id"]
+        if intent_id not in self._intents:
+            raise KeyError(intent_id)
+        handoff_id = handoff["handoff_id"]
+        if handoff_id in self._handoffs:
+            raise ValueError(f"Duplicate handoff_id: {handoff_id}")
+        self._handoffs[handoff_id] = dict(handoff)
+        self._handoffs_by_intent.setdefault(intent_id, []).append(handoff_id)
+        if handoff.get("state") == "submitted":
+            self._intent_states[intent_id] = "submitted"
+        return self._handoffs[handoff_id]
+
+    def get_handoff(self, handoff_id: str) -> Optional[Dict[str, Any]]:
+        return self._handoffs.get(handoff_id)
+
+    def list_handoffs_for_intent(self, intent_id: str) -> List[Dict[str, Any]]:
+        return [
+            self._handoffs[handoff_id]
+            for handoff_id in self._handoffs_by_intent.get(intent_id, [])
+            if handoff_id in self._handoffs
+        ]
+
+    def withdraw_intent(self, intent_id: str, *, withdrawn_at: str) -> Optional[Dict[str, Any]]:
+        intent = self.set_intent_state(intent_id, "withdrawn")
+        if intent is None:
+            return None
+
+        withdrawn_handoff_ids: List[str] = []
+        for handoff in self.list_handoffs_for_intent(intent_id):
+            if handoff.get("state") in {"draft", "submitted"}:
+                handoff["state"] = "withdrawn"
+                handoff["updated_at"] = withdrawn_at
+                withdrawn_handoff_ids.append(handoff["handoff_id"])
+
+        return {
+            "intent": intent,
+            "state": "withdrawn",
+            "withdrawn_handoff_ids": withdrawn_handoff_ids,
+        }
+
+    # ------------------------------------------------------------------
+    # Idempotency
+    # ------------------------------------------------------------------
+
+    def check_and_record_idempotency_key(self, scope: str, key: str) -> bool:
+        """Return True if duplicate; False on first use and record the key."""
+        composite = f"{scope}:{key}"
+        if composite in self._idempotency_keys:
+            return True
+        self._idempotency_keys[composite] = True
+        return False
 
 
 def make_trading_room_store() -> TradingRoomStore:

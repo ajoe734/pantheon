@@ -25,7 +25,7 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         env["PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS"]
         == "${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-180.0}"
     )
-    assert env["PANTHEON_ASSISTANT_KERNEL_ENABLED"] == "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-false}"
+    assert env["PANTHEON_ASSISTANT_KERNEL_ENABLED"] == "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-true}"
     assert (
         env["PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH"]
         == "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"
@@ -34,7 +34,10 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         env["PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS"]
         == "${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"
     )
-    assert env["PANTHEON_BFF_STUB_CAPABILITIES"] == "${PANTHEON_BFF_STUB_CAPABILITIES:-}"
+    assert (
+        env["PANTHEON_BFF_STUB_CAPABILITIES"]
+        == "${PANTHEON_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"
+    )
     assert (
         env["PANTHEON_MANAGEMENT_AI_STORE_PATH"]
         == "${PANTHEON_MANAGEMENT_AI_STORE_PATH:-/data/bff/management-ai-conversations.json}"

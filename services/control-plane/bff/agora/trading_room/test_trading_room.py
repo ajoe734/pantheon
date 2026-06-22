@@ -18,6 +18,9 @@ import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+
 from bff.agora.trading_room.store import TradingRoomStore, make_trading_room_store
 from bff.agora.trading_room.router import (
     TradingDecisionEvent,
@@ -111,6 +114,95 @@ def _make_event(
     }
 
 
+def _make_intent(intent_id: str = "int-001") -> dict:
+    return {
+        "spec_version": "1.0",
+        "intent_id": intent_id,
+        "operator_id": "user-001",
+        "intent_type": "entry_interest",
+        "direction": "neutral",
+        "subject": {"symbol": "AAPL", "strategy_ref": "strat-001"},
+        "rationale": "Decision-support intent only",
+        "linked_event_ids": ["evt-001"],
+        "learning_eligible": True,
+        "no_order_route_proof": "agora_intent_record_only",
+        "expressed_at": "2026-06-22T10:00:00Z",
+    }
+
+
+def _make_handoff(
+    *,
+    intent_id: str = "int-001",
+    handoff_id: str = "hof-001",
+    requested_stage: str = "paper",
+    handoff_type: str = "paper_validation_request",
+    target_queue: str | None = None,
+    state: str = "submitted",
+) -> dict:
+    body = {
+        "spec_version": "1.0",
+        "handoff_id": handoff_id,
+        "intent_id": intent_id,
+        "requested_stage": requested_stage,
+        "handoff_type": handoff_type,
+        "state": state,
+        "strategy_id": "strat-001",
+        "strategy_spec_registry_id": "reg-001",
+        "requested_by": {"actor_type": "trader", "actor_ref": "user-001"},
+        "evidence_refs": [{"ref_type": "evidence_bundle", "ref_id": "evb-001"}],
+        "no_order_route_proof": "agora_request_only_no_order_route",
+        "created_at": "2026-06-22T10:00:00Z",
+        "action_proposal": {
+            "action": "enter",
+            "symbol": "AAPL",
+            "direction": "neutral",
+            "non_binding": True,
+        },
+    }
+    if target_queue is not None:
+        body["target_queue"] = target_queue
+    return body
+
+
+def _write_headers(idempotency_key: str = "idem-001") -> dict:
+    return {
+        "Authorization": "Bearer test",
+        "If-Match": "*",
+        "Idempotency-Key": idempotency_key,
+        "X-Request-Id": f"req-{idempotency_key}",
+    }
+
+
+def _client(store: TradingRoomStore) -> TestClient:
+    def _extract_identity(_auth: str | None) -> dict:
+        return {"user_id": "user-001", "tenant_id": "tenant-001", "session_id": "session-001"}
+
+    def _require_read_role(_identity: dict) -> None:
+        pass
+
+    def _bff_error(status_code: int, code: object, message: str, reason: str, **kw) -> HTTPException:
+        code_value = getattr(code, "value", code)
+        return HTTPException(
+            status_code=status_code,
+            detail={"code": code_value, "message": message, "reason": reason, **kw},
+        )
+
+    def _utc_now() -> str:
+        return "2026-06-22T10:00:00Z"
+
+    app = FastAPI()
+    app.include_router(
+        create_trading_room_router(
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            bff_error=_bff_error,
+            utc_now=_utc_now,
+            trading_room_store=store,
+        )
+    )
+    return TestClient(app)
+
+
 # ---------------------------------------------------------------------------
 # Store tests
 # ---------------------------------------------------------------------------
@@ -200,15 +292,13 @@ def test_store_record_trader_decision_defer():
 
 def test_store_intent_upsert_and_get():
     store = make_trading_room_store()
-    intent = {
-        "intent_id": "int-001",
-        "state": "draft",
-        "strategy_id": "strat-001",
-    }
+    intent = _make_intent("int-001")
     store.upsert_intent(intent)
     result = store.get_intent("int-001")
     assert result is not None
     assert result["intent_id"] == "int-001"
+    assert result["no_order_route_proof"] == "agora_intent_record_only"
+    assert store.get_intent_state("int-001") == "draft"
     print("✅ store: upsert and get trading intent")
 
 
@@ -322,12 +412,186 @@ def test_governed_intent_handoff_no_order_route_proof():
 
 
 # ---------------------------------------------------------------------------
+# AG-BE-TR-002: governed TradingIntent / handoff route semantics
+# ---------------------------------------------------------------------------
+
+def test_approve_decision_persists_schema_valid_trading_intent():
+    import jsonschema
+
+    store = make_trading_room_store()
+    store.upsert_decision_event(_make_event(event_id="evt-approve-intent"))
+    client = _client(store)
+
+    resp = client.post(
+        "/bff/agora/trading-room/decision-events/evt-approve-intent/decisions",
+        headers=_write_headers("idem-decision-001"),
+        json={"decision": "approve", "rationale": "Approve as non-binding intent"},
+    )
+    assert resp.status_code == 201, resp.text
+    intent_id = resp.json()["data"]["intent_ref"]
+    assert intent_id
+
+    intent = store.get_intent(intent_id)
+    assert intent is not None
+    assert intent["no_order_route_proof"] == "agora_intent_record_only"
+    assert store.get_intent_state(intent_id) == "draft"
+    with open(_TRADING_INTENT_SCHEMA_PATH) as f:
+        schema = json.load(f)
+    jsonschema.validate(intent, schema)
+    print("✅ route: approve decision persists schema-valid TradingIntent without order route")
+
+
+def test_decision_requires_idempotency_key():
+    store = make_trading_room_store()
+    store.upsert_decision_event(_make_event(event_id="evt-no-idem"))
+    client = _client(store)
+
+    headers = _write_headers("unused")
+    headers.pop("Idempotency-Key")
+    resp = client.post(
+        "/bff/agora/trading-room/decision-events/evt-no-idem/decisions",
+        headers=headers,
+        json={"decision": "approve"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["detail"]["reason"] == "missing_idempotency_key"
+    print("✅ route: decision write requires Idempotency-Key")
+
+
+def test_submit_handoff_paper_persists_request_only_record():
+    import jsonschema
+
+    store = make_trading_room_store()
+    store.upsert_intent(_make_intent("int-paper"))
+    client = _client(store)
+
+    resp = client.post(
+        "/bff/agora/trading-intents/int-paper/handoffs",
+        headers=_write_headers("idem-handoff-paper"),
+        json=_make_handoff(intent_id="int-paper", handoff_id="hof-paper"),
+    )
+    assert resp.status_code == 202, resp.text
+    data = resp.json()["data"]
+    assert data["requested_stage"] == "paper"
+    assert data["target_queue"] == "management_governance"
+    assert data["state"] == "submitted"
+    assert data["no_order_route_proof"] == "agora_request_only_no_order_route"
+
+    handoff = store.get_handoff("hof-paper")
+    assert handoff is not None
+    assert handoff["state"] == "submitted"
+    assert handoff["target_queue"] == "management_governance"
+    assert store.get_intent_state("int-paper") == "submitted"
+    with open(_GOVERNED_HANDOFF_SCHEMA_PATH) as f:
+        schema = json.load(f)
+    jsonschema.validate(handoff, schema)
+    print("✅ route: paper handoff persists request-only governed handoff")
+
+
+def test_canary_and_live_handoffs_are_promotion_review_request_only():
+    for stage in ("canary", "live"):
+        store = make_trading_room_store()
+        intent_id = f"int-{stage}"
+        handoff_id = f"hof-{stage}"
+        store.upsert_intent(_make_intent(intent_id))
+        client = _client(store)
+
+        resp = client.post(
+            f"/bff/agora/trading-intents/{intent_id}/handoffs",
+            headers=_write_headers(f"idem-handoff-{stage}"),
+            json=_make_handoff(
+                intent_id=intent_id,
+                handoff_id=handoff_id,
+                requested_stage=stage,
+                handoff_type="promotion_review_request",
+            ),
+        )
+        assert resp.status_code == 202, resp.text
+        data = resp.json()["data"]
+        assert data["requested_stage"] == stage
+        assert data["handoff_type"] == "promotion_review_request"
+        assert data["target_queue"] == "promotion_review"
+        assert data["no_order_route_proof"] == "agora_request_only_no_order_route"
+    print("✅ route: canary/live handoffs are promotion-review requests only")
+
+
+def test_handoff_rejects_mismatched_stage_type():
+    store = make_trading_room_store()
+    store.upsert_intent(_make_intent("int-mismatch"))
+    client = _client(store)
+
+    resp = client.post(
+        "/bff/agora/trading-intents/int-mismatch/handoffs",
+        headers=_write_headers("idem-handoff-mismatch"),
+        json=_make_handoff(
+            intent_id="int-mismatch",
+            handoff_id="hof-mismatch",
+            requested_stage="paper",
+            handoff_type="promotion_review_request",
+        ),
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["reason"] == "stage_handoff_type_mismatch"
+    print("✅ route: handoff rejects stage/type mismatch")
+
+
+def test_handoff_requires_idempotency_key():
+    store = make_trading_room_store()
+    store.upsert_intent(_make_intent("int-no-idem"))
+    client = _client(store)
+
+    headers = _write_headers("unused")
+    headers.pop("Idempotency-Key")
+    resp = client.post(
+        "/bff/agora/trading-intents/int-no-idem/handoffs",
+        headers=headers,
+        json=_make_handoff(intent_id="int-no-idem", handoff_id="hof-no-idem"),
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["detail"]["reason"] == "missing_idempotency_key"
+    print("✅ route: handoff write requires Idempotency-Key")
+
+
+def test_withdraw_marks_pending_handoff_withdrawn():
+    store = make_trading_room_store()
+    store.upsert_intent(_make_intent("int-withdraw"))
+    client = _client(store)
+
+    submit = client.post(
+        "/bff/agora/trading-intents/int-withdraw/handoffs",
+        headers=_write_headers("idem-handoff-withdraw"),
+        json=_make_handoff(intent_id="int-withdraw", handoff_id="hof-withdraw"),
+    )
+    assert submit.status_code == 202, submit.text
+
+    withdraw = client.post(
+        "/bff/agora/trading-intents/int-withdraw/withdraw",
+        headers=_write_headers("idem-withdraw"),
+    )
+    assert withdraw.status_code == 200, withdraw.text
+    data = withdraw.json()["data"]
+    assert data["state"] == "withdrawn"
+    assert data["withdrawn_handoff_ids"] == ["hof-withdraw"]
+    assert store.get_intent_state("int-withdraw") == "withdrawn"
+    assert store.get_handoff("hof-withdraw")["state"] == "withdrawn"
+    print("✅ route: withdraw marks pending governed handoff withdrawn")
+
+
+# ---------------------------------------------------------------------------
 # Regression: jsonschema compliance (Fix 1)
 # ---------------------------------------------------------------------------
 
 _SCHEMA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "..", "..", "..", "specs", "agora", "v4", "trading_decision_event.schema.json",
+)
+_TRADING_INTENT_SCHEMA_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "..", "..", "specs", "agora", "trading_intent.schema.json",
+)
+_GOVERNED_HANDOFF_SCHEMA_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "..", "..", "specs", "agora", "v4", "governed_intent_handoff.schema.json",
 )
 
 
@@ -506,6 +770,13 @@ if __name__ == "__main__":
     test_all_event_kinds_accepted()
     test_trader_decision_request()
     test_governed_intent_handoff_no_order_route_proof()
+    test_approve_decision_persists_schema_valid_trading_intent()
+    test_decision_requires_idempotency_key()
+    test_submit_handoff_paper_persists_request_only_record()
+    test_canary_and_live_handoffs_are_promotion_review_request_only()
+    test_handoff_rejects_mismatched_stage_type()
+    test_handoff_requires_idempotency_key()
+    test_withdraw_marks_pending_handoff_withdrawn()
     test_model_dump_exclude_none_passes_schema()
     test_model_dump_without_exclude_none_emits_null_fields_that_fail_schema()
     test_store_rejects_invalid_no_order_route_proof()

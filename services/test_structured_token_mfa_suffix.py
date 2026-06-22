@@ -59,3 +59,13 @@ def test_non_mfa_third_segment_does_not_pollute_roles():
     ctx = _ctx("op-dev:admin:something")
     assert ctx.roles == frozenset({"admin"})
     assert ctx.mfa_verified is False
+
+
+def test_capability_suffix_is_preserved_in_claims():
+    ctx = _ctx("op-dev:admin,operator:mfa:assistant.kernel.debug,assistant.kernel.repair")
+    assert {"admin", "operator"} <= ctx.roles
+    assert ctx.mfa_verified is True
+    assert ctx.claims["capabilities"] == [
+        "assistant.kernel.debug",
+        "assistant.kernel.repair",
+    ]
