@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-RS-001 BFF and frontend handoff packet
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Codex is preparing a support-only follow-up packet for Claude review; current focus is parent AG-FE-RS-001 review_approved/PR-closeout state, not new canonical or runtime changes.
+- Next: Support-only AG-FE-RS-001 follow-up 16 approved for parent owner closeout awareness.
 
 ## Summary
 平行支援 AG-FE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
