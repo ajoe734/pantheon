@@ -65,6 +65,18 @@ USER_B = "user_b_ref"
 BASE_REGISTRY_ID = "reg_wbranch_v1_draft"
 CANDIDATE_REGISTRY_ID = "reg_wbranch_v2_draft"
 BASE_DOC_SHA256 = _sha256(b"base_strategy_spec_document_bytes")
+FORBIDDEN_EXECUTION_KEYS = frozenset(
+    {
+        "broker_order_id",
+        "order_route",
+        "order_id",
+        "filled_qty",
+        "runtime_binding_id",
+        "runtime_binding_ref",
+        "capital_binding_id",
+        "capital_binding_ref",
+    }
+)
 
 
 def _actor(actor_type: str, actor_ref: str) -> dict:
@@ -117,6 +129,17 @@ def _workshop_card(
         "payload": payload,
         "created_at": NOW,
     }
+
+
+def _assert_no_forbidden_execution_keys(testcase: unittest.TestCase, value: Any) -> None:
+    if isinstance(value, dict):
+        for key in FORBIDDEN_EXECUTION_KEYS:
+            testcase.assertNotIn(key, value, f"Forbidden execution key: {key}")
+        for item in value.values():
+            _assert_no_forbidden_execution_keys(testcase, item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_no_forbidden_execution_keys(testcase, item)
 
 
 # ---------------------------------------------------------------------------
@@ -1104,18 +1127,30 @@ class TestStep11DecisionEventAndGovernedIntent(unittest.TestCase):
         }
 
     def _make_governed_handoff(self, requested_stage: str = "paper") -> dict:
+        handoff_type_by_stage = {
+            "shadow": "shadow_start",
+            "paper": "paper_validation_request",
+            "canary": "promotion_review_request",
+            "live": "promotion_review_request",
+        }
+        target_queue_by_stage = {
+            "shadow": "shadow_research",
+            "paper": "management_governance",
+            "canary": "promotion_review",
+            "live": "promotion_review",
+        }
         return {
             "spec_version": "1.0",
             "handoff_id": "hoff_wbranch_001",
             "intent_id": "intent_wbranch_001",
             "decision_event_id": "de_wbranch_entry_001",
             "requested_stage": requested_stage,
-            "handoff_type": "paper_validation_request",
+            "handoff_type": handoff_type_by_stage[requested_stage],
             "state": "submitted",
             "strategy_id": STRATEGY_ID,
             "strategy_spec_registry_id": CANDIDATE_REGISTRY_ID,
             "requested_by": _actor("trader", USER_A),
-            "target_queue": "management_governance",
+            "target_queue": target_queue_by_stage[requested_stage],
             "action_proposal": {
                 "action": "enter",
                 "symbol": "2330.TW",
@@ -1233,15 +1268,35 @@ class TestFullFlowSequenceInvariant(unittest.TestCase):
         self.assertEqual(seqs, sorted(seqs))
 
     def test_no_broker_order_anywhere_in_flow(self):
-        flow_artifacts: list[dict[str, Any]] = []
-        for key in ("broker_order_id", "order_route", "order_id", "filled_qty"):
-            for artifact in flow_artifacts:
-                self.assertNotIn(key, artifact, f"Forbidden field {key} found in flow artifact")
+        plan = TestStep5ResearchPlan()._make_plan()
+        run = TestStep6ResearchExecution()._make_run("prototype_backtest", "vectorbt")
+        selection = TestStep9SelectExecutionCandidates()._make_selection([CANDIDATE_REGISTRY_ID])
+        decision = TestStep11DecisionEventAndGovernedIntent()._make_decision_event()
+        handoff = TestStep11DecisionEventAndGovernedIntent()._make_governed_handoff("paper")
+
+        flow_artifacts: list[dict[str, Any]] = [plan, run, selection, decision, handoff]
+        for artifact in flow_artifacts:
+            _assert_no_forbidden_execution_keys(self, artifact)
+        self.assertFalse(selection["runtime_binding_created"])
+        self.assertFalse(selection["capital_binding_created"])
 
     def test_all_handoffs_are_request_only(self):
-        handoff_types = {"shadow_start", "paper_validation_request", "promotion_review_request"}
-        for ht in handoff_types:
-            self.assertIn(ht, {"shadow_start", "paper_validation_request", "promotion_review_request"})
+        maker = TestStep11DecisionEventAndGovernedIntent()
+        handoffs = [maker._make_governed_handoff(stage) for stage in ("shadow", "paper", "canary", "live")]
+        expected = {
+            "shadow": ("shadow_start", "shadow_research"),
+            "paper": ("paper_validation_request", "management_governance"),
+            "canary": ("promotion_review_request", "promotion_review"),
+            "live": ("promotion_review_request", "promotion_review"),
+        }
+        for handoff in handoffs:
+            _validate(handoff, "governed_intent_handoff.schema.json")
+            handoff_type, target_queue = expected[handoff["requested_stage"]]
+            self.assertEqual(handoff["handoff_type"], handoff_type)
+            self.assertEqual(handoff["target_queue"], target_queue)
+            self.assertEqual(handoff["state"], "submitted")
+            self.assertEqual(handoff["no_order_route_proof"], "agora_request_only_no_order_route")
+            _assert_no_forbidden_execution_keys(self, handoff)
 
 
 if __name__ == "__main__":
