@@ -34,6 +34,7 @@ behavior, governance implementation, broker authority, or RuntimeBinding.
 | GitHub PR `#2187` | Parent implementation merge facts and required check results. |
 | GitHub PR `#2188` | Latest acceptance follow-up packet merge facts and required check results. |
 | GitHub PR `#2189` | Parent task-brief closeout/update merge facts and required check results. |
+| GitHub PR `#2190` | Acceptance follow-up 27 closeout merge facts and required check results. |
 | `execute-plans/src/agora/dashboard/DashboardGridEditor.tsx` | Parent dashboard grid editor implementation under review. |
 | `execute-plans/src/agora/dashboard/DashboardGridEditor.test.tsx` | Focused parent tests for layout mapping and editor gestures. |
 | `support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-27.md` | Approved sidecar support map for post-PR `#2187` state. |
@@ -59,10 +60,13 @@ behavior, governance implementation, broker authority, or RuntimeBinding.
 | Item | Evidence |
 |---|---|
 | Follow-up 26 PRs | PR `#2182` merged at `e01f19e7a4b73e7a70d0a8b607159e7db4192d6b`; closeout PR `#2184` merged at `5452bbd18f114cfbdb74d4cd684ae1a88965c4b5`. |
-| Follow-up 27 PR | `https://github.com/ajoe734/pantheon/pull/2188` |
-| Follow-up 27 PR state | `MERGED` into `dev` at `2026-06-22T03:01:57Z` |
-| Follow-up 27 merge commit | `431d75d49883fc6c9288f92927c606a3f3877dd0` |
-| Follow-up 27 active status | `review_approved`, not `done`, at the time this packet was prepared. |
+| Follow-up 27 packet PR | `https://github.com/ajoe734/pantheon/pull/2188` |
+| Follow-up 27 packet PR state | `MERGED` into `dev` at `2026-06-22T03:01:57Z` |
+| Follow-up 27 packet merge commit | `431d75d49883fc6c9288f92927c606a3f3877dd0` |
+| Follow-up 27 closeout PR | `https://github.com/ajoe734/pantheon/pull/2190` |
+| Follow-up 27 closeout PR state | `MERGED` into `dev` at `2026-06-22T03:12:27Z` |
+| Follow-up 27 closeout merge commit | `257e4a1909ab1fe0cec8c4241d5f01ad8a71e5eb` |
+| Follow-up 27 terminal status | Archived `done` at `2026-06-22T03:12:47Z`. |
 | Follow-up 27 review notes | Claude accepted the packet's Pantheon-dev versus external `execute-plans origin/dev` split, component-versus-persistence distinction, and support-only boundary. |
 | This sidecar artifact | `support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-REVIEW.md` |
 
@@ -129,6 +133,7 @@ AI_NAME=Codex ./scripts/ai-status.sh show AG-E2E-TR-001
 gh pr view 2187 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,url,title,headRefName,baseRefName,statusCheckRollup
 gh pr view 2188 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,url,title,headRefName,baseRefName,statusCheckRollup
 gh pr view 2189 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,url,title,headRefName,baseRefName,statusCheckRollup
+gh pr view 2190 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,url,title,headRefName,baseRefName,statusCheckRollup
 rg -n "RuntimeBinding|broker|order|capital|governance|capability|execute|PATCH|WidgetPlacement|PersonalizationEvent|personalization|onPlacement|widget|chart|layout" execute-plans/src/agora/dashboard/DashboardGridEditor.tsx execute-plans/src/agora/dashboard/DashboardGridEditor.test.tsx
 git -C /home/lupin/code/execute-plans rev-parse origin/dev
 git -C /home/lupin/code/execute-plans ls-tree -r --name-only origin/dev src/agora/widgets src/agora/dashboard src/lib/bff-v1/agora package.json package-lock.json
@@ -138,8 +143,8 @@ npm --prefix execute-plans test -- --run src/agora/dashboard/DashboardGridEditor
 
 Observed results:
 
-- PR `#2187`, `#2188`, and `#2189` are merged into Pantheon `dev`; their visible
-  Branch CI Gate and Orchestrator Sync checks reported success.
+- PR `#2187`, `#2188`, `#2189`, and `#2190` are merged into Pantheon `dev`; their
+  visible Branch CI Gate and Orchestrator Sync checks reported success.
 - Initial focused test attempt failed with `vitest: not found` before
   dependencies were installed in this worktree. After `npm --prefix
   execute-plans ci`, the same focused test passed: 1 file, 16 tests.
@@ -148,8 +153,8 @@ Observed results:
   `npm audit fix` or change dependency truth.
 - Parent `AG-FE-DB-002` remains active `review_approved`, not `done`.
 - This sidecar remains active `in_progress` until Claude review handoff.
-- `FOLLOWUP-27` remains active `review_approved`, not `done`, but its review
-  notes approve the support-only split and caveats reused here.
+- `FOLLOWUP-27` is archived `done`; its review notes approve the support-only
+  split and caveats reused here.
 - `ai-status` references a parent review file path that is not present in this
   checkout, so this packet cites durable status review notes and PR evidence.
 
@@ -160,8 +165,8 @@ To `Claude`, sidecar reviewer:
 Please review this support-only packet for:
 
 1. Accuracy of the parent delivery facts across PR `#2187` and PR `#2189`.
-2. Accuracy of the sidecar support chain facts across PR `#2188` and the active
-   `FOLLOWUP-27` review approval.
+2. Accuracy of the sidecar support chain facts across PR `#2188`, PR `#2190`,
+   and the archived `FOLLOWUP-27` review approval.
 3. Whether the review matrix correctly separates component-level proof from
    caller/BFF persistence proof.
 4. Whether the delivery target caveat accurately preserves the Pantheon mirror
