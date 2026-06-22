@@ -125,10 +125,10 @@ export interface ResearchRunProjection {
   updated_at?: string;
 }
 
-export interface ResearchCommandResponse {
-  ok: boolean;
-  request_id?: string;
-  idempotency_key?: string;
+export interface CommandResponse {
+  status: "accepted" | "queued" | "completed";
+  data: unknown;
+  meta: Record<string, unknown>;
 }
 
 function resolvedBase(baseUrl?: string): string {
@@ -185,9 +185,13 @@ function runsFrom(value: unknown): ResearchRunProjection[] {
   return Array.isArray(list) ? (list as ResearchRunProjection[]) : [];
 }
 
-function commandResponseFrom(value: unknown): ResearchCommandResponse {
+function commandResponseFrom(value: unknown): CommandResponse {
   const root = recordFrom(value);
-  return { ok: true, ...root } as ResearchCommandResponse;
+  return {
+    status: (root.status as CommandResponse["status"]) ?? "accepted",
+    data: root.data ?? null,
+    meta: (root.meta as Record<string, unknown>) ?? {},
+  };
 }
 
 function artifactRefsFrom(value: unknown): string[] {
@@ -234,7 +238,7 @@ export async function listWorkshopResearchPlans(
 export async function createWorkshopResearchPlan(
   workshopId: string,
   plan: Partial<ResearchPlanExecution>,
-  options?: { idempotencyKey?: string; ifMatch?: string },
+  options?: { idempotencyKey?: string; ifMatch?: string; requestId?: string },
   baseUrl?: string,
 ): Promise<ResearchPlanExecution> {
   const base = resolvedBase(baseUrl);
@@ -245,6 +249,7 @@ export async function createWorkshopResearchPlan(
   };
   if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
   if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
+  if (options?.requestId) headers["X-Request-Id"] = options.requestId;
   const res = await fetch(url, {
     method: "POST",
     credentials: "include",
@@ -281,14 +286,15 @@ export async function getResearchPlan(
  */
 export async function approveResearchPlan(
   planId: string,
-  options?: { idempotencyKey?: string; ifMatch?: string },
+  options?: { idempotencyKey?: string; ifMatch?: string; requestId?: string },
   baseUrl?: string,
-): Promise<ResearchCommandResponse> {
+): Promise<CommandResponse> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/research-plans/${encodeURIComponent(planId)}/approve`;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
   if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
+  if (options?.requestId) headers["X-Request-Id"] = options.requestId;
   const res = await fetch(url, { method: "POST", credentials: "include", headers });
   await throwOnError(res, url);
   return commandResponseFrom(await parseJson(res));
@@ -300,14 +306,15 @@ export async function approveResearchPlan(
  */
 export async function cancelResearchPlan(
   planId: string,
-  options?: { idempotencyKey?: string; ifMatch?: string },
+  options?: { idempotencyKey?: string; ifMatch?: string; requestId?: string },
   baseUrl?: string,
-): Promise<ResearchCommandResponse> {
+): Promise<CommandResponse> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/research-plans/${encodeURIComponent(planId)}/cancel`;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
   if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
+  if (options?.requestId) headers["X-Request-Id"] = options.requestId;
   const res = await fetch(url, { method: "POST", credentials: "include", headers });
   await throwOnError(res, url);
   return commandResponseFrom(await parseJson(res));
@@ -338,14 +345,15 @@ export async function listResearchPlanRuns(
  */
 export async function dispatchResearchPlan(
   planId: string,
-  options?: { idempotencyKey?: string; ifMatch?: string },
+  options?: { idempotencyKey?: string; ifMatch?: string; requestId?: string },
   baseUrl?: string,
-): Promise<ResearchCommandResponse> {
+): Promise<CommandResponse> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/research-plans/${encodeURIComponent(planId)}/runs`;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
   if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
+  if (options?.requestId) headers["X-Request-Id"] = options.requestId;
   const res = await fetch(url, { method: "POST", credentials: "include", headers });
   await throwOnError(res, url);
   return commandResponseFrom(await parseJson(res));
@@ -377,13 +385,14 @@ export async function getResearchRun(
  */
 export async function cancelResearchRun(
   runId: string,
-  options?: { idempotencyKey?: string },
+  options?: { idempotencyKey?: string; requestId?: string },
   baseUrl?: string,
-): Promise<ResearchCommandResponse> {
+): Promise<CommandResponse> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/research-runs/${encodeURIComponent(runId)}/cancel`;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
+  if (options?.requestId) headers["X-Request-Id"] = options.requestId;
   const res = await fetch(url, { method: "POST", credentials: "include", headers });
   await throwOnError(res, url);
   return commandResponseFrom(await parseJson(res));
