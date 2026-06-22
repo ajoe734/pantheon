@@ -35,13 +35,13 @@ The canonical authority document for every test assertion is:
 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/06_winner_branch_e2e_and_isolation.md
 ```
 
-> [!IMPORTANT]
-> **Active Blocker Distinction:** `AG-TEST-ID-001` is **gated** (not BLOCKED by
-> an ops issue) because the isolation matrix specification in §F2–F7 must be
-> merged into the repo as part of `AG-DES-E2E-001` before test assertions can
-> reference stable, merged contract paths. The parent owner must NOT finalize
-> implementation until `AG-DES-E2E-001` is merged and the v1.3 bundle index is
-> confirmed in the repo.
+> [!NOTE]
+> **Gate Status (updated 2026-06-22):** `AG-TEST-ID-001` implementation is now
+> **in progress** — PR #2230 is merged/in review. The prior gate (isolation
+> matrix spec §F2–F7 must be merged as `AG-DES-E2E-001` before test authoring)
+> has lifted. Section 3A below records the original gate conditions as
+> finalization checks; the parent owner should verify each path is present before
+> closing the PR.
 
 ---
 
@@ -55,6 +55,8 @@ docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/06_winner_bra
 | `docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/07_dispatch_unblock_matrix.md` | Unblock condition: isolation matrix merged |
 | `support/sidecars/AG-BE-ID-002/AG-BE-ID-002-SIDECAR-ACCEPTANCE.md` | Upstream sidecar listing AG-TEST-ID-001 as downstream dependency of servant provisioning |
 | `support/sidecars/AG-DES-E2E-001/AG-DES-E2E-001-SIDECAR-ACCEPTANCE.md` | Upstream sidecar explicitly recording AG-TEST-ID-001 as an unblock downstream of AG-DES-E2E-001 |
+| `support/sidecars/AG-BE-ID-004/AG-BE-ID-004-SIDECAR-BFF-HANDOFF.md` | BFF handoff packet for ContextBundle redaction, management_projection routes, and `RAW_PRIVATE_CONTENT_FORBIDDEN` error code required by ISO-M02/ISO-M03/ISO-M04/ISO-M08 |
+| `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43.md` | Latest execute-plans/Agora shell handoff; source for BFF client facade paths (execute-plans/src/lib/bff-v1/agora/) and Agora page targets (execute-plans/src/agora/) required by XR-05 and F5 checks |
 | `services/control-plane/specs/agora/` | Schema bundle directory; test assertions must reference merged v4 schemas after AG-XR-OPENAPI-004 merges |
 | `services/control-plane/openapi/` | OpenAPI directory; test assertions must reference merged `agora_v1_3.openapi.yaml` |
 
@@ -64,12 +66,12 @@ docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/06_winner_bra
 
 Before the parent owner begins implementation, verify the following:
 
-### A. Isolation Matrix Merge Gate (Blocker for Test Authoring)
+### A. Isolation Matrix Merge Gate (Finalization Check)
 
-The test file `services/control-plane/tests/agora/test_agora_isolation_matrix.py`
-(or equivalent path) must cite merged contract paths for every assertion. The
-following merges must be confirmed present on `pantheon@dev` before the test
-file is authored against them:
+The gate has lifted — PR #2230 for AG-TEST-ID-001 is merged/in review. The
+following paths should still be confirmed present on `pantheon@dev` before the
+PR is closed; if any are absent, the parent owner must record a blocker before
+marking the task done:
 
 | Required merge | Source task | Check |
 |---|---|---|
@@ -78,9 +80,9 @@ file is authored against them:
 | `services/control-plane/openapi/agora_v1_3.openapi.yaml` | AG-XR-OPENAPI-004 | `git log --oneline -- services/control-plane/openapi/agora_v1_3.openapi.yaml` |
 | `services/control-plane/specs/agora/bundle_index.v1_3.json` | AG-XR-OPENAPI-004 | `git log --oneline -- services/control-plane/specs/agora/bundle_index.v1_3.json` |
 
-**Action required:** If any of the above paths are missing when implementation
-starts, the parent owner must record a blocker citing the unresolved dependency
-rather than writing stubs that could silently pass.
+**Action required:** If any of the above paths are absent when closing PR #2230,
+the parent owner must record a blocker rather than merging with stubs that could
+silently pass.
 
 ### B. Explicit No-Order-Route Assertion (Safety-Critical)
 
@@ -215,6 +217,8 @@ migration completes. Until then:
 | v1.3 bundle index | `services/control-plane/specs/agora/bundle_index.v1_3.json` | AG-XR-OPENAPI-004 | XR-01, XR-06 hash assertions |
 | Servant provisioning (user-private servant) | `services/control-plane/bff/agora/servant/router.py` (non-stub) | AG-BE-ID-002 | Any F3/F4 test needing an authenticated user with a servant |
 | User scope and servant policy | `AG-BE-ID-001` artifacts | AG-BE-ID-001 | Auth identity enforcement for cross-user assertions |
+| ContextBundle redaction boundary | `integrations/openclaw/adapter/agora_context_bundle.py`, management_projection routes, `RAW_PRIVATE_CONTENT_FORBIDDEN` error code | AG-BE-ID-004 | ISO-M02, ISO-M03, ISO-M04, ISO-M08 assertions |
+| execute-plans Agora shell and BFF client facade | `execute-plans/src/agora/` pages, `execute-plans/src/lib/bff-v1/agora/` facade | AG-FE-ID-001 | XR-05 BFF client assertion; F5 app/build isolation checks |
 
 ```mermaid
 graph TD
@@ -227,6 +231,8 @@ graph TD
     AG_DES_CARD_001["AG-DES-CARD-001<br/>Workshop card contracts"] -->|v4 schemas| AG_TEST_ID_001
     AG_BE_ID_001["AG-BE-ID-001<br/>User Scope & Servant Policy"] -->|auth identity enforcement| AG_TEST_ID_001
     AG_BE_ID_002["AG-BE-ID-002<br/>OpenClaw Servant Provisioning"] -->|user-private servant available| AG_TEST_ID_001
+    AG_BE_ID_004["AG-BE-ID-004<br/>ContextBundle Redaction<br/>+ management_projection routes"] -->|RAW_PRIVATE_CONTENT_FORBIDDEN;<br/>ISO-M02/M03/M04/M08 surfaces| AG_TEST_ID_001
+    AG_FE_ID_001["AG-FE-ID-001<br/>execute-plans Agora Shell<br/>+ BFF client facade"] -->|execute-plans/src/agora/ pages;<br/>XR-05 + F5 checks| AG_TEST_ID_001
 ```
 
 ### Downstream: What Depends On AG-TEST-ID-001
@@ -260,7 +266,8 @@ python3 scripts/verify_bundle_hashes.py \
   --index services/control-plane/specs/agora/bundle_index.v1_3.json
 
 # 5. Verify no raw fetch calls in execute-plans pages (XR-05)
-grep -rn "fetch\|axios" services/execute-plans/src/agora/ \
+# execute-plans is a root-level directory, not under services/
+grep -rn "fetch\|axios" execute-plans/src/agora/ \
   --include="*.ts" --include="*.tsx" | grep -v "bff-client" || echo "XR-05 pass"
 ```
 
