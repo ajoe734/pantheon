@@ -8,7 +8,7 @@
 | Owner / reviewer | `Codex` / `Claude` |
 | Date | 2026-06-22 |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff after task PR |
+| Status | Review approved; owner closeout note ready |
 
 This is a support artifact only. It does not edit L1 canonical truth, OpenAPI,
 JSON schemas, BFF runtime, registry/governance code, or execute-plans frontend
@@ -31,7 +31,7 @@ facts, response-shape corrections, or stop lines already recorded there.
 | `.orchestrator/task-briefs/ag_fe_rs_001_sidecar_bff_handoff_followup_9.md` | Scope is support-only BFF query gap, operator journey, and frontend handoff material; no canonical truth changes. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Support artifact changes need narrow task scope and explicit worker commit discipline. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Repo changes require task commit, PR, merge, then owner closeout. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9` | Active task is `in_progress`, owner `Codex`, reviewer `Claude`, artifact target is this file. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9` | Active task is `review_approved`, owner `Codex`, reviewer `Claude`, artifact target is this file. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-RS-001` | Parent remains `todo`; artifacts name `research.ts`, `ResearchRunCard.tsx`, and `BacktestResultCard.tsx`; summary also mentions research plan and consult cards but requires STOP on unclear specs. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-SW-002` | Still `todo`; owns conversation/result cards and completeness rail, with `ResearchPlanCard.tsx` and `ConsultResultCard.tsx` in its artifact list. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-RS-002` | Archived `done`; run/progress/result projection implementation and closeout are complete. |
@@ -237,10 +237,13 @@ Focused validation run from this task worktree:
 
 ```bash
 git status --short
-# expected: this support artifact plus the generated task brief as task-scoped context
+# expected before closeout commit: this support artifact plus the generated task brief as task-scoped context
+
+git diff --check -- support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md .orchestrator/task-briefs/ag_fe_rs_001_sidecar_bff_handoff_followup_9.md
+# expected: no whitespace errors
 
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9
-# source: active; status: in_progress; owner: Codex; reviewer: Claude
+# source: active; status: review_approved; owner: Codex; reviewer: Claude
 
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-RS-001
 # source: active; status: todo; parent artifacts include research.ts, ResearchRunCard.tsx, BacktestResultCard.tsx
@@ -257,3 +260,24 @@ AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-OPENAPI-004
 
 No runtime, schema, OpenAPI, canonical truth, or frontend implementation tests
 are required for this support-only packet.
+
+## Owner Closeout Note
+
+Claude approved this packet through the `review_approved` status transition
+with `review_file` set to this support artifact. The packet PR `#2227` merged
+into `dev` at merge commit `25b2ca03469bdc06584921adb4eabdf8169c00c4`; the
+reviewed task commit was `c7d6b172c932812daebc83a7e0651af31233cc93`.
+
+This owner closeout note only records finalization context for the support
+sidecar. It does not broaden the packet, promote canonical truth, change BFF
+runtime/OpenAPI/schema/frontend code, or change parent `AG-FE-RS-001` status.
+Parent owner/reviewer still decide whether and how to absorb the route-backed
+research slice, component ownership split, blocker wording, and no-order
+guardrails into the main AG-FE-RS-001 implementation.
+
+After this closeout commit merges, Codex should run:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh done AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9 \
+  "Closeout complete. Support-only AG-FE-RS-001 BFF/frontend handoff packet follow-up merged; parent owner may absorb the approved route-backed research cut and blocker wording."
+```
