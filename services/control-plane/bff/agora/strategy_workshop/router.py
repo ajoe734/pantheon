@@ -156,6 +156,24 @@ def _parse_etag_lock_version(if_match: str, workshop_id: str) -> int:
     return 0
 
 
+def _raise_cross_user_forbidden(
+    *,
+    bff_error: Callable[..., HTTPException],
+    resource: str,
+    resource_id: str,
+) -> None:
+    from models import ErrorCode
+
+    raise bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Agora resource is outside the current user scope",
+        "CROSS_USER_ACCESS_FORBIDDEN",
+        precondition_failed="agora_user_scope",
+        details_extra={"resource": resource, "resource_id": resource_id},
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Request / response models
 # --------------------------------------------------------------------------- #
@@ -335,8 +353,11 @@ def create_strategy_workshop_router(
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         # Verify ownership
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
-            from models import ErrorCode
-            raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop not owned by caller", workshop_id)
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="strategy_workshop",
+                resource_id=workshop_id,
+            )
         lock_version = session.get("lock_version", 1)
         # ETag format: W/"workshop:{id}:v{lock_version}" per contract §B Concurrency
         etag = f'W/"workshop:{workshop_id}:v{lock_version}"'
@@ -387,8 +408,11 @@ def create_strategy_workshop_router(
             from models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
-            from models import ErrorCode
-            raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop not owned by caller", workshop_id)
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="strategy_workshop",
+                resource_id=workshop_id,
+            )
         # Reject duplicate keys for the same user+workshop+endpoint.
         if hasattr(store, "check_and_record_idempotency_key"):
             idem_scope = (
@@ -466,8 +490,11 @@ def create_strategy_workshop_router(
             from models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
-            from models import ErrorCode
-            raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop not owned by caller", workshop_id)
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="strategy_workshop",
+                resource_id=workshop_id,
+            )
         events = store.list_events(workshop_id, after_sequence=after_sequence)
         return {
             "data": events,
@@ -493,8 +520,11 @@ def create_strategy_workshop_router(
             from models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
-            from models import ErrorCode
-            raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop not owned by caller", workshop_id)
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="strategy_workshop",
+                resource_id=workshop_id,
+            )
         snapshot = store.get_latest_completeness_snapshot(workshop_id)
         return {
             "data": snapshot,
@@ -585,8 +615,11 @@ def create_strategy_workshop_router(
             from models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
-            from models import ErrorCode
-            raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop not owned by caller", workshop_id)
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="strategy_workshop",
+                resource_id=workshop_id,
+            )
 
         async def _event_stream() -> AsyncGenerator[str, None]:
             q: asyncio.Queue = asyncio.Queue(maxsize=500)

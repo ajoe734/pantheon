@@ -9124,6 +9124,7 @@ class ReadSurfaceStore:
             "createdAt": str(record.get("createdAt") or record.get("created_at") or timestamp),
             "updatedAt": str(record.get("updatedAt") or record.get("updated_at") or timestamp),
             "version": int(record.get("version") or 1),
+            "createdBy": str(record.get("createdBy") or record.get("created_by") or ""),
             "canonicalWriteAuthority": "agora_journal_service",
             "persistenceMode": str(record.get("persistenceMode") or "bff_local_dev_store"),
         }
