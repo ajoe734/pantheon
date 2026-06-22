@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/schemas/agora/candidate_discussion.v1.json",
+  "title": "CandidateDiscussion",
+  "description": "A discussion thread entry attached to a CandidatePool or a specific pool member. Discussion threads drive collaborative review and research tasking; they do not place orders.",
+  "type": "object",
+  "required": ["discussion_id", "subject_type", "subject_id", "author", "body", "created_at"],
+  "properties": {
+    "discussion_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject_type": {
+      "type": "string",
+      "enum": ["pool", "member"],
+      "description": "'pool' for a pool-level discussion; 'member' for a candidate-specific thread."
+    },
+    "subject_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "pool_id (when subject_type=pool) or artifact_id (when subject_type=member)."
+    },
+    "pool_id": {
+      "type": "string",
+      "description": "Pool context; always present for member-level discussions."
+    },
+    "parent_discussion_id": {
+      "type": ["string", "null"],
+      "description": "ID of the parent thread entry when this is a reply."
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator or persona ID that created this discussion entry."
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Markdown body of the discussion entry."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "comment",
+        "research_task",
+        "score_question",
+        "risk_flag",
+        "approval_note"
+      ],
+      "description": "Semantic kind of the entry; used by the BFF to surface actionable items.",
+      "default": "comment"
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "resolved": {
+      "type": "boolean",
+      "default": false
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

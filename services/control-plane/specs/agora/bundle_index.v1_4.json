@@ -1,0 +1,28 @@
+{
+  "bundle_version": "1.4",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_3.json",
+    "bundle_version": "1.3",
+    "bundle_index_sha256": "4ba5fc1a0858f3ca7370a2a54c11affe98ee0e11cfd3eb99c4ade734b52c75e3"
+  },
+  "files": {
+    "specs/agora/v5/capability_manifest_v1_4.json": "58141ebdd0a7fab9a35b6cd912e40b2b00800d2bbc82bee31a334e894cd2d564",
+    "specs/agora/v5/candidate_score_result.schema.json": "c28d2c45d955106e07f9ce529bb7792d822d333ae5fbd498500e379acfb50363",
+    "specs/agora/v5/candidate_member_review.schema.json": "560df54cefc05154a17cb00ae49611758484174bd18e52ee477ab261a0ba18a3",
+    "specs/agora/v5/candidate_discussion.schema.json": "69b1b81b120dec2a6f90b289c0130ef45197cbd4240ac578bce78c42d9f62eaa",
+    "specs/agora/v5/candidate_monitoring_status.schema.json": "64ec4637bcd16f5c13f839a96d04c9209e076fd8dc4162a3e5631138c7c3f344"
+  },
+  "openapi": {
+    "path": "services/control-plane/openapi/agora_v1_4.openapi.yaml",
+    "sha256": "c911512fd3b9ff0c537c8137378aaa31578311a2275c77518eaedfceed55e409"
+  },
+  "base_schemas_reused": {
+    "specs/agora/candidate_pool.schema.json": "not rehashed; frozen input reused by $ref"
+  },
+  "design_closure_refs": {
+    "A2_candidate_scoring_recipe": "docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/A2_candidate_scoring_recipe_spec.md",
+    "candidate_scoring_recipe_schema": "docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/candidate_scoring_recipe.schema.json",
+    "candidate_scoring_recipe_winner_branch_default": "docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/candidate_scoring_recipe.winner_branch.default.json"
+  },
+  "note": "Additive §17.3 candidate pool BFF routes. CandidateScoreResult.components are aligned to CandidateScoringRecipe components (A2 design closure). Rejected candidates are preserved as negative examples for Shadow/preference learning. No broker orders, no RuntimeBinding writes, no capital binding."
+}
