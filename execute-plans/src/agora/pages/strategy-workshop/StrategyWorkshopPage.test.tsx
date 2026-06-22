@@ -8,6 +8,7 @@ vi.mock("@/lib/bff-v1/agora/workshops", () => ({
   getWorkshopCompleteness: vi.fn().mockResolvedValue(null),
   getWorkshopReadiness: vi.fn().mockResolvedValue(null),
   listWorkshopCards: vi.fn().mockResolvedValue([]),
+  openWorkshopStream: vi.fn().mockReturnValue(() => undefined),
 }));
 
 import { StrategyWorkshopPage } from "./StrategyWorkshopPage";
