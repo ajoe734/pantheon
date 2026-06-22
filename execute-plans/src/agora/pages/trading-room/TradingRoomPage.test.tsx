@@ -5,12 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/bff-v1/agora/tradingRoom", () => ({
   getTradingRoom: vi.fn(),
   listDecisionEvents: vi.fn(),
-  getTradingRoomStrategy: vi.fn(),
   decideOnEvent: vi.fn(),
+}));
+
+vi.mock("@/lib/bff-v1/agora/dashboard", () => ({
+  getDashboardRecipeById: vi.fn(),
 }));
 
 import { TradingRoomPage } from "./TradingRoomPage";
 import * as tradingRoomModule from "@/lib/bff-v1/agora/tradingRoom";
+import * as dashboardModule from "@/lib/bff-v1/agora/dashboard";
 
 const MOCK_AGGREGATE = {
   spec_version: "1.0" as const,
@@ -94,8 +98,7 @@ const MOCK_DECISION_EVENT = {
   no_order_route_proof: "agora_decision_support_only" as const,
 };
 
-const MOCK_STRATEGY_DETAIL = {
-  strategy_id: "strat-001",
+const MOCK_RECIPE = {
   recipe_id: "recipe-001",
   spec_version: "2.0",
   tenant_id: "tenant-001",
@@ -137,7 +140,7 @@ describe("TradingRoomPage", () => {
   beforeEach(() => {
     vi.mocked(tradingRoomModule.getTradingRoom).mockResolvedValue(MOCK_AGGREGATE);
     vi.mocked(tradingRoomModule.listDecisionEvents).mockResolvedValue([MOCK_DECISION_EVENT]);
-    vi.mocked(tradingRoomModule.getTradingRoomStrategy).mockResolvedValue(MOCK_STRATEGY_DETAIL);
+    vi.mocked(dashboardModule.getDashboardRecipeById).mockResolvedValue(MOCK_RECIPE);
     vi.mocked(tradingRoomModule.decideOnEvent).mockResolvedValue({});
   });
 
@@ -275,10 +278,10 @@ describe("TradingRoomPage", () => {
 
   // ── Strategy Recipe Workspace ──────────────────────────────────────────────
 
-  it("calls getTradingRoomStrategy with the selected strategyId", async () => {
+  it("calls getDashboardRecipeById with the strategy's dashboard_recipe_id", async () => {
     render(<TradingRoomPage strategyId="strat-001" />);
     await screen.findByTestId("strategy-workspace-strat-001");
-    expect(tradingRoomModule.getTradingRoomStrategy).toHaveBeenCalledWith("strat-001");
+    expect(dashboardModule.getDashboardRecipeById).toHaveBeenCalledWith("recipe-001");
   });
 
   it("renders the strategy recipe workspace when recipe is available", async () => {
@@ -294,29 +297,28 @@ describe("TradingRoomPage", () => {
   });
 
   it("does not render view tabs when only one view is present", async () => {
-    vi.mocked(tradingRoomModule.getTradingRoomStrategy).mockResolvedValue({
-      ...MOCK_STRATEGY_DETAIL,
-      views: [MOCK_STRATEGY_DETAIL.views[0]],
+    vi.mocked(dashboardModule.getDashboardRecipeById).mockResolvedValue({
+      ...MOCK_RECIPE,
+      views: [MOCK_RECIPE.views[0]],
     });
     render(<TradingRoomPage strategyId="strat-001" />);
     await screen.findByTestId("strategy-recipe-workspace");
     expect(screen.queryByTestId("recipe-view-tabs")).toBeNull();
   });
 
-  it("shows recipe unavailable placeholder when detail has no recipe data", async () => {
-    vi.mocked(tradingRoomModule.getTradingRoomStrategy).mockResolvedValue({ strategy_id: "strat-001" });
-    render(<TradingRoomPage strategyId="strat-001" />);
+  it("shows recipe unavailable placeholder when strategy has no dashboard_recipe_id", async () => {
+    render(<TradingRoomPage strategyId="strat-002" />);
     await screen.findByTestId("strategy-recipe-unavailable");
   });
 
-  it("shows recipe unavailable placeholder when getTradingRoomStrategy returns null", async () => {
-    vi.mocked(tradingRoomModule.getTradingRoomStrategy).mockResolvedValue(null);
+  it("shows recipe unavailable placeholder when getDashboardRecipeById returns null", async () => {
+    vi.mocked(dashboardModule.getDashboardRecipeById).mockResolvedValue(null);
     render(<TradingRoomPage strategyId="strat-001" />);
     await screen.findByTestId("strategy-recipe-unavailable");
   });
 
   it("shows loading state while recipe is being fetched", async () => {
-    vi.mocked(tradingRoomModule.getTradingRoomStrategy).mockReturnValue(new Promise(() => {}));
+    vi.mocked(dashboardModule.getDashboardRecipeById).mockReturnValue(new Promise(() => {}));
     render(<TradingRoomPage strategyId="strat-001" />);
     await screen.findByTestId("strategy-workspace-strat-001");
     expect(screen.getByTestId("strategy-recipe-loading")).toBeDefined();

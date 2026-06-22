@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
   getTradingRoom,
-  getTradingRoomStrategy,
   listDecisionEvents,
   decideOnEvent,
   type TradingRoomAggregate,
@@ -9,18 +8,10 @@ import {
   type TradingDecisionEvent,
   type DecisionChoice,
 } from "@/lib/bff-v1/agora/tradingRoom";
+import { getDashboardRecipeById } from "@/lib/bff-v1/agora/dashboard";
 import type { DashboardRecipeV2, WidgetSpecV2 } from "@/lib/bff-v1/agora/types";
 import { DashboardGridEditor } from "@/agora/dashboard/DashboardGridEditor";
 import type { WidgetPlacement } from "@/agora/dashboard/DashboardGridEditor";
-
-// ── Recipe extraction helper ──────────────────────────────────────────────────
-
-function extractRecipe(detail: Record<string, unknown>): DashboardRecipeV2 | null {
-  const candidate = (detail.recipe ?? detail) as Record<string, unknown>;
-  if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) return null;
-  if (typeof candidate.recipe_id !== "string" || !Array.isArray(candidate.views)) return null;
-  return candidate as unknown as DashboardRecipeV2;
-}
 
 // ── Strategy Lens Switcher ────────────────────────────────────────────────────
 
@@ -674,16 +665,23 @@ function StrategyWorkspaceView({
   const [recipe, setRecipe] = useState<DashboardRecipeV2 | null>(null);
   const [recipeLoading, setRecipeLoading] = useState(true);
 
+  const recipeId = strategy?.dashboard_recipe_id;
+
   useEffect(() => {
+    if (!recipeId) {
+      setRecipe(null);
+      setRecipeLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setRecipe(null);
     setRecipeLoading(true);
 
-    getTradingRoomStrategy(strategyId)
-      .then((detail) => {
+    getDashboardRecipeById(recipeId)
+      .then((r) => {
         if (cancelled) return;
-        const extracted = detail ? extractRecipe(detail) : null;
-        setRecipe(extracted);
+        setRecipe(r);
         setRecipeLoading(false);
       })
       .catch(() => {
@@ -693,7 +691,7 @@ function StrategyWorkspaceView({
     return () => {
       cancelled = true;
     };
-  }, [strategyId]);
+  }, [recipeId]);
 
   return (
     <div
