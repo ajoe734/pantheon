@@ -5,9 +5,13 @@ Covers:
   - Pydantic models field-aligned with v4 schemas
   - Router creation (smoke test)
   - Safety invariants: no_order_route_proof, no order routing
+  - Regression: model_dump(exclude_none=True) passes v4 jsonschema
+  - Regression: store rejects invalid no_order_route_proof (D1 invariant)
+  - Regression: pagination token does not repeat previous page's last item
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import uuid
@@ -318,6 +322,123 @@ def test_governed_intent_handoff_no_order_route_proof():
 
 
 # ---------------------------------------------------------------------------
+# Regression: jsonschema compliance (Fix 1)
+# ---------------------------------------------------------------------------
+
+_SCHEMA_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "..", "..", "specs", "agora", "v4", "trading_decision_event.schema.json",
+)
+
+
+def test_model_dump_exclude_none_passes_schema():
+    """model_dump(exclude_none=True) must pass v4 trading_decision_event schema."""
+    import jsonschema
+
+    with open(_SCHEMA_PATH) as f:
+        schema = json.load(f)
+    model = TradingDecisionEvent(**_make_event(event_id="evt-schema-valid"))
+    dumped = model.model_dump(exclude_none=True)
+    jsonschema.validate(dumped, schema)
+    print("✅ schema: model_dump(exclude_none=True) passes v4 trading_decision_event schema")
+
+
+def test_model_dump_without_exclude_none_emits_null_fields_that_fail_schema():
+    """Regression: model_dump() without exclude_none emits null optional fields that violate v4 schema."""
+    import jsonschema
+
+    with open(_SCHEMA_PATH) as f:
+        schema = json.load(f)
+    model = TradingDecisionEvent(**_make_event(event_id="evt-schema-null"))
+    dumped = model.model_dump()
+    assert dumped.get("dedupe_key") is None, "dedupe_key should be None when not set"
+    assert dumped["subject"].get("asset_class") is None, "asset_class should be None when not set"
+    try:
+        jsonschema.validate(dumped, schema)
+        raise AssertionError("Expected schema validation failure due to null optional fields")
+    except jsonschema.ValidationError:
+        pass
+    print("✅ schema: model_dump() emits null optional fields that fail v4 schema (confirms fix is needed)")
+
+
+# ---------------------------------------------------------------------------
+# Regression: D1 safety invariant at store boundary (Fix 2)
+# ---------------------------------------------------------------------------
+
+def test_store_rejects_invalid_no_order_route_proof():
+    """Store must reject events with no_order_route_proof != 'agora_decision_support_only'."""
+    import pytest
+
+    store = make_trading_room_store()
+    bad_event = _make_event(event_id="evt-bad-proof")
+    bad_event["no_order_route_proof"] = "BROKER_ORDER_ALLOWED"
+    with pytest.raises(ValueError, match="D1 safety invariant"):
+        store.upsert_decision_event(bad_event)
+    print("✅ store: rejects event with BROKER_ORDER_ALLOWED no_order_route_proof (D1 invariant)")
+
+
+def test_store_rejects_missing_no_order_route_proof():
+    """Store must reject events without no_order_route_proof."""
+    import pytest
+
+    store = make_trading_room_store()
+    bad_event = _make_event(event_id="evt-no-proof")
+    del bad_event["no_order_route_proof"]
+    with pytest.raises(ValueError, match="D1 safety invariant"):
+        store.upsert_decision_event(bad_event)
+    print("✅ store: rejects event with missing no_order_route_proof (D1 invariant)")
+
+
+# ---------------------------------------------------------------------------
+# Regression: pagination token semantics (Fix 3)
+# ---------------------------------------------------------------------------
+
+def test_store_pagination_no_repeat_on_second_page():
+    """next_page_token must not repeat the last item of the previous page."""
+    store = make_trading_room_store()
+    for i in range(4):
+        ev = _make_event(event_id=f"pg-e{i}")
+        ev["triggered_at"] = f"2026-06-22T10:0{i}:00Z"
+        store.upsert_decision_event(ev)
+
+    page1 = store.list_decision_events(page_size=2)
+    assert len(page1["items"]) == 2
+    token = page1["page_info"]["next_page_token"]
+    assert token is not None, "Expected a next_page_token for page 1"
+    last_id_page1 = page1["items"][-1]["decision_event_id"]
+
+    page2 = store.list_decision_events(page_size=2, next_page_token=token)
+    page2_ids = [e["decision_event_id"] for e in page2["items"]]
+    assert last_id_page1 not in page2_ids, (
+        f"Token item {last_id_page1!r} must not repeat in page 2: {page2_ids}"
+    )
+    assert len(page2["items"]) == 2, f"Expected 2 items on page 2, got {len(page2['items'])}"
+    print(f"✅ store: page 2 starts after token {token!r}, no repeat of {last_id_page1!r}")
+
+
+def test_store_pagination_full_coverage_no_overlap():
+    """All items must appear exactly once across paginated pages."""
+    store = make_trading_room_store()
+    for i in range(6):
+        ev = _make_event(event_id=f"cov-e{i}")
+        ev["triggered_at"] = f"2026-06-22T10:0{i}:00Z"
+        store.upsert_decision_event(ev)
+
+    all_ids = []
+    token = None
+    for _ in range(10):
+        page = store.list_decision_events(page_size=2, next_page_token=token)
+        all_ids.extend(e["decision_event_id"] for e in page["items"])
+        token = page["page_info"]["next_page_token"]
+        if not page["page_info"]["has_more"]:
+            break
+
+    assert len(all_ids) == 6, f"Expected 6 unique items across pages, got {len(all_ids)}: {all_ids}"
+    assert len(set(all_ids)) == 6, f"Duplicate items found across pages: {all_ids}"
+    print("✅ store: all 6 items covered exactly once across paginated pages")
+
+
+# ---------------------------------------------------------------------------
 # Router smoke test
 # ---------------------------------------------------------------------------
 
@@ -385,5 +506,11 @@ if __name__ == "__main__":
     test_all_event_kinds_accepted()
     test_trader_decision_request()
     test_governed_intent_handoff_no_order_route_proof()
+    test_model_dump_exclude_none_passes_schema()
+    test_model_dump_without_exclude_none_emits_null_fields_that_fail_schema()
+    test_store_rejects_invalid_no_order_route_proof()
+    test_store_rejects_missing_no_order_route_proof()
+    test_store_pagination_no_repeat_on_second_page()
+    test_store_pagination_full_coverage_no_overlap()
     test_router_creation_smoke()
     print("\n✅ All trading room tests passed.")

@@ -23,7 +23,15 @@ class TradingRoomStore:
     # Decision events
     # ------------------------------------------------------------------
 
+    _REQUIRED_PROOF = "agora_decision_support_only"
+
     def upsert_decision_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        proof = event.get("no_order_route_proof")
+        if proof != self._REQUIRED_PROOF:
+            raise ValueError(
+                f"D1 safety invariant: no_order_route_proof must be "
+                f"'{self._REQUIRED_PROOF}', got {proof!r}"
+            )
         event_id = event["decision_event_id"]
         self._decision_events[event_id] = event
         return event
@@ -50,7 +58,7 @@ class TradingRoomStore:
         if next_page_token:
             ids = [e["decision_event_id"] for e in items]
             if next_page_token in ids:
-                start = ids.index(next_page_token)
+                start = ids.index(next_page_token) + 1  # start AFTER the token item
         page = items[start : start + page_size]
         has_more = (start + page_size) < len(items)
         token = page[-1]["decision_event_id"] if has_more and page else None

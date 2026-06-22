@@ -306,7 +306,7 @@ def create_trading_room_router(
             snapshot_at=now,
             data_cutoff=now,
         )
-        return aggregate.model_dump()
+        return aggregate.model_dump(exclude_none=True)
 
     # ------------------------------------------------------------------
     # GET /bff/agora/trading-room/strategies/{strategy_id}
