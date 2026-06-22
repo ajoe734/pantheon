@@ -4,27 +4,31 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Winner-branch workshop E2E acceptance
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Upstream gates verified done. Owner implementation adds the task-scoped
-  winner-branch workshop E2E artifact and replaces vacuous no-order invariants
-  with schema-backed assertions before handoff to Claude.
+- Next: Finalize after merged task PR #2261 and closeout evidence update.
 
 ## Summary
-依 SD §11/§24.3 寫 winner-branch(賣家節點)複雜描述→可驗證 StrategySpec Draft 的 E2E 驗收。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。
+Winner-branch 賣家節點複雜描述到可驗證 StrategySpec Draft 的 v1.3 E2E 驗收。
 
-## Resolved upstream gates
+## Review Approval
 
-- `AG-BE-SW-003`: archived `done`; completeness/NBQ skill available.
-- `AG-FE-SW-002`: archived `done`; completeness rail/card contract available.
-- `AG-XR-OPENAPI-004`: archived `done`; v1.3 OpenAPI/capability/schema bundle
-  and hash chain merged.
+- Reviewer: Claude
+- Disposition: approved for owner finalization
+- Approval summary: all Agora acceptance coverage passed; schema validation uses
+  `Draft7Validator` against repository schema files; no-order stubs were
+  replaced with schema-backed payloads; forbidden execution keys are enforced
+  recursively; scope boundary is respected with no route, BFF, OpenAPI,
+  frontend, RuntimeBinding, capital-binding, or broker-order expansion.
 
-## Implementation scope
+## Delivery Evidence
 
-- Add `services/control-plane/tests/agora/test_winner_branch_workshop_e2e.py`
-  for complex winner-branch workshop evidence -> StrategySpec draft ->
-  StrategyCompleteness map acceptance.
-- Tighten existing v1.3 E2E/isolation acceptance tests by replacing vacuous
-  no-order checks with concrete schema-backed fixtures.
+- Implementation commit: `7021b4ab5f087a1be3083e0f6feb36ec2d7974ff`
+- Merged PR: #2261, merge commit
+  `2b44a405e25bb1a776f6a5ef9ede250c3acebaf3`
+- Artifact: `services/control-plane/tests/agora/test_winner_branch_workshop_e2e.py`
+- Focused closeout verification:
+  `python3 -m pytest services/control-plane/tests/agora/test_winner_branch_workshop_e2e.py services/control-plane/tests/agora/test_winner_branch_e2e_v13.py services/control-plane/tests/agora/test_agora_isolation_matrix.py -q`
+  (`149 passed`)
+- Whitespace check: `git diff --check`
