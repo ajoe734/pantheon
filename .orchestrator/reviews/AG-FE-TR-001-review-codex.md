@@ -58,3 +58,57 @@ Disposition: Changes requested
   order, capital-binding, or RuntimeBinding writes in this patch.
 - The local task branch is behind current `origin/dev`; I reviewed commit
   `b69321ac` as dispatched and did not rebase or merge owner work.
+
+## Second Review - 2026-06-22
+
+Disposition: Changes requested
+
+### Findings
+
+1. `execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx:18`
+
+   Commit `18441482` adds recipe rendering, but the live-strict data path still
+   cannot supply the recipe it renders. `StrategyWorkspaceView` calls
+   `getTradingRoomStrategy(strategyId)` and `extractRecipe()` only accepts
+   either a recipe object directly or `detail.recipe`. The actual BFF route
+   `services/control-plane/bff/agora/trading_room/router.py:545` returns
+   `DetailEnvelope.data` with `strategy_id`, `pending_event_counts`,
+   `readiness_state`, and `monitoring_state`; it does not include a
+   `DashboardRecipeV2`, `recipe`, or `dashboard_recipe`. The test mock at
+   `TradingRoomPage.test.tsx:97` bypasses that by returning a bare recipe-shaped
+   object, so `strategy-recipe-workspace` is only proven against a shape the real
+   route does not return.
+
+   Required fix: make the frontend use a contract-backed recipe source. Either
+   fetch the accepted `dashboard_recipe_id` through the canonical dashboard
+   recipe route/client and render that `DashboardRecipeV2`, or first change the
+   strategy detail projection/spec to include a named recipe field and update
+   the frontend extractor/tests to that exact envelope shape. If neither route
+   is available in the accepted backend contract, stop with a blocker instead of
+   mocking a non-contract shape. The previous finding #1 is not resolved until a
+   selected strategy visibly renders a recipe available from the real BFF
+   projection.
+
+### Resolved Items
+
+- The expanded `TradingDecisionEvent` detail now covers the required v4 fields:
+  confidence and calibration, probability horizon and interval, EV gross/cost/net
+  and downside, suggested action and non-binding size, rationale, risk notes,
+  evidence refs, invalidation state, data cutoff, and no-order-route proof.
+- The trader decision buttons call `decideOnEvent` and remain inside the
+  request/intent-support route family.
+
+### Verification
+
+- `git fetch origin` -> latest `origin/dev` confirmed; the task branch remains
+  behind by 26 commits.
+- `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-TR-001` -> active task is
+  `review`, owner `Claude`, reviewer `Codex`.
+- `npm ci` in `execute-plans` -> dependencies installed; npm reported existing
+  audit warnings (2 moderate, 1 high, 1 critical).
+- `npm test -- src/agora/pages/trading-room/TradingRoomPage.test.tsx` -> 40
+  tests passed; this confirms the current mocks, but does not cover the live BFF
+  strategy-detail envelope shape described above.
+- Static contract check against
+  `services/control-plane/bff/agora/trading_room/router.py` and
+  `services/control-plane/openapi/agora_v1_3.openapi.yaml`.
