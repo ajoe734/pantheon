@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-DES-TR-001",
+  "archived_at": "2026-06-21T12:16:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DES-TR-001",
+    "title": "Trading Room aggregate + governed intent handoff (v1.3)",
+    "summary_zh": "依 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/04_trading_room_and_governed_intent.md 落地 v4 schema:trading_room_aggregate/trading_decision_event/governed_intent_handoff。Trading Room 只讀/呈現(§D1,不擁有 order/capital/RuntimeBinding);decision-event 欄位(§D2,confidence≠probability,含 no-order-route proof);decision lifecycle(§D3);trader 決策 approve/reject/defer/modify(§D4,approve/modify 建 TradingIntent 非 order);governed handoff(§D5 shadow/paper/canary/live 僅 request,只有既有 Governance/DeploymentPlan/RuntimeBinding/LEAN 能產生執行)。 【有疑問一定要 STOP 開 blocker】動工前讀完權威設計 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/ (MASTER_SD_RESPONSE.md + 對應 0X 文件 + schemas/*.json + 08 OpenAPI delta)。鐵律:不可改動或重雜湊 frozen v1/v1.1/v1.2(bundle_index.json/.v1_1/.v1_2、agora_v1*.openapi.yaml);一律 additive 到 services/control-plane/specs/agora/v4/ 與 agora_v1_3.openapi.yaml / bundle_index.v1_3.json(後者 extends 並 hash v1.2 精確 bytes)。schema 內容以 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/schemas/ 同名檔為準逐欄落地,不自創欄位/route/enum;Agora 永不下單/綁資金/寫 RuntimeBinding(governed handoff 只建 request)。遇任何不確定先 blocker。",
+    "phase": "EPIC AGORA-V13 / Round2",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/specs/agora/v4/trading_room_aggregate.schema.json",
+      "services/control-plane/specs/agora/v4/trading_decision_event.schema.json",
+      "services/control-plane/specs/agora/v4/governed_intent_handoff.schema.json"
+    ],
+    "acceptance": [
+      "trading_room_aggregate/trading_decision_event/governed_intent_handoff schema 落 v4 且對齊 04;Agora 不下單;confidence/probability 分離;handoff 僅 request + no-order-route proof;【驗收】frozen v1/v1.1/v1.2 + 其 bundle_index sha256 全不變;新增物逐欄對齊 design-closure-round2;遇疑問先 blocker 不自行實作"
+    ],
+    "next": "Closeout: 3 v4 schemas (trading_room_aggregate/trading_decision_event/governed_intent_handoff) verified byte-for-byte vs design-closure-round2 references (SHA256 confirmed). confidence!=probability, no_order_route_proof correct, frozen v1/v1.1/v1.2 untouched, Agora boundary invariants pass. PR #2059 merged into dev.",
+    "last_update": "2026-06-21T12:16:24Z",
+    "auto_created_by": "dispatch_agora_v13_round2_2026-06-21",
+    "review_notes_zh": [
+      "審查通過: 三份 v4 schema 與 design-closure-round2 參考檔案 byte-for-byte 相同，SHA256 全數吻合 bundle_index.v1_3.template.json",
+      "confidence≠probability 欄位分離正確，no_order_route_proof 值適切，Agora 邊界不變量（無 order/capital/RuntimeBinding write）全數通過",
+      "frozen v1/v1.1/v1.2 未被改動"
+    ],
+    "review_file": ".orchestrator/reviews/ag_des_tr_001_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T12:16:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-des-tr-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DES-TR-001",
+      "git_clean_required": false,
+      "commit": "99531329f2ff24b26ca268540ec292bfea861e44",
+      "commit_subject": "Merge origin/dev into task/AG-DES-TR-001 to clear BEHIND state before auto-merge",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DES-TR-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a330af8610b4c28e0581873de4795ae40e3036f6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DES-TR-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-21T11:49:57Z",
+      "resolved_at": "2026-06-21T11:50:51Z"
+    },
+    {
+      "task_id": "AG-DES-TR-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "3 Trading Room v4 schemas landed and anchor-committed (f14bc672). All sha256 match bundle_index.v1_3.template.json. Frozen v1/v1.1/v1.2 untouched. Please review: (1) schema fields align with 04_trading_room_and_governed_intent.md §D1-D10; (2) confidence≠probability separation; (3) no_order_route_proof values; (4) Agora boundary invariants (no order/capital/RuntimeBinding write). Composes with AG-XR-OPENAPI-004 for bundle_index.v1_3.json.",
+      "status": "done",
+      "created_at": "2026-06-21T11:59:40Z",
+      "resolved_at": "2026-06-21T12:06:06Z"
+    },
+    {
+      "task_id": "AG-DES-TR-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all 3 v4 schemas match reference byte-for-byte, SHA256 verified, boundary invariants pass. Returning to Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-06-21T12:06:06Z",
+      "resolved_at": "2026-06-21T12:16:25Z"
+    }
+  ],
+  "blockers": []
+}

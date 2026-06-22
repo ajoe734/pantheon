@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33",
+  "archived_at": "2026-06-21T19:38:51Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000",
+      "AG-BE-ID-003"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Followup-33 support packet closeout complete. PR #2133 merged into dev at 2026-06-21T19:36:29Z with all CI gates passing (commit trailers, runtime mirror guard, smoke acceptance x2). Handoff packet and review approval record delivered. No canonical truth mutations. Parent AG-FE-ID-001 remains blocked pending execute-plans PR#66 merge or aggregate gate disposition.",
+    "last_update": "2026-06-21T19:38:51Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：事實準確，範疇紀律符合要求，未修改 canonical truth",
+      "父任務 AG-FE-ID-001 維持 blocked，待 execute-plans PR#66 合併或 aggregate gate 正式處置"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T19:38:51Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-33",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33",
+      "git_clean_required": false,
+      "commit": "5db62f7c53c5052632bc8b7be341cfba132b9e2e",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "03742a5f710dc4784b066ea89e92c3884829e282",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Followup-33 BFF/frontend handoff packet prepared and anchor-committed at 29fe886b. Pantheon dev advanced to 4e745eb0 since followup-32; no Agora BFF or contract delta found. Execute-plans PR#66 still OPEN/integration-gate failing; PR#63 still open. BFF 39 tests pass; compat manifest fail-closed as expected. Packet is support-only, no canonical truth mutations. Ready for Claude to review scope discipline and factual accuracy.",
+      "status": "done",
+      "created_at": "2026-06-21T19:19:29Z",
+      "resolved_at": "2026-06-21T19:21:29Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup-33 support packet approved; factually accurate refresh with no canonical truth mutations. Parent AG-FE-ID-001 remains blocked pending execute-plans PR#66 merge or gate disposition.",
+      "status": "done",
+      "created_at": "2026-06-21T19:21:29Z",
+      "resolved_at": "2026-06-21T19:34:12Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Restoring review_approved status: task was incorrectly moved to in_progress by progress command during finalize wait. Review approval by Claude remains valid (review_notes_zh present). PR #2133 is now merged.",
+      "status": "done",
+      "created_at": "2026-06-21T19:38:34Z",
+      "resolved_at": "2026-06-21T19:38:52Z"
+    }
+  ],
+  "blockers": []
+}

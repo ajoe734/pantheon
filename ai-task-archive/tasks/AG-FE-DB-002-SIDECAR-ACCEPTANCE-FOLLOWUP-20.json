@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-20",
+  "archived_at": "2026-06-21T10:32:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-20",
+    "title": "Prepare AG-FE-DB-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-FE-DB-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-DB-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-20.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved follow-up 20 after PR #2037 merged into dev at 6ed600009f6723373cef673f3bcd797abe3c06ef; support packet remains support-only and parent AG-FE-DB-002 remains blocked waiting_for Codex absorption.",
+    "last_update": "2026-06-21T10:32:47Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-DB-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：follow-up 20 維持 support-only boundary，未修改 canonical truth、runtime、registry、BFF/OpenAPI/schema、governance、broker、RuntimeBinding 或 parent task state。",
+      "抽查 post-followup-19 dev delta：PR #2035 只新增 AG-BE-SW-004 sidecar BFF handoff support artifact，DB002 dashboard/editor/widget/BFF helper/OpenAPI/schema 路徑未變；PR #2037 已 auto-merge 到 dev at 6ed600009f6723373cef673f3bcd797abe3c06ef，visible checks success。",
+      "Parent acceptance checklist 與 dependency map 可供 Codex 吸收；parent AG-FE-DB-002 仍維持 blocked waiting_for Codex。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T10:32:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-db-002-sidecar-acceptance-followup-20",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-20",
+      "git_clean_required": false,
+      "commit": "6ed600009f6723373cef673f3bcd797abe3c06ef",
+      "commit_subject": "Merge pull request #2037 from ajoe734/task/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-20",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-20": "add packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-20",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6ed600009f6723373cef673f3bcd797abe3c06ef",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-20",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Follow-up 20 packet committed and PR #2037 opened with auto-merge enabled (head ee417e33). Packet refreshes post-followup-19 dev delta through ea320c5e; only new dev delta is AG-BE-SW-004 sidecar BFF handoff support material, with no DB002 dashboard/editor/widget/BFF helper/OpenAPI/schema path changes. Please review support-only boundary, current parent blocked state, checklist, and dependency map. Parent AG-FE-DB-002 remains blocked waiting_for Codex.",
+      "status": "done",
+      "created_at": "2026-06-21T10:27:28Z",
+      "resolved_at": "2026-06-21T10:30:30Z"
+    },
+    {
+      "task_id": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-20",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: follow-up 20 packet is support-only and accurate; post-followup-19 delta is unrelated to DB002 dashboard layout semantics; PR #2037 merged at 6ed600009f6723373cef673f3bcd797abe3c06ef with visible checks success. Return to Codex for closeout finalization; parent AG-FE-DB-002 remains blocked waiting_for Codex.",
+      "status": "done",
+      "created_at": "2026-06-21T10:30:30Z",
+      "resolved_at": "2026-06-21T10:32:48Z"
+    }
+  ],
+  "blockers": []
+}

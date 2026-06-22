@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43",
+  "archived_at": "2026-06-22T08:02:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000",
+      "AG-BE-ID-003"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: packet PR #2223 merged at 4cdd90e5; Claude review artifact PR #2224 merged at 6a6987ab; closeout PRs #2225/#2226 merged with final owner metadata at dd7bb690; Branch CI passed; parent AG-FE-ID-001 remains blocked on execute-plans PR #66 aggregate gate until merge or formal exception.",
+    "last_update": "2026-06-22T08:02:31Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：範圍紀律正確，dev-window 摘要準確，main.py 能力正規化處理邊界正確，execute-plans PR gate 正確攜帶，AG-BE-TR-002 Phase 4 路由正確排除在外",
+      "後續：parent AG-FE-ID-001 保持 blocked 直至 PR #66 合併或正式豁免"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T08:02:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-43",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43",
+      "git_clean_required": false,
+      "commit": "87b1f8cad1a52c30bbd196b114a9d00755570d63",
+      "commit_subject": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43: finalize done metadata",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43.md final owner closeout metadata",
+        "Not changing": "canonical truth, BFF runtime, route registry, governance policy, execute-plans source, or generated task brief",
+        "Composes with": "packet PR #2223, Claude review artifact PR #2224, closeout PR #2225, and parent AG-FE-ID-001 blocked on execute-plans PR #66",
+        "Verified": "git diff --check -- support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43.md",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43",
+        "Reviewer": "Claude"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "dd7bb690dd02c22517a5408e11ff33ae63459f67",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "FOLLOWUP-43 support packet committed at 12357eea and merged via PR #2223 at 4cdd90e5: https://github.com/ajoe734/pantheon/pull/2223. Scope is only support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43.md; generated task brief intentionally left uncommitted. Packet refreshes post-followup-42 dev delta 9e5d9816..61ec2478, notes main.py structured-token capability normalization without changing Agora identity/servant route contracts, keeps AG-BE-TR-002 governed TradingIntent/handoff as Phase 4 out-of-scope for AG-FE-ID-001, and carries forward execute-plans PR #66/#63 unstable gate blockers plus fail-closed compatibility manifest. Validation: git diff --check clean; pytest 39/39 identity/servant/session, 3/3 candidate-pool, 31/31 trading-room, 96/96 auth identity tests; manifest deployment gate failed closed as expected; PR checks all passed. current-work.md and full ai-activity-log.jsonl were not read. Please review scope discipline and factual accuracy.",
+      "status": "done",
+      "created_at": "2026-06-22T07:50:49Z",
+      "resolved_at": "2026-06-22T07:53:14Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: scope-disciplined packet, accurate dev-window summary, correct main.py auth-capability boundary, PR #66/#63 gate blockers carried forward, Phase 4 AG-BE-TR-002 routes correctly excluded. Return to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T07:53:14Z",
+      "resolved_at": "2026-06-22T08:02:32Z"
+    }
+  ],
+  "blockers": []
+}

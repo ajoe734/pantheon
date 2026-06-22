@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-DASH-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-20T16:14:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-DASH-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare AG-XR-DASH-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-XR-DASH-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-XR / Contract-Closure",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-001A"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-XR-DASH-001/AG-XR-DASH-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet for AG-XR-DASH-001 finalized and merged (PR #1840). Support packet at support/sidecars/AG-XR-DASH-001/AG-XR-DASH-001-SIDECAR-ACCEPTANCE.md: v2 schema SHA-256 baselines recorded, 3 missing dashboard routes named (dashboard-recipes feedback, widgets feedback, widgets/propose-plugin), CRUD/ETag/expected_version acceptance criteria fully mapped, dependency chain correct. No canonical truth modified. Reviewer approved (Claude): support-only boundary preserved.",
+    "last_update": "2026-06-20T16:14:09Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-DASH-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：support artifact 邊界保持正確，未修改任何 canonical truth；v2 schema baseline hashes 已記錄；3 個缺失 dashboard route 明確列出（dashboard-recipes feedback、widgets feedback、widgets/propose-plugin）；CRUD/ETag/expected_version 驗收標準完整映射；dependency chain 正確（AG-XR-001A → AG-XR-DASH-001 → AG-BE-DB-001/AG-FE-DB-001）；broker/capital/RuntimeBinding 邊界明確標示為拒絕條件。",
+      "後續追蹤：parent owner 在 AG-XR-DASH-001 完成後應驗證 capability_manifest_v1_1.json 含 agora.dashboard.v2 capability。"
+    ],
+    "review_file": "support/sidecars/AG-XR-DASH-001/AG-XR-DASH-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T16:14:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-dash-001-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-DASH-001-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "7d31f868001e14e410c45b3c8fcb66e4371124ce",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-XR-DASH-001-SIDECAR-ACCEPTANCE",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-DASH-001-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2711ac25469ecfcb25955953d9c2c549b7a3489c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-DASH-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support packet ready for AG-XR-DASH-001: acceptance checklist and dependency map are in support/sidecars/AG-XR-DASH-001/AG-XR-DASH-001-SIDECAR-ACCEPTANCE.md. The packet records the current v2 schema baseline, lists the 3 missing dashboard routes, maps the CRUD/ETag concurrency contract to parent acceptance checks, and identifies the dependency chain to AG-BE-DB-001 and AG-FE-DB-001 without editing canonical truth.",
+      "status": "done",
+      "created_at": "2026-06-20T15:46:22Z",
+      "resolved_at": "2026-06-20T15:51:15Z"
+    },
+    {
+      "task_id": "AG-XR-DASH-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: support-only boundary preserved, v2 schema baselines recorded with SHA-256 hashes, 3 missing dashboard routes explicitly named, CRUD/ETag/expected_version acceptance criteria fully mapped, dependency chain correct. Returned to Claude2 for finalization.",
+      "status": "done",
+      "created_at": "2026-06-20T15:51:15Z",
+      "resolved_at": "2026-06-20T16:09:51Z"
+    },
+    {
+      "task_id": "AG-XR-DASH-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Restoring review_approved: review notes confirm Claude approved the acceptance packet (support-only boundary preserved, v2 schema baselines, 3 missing routes, CRUD/ETag criteria, dependency chain correct). Status was accidentally rolled to in_progress by progress command.",
+      "status": "done",
+      "created_at": "2026-06-20T16:13:44Z",
+      "resolved_at": "2026-06-20T16:14:11Z"
+    }
+  ],
+  "blockers": []
+}

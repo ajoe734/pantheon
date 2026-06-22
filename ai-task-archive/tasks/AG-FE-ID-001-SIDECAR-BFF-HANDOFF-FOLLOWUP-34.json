@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+  "archived_at": "2026-06-22T01:59:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000",
+      "AG-BE-ID-003"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only BFF/frontend handoff sidecar after Claude review approval; PR #2174 merged into dev at 2a811d565f9ff9d67494ecb431e1e79a5747889a with task head d4ab2ecbe9edf893c0fdba43ad336b0891b7a528. Parent AG-FE-ID-001 remains blocked on execute-plans PR #66 integration-gate failure.",
+    "last_update": "2026-06-22T01:59:00Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "Re-dispatch refresh factually accurate; no canonical truth mutations",
+      "PR#66狀態改UNSTABLE已正確記錄",
+      "BFF ledger和parent absorption checklist未改變",
+      "Parent AG-FE-ID-001持續blocked等待execute-plans PR#66合併或gate處置"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T01:59:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-34",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+      "git_clean_required": false,
+      "commit": "d4ab2ecbe9edf893c0fdba43ad336b0891b7a528",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2a811d565f9ff9d67494ecb431e1e79a5747889a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Followup-34 packet prepared at commit 958e9aaa. Refreshed from followup-33 baseline (Pantheon dev 4e745eb0->7b112049). No Agora BFF/contract delta. Execute-plans PR#66 unchanged (integration-gate fail). BFF tests 39/39 pass. Compat manifest fail-closed. Please review for factual accuracy and scope discipline.",
+      "status": "done",
+      "created_at": "2026-06-21T23:20:02Z",
+      "resolved_at": "2026-06-21T23:23:23Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup-34 support packet approved; factually accurate refresh with no canonical truth mutations. Pantheon dev advanced 7b112049->6393f121 (AG-BE-TR-002 sidecar, PR #2161) with no Agora path changes. BFF 39/39 pass reconfirmed. Parent AG-FE-ID-001 remains blocked pending execute-plans PR#66 merge or gate disposition.",
+      "status": "done",
+      "created_at": "2026-06-21T23:23:23Z",
+      "resolved_at": "2026-06-21T23:29:08Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Re-dispatch refresh committed (9011c129). Packet updated for new dev base (91b5869f) and PR#66 state change (UNSTABLE). Prior approval file on dev (c9c12b31); BFF ledger and parent absorption checklist unchanged. Please formally approve in ai-status.json to complete the lifecycle.",
+      "status": "done",
+      "created_at": "2026-06-22T00:20:02Z",
+      "resolved_at": "2026-06-22T00:23:33Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup-34 re-dispatch refresh approved. Packet is factually accurate: dev advanced 7b112049->91b5869f with no Agora BFF/contract changes; PR#66 state correctly updated to UNSTABLE (gate failure and head de7834b8 unchanged). BFF ledger, operator journey, and parent absorption checklist remain valid. mutates_canonical: false confirmed. Parent AG-FE-ID-001 remains blocked pending execute-plans PR#66 merge or aggregate-gate disposition.",
+      "status": "done",
+      "created_at": "2026-06-22T00:23:33Z",
+      "resolved_at": "2026-06-22T01:49:44Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Claude2 to Codex after repeated Claude2 terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\",\"resetsAt\":1782320400,\"rateLimitType\":\"seven_day\",\"utilization\":0.77,\"isUsingOverage\":false,\"surpassedThres",
+      "status": "done",
+      "created_at": "2026-06-22T01:49:45Z",
+      "resolved_at": "2026-06-22T01:59:01Z"
+    }
+  ],
+  "blockers": []
+}

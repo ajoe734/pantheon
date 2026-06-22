@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-06-20T20:38:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only BFF/frontend handoff packet; closeout PR #1897 merged into dev at e51bc8fdcdce119bd66596367c468364d18bf835; local verification covered task status, parent blocker state, support-only boundary, and packet closeout markers.",
+    "last_update": "2026-06-20T20:38:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T20:38:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "5d718e2b6ba88e70a9c2a2a5bbc08ba2bdbf7192",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e51bc8fdcdce119bd66596367c468364d18bf835",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Followup-4 support-only packet is ready for review and already merged through PR #1895 at bf3c92d5b436ee5249aac957318b720a04cb5c18. It records the AG-BE-ID-003 servant-session session_type contract decision matrix, frontend gates, and parent absorption gates. Verification: git diff --check on the task packet/brief and python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q (18 passed).",
+      "status": "done",
+      "created_at": "2026-06-20T20:28:31Z",
+      "resolved_at": "2026-06-20T20:32:19Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Followup 4 support packet approved; contract decision matrix, frontend gates, and parent absorption gates are accurate and support-only.",
+      "status": "done",
+      "created_at": "2026-06-20T20:32:19Z",
+      "resolved_at": "2026-06-20T20:38:46Z"
+    }
+  ],
+  "blockers": []
+}

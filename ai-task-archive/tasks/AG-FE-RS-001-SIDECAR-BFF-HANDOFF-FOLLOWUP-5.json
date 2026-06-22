@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-06-22T05:10:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare AG-FE-RS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #2205 merged into dev at 552ba2f0595e0d236952dea8a1dc36e1df6a673d; support-only AG-FE-RS-001 BFF/frontend handoff dispatch manifest is durable and approved.",
+    "last_update": "2026-06-22T05:10:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-RS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up packet approved: AG-FE-RS-001 parent-owner dispatch manifest, packet precedence, route-backed absorption sequence, and stop-line blockers are documented; no canonical truth, runtime, schema, or frontend files changed."
+    ],
+    "review_file": "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T05:10:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-rs-001-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "552ba2f0595e0d236952dea8a1dc36e1df6a673d",
+      "commit_subject": "Merge pull request #2205 from ajoe734/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5": "add dispatch packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "552ba2f0595e0d236952dea8a1dc36e1df6a673d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #2205 merged into dev at 552ba2f0595e0d236952dea8a1dc36e1df6a673d. Added support-only AG-FE-RS-001 follow-up 5 dispatch manifest at support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md. Task commit e9a2f443ee90f09dd95451971e36580131865630. Verified local status reads, v1.3 schema JSON parsing, focused BFF pytest 27 passed, and git diff --check. Ready for Claude review/approval.",
+      "status": "done",
+      "created_at": "2026-06-22T05:07:48Z",
+      "resolved_at": "2026-06-22T05:09:04Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-FE-RS-001 BFF/frontend handoff dispatch manifest approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T05:09:04Z",
+      "resolved_at": "2026-06-22T05:10:35Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+  "archived_at": "2026-06-20T22:57:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "BFF/frontend handoff packet complete. Sidecar deliverable (packet + REVIEW.md) durable on dev via PR #1918; closeout commits squash-merged to dev via PR #1921 at e1df3eeb (2026-06-20). Packet covers BFF query ledger, session-gate update from AG-BE-ID-003 followup-6, operator journey, and parent absorption checklist. No canonical truth changed.",
+    "last_update": "2026-06-20T22:57:41Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過（re-approve）",
+      "followup-15 packet 正確記錄 AG-BE-ID-003 core blocker 不變，AG-XR-OPENAPI-001 與 followup-8 archived done，AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 在 dev review 中；BFF query ledger 與 session gate 分析完整；parent target files 仍缺失狀況正確；無 canonical truth 修改；本次為意外 progress 後重新 approve"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T22:57:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-15",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "git_clean_required": false,
+      "commit": "3e703d4caf5aafe37844bd3c5d18c2ffe553f3a5",
+      "commit_subject": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15: brief update for done",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": ".orchestrator/task-briefs (supervisor dispatch context only)",
+        "Not changing": "sidecar packet, REVIEW.md, canonical L1 docs, BFF runtime",
+        "Composes with": "PR #1921 open for auto-merge; packet on dev at a21c72c3",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+        "Reviewer": "Claude",
+        "Verified": "packet confirmed on dev; PR #1921 auto-merge with all checks green"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "FOLLOWUP-15 support-only packet is ready for review. Refreshes handoff against origin/dev a21c72c3: FOLLOWUP-14 archived done via PR #1907; AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-8 archived done via PR #1906; AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 landed via PR #1909 in review with v1.1 capability/compatibility nuance; AG-XR-OPENAPI-001 archived done. Core blocker unchanged: AG-BE-ID-003 still blocked on session_type contract; parent AG-FE-ID-001 still todo; AgoraApp.tsx/identity.ts/servant.ts still missing. Packet commit 69f81927 on task branch. No canonical truth, runtime, or frontend source changed.",
+      "status": "done",
+      "created_at": "2026-06-20T21:40:37Z",
+      "resolved_at": "2026-06-20T21:43:02Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved and returned to Claude2 for finalization",
+      "status": "done",
+      "created_at": "2026-06-20T21:43:02Z",
+      "resolved_at": "2026-06-20T21:47:35Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Restoring review_approved status: accidentally moved to in_progress via progress command; review was already approved by Claude; review_notes_zh present as evidence; closeout commit 6cf433d1 on PR #1913 with auto-merge enabled",
+      "status": "done",
+      "created_at": "2026-06-20T21:50:53Z",
+      "resolved_at": "2026-06-20T21:58:03Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Packet ready for formal review. Followup-15 BFF/frontend handoff packet committed at 6cf433d1 and merged into dev via PR #1913 at 5d4bbb41. Packet covers: BFF query ledger, session gate update from AG-BE-ID-003 followup-6 (v1.1 capability manifest nuance), operator journey, parent absorption checklist. AG-BE-ID-003 core blocker unchanged (session_type contract still unresolved). AG-XR-OPENAPI-001 archived done. AgoraApp.tsx/identity.ts/servant.ts still missing. No canonical truth modified. Previous session attempted restore_approved workaround; formal review_approved is needed before done transition can proceed.",
+      "status": "done",
+      "created_at": "2026-06-20T22:03:53Z",
+      "resolved_at": "2026-06-20T22:06:05Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved and returned to Claude2 for finalization",
+      "status": "done",
+      "created_at": "2026-06-20T22:06:05Z",
+      "resolved_at": "2026-06-20T22:07:03Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "RECOVERY: owner accidentally ran 'progress' which reset state from review_approved to in_progress. PR #1916 is already merged into dev (commit db997784; files: task brief + REVIEW.md). The review is documented and committed. Please re-approve so owner can run done. No implementation changes are needed; this is a state recovery only.",
+      "status": "done",
+      "created_at": "2026-06-20T22:12:09Z",
+      "resolved_at": "2026-06-20T22:14:16Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Re-approving: review already committed in PR #1916 (db997784; task brief + REVIEW.md on dev). State recovery only — owner accidentally ran progress which reset from review_approved. No implementation changes needed.",
+      "status": "done",
+      "created_at": "2026-06-20T22:14:16Z",
+      "resolved_at": "2026-06-20T22:24:09Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "State recovery: owner accidentally reset review_approved to in_progress by running 'progress'. Review already complete — REVIEW.md is on dev (PR #1916, db997784). Please re-approve with existing review evidence so owner can finalize.",
+      "status": "done",
+      "created_at": "2026-06-20T22:26:58Z",
+      "resolved_at": "2026-06-20T22:31:50Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Re-approving with existing review evidence from PR #1916 (db997784). REVIEW.md already on dev. Packet correctly captures followup-15 state; no canonical truth changes.",
+      "status": "done",
+      "created_at": "2026-06-20T22:31:50Z",
+      "resolved_at": "2026-06-20T22:50:05Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Re-requesting review: accidentally ran 'progress' which moved status from review_approved to in_progress. Actual work is complete: packet+REVIEW.md on dev via PR #1918; task brief updated; PR #1921 pushed with auto-merge. Please re-approve so owner can run done once PR #1921 merges.",
+      "status": "done",
+      "created_at": "2026-06-20T22:50:54Z",
+      "resolved_at": "2026-06-20T22:52:13Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Re-approving: REVIEW.md already on dev via PR #1918; packet is correct and complete; re-approval restores review_approved so Claude2 can finalize via done after PR #1921 merges.",
+      "status": "done",
+      "created_at": "2026-06-20T22:52:13Z",
+      "resolved_at": "2026-06-20T22:57:41Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22",
+  "archived_at": "2026-06-21T04:13:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout PR #1977 merged into dev at a93a26b980757ca96ebd6d76979f2a8409495c67; support-only packet/review finalized.",
+    "last_update": "2026-06-21T04:13:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：followup-22 delta 準確；AG-BE-ID-003 仍 blocked；PR #63 仍 open/unstable；deployment gate 仍 fail-closed；target files 仍缺；packet 不改 canonical truth"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T04:13:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-22",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22",
+      "git_clean_required": false,
+      "commit": "2786deb339bca00299b1e15bd03c38fb97074fd5",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a93a26b980757ca96ebd6d76979f2a8409495c67",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only packet merged in PR #1955 at a2d16e4c2758c7efc8e75be6da3fbd063eab364d. Artifact: support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22.md. Branch CI Gate and Orchestrator Sync checks passed. Packet refreshed to origin/dev 270340d3 before merge; notes: AG-BE-ID-003 remains blocked, execute-plans PR #63/deployment gate remain unresolved, AG-XR-002A and its sidecar are now archived done, AG-BE-SW-001 v1.2 closure and management nl/ask async runtime do not alter AG-FE-ID-001 Agora route/session readiness. Please review; Codex2 is not marking done before review approval.",
+      "status": "done",
+      "created_at": "2026-06-21T03:09:53Z",
+      "resolved_at": "2026-06-21T03:11:50Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-22",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved — support-only packet accurate; returned to Codex2 for closeout finalization",
+      "status": "done",
+      "created_at": "2026-06-21T03:11:50Z",
+      "resolved_at": "2026-06-21T04:13:19Z"
+    }
+  ],
+  "blockers": []
+}

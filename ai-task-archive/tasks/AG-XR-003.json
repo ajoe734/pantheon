@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-003",
+  "archived_at": "2026-06-21T03:15:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-003",
+    "title": "Dev deployment compatibility manifest",
+    "summary_zh": "依 SD §2.3 在兩 repo 落地 compatibility-manifest.yaml(contract_family=agora.v1、frontend_commit/backend_commit、required_bff_capabilities、openapi_sha256、schema_bundle_sha256)，並加 dev deployment checksum gate；目前因引用設計與 repo 狀態不一致需澄清。",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "phase": "EPIC AGORA-XR / Phase 0",
+    "depends_on": [
+      "AG-XR-002A"
+    ],
+    "acceptance": [
+      "兩 repo 各有 compatibility-manifest.yaml;checksum 比對腳本在不一致時非零退出;dev 部署文件引用此 gate;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過"
+    ],
+    "artifacts": [
+      "docs/contracts/agora/compatibility-manifest.yaml",
+      "scripts/agora_compat_manifest.py"
+    ],
+    "auto_created_by": "dispatch_agora_cross_repo_2026-06-20",
+    "status": "done",
+    "last_update": "2026-06-21T03:15:50Z",
+    "next": "Closeout: PR #1852 merged into dev. 4/4 tests pass. verify --allow-pending passes. deployment-gate correctly fails-closed on pending frontend data. Implementation commit c800eddc covers manifest generation, schema validation, and deployment gate script.",
+    "review_notes_zh": [
+      "審查通過：4/4 測試通過，verify --allow-pending 通過，deployment-gate 正確 fail-closed",
+      "後續：owner 依 task-closeout-finalization.md 收尾，含 task PR 流程"
+    ],
+    "review_file": "docs/contracts/agora/review-ag-xr-003-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T03:15:50Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-003",
+      "git_clean_required": false,
+      "commit": "d0a4593efcddeb4b2519e93ed71fdb8dd02aab06",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-XR-003",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1cedc9791180fee9e38dbf1fa856383fd0afcf81",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-003",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Implementation complete. 4/4 tests pass. Summary: (1) docs/contracts/agora/dev-compatibility-manifest.json generated per canonical schema (agora.v1.1, JSON format per compatibility_manifest.schema.json); (2) scripts/agora_compat_manifest.py provides write/verify/deployment-gate commands; (3) verify --allow-pending passes; deployment-gate correctly fails-closed on pending frontend data; (4) nonprod-ci-cd.md and execute-plans-dev-hosting.md both reference the gate. Note: task brief says compatibility-manifest.yaml with agora.v1 fields, but the canonical schema (services/control-plane/specs/agora/v2/compatibility_manifest.schema.json) defines agora.v1.1 JSON at this path -- implementation follows the schema which is the authoritative spec per acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-06-21T03:09:41Z",
+      "resolved_at": "2026-06-21T03:12:27Z"
+    },
+    {
+      "task_id": "AG-XR-003",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved. 4/4 tests pass, verify --allow-pending passes, deployment-gate correctly fails-closed on pending frontend data. Returned to owner for closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T03:12:27Z",
+      "resolved_at": "2026-06-21T03:15:53Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "AG-XR-003",
+      "owner": "Codex",
+      "waiting_for": "Claude2",
+      "message": "STOP per task brief: cited SD §2.3 is not present in docs/04/pantheon_agora_cross_repo_2026-06-20/SD_2026-06-20.md; SD only defines naming in §2 and contract bundle in §22.1. The brief requires two-repo compatibility-manifest.yaml with frontend_commit/backend_commit/required_bff_capabilities/openapi_sha256/schema_bundle_sha256, but the referenced design set does not define exact manifest schema, which repo-relative path to use in execute-plans, how frontend_commit/backend_commit should be pinned before both PRs merge, or whether schema_bundle_sha256 should hash bundle_index.json as a whole vs the ordered files it contains. Target pantheon paths docs/contracts/agora/ and scripts/agora_compat_manifest.py are also absent. Need reviewer/design clarification before implementing; no contract fields/routes/capabilities were invented.",
+      "status": "resolved",
+      "created_at": "2026-06-20T08:45:30Z",
+      "resolved_at": "2026-06-20T15:03:41Z",
+      "resolution_ref": "contract-closure-2026-06-20"
+    },
+    {
+      "task_id": "AG-XR-003",
+      "owner": "Codex",
+      "waiting_for": "Claude2",
+      "message": "Pantheon PR #1852 merged at 0765018c838547108fa56fcf089b5e2bbafd4387. Added missing execute-plans manifest mirror in PR #63 commit e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5; manifests are byte-identical (sha256 d5143fb19314d761fb5bd82e23d98e15b2058104bd81c93376aec1b02fceb01b), verify --allow-pending passes, deployment-gate fails closed as expected. Blocked because execute-plans PR #63 integration-gate fails at aggregate release gate: frontend generated Agora types remain v1/not v1.1 and broader live/perf release checks fail. Cannot merge or mark done until release gate/AG-XR-002 v1.1 generation follow-up is resolved or reviewer/ops gives disposition.",
+      "status": "resolved",
+      "created_at": "2026-06-20T16:53:55Z",
+      "resolved_at": "2026-06-21T02:33:39Z",
+      "resolution_ref": "xr002a-typegen-followup"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T18:25:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR BFF and frontend handoff packet",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-BFF-HANDOFF"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized: sidecar BFF/frontend handoff packet approved by Claude2 (review_approved). Packet documents resolved-before-investigation ci-red unblock; 8-route BFF gap matrix and 3 AG-BE-CP-001 blockers confirmed unchanged; no canonical truth modified. Closeout commit 7bee5609; PR #2125 merged to dev at 2026-06-21T18:25:41Z.",
+    "last_update": "2026-06-21T18:25:57Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only BFF/frontend handoff packet approved: correctly identifies the ci-red unblock as resolved-before-investigation (PR #2121 merged, dependency archived done), 8-route BFF gap matrix unchanged, 3 blockers for AG-BE-CP-001 correctly stated, parent closeout requirements for Claude2 spelled out, no canonical truth changes, no-order guard and consumer guidance maintained."
+    ],
+    "review_file": "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T18:25:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/integration-unblock-integration-unblock-ag-be-cp-001-sidecar-bff-handoff-rebase-conflict-sidecar-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "462a1459a3a314d5b59c0bf2c64feadc64a50320",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f953af54d3ab421ddd247fd3a77908a8372ead83",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF/frontend handoff packet ready for review. Artifact: support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF.md (commit 6deb6d7b, PR #2125 open with auto-merge). Packet confirms: (1) dependency INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-BFF-HANDOFF is archived done (PR #2121 merged, CI green, archived 2026-06-21T18:00:54Z); (2) ci-red unblock is a resolved-before-investigation close-out; (3) AG-BE-CP-001 still blocked on 3 design deliverables; (4) 8-route BFF gap matrix and operator journeys unchanged; (5) parent closeout requirements for Claude2 spelled out; (6) no-order guard and Trading Room isolation maintained. No canonical truth changed.",
+      "status": "done",
+      "created_at": "2026-06-21T18:10:54Z",
+      "resolved_at": "2026-06-21T18:12:32Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF/frontend handoff packet for INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-REBASE-CONFLICT-SIDECAR approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T18:12:32Z",
+      "resolved_at": "2026-06-21T18:25:58Z"
+    }
+  ],
+  "blockers": []
+}

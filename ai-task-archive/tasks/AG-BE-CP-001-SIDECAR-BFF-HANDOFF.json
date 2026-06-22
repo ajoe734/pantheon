@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T16:41:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-BE-CP-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-CP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-CP / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-CP-001/AG-BE-CP-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalization complete: BFF/frontend handoff packet for AG-BE-CP-001 reviewed and approved by Codex. Packet covers CandidatePool/score/decision/discussion/monitoring BFF gap surfaces, A2 recipe operator journeys, frontend client/drawer boundaries, no-order-route guardrails, schema extension requirements, and AG-BE-CP-001 vs AG-BE-TR-001/TR-002 ownership boundary. PR #2109 merged into dev.",
+    "last_update": "2026-06-21T16:41:42Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-CP-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only BFF/frontend handoff packet approved: records CandidatePool/score/decision/discussion/monitoring BFF gap surfaces, A2 recipe operator journeys, frontend client/drawer boundaries, no-order-route guardrails, schema extension requirements, RS-002 done status, and AG-BE-CP-001 versus AG-BE-TR-001/TR-002 ownership boundary without modifying canonical truth or runtime files."
+    ],
+    "review_file": "support/sidecars/AG-BE-CP-001/AG-BE-CP-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T16:41:42Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-cp-001-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-CP-001-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "6c932a347db6e774aa716e7b60b2d95cf1c08919",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-CP-001-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-CP-001-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5a8a96a8032bdb9d399b47d40cc9b0621cfc3ce2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF and frontend handoff packet for AG-BE-CP-001 is complete. Artifact at support/sidecars/AG-BE-CP-001/AG-BE-CP-001-SIDECAR-BFF-HANDOFF.md (commit b3b726c1). Documents: 8 missing BFF routes (candidate pool list/detail, score GET/POST, decision, discussion, monitoring), A2 recipe operator journeys (A-F), TypeScript client method signatures, acceptance checks, and 4 open design notes (schema extension needed, §17.3 not formally defined in SD, gated on RS-002, Trading Room isolation boundary). No canonical truth changed.",
+      "status": "done",
+      "created_at": "2026-06-21T16:16:03Z",
+      "resolved_at": "2026-06-21T16:19:03Z"
+    },
+    {
+      "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer reopen: packet fact check found stale RS-002 gate. AG-BE-RS-002 now resolves from archive as done (closeout merge 3566d9e6ee1f531e84c536fd3ff0d4b44e0744c4), but the packet still says AG-BE-RS-002 is todo / until RS-002 closes / show coming-soon if gated on RS-002, and its reviewer checklist asks Codex to verify AG-BE-RS-002 is todo. Please update the handoff packet and task brief so RS-002 is treated as completed; remaining blocker should be the missing candidate score/review HTTP route/schema/fields and lifecycle persistence definition, not the RS-002 dependency. Scope/canonical-boundary checks otherwise look support-only: no runtime, OpenAPI, schema, or L1 truth edits found.",
+      "status": "done",
+      "created_at": "2026-06-21T16:19:03Z",
+      "resolved_at": "2026-06-21T16:19:03Z"
+    },
+    {
+      "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Packet updated to reflect AG-BE-RS-002 is done (archive, closeout merge 3566d9e6, impl PR #2092 merged to dev). All stale RS-002 gate references removed from the handoff packet and task brief. Remaining blockers for parent AG-BE-CP-001 correctly stated as: missing candidate score/review HTTP route (§17.3 not in SD), missing schema extension (candidate_pool.schema.json additionalProperties:false), and missing lifecycle_state transition map. No canonical truth changes. Anchor commit 2043521e on task branch. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-06-21T16:22:50Z",
+      "resolved_at": "2026-06-21T16:24:36Z"
+    },
+    {
+      "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only AG-BE-CP-001 BFF/frontend handoff packet approved for parent owner absorption. Owner must finalize the task-scoped packet/brief changes before done.",
+      "status": "done",
+      "created_at": "2026-06-21T16:24:36Z",
+      "resolved_at": "2026-06-21T16:41:44Z"
+    }
+  ],
+  "blockers": []
+}

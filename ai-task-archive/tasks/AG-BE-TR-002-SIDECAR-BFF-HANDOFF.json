@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T20:46:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-BE-TR-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-TR-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only AG-BE-TR-002 BFF/frontend handoff packet finalized: governed TradingIntent/handoff BFF gaps, operator journeys A-I, frontend tradingRoom.ts signatures, stage→queue routing, and no-order gate documented. No canonical truth modified. PR #2142 merged.",
+    "last_update": "2026-06-21T20:46:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-TR-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only BFF/frontend handoff packet approved: records governed TradingIntent/handoff BFF gaps (submit/read/withdraw), canary/live no-order gate enforcement (TRADING_INTENT_NOT_ALLOWED), idempotency/If-Match requirements, stage→queue routing (shadow→shadow_research, paper→management_governance, canary/live→promotion_review), TradingIntent vs GovernedIntentHandoff schema distinction, operator journeys A-I, frontend tradingRoom.ts method signatures, and AG-BE-TR-001/AG-BE-TR-002 ownership boundary, without modifying canonical truth or runtime files."
+    ],
+    "review_file": "support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T20:46:27Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-tr-002-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-TR-002-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "65b51789a2f5bc9df097a995399e874e31dbe7f9",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-TR-002-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-TR-002-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b0851b319792efdb6746123c6e0b09c29d1831f8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF handoff packet for AG-BE-TR-002 is complete. Artifact: support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF.md. Covers: governed handoff BFF gaps (submit/read/withdraw), canary/live no-order gate (TRADING_INTENT_NOT_ALLOWED), stage→queue routing, idempotency/If-Match requirements, TradingIntent v1 vs GovernedIntentHandoff v4 schema distinction, operator journeys A-I, frontend tradingRoom.ts method signatures, and AG-BE-TR-001/AG-BE-TR-002 ownership boundary. PR #2142 open with auto-merge. No canonical truth files changed.",
+      "status": "done",
+      "created_at": "2026-06-21T20:37:57Z",
+      "resolved_at": "2026-06-21T20:40:06Z"
+    },
+    {
+      "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only AG-BE-TR-002 BFF/frontend handoff packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T20:40:06Z",
+      "resolved_at": "2026-06-21T20:46:29Z"
+    }
+  ],
+  "blockers": []
+}

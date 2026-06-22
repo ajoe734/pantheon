@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOL-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-22T01:01:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOL-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOL BFF and frontend handoff packet",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOL，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOL/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOL-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Auto-integrator 在 split-tree 環境 done-guard 不相容、產生的巢狀 INTEGRATION-UNBLOCK 垃圾任務;integrator 已關閉,此 wrapper 作廢回收 slot。",
+    "last_update": "2026-06-22T01:01:44Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOL",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-DES-VERS-001",
+  "archived_at": "2026-06-21T12:26:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DES-VERS-001",
+    "title": "Strategy versioning: patch + version-compare + readiness contract (v1.3)",
+    "summary_zh": "依 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/01_strategy_versioning_patch_readiness.md 落地 v4 schema:version_patch_proposal/version_compare/strategy_readiness。patch 用 **restricted RFC 6902**(只允許 add/remove/replace/test,禁 move/copy),只允許 §A1 列的 StrategySpec roots,system-owned 欄位不可改;patch 套用走 §A2(解析 base Registry version→驗 SHA-256+scope→驗 path→in-memory apply→驗 canonical schema+policy→建新 immutable draft+workshop-version link,絕不就地改 Registry);VersionPatchProposal 身分/lifecycle(§A3)、version compare(1 base + ≤4 candidate,§A4,predicted 不得渲染成 observed)、三 readiness gate(preliminary/full-validation/trading-room + 狀態 not_assessed/blocked/conditional/ready/stale,§A5)。 【有疑問一定要 STOP 開 blocker】動工前讀完權威設計 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/ (MASTER_SD_RESPONSE.md + 對應 0X 文件 + schemas/*.json + 08 OpenAPI delta)。鐵律:不可改動或重雜湊 frozen v1/v1.1/v1.2(bundle_index.json/.v1_1/.v1_2、agora_v1*.openapi.yaml);一律 additive 到 services/control-plane/specs/agora/v4/ 與 agora_v1_3.openapi.yaml / bundle_index.v1_3.json(後者 extends 並 hash v1.2 精確 bytes)。schema 內容以 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/schemas/ 同名檔為準逐欄落地,不自創欄位/route/enum;Agora 永不下單/綁資金/寫 RuntimeBinding(governed handoff 只建 request)。遇任何不確定先 blocker。",
+    "phase": "EPIC AGORA-V13 / Round2",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/specs/agora/v4/version_patch_proposal.schema.json",
+      "services/control-plane/specs/agora/v4/version_compare.schema.json",
+      "services/control-plane/specs/agora/v4/strategy_readiness.schema.json"
+    ],
+    "acceptance": [
+      "version_patch_proposal/version_compare/strategy_readiness schema 落 v4 且逐欄對齊 01;patch 限 RFC6902 子集且 root allowlist 受限;套用流程不就地改 Registry;三 readiness gate 與狀態機到位;【驗收】frozen v1/v1.1/v1.2 + 其 bundle_index sha256 全不變;新增物逐欄對齊 design-closure-round2;遇疑問先 blocker 不自行實作"
+    ],
+    "next": "Closeout: v1.3 versioning schemas (version_patch_proposal/version_compare/strategy_readiness) delivered additively under services/control-plane/specs/agora/v4/; SHA256-verified byte-match confirmed by reviewer Claude2; PR #2060 merged into dev",
+    "last_update": "2026-06-21T12:26:36Z",
+    "auto_created_by": "dispatch_agora_v13_round2_2026-06-21",
+    "review_notes_zh": [
+      "審查通過：三個 schema 逐欄對齊 design-closure-round2/schemas/，SHA256 驗證全符；patch 限 RFC6902 子集；三 readiness gate 與狀態機到位；frozen v1/v1.1/v1.2 未動",
+      "後續追蹤：bundle_index.v1_3.json 與 agora_v1_3.openapi.yaml 由後續任務完成"
+    ],
+    "review_file": ".orchestrator/reviews/ag_des_vers_001_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T12:26:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-des-vers-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DES-VERS-001",
+      "git_clean_required": false,
+      "commit": "96be741f9c7d9f5a4b59ec3d12f0b4e31cab433a",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DES-VERS-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DES-VERS-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5fd3dc90573a9bfe5c3be92e0720d79cb40e741a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DES-VERS-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "PR #2054 merged into dev. Three v4 schemas landed: version_patch_proposal/version_compare/strategy_readiness. SHA-256 hashes verified vs bundle_index.v1_3.template.json (exact match). Frozen v1/v1.1/v1.2 files untouched. Commit: 14fd43a0. Please review schema correctness against 01_strategy_versioning_patch_readiness.md §A1-§A8.",
+      "status": "done",
+      "created_at": "2026-06-21T11:54:59Z",
+      "resolved_at": "2026-06-21T12:11:24Z"
+    },
+    {
+      "task_id": "AG-DES-VERS-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex to Claude2: Codex lanes (codex1, codex2) are paused; AG-DES-VERS-001 has been in review since 2026-06-21T11:54Z with no Codex worker available to process it. Claude2 is not the owner and has reviewed similar design schema tasks this cycle.",
+      "status": "done",
+      "created_at": "2026-06-21T12:11:24Z",
+      "resolved_at": "2026-06-21T12:15:12Z"
+    },
+    {
+      "task_id": "AG-DES-VERS-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved — schemas byte-match design-closure-round2 authoritative sources; SHA256 verified; all acceptance criteria met; returning to owner Claude for closeout",
+      "status": "done",
+      "created_at": "2026-06-21T12:15:12Z",
+      "resolved_at": "2026-06-21T12:26:38Z"
+    }
+  ],
+  "blockers": []
+}

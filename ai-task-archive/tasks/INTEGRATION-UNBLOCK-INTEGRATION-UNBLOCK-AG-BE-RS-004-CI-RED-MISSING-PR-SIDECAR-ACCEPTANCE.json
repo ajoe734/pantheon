@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-21T16:44:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE",
+    "title": "Prepare INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR acceptance packet and dependency map",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR，整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved support-only acceptance packet after PR #2113 merged into dev at b00abff17d377ebd3531615e763a85e2f7a660c4; PR #2112 carried the original packet.",
+    "last_update": "2026-06-21T16:44:54Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "owned_ready_dispatch",
+    "review_notes_zh": [
+      "審查通過：support-only dependency map 準確捕捉 AG-BE-RS-004、upstream ci-red unblock PR #2107 與 parent PR #2110 邊界；Section 6 殘留事項足夠讓 parent owner 完成 PR #2110 closeout；無 canonical/runtime/registry/governance 實作更動"
+    ],
+    "review_file": "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T16:44:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/integration-unblock-integration-unblock-ag-be-rs-004-ci-red-missing-pr-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "48584c936cb7fddb4374e1417c1d7deb9a7da17d",
+      "commit_subject": "INTEGRATION-UNBLOCK: refresh acceptance closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only post-refresh closeout note for the accepted sidecar packet.",
+        "Not changing": "L1 canonical truth, runtime implementation, registry implementation, governance implementation, routing, OpenAPI, schema, or parent task lifecycle state.",
+        "Composes with": "PR #2113 closeout branch refresh after dev advanced with parent/support merges.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE.md; gh pr view 2113 --json number,state,mergeStateStatus,statusCheckRollup,url"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b00abff17d377ebd3531615e763a85e2f7a660c4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet is ready at support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE.md. Commit d111a24f, PR #2112 open with auto-merge. Packet maps AG-BE-RS-004, upstream ci-red unblock PR #2107, and parent PR #2110 BEHIND/checks-green boundary; no canonical/runtime/registry/governance implementation touched. Verification: git diff --check passed; commit trailer check passed; auto_integrator parent/unblock candidate_count 0.",
+      "status": "done",
+      "created_at": "2026-06-21T16:33:18Z",
+      "resolved_at": "2026-06-21T16:35:07Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-RS-004-CI-RED-MISSING-PR-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet approved: support-only dependency map and parent closeout checklist accurately capture AG-BE-RS-004, upstream ci-red unblock PR #2107, and parent PR #2110 BEHIND/checks-green review boundary. No canonical or runtime surface touched. Section 6 residuals are sufficient for parent owner to finalize PR #2110 lifecycle.",
+      "status": "done",
+      "created_at": "2026-06-21T16:35:07Z",
+      "resolved_at": "2026-06-21T16:44:56Z"
+    }
+  ],
+  "blockers": []
+}
