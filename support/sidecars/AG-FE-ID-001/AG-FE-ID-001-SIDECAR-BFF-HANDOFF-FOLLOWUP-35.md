@@ -8,7 +8,7 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-22` |
-| Status | `review handoff prepared` |
+| Status | `review approved; owner closeout ready` |
 | Current Pantheon dev base | `e01f19e7a4b73e7a70d0a8b607159e7db4192d6b` |
 | Previous packet closeout | Followup-34 archived `done` at `2026-06-22T01:59:00Z`; PR `#2174` merged into Pantheon dev at `2a811d565f9ff9d67494ecb431e1e79a5747889a`; task head `d4ab2ecbe9edf893c0fdba43ad336b0891b7a528` |
 | Parent implementation PR | execute-plans PR `#66`, `OPEN` / `UNSTABLE`, head `d1ae3149935986782993a363b92227d38555cc1b`, updated `2026-06-22T01:31:49Z`; `integration-gate` still failed |
@@ -61,7 +61,7 @@ status root at `/home/lupin/code/pantheon`.
 
 | Task | Status | Handoff implication |
 |---|---|---|
-| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35` | active `in_progress`; owner `Codex`; reviewer `Claude` | This packet is the support-only artifact for reviewer handoff. |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35` | active `review_approved`; owner `Codex`; reviewer `Claude` | Review is approved in `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35-REVIEW.md`; owner closeout remains PR merge plus `done`. |
 | `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` | archived `done` at `2026-06-22T01:59:00Z` | Previous support packet is the baseline for this refresh. |
 | `AG-FE-ID-001` | active `blocked`; owner `Claude`; reviewer `Codex`; waiting for `Gemini` | Parent PR `#66` remains blocked by the execute-plans aggregate release gate, not by the Agora-specific shell/client code review. |
 | `AG-FE-000` | archived `done` | Entry/build/audience split remains accepted dependency context. |
@@ -80,6 +80,7 @@ facts. It still must not claim execute-plans dev deployment readiness until PR
 |---|---|
 | `.orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_35.md` | This sidecar's generated support-only assignment. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35` | Confirms active owner/reviewer/status and support-only artifact path. |
+| `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35-REVIEW.md` | Confirms Claude approved the support packet and preserved the execute-plans PR `#66` gate blocker. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` | Confirms predecessor archived `done`, PR `#2174`, and parent blocker note. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001` | Confirms parent remains `blocked`, waiting for `Gemini`, with PR `#66` aggregate-gate blocker. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-000` | Confirms frontend entry/build/audience dependency archived `done`. |
@@ -271,7 +272,7 @@ evidence answers these checks:
 | Command | Result |
 |---|---|
 | `git status -sb`; `git branch --show-current`; `git remote -v` | Started on expected branch `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35`; remote is `origin` `https://github.com/ajoe734/pantheon.git`; only generated task brief was untracked. |
-| `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35` | Active `in_progress`; owner `Codex`; reviewer `Claude`; artifact path is this support packet. |
+| `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35` | Active `review_approved`; owner `Codex`; reviewer `Claude`; artifact path is this support packet; review file is recorded. |
 | `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001` | Parent remains `blocked`, waiting for `Gemini`; PR `#66` aggregate release gate remains the blocker. |
 | `git fetch origin --prune`; `git rev-parse origin/dev` | Pantheon `origin/dev` is `e01f19e7a4b73e7a70d0a8b607159e7db4192d6b`. |
 | `git log --oneline 2a811d565f9f..origin/dev --decorate` | Dev delta includes PRs `#2176` through `#2182`. |
@@ -286,21 +287,18 @@ evidence answers these checks:
 | `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_agora_candidate_pool.py -q` | `3 passed in 27.15s`. |
 | `PYTHONDONTWRITEBYTECODE=1 python3 scripts/agora_compat_manifest.py deployment-gate --manifest docs/contracts/agora/dev-compatibility-manifest.json` | Expected fail-closed: `compatibility_status must be compatible`, `frontend.runtime_commit is a placeholder commit`, `blocking_reasons must be empty for deployment`. |
 
-## 11. Reviewer Handoff
+## 11. Review And Owner Closeout
 
-This packet is ready for Claude review as a support-only refresh. The factual
-change from followup-34 is that Agora candidate-pool contract/BFF surfaces are
-now merged on Pantheon dev; the identity/servant status-shell route family did
-not change.
+Claude approved this packet in
+`support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35-REVIEW.md`.
+The approval confirms the packet is support-only, keeps candidate-pool deltas
+outside the `AG-FE-ID-001` Phase 1 identity/servant shell, and preserves
+execute-plans PR `#66` as the parent aggregate-gate blocker.
 
-Requested review focus:
+Owner closeout remains mechanical: commit this approved task state, merge the
+task PR into Pantheon `dev`, then run
+`AI_NAME=Codex ./scripts/ai-status.sh done AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35
+"Approved sidecar packet merged; parent AG-FE-ID-001 remains blocked on execute-plans PR #66 aggregate gate."`
 
-- Confirm the packet does not mutate canonical truth or runtime code.
-- Confirm the candidate-pool delta is correctly separated from
-  `AG-FE-ID-001` Phase 1 identity/servant shell scope.
-- Confirm execute-plans PR `#66` remains the parent blocker until its aggregate
-  gate is merged or formally dispositioned.
-- Confirm the absorption checklist is still strict enough for parent closeout.
-
-*Prepared by Codex for the `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35`
-support slice on `2026-06-22`.*
+*Prepared and finalized by Codex for the
+`AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-35` support slice on `2026-06-22`.*
