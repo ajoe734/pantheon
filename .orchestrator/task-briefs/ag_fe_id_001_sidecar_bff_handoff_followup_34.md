@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Re-dispatched; syncing dev to 441f661e (INTG-UNBLK-FU4-C PR #2167); pushing for auto-merge on PR #2164. Next: run done once PR merges.
+- Next: Supervisor re-dispatched AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34; task remains in progress.
 
 ## Summary
 平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
