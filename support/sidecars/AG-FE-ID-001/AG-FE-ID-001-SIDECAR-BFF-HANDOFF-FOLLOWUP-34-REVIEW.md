@@ -3,9 +3,9 @@
 | Field | Value |
 |---|---|
 | Reviewer | `Claude` |
-| Review date | `2026-06-21` |
+| Review date | `2026-06-21` (initial); `2026-06-22` (re-dispatch refresh) |
 | Task | `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` |
-| Packet commit | `958e9aaa` |
+| Packet commit | `958e9aaa` (initial); `9011c129` (re-dispatch refresh) |
 | Outcome | **Approved** |
 
 ## Scope Discipline Check
@@ -65,3 +65,21 @@ so the packet's BFF facts remain current. No canonical truth was mutated.
 
 **Approved.** Parent `AG-FE-ID-001` remains blocked pending execute-plans PR `#66`
 merge or a formal aggregate-gate disposition from repository governance.
+
+## Re-Dispatch Refresh Review (`2026-06-22`, commit `9011c129`)
+
+Packet updated by Claude2 for re-dispatch `2026-06-22`. Changes from initial packet:
+
+| Change | Assessment |
+|---|---|
+| Pantheon dev base updated `7b112049` → `91b5869f` | ✓ Confirmed. Intervening PRs `#2166`, `#2169`, `#2170` touch no Agora BFF/contract/identity/servant paths. BFF ledger remains current. |
+| Execute-plans PR `#66` merge state changed `MERGEABLE` → `UNSTABLE` | ✓ Documented accurately in §7. Head `de7834b8` and `integration-gate` failure (run `27902747928`) unchanged. More restrictive state is correctly noted without changing gate ownership. |
+| Execute-plans PR `#63` unchanged | ✓ Confirmed: still OPEN, head `e1cb9125`, timestamp `2026-06-20`. |
+| BFF route ledger (§5) | ✓ Unchanged and still accurate. No BFF source changes in delta range. |
+| Parent absorption checklist (§9) | ✓ Unchanged and still applicable. Gate ownership assignments preserved. |
+| Scope constraints | ✓ `mutates_canonical: false`; no L1 docs, BFF source, OpenAPI specs, or execute-plans files touched. |
+| Formal ai-status lifecycle gap noted | ✓ Re-dispatch correctly identifies that the initial packet was not formally transitioned through ai-status.json lifecycle. This re-dispatch closes that gap. |
+
+No new factual concerns introduced by the refresh. The packet remains scope-disciplined and factually accurate against the current state.
+
+**Re-dispatch refresh approved.** Formally approving in ai-status.json to complete the lifecycle. Parent `AG-FE-ID-001` remains blocked pending execute-plans PR `#66` merge or aggregate-gate disposition.
