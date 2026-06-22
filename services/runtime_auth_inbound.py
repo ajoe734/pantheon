@@ -504,10 +504,16 @@ def _parse_structured_token(token: str, default_role: str) -> AuthContext:
     if not raw_roles:
         raw_roles = [default_role]
     mfa_verified = len(parts) >= 3 and parts[2].strip().lower() == "mfa"
+    capabilities: list[str] = []
+    if len(parts) >= 4:
+        capabilities = [cap.strip() for cap in parts[3].split(",") if cap.strip()]
+    claims: dict[str, Any] = {"sub": actor_id, "roles": list(raw_roles)}
+    if capabilities:
+        claims["capabilities"] = capabilities
     return AuthContext(
         actor_id=actor_id,
         roles=frozenset(raw_roles),
-        claims={"sub": actor_id, "roles": list(raw_roles)},
+        claims=claims,
         mfa_verified=mfa_verified,
         token_kind="structured",
     )

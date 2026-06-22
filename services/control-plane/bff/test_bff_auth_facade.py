@@ -213,6 +213,31 @@ class TestExtractIdentityJwt:
         assert identity.operator_id == "op-internal"
         assert "operator" in identity.roles
 
+    def test_permissive_structured_token_preserves_capability_suffix(self):
+        identity = self._call(
+            "Bearer op-admin:admin,operator:mfa:assistant.kernel.debug,audit.read",
+            env_overrides={"PANTHEON_BFF_AUTH_MODE": "permissive", "PANTHEON_BFF_JWT_SECRET": ""},
+        )
+
+        assert identity.operator_id == "op-admin"
+        assert identity.mfa_verified is True
+        assert identity.claims["capabilities"] == ["assistant.kernel.debug", "audit.read"]
+
+    def test_permissive_structured_token_merges_dev_stub_capabilities(self):
+        identity = self._call(
+            "Bearer op-admin:admin,operator:mfa:assistant.kernel.debug",
+            env_overrides={
+                "PANTHEON_BFF_AUTH_MODE": "permissive",
+                "PANTHEON_BFF_JWT_SECRET": "",
+                "PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.debug,assistant.kernel.repair",
+            },
+        )
+
+        assert identity.claims["capabilities"] == [
+            "assistant.kernel.debug",
+            "assistant.kernel.repair",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: _extract_identity_stub (legacy dev mode)
