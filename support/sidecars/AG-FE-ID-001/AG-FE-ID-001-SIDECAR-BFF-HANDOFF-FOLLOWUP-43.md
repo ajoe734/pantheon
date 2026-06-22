@@ -292,3 +292,7 @@ parent dependency model.
 Closeout still preserves the parent blocker: `AG-FE-ID-001` remains blocked on
 the execute-plans PR `#66` aggregate gate until that gate merges cleanly or a
 formal exception is recorded.
+
+After PR `#2225` merged, the task branch was refreshed from `dev` and this
+paragraph records the final owner metadata commit required before the
+`review_approved` task can move to `done`.
