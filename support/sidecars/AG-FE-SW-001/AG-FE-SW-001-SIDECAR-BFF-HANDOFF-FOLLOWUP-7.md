@@ -8,19 +8,26 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-22` |
-| Pantheon dev base inspected | `32133839ef0713929f76f2a9cb6e139addb0d9a3` |
-| Pantheon parent PR inspected | `ajoe734/pantheon#2245`, open at `88043260a439a108f2216ee73fc6ffcdee4610d5`, merge state `BEHIND` |
+| Review-time Pantheon dev base inspected | `32133839ef0713929f76f2a9cb6e139addb0d9a3` |
+| Review-time Pantheon parent PR inspected | `ajoe734/pantheon#2245`, open at `88043260a439a108f2216ee73fc6ffcdee4610d5`, merge state `BEHIND` |
+| Closeout Pantheon parent PR refresh | `ajoe734/pantheon#2245` merged at `2026-06-22T10:03:06Z`, head `a27c5402519744af344844cf4a129b6c8abd0d99`, merge commit `9052ffa12b8cb837fc599d1f9c6dd34dfe2e940d` |
 | Prior Pantheon parent PR inspected | `ajoe734/pantheon#2235`, merged at `08fdd92e98be142c6b8caf870272c61a1d76c89e` |
 | execute-plans dev ref inspected | `origin/dev` at `40fef8769435fa479c87c2892417a76186913ecf` |
 | execute-plans parent PR inspected | `ajoe734/execute-plans#69`, open at `476aa043c3b5196823a50106f956331262123b40`, merge state `UNSTABLE` |
 | Prior packets | `AG-FE-SW-001-SIDECAR-BFF-HANDOFF.md`, `FOLLOWUP-2.md`, `FOLLOWUP-3.md`, `FOLLOWUP-4.md`, `FOLLOWUP-5.md`, `FOLLOWUP-6.md` |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff |
+| Status | Review approved; closeout refresh appended |
 
 This is a support-only follow-up for the `AG-FE-SW-001` parent lane. It does
 not edit L1 truth, OpenAPI, JSON schemas, BFF runtime, route registries,
 governance/runtime code, or execute-plans frontend source. The parent owner
 decides whether to absorb this packet into the main frontend task.
+
+Closeout refresh: Pantheon parent PR #2245 merged after this packet was
+review-approved. The support finding is therefore narrowed from "Pantheon PR
+unmerged" to "Pantheon mirror merged, but parent status and execute-plans source
+delivery remain split." The runtime route and ETag/idempotency stop lines below
+are unchanged.
 
 ---
 
@@ -32,10 +39,11 @@ decides whether to absorb this packet into the main frontend task.
 | `.orchestrator/task-briefs/ag_fe_sw_001_sidecar_bff_handoff_followup_7.md` | Scope is support-only BFF query gap, operator journey, and frontend handoff material; no canonical truth changes. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Meaningful support-file progress must be committed with explicit task scope. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Repo file changes require task commit, PR, review, merge, then owner closeout before `done`. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7` | Active sidecar is `in_progress`, owner `Codex`, reviewer `Claude`, artifact target is this file. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7` | Active sidecar is `review_approved`, owner `Codex`, reviewer `Claude`, artifact target is this file. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-SW-001` | Parent now records `review_approved`; next text says the supervisor resumed it for finalize after successful dispatch. |
 | `gh pr list --repo ajoe734/pantheon --head task/AG-FE-SW-001 --state all` | Pantheon PR #2245 is open, base `dev`, head `88043260`, merge state `BEHIND`; PR #2235 is the prior merged mirror PR. |
 | `gh pr view 2245 --repo ajoe734/pantheon` | PR #2245 includes commits `1bde7a60` and `88043260`; visible Branch CI Gate and Orchestrator Sync checks are green, but merge state remains `BEHIND`. |
+| Closeout `gh pr view 2245 --repo ajoe734/pantheon` | PR #2245 is now `MERGED` at `2026-06-22T10:03:06Z`, head `a27c5402519744af344844cf4a129b6c8abd0d99`, merge commit `9052ffa12b8cb837fc599d1f9c6dd34dfe2e940d`. |
 | `git show FETCH_HEAD:execute-plans/src/lib/bff-v1/agora/workshops.ts` | Pantheon mirror `workshops.ts` now calls `/cards` and `/readiness` as live routes, manually declares v1.3 types, and uses direct `fetch()` inside the BFF client module. It still has no create-workshop or post-message methods. |
 | `git show FETCH_HEAD:execute-plans/src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx` | Pantheon mirror page lists workshops, loads detail/completeness/readiness/cards, but has no create action and an inert composer with no submit path. |
 | `git show HEAD:execute-plans/src/entries/agora-main.tsx` | Pantheon dev mirror entry wires `TradingDeskLayout` through a standalone Agora entry and redirects legacy paths there; this is mirror code, not execute-plans source PR #69. |
@@ -52,10 +60,10 @@ decides whether to absorb this packet into the main frontend task.
 
 ---
 
-## Current Cross-Repo State
+## Review-Time Cross-Repo State
 
-The parent lane is marked `review_approved` in status, but the durable delivery
-state is still split.
+At review time, the parent lane was marked `review_approved` in status, but the
+durable delivery state was still split.
 
 | Surface | Current state | Handoff meaning |
 |---|---|---|
@@ -75,6 +83,15 @@ failing, and the latest mirror client calls runtime routes that are not
 registered in the inspected BFF.
 ```
 
+Closeout refresh stop line:
+
+```text
+Do not close AG-FE-SW-001 solely because Pantheon PR #2245 has since merged.
+Parent status still reports review_approved, execute-plans PR #69 remains open
+and failing, and the latest mirror client still calls runtime routes that are
+not registered in the inspected BFF.
+```
+
 ---
 
 ## Delta From Follow-up 6
@@ -85,7 +102,9 @@ New facts since follow-up 6:
    Pantheon PR" finding is superseded.
 2. The parent branch advanced from `1bde7a60` to `88043260`.
 3. Parent status moved from `review` to `review_approved`.
-4. PR #2245 is still open and `BEHIND`, so it is not merged into Pantheon `dev`.
+4. PR #2245 was still open and `BEHIND` at review time, so it was not then
+   merged into Pantheon `dev`; closeout refresh later found it merged at
+   `9052ffa12b8cb837fc599d1f9c6dd34dfe2e940d`.
 5. The `88043260` mirror commit changed the handoff risk: it aligns some manual
    type names with v1.3 contract files, but it now calls `/cards` and
    `/readiness` as live data even though inspected runtime handlers are absent.
@@ -108,7 +127,7 @@ No new runtime implementation was found for:
 
 | Area | Observed state at `88043260` | Parent action |
 |---|---|---|
-| PR mergeability | PR #2245 is `BEHIND` current `dev`. | Refresh the branch before treating review approval as finalizable. |
+| PR mergeability | Review-time PR #2245 was `BEHIND` current `dev`; closeout refresh shows it merged at `9052ffa12b8cb837fc599d1f9c6dd34dfe2e940d`. | Do not treat merge alone as parent completion while execute-plans source delivery and runtime route gaps remain unresolved. |
 | Source files | Adds `TradingDeskLayout.tsx`, `StrategyWorkshopPage.tsx`, and `workshops.ts` in the Pantheon mirror tree. | These files still need to compose with current dev and actual execute-plans source. |
 | BFF client boundary | `workshops.ts` is under `src/lib/bff-v1/agora`, but it uses direct `fetch()` rather than the existing execute-plans `bffFetch` pattern. | Parent/reviewer should decide whether this mirror client is acceptable or must match execute-plans BFF client conventions. |
 | Runtime route use | Client calls `/cards` and `/readiness` as live routes. | Blocking runtime mismatch unless the BFF route owner lands handlers first. |
@@ -164,8 +183,9 @@ GET      /bff/agora/research-runs/{run_id}/artifacts
 
 ```text
 Do not treat Pantheon PR #2245 review approval or open auto-merge as completed
-delivery. The PR is open and behind current dev, and owner closeout should wait
-until the required repo flow has merged.
+delivery. At review time the PR was open and behind current dev; at closeout it
+has merged, but parent completion still depends on the selected cross-repo
+delivery flow and the runtime route gaps below.
 ```
 
 ```text
@@ -205,8 +225,9 @@ router.
 
 Recommended order for the parent owner:
 
-1. Refresh Pantheon PR #2245 onto current `dev`, or keep it open until the
-   latest sidecar merges are incorporated.
+1. Verify Pantheon PR #2245 merge commit
+   `9052ffa12b8cb837fc599d1f9c6dd34dfe2e940d` is the intended mirror delivery,
+   then keep the source repo and parent status aligned.
 2. Decide source of truth: execute-plans PR #69, Pantheon mirror PR #2245, or a
    deliberate two-repo sync. Do not let the two branches keep diverging.
 3. Remove live `/cards` and `/readiness` calls from AG-FE-SW-001 until BFF
@@ -232,8 +253,8 @@ Claude should verify:
 | Check | Expected result |
 |---|---|
 | Scope | This sidecar authored only this support artifact. |
-| Status accuracy | Packet records that parent status is `review_approved` but delivery is not merged. |
-| Pantheon PR accuracy | Packet distinguishes merged PR #2235 from open/behind PR #2245 at `88043260`. |
+| Status accuracy | Packet records that parent status is `review_approved`; closeout refresh notes Pantheon mirror delivery merged but source delivery remains split. |
+| Pantheon PR accuracy | Packet distinguishes review-time open/behind PR #2245 at `88043260` from closeout merged PR #2245 at `9052ffa12b8cb837fc599d1f9c6dd34dfe2e940d`. |
 | execute-plans accuracy | Packet records source PR #69 remains open at `476aa04` and did not absorb mirror commits. |
 | Runtime accuracy | Route ledger matches `strategy_workshop/router.py`: list/create/get/messages/events/completeness/stream live; versions/research-runs/consultations/conclude 501; no cards/readiness handler claimed live. |
 | Test gap accuracy | Packet notes that mirror tests mock `/cards` and `/readiness`, so they do not prove runtime availability. |
@@ -266,10 +287,11 @@ LC_ALL=C rg -n "[^[:ascii:]]" support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR
 git diff --no-index --check /dev/null support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-SW-001
-gh pr view 2245 --repo ajoe734/pantheon --json number,state,mergeStateStatus,headRefOid,url,statusCheckRollup
+gh pr view 2245 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,headRefOid,url,statusCheckRollup
 gh pr view 69 --repo ajoe734/execute-plans --json number,state,mergeStateStatus,headRefOid,url,statusCheckRollup
 git -C /home/lupin/code/execute-plans ls-remote origin refs/heads/task/AG-FE-SW-001 refs/heads/dev refs/pull/69/head
-rg -n "/bff/agora/workshops/.+(cards|readiness|patch-proposals|version-comparisons)|readiness|cards" services/control-plane/bff/agora services/control-plane/bff/tests services/control-plane/tests/agora
+rg -n "cards|readiness|readiness/reassess|patch-proposals|version-comparisons|version_comparisons" services/control-plane/bff/agora/strategy_workshop
+rg -n "@router\.(get|post|patch|put|delete)\(" services/control-plane/bff/agora/strategy_workshop/router.py
 ```
 
 No canonical truth, runtime, schema, or execute-plans source files are changed
@@ -279,9 +301,13 @@ Results:
 
 - ASCII scan: no output.
 - New-file whitespace check: no output.
-- Sidecar status show: active `in_progress`, owner `Codex`, reviewer `Claude`.
+- Sidecar status show: active `review_approved`, owner `Codex`, reviewer
+  `Claude`.
 - Parent status show: active `review_approved`.
-- Pantheon PR #2245 metadata: `OPEN`, head `88043260a439a108f2216ee73fc6ffcdee4610d5`, merge state `BEHIND`, visible checks `SUCCESS`.
+- Pantheon PR #2245 metadata: `MERGED` at `2026-06-22T10:03:06Z`,
+  head `a27c5402519744af344844cf4a129b6c8abd0d99`, merge commit
+  `9052ffa12b8cb837fc599d1f9c6dd34dfe2e940d`, visible checks `SUCCESS`.
 - execute-plans PR #69 metadata: `OPEN`, head `476aa043c3b5196823a50106f956331262123b40`, merge state `UNSTABLE`, `integration-gate` `FAILURE`.
 - execute-plans remote refs: `dev` is `40fef8769435fa479c87c2892417a76186913ecf`; `task/AG-FE-SW-001` and PR #69 are both `476aa043c3b5196823a50106f956331262123b40`.
-- Targeted Agora runtime handler search for workshop cards/readiness/patch/version-comparison routes: no output under `services/control-plane/bff/agora`.
+- Targeted strategy-workshop runtime handler search for cards/readiness/patch/version-comparison routes: no output under `services/control-plane/bff/agora/strategy_workshop`.
+- Strategy-workshop route decorator scan confirms list/create/get/messages/events/completeness/stream plus version/research-runs/consultations/conclude stubs; no cards/readiness/patch/version-comparison route decorator is present.
