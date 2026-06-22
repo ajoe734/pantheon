@@ -6,13 +6,14 @@
 | Helper parent | `AG-FE-ID-001` - Agora auth/session/servant status shell |
 | Helper kind | `bff_handoff_packet` |
 | Parent owner / reviewer | `Claude` / `Codex` |
-| Sidecar owner / reviewer | `Claude2` / `Claude` |
-| Date | `2026-06-21` |
-| Status | `review handoff prepared` |
-| Current Pantheon dev base | `7b112049a0a735f7fc49e8ba6d8fd973a19d5c75` |
+| Sidecar owner / reviewer | `Codex` / `Claude` (owner reassigned from `Claude2` for closeout) |
+| Date | `2026-06-22` (Codex owner closeout) |
+| Status | `review_approved — owner closeout prepared` |
+| Current Pantheon dev base | `7b18c6c149f6065cba6543624e4dcefd84694cf6` |
 | Previous packet closeout | Followup-33 archived `done` at `2026-06-21T19:38:51Z`; packet PR merged at `29fe886b` |
-| Parent implementation PR | execute-plans PR `#66`, `OPEN` / `MERGEABLE`, head `de7834b8c33d39942e37f0fb8d4511726d828ad8`, updated `2026-06-21T11:34:55Z`; `integration-gate` still failed |
-| execute-plans dev base | `574cc541bf326e031a2f6bf9081e428a708b929a` |
+| Initial FOLLOWUP-34 anchor | Packet anchored at commit `958e9aaa`; reviewer approval file added at `c9c12b31` (Claude approved); PR `#2164` merged into Pantheon dev at `4dc85feb` on `2026-06-21`. Task not formally transitioned through ai-status lifecycle; re-dispatched `2026-06-22` for formal handoff. |
+| Parent implementation PR | execute-plans PR `#66`, `OPEN` / `UNSTABLE`, head `d1ae3149935986782993a363b92227d38555cc1b`, updated `2026-06-22T01:31:49Z`; `integration-gate` still failed |
+| execute-plans dev base | `ee835e2e6f1037e612d7929279a11efb32c61975` |
 | Legacy compatibility PR | execute-plans PR `#63`, `OPEN`, head `e1cb9125c87d9ace0adf3dd9f17f24ff0542d9c5`, updated `2026-06-20T16:53:49Z` |
 | Mutates canonical truth | `false` |
 
@@ -28,24 +29,30 @@ This followup refreshes the `AG-FE-ID-001` BFF/frontend handoff after
 
 Material changes since followup-33:
 
-1. Pantheon `origin/dev` advanced from `4e745eb0` to `7b112049`. The new
-   commits include INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR
-   (PR `#2156`), INTEGRATION-UNBLOCK-AG-FE-RS-001-SIDECAR-BFF-HANDOFF-CI-RED (PR `#2159`),
-   AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 (PR `#2158`), and related merge
-   commits. None of these touch the Agora BFF, contract, identity, servant, or
-   AG-FE-ID-001 support paths.
+1. Pantheon `origin/dev` advanced from `4e745eb0` to `7b112049` (FOLLOWUP-34
+   initial packet base), further to `91b5869f` (re-dispatch base), and then to
+   `7b18c6c1` for Codex owner closeout. The new commits after `7b112049`
+   include INTG-UNBLK-FU4-S (PR `#2166`, ci-red resolution),
+   INTG-UNBLK-FU4-S-BFF (PR `#2169`, BFF handoff sidecar for a separate
+   surface), AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 (PR `#2170`,
+   separate BFF handoff), and AG-FE-DB-001B (PR `#2175`, FE widget runtime
+   evidence). None of these touch the Agora BFF, contract, identity, servant,
+   or AG-FE-ID-001 support paths.
 2. `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33` is now archived `done` at
    `2026-06-21T19:38:51Z`; its packet and review files (`FOLLOWUP-33.md`,
-   `FOLLOWUP-33-REVIEW.md`) are now present on `origin/dev` as the new baseline.
-3. Execute-plans PR `#66` remains open and `MERGEABLE` at the same head
-   `de7834b8`. The `integration-gate` check is still failed (run
-   `27902747928`, job `82565909429`). Head and updated timestamps are
-   identical to what followup-33 recorded.
-4. Execute-plans `origin/dev` remains `574cc541`, so PR `#66` still has not
-   absorbed the refreshed `src/lib/bff-v1/agora/types.ts` baseline from PR
-   `#68`.
-5. Execute-plans PR `#63` remains open with unchanged head and timestamp.
-6. The Pantheon Agora compatibility manifest deployment gate remains
+   `FOLLOWUP-33-REVIEW.md`) are now present on `origin/dev` as the baseline.
+3. FOLLOWUP-34 initial packet was anchored at commit `958e9aaa`, reviewed by
+   Claude (approval file at `c9c12b31`), and merged into Pantheon dev via PR
+   `#2164` at `4dc85feb` on `2026-06-21`. The task was not formally transitioned
+   through ai-status.json lifecycle steps; this re-dispatch corrects that.
+4. Execute-plans PR `#66` remains open. Merge state changed from `MERGEABLE`
+   to `UNSTABLE` (integration-gate check still failing). Codex owner closeout
+   recheck saw head `d1ae3149`, run `27923882836`, job `82622466995`.
+5. Execute-plans `dev` is now `ee835e2e`. Comparing PR `#66` head
+   `d1ae3149` against current `dev` shows only the five Agora shell/client/test
+   files; `src/lib/bff-v1/agora/types.ts` is no longer in the PR diff.
+6. Execute-plans PR `#63` remains open with unchanged head and timestamp.
+7. The Pantheon Agora compatibility manifest deployment gate remains
    fail-closed: compatibility status is not compatible, frontend runtime commit
    is a placeholder, and blocking reasons are non-empty.
 
@@ -53,12 +60,13 @@ This sidecar does not approve, reopen, or implement parent `AG-FE-ID-001`.
 
 ## 2. Current Task State Snapshot
 
-Status commands used `AI_NAME=Claude2`. The status wrapper reads the shared
+Initial re-dispatch status commands used `AI_NAME=Claude2`. Codex owner
+closeout commands used `AI_NAME=Codex`. The status wrapper reads the shared
 status root at `/home/lupin/code/pantheon`.
 
 | Task | Status | Handoff implication |
 |---|---|---|
-| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` | active `in_progress`; owner `Claude2`, reviewer `Claude` | This packet is the support-only artifact for review. |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` | active `review_approved`; owner `Codex`, reviewer `Claude`; re-dispatched for owner closeout `2026-06-22` | Packet on dev (PR `#2164` merged); review file approved by Claude. Codex closeout records the support-only lifecycle handoff and keeps parent blocked on PR `#66`. |
 | `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33` | archived `done` at `2026-06-21T19:38:51Z` | Previous support packet is the baseline for this refresh. |
 | `AG-FE-ID-001` | active `blocked`; owner `Claude`, reviewer `Codex`, waiting for `Gemini` | Parent PR `#66` remains blocked by the execute-plans aggregate release gate, not by the Agora-specific shell/client review. |
 | `AG-FE-000` | archived `done` | Entry/build/audience split remains accepted dependency context. |
@@ -74,39 +82,44 @@ merges or the release-gate blocker is explicitly dispositioned.
 
 ## 3. Sources Rechecked
 
+Re-dispatch re-check date: `2026-06-22`.
+
 | Source | Why it matters |
 |---|---|
-| `.orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_34.md` | This sidecar's generated support-only assignment. |
-| `AI_NAME=Claude2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` | Confirms active owner/reviewer/status and support-only artifact path. |
-| `AI_NAME=Claude2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33` | Confirms predecessor archived `done`. |
-| `AI_NAME=Claude2 ./scripts/ai-status.sh show AG-FE-ID-001` | Confirms parent `blocked`, waiting for `Gemini`, with PR `#66` aggregate-gate blocker. |
-| `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33.md` | Previous AG-FE-ID-001 support baseline. |
-| `git log --oneline 4e745eb0..origin/dev --decorate` | Shows Pantheon dev delta since followup-33 baseline. |
-| `git diff --name-status 4e745eb0..origin/dev -- <checked pathset>` | Confirms only followup-33 packet/review files changed in the AG-FE-ID-001 support path; no Agora BFF, contract, or identity/servant path changes. |
-| `rg -n "@router\.(get\|post\|delete)\|sessions\|ensure\|reconcile\|stream" services/control-plane/bff/agora/router.py services/control-plane/bff/agora/servant/router.py` | Confirms active identity, ensure, and servant-session route families unchanged. |
-| `gh pr view 66 --repo ajoe734/execute-plans --json ...` | Confirms PR `#66` is `OPEN` / `MERGEABLE`; head `de7834b8`; updated `2026-06-21T11:34:55Z`. |
-| `gh pr checks 66 --repo ajoe734/execute-plans` | Confirms `integration-gate` failed in run `27902747928`, job `82565909429`. |
-| `gh pr view 63 --repo ajoe734/execute-plans --json ...` | Confirms legacy compatibility PR remains open with unchanged head/timestamp. |
-| execute-plans remote tree probes | Confirm PR `#66` branch still contains the new shell/client files; `origin/dev` still at `574cc541` and lacks those files. |
-| `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py integrations/openclaw/test_persona_agent_sync.py -q` | `39 passed in 24.33s`. |
-| `PYTHONDONTWRITEBYTECODE=1 python3 scripts/agora_compat_manifest.py deployment-gate --manifest docs/contracts/agora/dev-compatibility-manifest.json` | Expected fail-closed: not compatible, placeholder frontend runtime commit, blocking reasons non-empty. |
+| `.orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_34.md` | This sidecar's generated support-only assignment; re-dispatched with `owned_in_progress_dispatch`. |
+| `AI_NAME=Claude2 python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` | Confirms `in_progress`; owner `Claude2`, reviewer `Claude`; support-only artifact. |
+| `AI_NAME=Claude2 python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33` | Confirms predecessor archived `done`. |
+| `AI_NAME=Claude2 python3 scripts/ai_status.py show AG-FE-ID-001` | Confirms parent `blocked`, waiting for `Gemini`, with PR `#66` aggregate-gate blocker. |
+| `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34-REVIEW.md` | Existing Claude approval file on dev (commit `c9c12b31`); confirms prior Claude approval of initial packet. |
+| `git log --oneline 7b112049..origin/dev --decorate` | Shows Pantheon dev delta since initial packet base: INTG-UNBLK PRs `#2166`, `#2169` and AG-BE-TR-001-SIDECAR-FOLLOWUP-6 PR `#2170`. No Agora path impact. |
+| `git diff --name-status 7b112049..origin/dev -- <checked pathset>` | No changes to Agora BFF, contract, or identity/servant paths. Only FOLLOWUP-34 packet/review files added to support path. |
+| `gh pr view 66 --repo ajoe734/execute-plans --json state,mergeStateStatus,...` | PR `#66` is `OPEN` / `UNSTABLE`; head `de7834b8`; updated `2026-06-21T11:34:55Z`. State changed from `MERGEABLE` to `UNSTABLE`. |
+| `gh pr checks 66 --repo ajoe734/execute-plans` | `integration-gate` still failed; same run `27902747928`, job `82565909429`. |
+| `gh pr view 63 --repo ajoe734/execute-plans --json state,headRefOid,updatedAt` | PR `#63` is `OPEN`; head `e1cb9125`; updated `2026-06-20T16:53:49Z`. Unchanged. |
+| `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` | Codex owner closeout recheck confirms `review_approved`; owner `Codex`; reviewer `Claude`; review file present. |
+| `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001` | Parent remains `blocked`, owner `Claude`, reviewer `Codex`, waiting for `Gemini`; PR `#66` aggregate gate remains the blocker. |
+| `git diff --name-status 91b5869f..origin/dev -- <checked pathset>` | Codex owner closeout recheck shows no changes to Agora BFF, contract, identity, servant, or AG-FE-ID-001 support paths after re-dispatch base. |
+| `gh pr view 66 --repo ajoe734/execute-plans --json state,mergeStateStatus,headRefOid,updatedAt,statusCheckRollup` | Codex owner closeout recheck: PR `#66` is `OPEN` / `UNSTABLE`; head `d1ae3149`; updated `2026-06-22T01:31:49Z`; `integration-gate` failed in run `27923882836`, job `82622466995`. |
+| `gh api repos/ajoe734/execute-plans/git/ref/heads/dev --jq .object.sha` | Current execute-plans `dev` is `ee835e2e6f1037e612d7929279a11efb32c61975`. |
+| `gh api repos/ajoe734/execute-plans/compare/ee835e2e...d1ae3149` | PR `#66` is three commits ahead of current `dev`; diff files are `AgoraApp.tsx`, `identity.ts`, `identity.test.ts`, `servant.ts`, and `servant.test.ts`. No `types.ts` delta remains. |
 
 `current-work.md` and the full `ai-activity-log.jsonl` were not read.
 
 ## 4. Delta Since Followup-33 Closeout
 
-Baseline: followup-33 closeout base `4e745eb0`.
+Baseline: followup-33 closeout base `4e745eb0`. Current Pantheon dev base:
+`7b18c6c1`.
 
 | Change | What changed | Parent implication |
 |---|---|---|
-| Pantheon dev advanced | `origin/dev` moved from `4e745eb0` to `7b112049`. | Use `7b112049`, not the followup-33 base, when checking current support facts. |
-| INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR | PR `#2156` merged. | No AG-FE-ID-001 identity/servant implication. Separate BFF surface. |
-| INTEGRATION-UNBLOCK-AG-FE-RS-001-SIDECAR-BFF-HANDOFF-CI-RED | PR `#2159` merged. | No AG-FE-ID-001 identity/servant implication. Research frontend CI-red unblock. |
-| AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 | PR `#2158` merged. | No AG-FE-ID-001 identity/servant implication. Separate BFF surface. |
-| Followup-33 packet/review | Followup-33 files added to `support/sidecars/AG-FE-ID-001/`. | These are the previous handoff record; this followup-34 packet supersedes them as the current support baseline. |
-| Checked Agora paths | `git diff --name-status 4e745eb0..origin/dev -- services/control-plane/bff/agora services/control-plane/bff/main.py services/control-plane/specs/agora services/control-plane/openapi docs/contracts/agora` | No changes. The BFF identity/servant ledger from followup-33 remains valid. |
-| execute-plans PR `#66` | Still open; merge state is `MERGEABLE`; head unchanged at `de7834b8`; `integration-gate` still failing. | Not a merge-readiness improvement. Aggregate gate failure unchanged. |
-| execute-plans PR `#63` | Still open; head `e1cb9125`; timestamp unchanged. | Continue to treat as unresolved legacy compatibility follow-through risk. |
+| Pantheon dev advanced | `origin/dev` moved from `4e745eb0` to `7b112049` (initial packet), then `91b5869f` (re-dispatch), then `7b18c6c1` (Codex owner closeout). | Use `7b18c6c1` as the current support baseline. |
+| INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR | PRs `#2156`, `#2158`, `#2159` merged (initial packet window). | No AG-FE-ID-001 identity/servant implication. Separate BFF and research surfaces. |
+| INTG-UNBLK-FU4-S / INTG-UNBLK-FU4-S-BFF | PRs `#2166`, `#2169` merged (after initial packet). | No AG-FE-ID-001 implication. Separate sidecar and unblock surfaces. |
+| AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 | PR `#2170` merged (after initial packet). | No AG-FE-ID-001 implication. Separate BFF surface (TR-001 not AG-FE-ID-001). |
+| FOLLOWUP-34 packet/review on dev | Packet `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34.md` and review file `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34-REVIEW.md` merged via PR `#2164`. | Review file confirms Claude approved. This refresh updates the packet in-place; the re-dispatch formal handoff will close the ai-status lifecycle gap. |
+| Checked Agora paths | `git diff --name-status 7b112049..origin/dev -- services/control-plane/bff/agora services/control-plane/bff/main.py services/control-plane/specs/agora services/control-plane/openapi docs/contracts/agora` | No changes. The BFF identity/servant ledger from the initial packet remains valid. |
+| execute-plans PR `#66` merge state | Changed from `MERGEABLE` to `UNSTABLE`; Codex owner closeout recheck sees head `d1ae3149` and `integration-gate` failure in run `27923882836`. | More restrictive merge state; no gate ownership change. Aggregate gate failure unchanged. |
+| execute-plans PR `#63` | Still open; head `e1cb9125`; timestamp `2026-06-20` unchanged. | Continue to treat as unresolved legacy compatibility follow-through risk. |
 
 ## 5. BFF Query Ledger For Parent
 
@@ -137,19 +150,20 @@ merge/gate evidence before operator-ready deployment claims.
 Remote probe source: `/home/lupin/code/execute-plans` after
 `git fetch origin --prune`. No execute-plans files were edited.
 
-| Surface | `origin/dev` (`574cc541`) | PR `#66` head (`de7834b8`) | Handoff implication |
+| Surface | execute-plans `dev` (`ee835e2e`) | PR `#66` head (`d1ae3149`) | Handoff implication |
 |---|---|---|---|
-| `src/agora/AgoraApp.tsx` | Missing | Added | Parent shell exists only on PR `#66`. |
-| `src/lib/bff-v1/agora/identity.ts` | Missing | Added | PR branch has strict identity client for `/me` and `/capabilities`. |
-| `src/lib/bff-v1/agora/identity.test.ts` | Missing | Added | Focused identity tests are part of PR `#66`. |
-| `src/lib/bff-v1/agora/servant.ts` | Missing | Added | PR branch has strict servant ensure client using BFF transport and headers. |
-| `src/lib/bff-v1/agora/servant.test.ts` | Missing | Added | Focused servant tests are part of PR `#66`. |
-| `src/lib/bff-v1/agora/types.ts` | Present and refreshed by PR `#68` | Present but differs from `origin/dev` | Parent PR should update/rebase to avoid carrying stale generated type deltas. |
+| `src/agora/AgoraApp.tsx` | Missing from current diff base | Added | Parent shell exists only on PR `#66`. |
+| `src/lib/bff-v1/agora/identity.ts` | Missing from current diff base | Added | PR branch has strict identity client for `/me` and `/capabilities`. |
+| `src/lib/bff-v1/agora/identity.test.ts` | Missing from current diff base | Added | Focused identity tests are part of PR `#66`. |
+| `src/lib/bff-v1/agora/servant.ts` | Missing from current diff base | Added | PR branch has strict servant ensure client using BFF transport and headers. |
+| `src/lib/bff-v1/agora/servant.test.ts` | Missing from current diff base | Added | Focused servant tests are part of PR `#66`. |
+| `src/lib/bff-v1/agora/types.ts` | Present on current `dev` | Not in current PR `#66` diff | Prior stale generated type concern is no longer visible in the current PR diff. |
 | `src/agora/pages/AskPersonas.tsx` | Present | Present | Existing ask UI remains separate from the new status shell. |
 | `src/lib/bff/agora.ts` | Present | Present | Legacy helper is not sufficient for parent acceptance. |
 
-The five parent shell/client/test files added plus a `types.ts` modification on
-PR `#66` remain unchanged from followup-33 observation.
+The current PR `#66` diff against execute-plans `dev` is limited to the five
+parent shell/client/test files above. The earlier `types.ts` modification has
+been absorbed or otherwise removed from the current PR diff.
 
 Observed PR `#66` review state from the latest Codex comment:
 
@@ -169,11 +183,13 @@ Observed PR `#66` review state from the latest Codex comment:
 
 | Check | State | Evidence |
 |---|---|---|
-| `integration-gate` | `fail` | Run `27902747928`, job `82565909429` |
+| `integration-gate` | `fail` | Run `27923882836`, job `82622466995` |
 
-`gh pr view 66` reports `OPEN` / `MERGEABLE`, with only the failed
-`integration-gate` check surfaced in `statusCheckRollup`. The state is
-identical to what followup-33 recorded.
+`gh pr view 66` reports `OPEN` / `UNSTABLE` (changed from `MERGEABLE` in
+followup-33 and initial FOLLOWUP-34 packet). The `integration-gate` check
+still fails, now in run `27923882836`. `UNSTABLE` indicates the latest commit
+has a failing required check, consistent with the same aggregate gate blocker.
+Head is now `d1ae3149`; updated timestamp is `2026-06-22T01:31:49Z`.
 
 The release-gate summary from followup-33 remains authoritative (unchanged
 gate state):
@@ -235,7 +251,7 @@ evidence answers these checks:
 | Check | Required evidence |
 |---|---|
 | Parent PR status | PR `#66` is merged into execute-plans `dev`, or parent remains blocked with the aggregate-gate blocker recorded. |
-| Dev baseline freshness | PR `#66` has absorbed execute-plans PR `#68` or otherwise reconciled the refreshed `src/lib/bff-v1/agora/types.ts` baseline. |
+| Dev baseline freshness | Codex owner closeout recheck confirms current PR `#66` diff against execute-plans `dev` no longer includes `src/lib/bff-v1/agora/types.ts`; keep this true before parent merge. |
 | Backend dependency | `AG-BE-ID-003` is treated as done, and frontend session work uses `/bff/agora/servant/sessions*`, not legacy sessions. |
 | Identity route truth | `/me` and `/capabilities` are strict live calls; failures produce blocked states with no seed/mock fallback. |
 | Servant ensure truth | `/servant/ensure` sends required idempotency/request headers and maps 401/403/422/503 without fabricating success. |
@@ -250,43 +266,60 @@ evidence answers these checks:
 
 ## 10. Verification Performed For This Sidecar
 
-Commands and results:
+Initial packet commands (2026-06-21):
 
 | Command | Result |
 |---|---|
 | `git status -sb`; `git branch --show-current` | Started on expected task branch `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34`; only generated task brief was untracked. |
-| `git rev-parse origin/dev` | `7b112049a0a735f7fc49e8ba6d8fd973a19d5c75` |
-| `AI_NAME=Claude2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` | Active `in_progress`; owner `Claude2`, reviewer `Claude`, support-only artifact. |
-| `AI_NAME=Claude2 ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-33` | Archived `done` at `2026-06-21T19:38:51Z`. |
-| `AI_NAME=Claude2 ./scripts/ai-status.sh show AG-FE-ID-001` | Active `blocked`; owner `Claude`, reviewer `Codex`; waiting for `Gemini` on execute-plans PR `#66` aggregate gate. |
-| `git log --oneline 4e745eb0..origin/dev --decorate` | Shows INTEGRATION-UNBLOCK tasks (PR `#2156`, `#2159`) and AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 (PR `#2158`) after followup-33. |
-| `git diff --name-status 4e745eb0..origin/dev -- services/control-plane/bff/agora services/control-plane/bff/main.py services/control-plane/specs/agora services/control-plane/openapi docs/contracts/agora support/sidecars/AG-FE-ID-001` | Only followup-33 packet and review files added in the AG-FE-ID-001 support path; no Agora BFF or contract delta. |
-| `git -C /home/lupin/code/execute-plans fetch origin --prune --quiet` | Completed; `origin/dev` is `574cc541`. |
-| `gh pr view 66 --repo ajoe734/execute-plans --json ...` | PR `#66` is `OPEN` / `MERGEABLE`; head `de7834b8`; updated `2026-06-21T11:34:55Z`. |
-| `gh pr checks 66 --repo ajoe734/execute-plans` | `integration-gate` failing; run `27902747928`, job `82565909429`. |
-| `gh pr view 63 --repo ajoe734/execute-plans --json ...` | PR `#63` is `OPEN`; head `e1cb9125`; updated `2026-06-20T16:53:49Z`. |
-| `rg -n "@router.(get\|post\|delete)\|sessions\|ensure\|reconcile\|stream" services/control-plane/bff/agora/router.py services/control-plane/bff/agora/servant/router.py` | Active identity, ensure, servant-session routes confirmed unchanged. |
-| `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py integrations/openclaw/test_persona_agent_sync.py -q` | `39 passed in 24.33s`. |
-| `PYTHONDONTWRITEBYTECODE=1 python3 scripts/agora_compat_manifest.py deployment-gate --manifest docs/contracts/agora/dev-compatibility-manifest.json` | Expected fail-closed: compatibility status not compatible, frontend runtime commit placeholder, blocking reasons non-empty. |
+| `git rev-parse origin/dev` | `7b112049a0a735f7fc49e8ba6d8fd973a19d5c75` (initial packet base) |
+| Task status checks | `in_progress` owner `Claude2`, reviewer `Claude`; predecessor `done`; parent `blocked`. |
+| `git diff --name-status 4e745eb0..origin/dev -- <Agora pathset>` | No Agora BFF/contract changes. |
+| `gh pr view 66 / gh pr checks 66` | `OPEN` / `MERGEABLE`; `integration-gate` failing (run `27902747928`). |
+| `gh pr view 63` | `OPEN`; head `e1cb9125`; `2026-06-20`. |
+| BFF tests | `39 passed in 24.33s`. |
+| Compat manifest | Fail-closed: not compatible, placeholder runtime commit. |
 
-## 11. Handoff To Reviewer
+Re-dispatch re-check commands (2026-06-22):
 
-Reviewer `Claude`: please review this support-only packet for factual accuracy
-and scope discipline. The recommended disposition is to approve the sidecar if
-the refreshed facts match current state, while keeping parent `AG-FE-ID-001`
-blocked until execute-plans PR `#66` is merged or the aggregate gate receives a
-formal repository disposition.
+| Command | Result |
+|---|---|
+| `git branch --show-current`; `git status --short` | On `task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34`; only task brief modified. |
+| `git rev-parse origin/dev` | `91b5869fe6872f062be98c9b7f5c0a16745aec78` |
+| `git log --oneline 7b112049..origin/dev` | INTG-UNBLK PRs `#2166`, `#2169` and AG-BE-TR-001 FOLLOWUP-6 PR `#2170` merged. No Agora paths. |
+| `git diff --name-status 7b112049..origin/dev -- <Agora pathset>` | No changes. Only FOLLOWUP-34 packet/review added to support path. |
+| `git log --all -- support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34-REVIEW.md` | Review file committed at `c9c12b31` (Claude approval, `2026-06-21`). |
+| `gh pr view 66 --repo ajoe734/execute-plans --json state,mergeStateStatus,headRefOid,updatedAt,statusCheckRollup` | `OPEN` / `UNSTABLE`; head `de7834b8`; updated `2026-06-21T11:34:55Z`; `integration-gate` `FAILURE`. |
+| `gh pr view 63 --repo ajoe734/execute-plans --json state,headRefOid,updatedAt` | `OPEN`; head `e1cb9125`; `2026-06-20T16:53:49Z`. Unchanged. |
 
-Suggested approval command:
+Codex owner closeout re-check commands (2026-06-22):
 
-```bash
-AI_NAME=Claude python3 scripts/ai_status.py approve AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34 "Followup-34 support packet approved; factually accurate refresh with no canonical truth mutations. Parent AG-FE-ID-001 remains blocked pending execute-plans PR#66 merge or gate disposition."
-```
+| Command | Result |
+|---|---|
+| `git fetch origin --prune`; `git rev-parse origin/dev` | Pantheon `origin/dev` is `7b18c6c149f6065cba6543624e4dcefd84694cf6`. |
+| `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` | Task is active `review_approved`; owner `Codex`; reviewer `Claude`; review file present. |
+| `AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-ID-001` | Parent remains `blocked`, waiting for `Gemini`; PR `#66` aggregate release gate remains the blocker. |
+| `git diff --name-status 91b5869f..origin/dev -- <Agora/support pathset>` | No changes to Agora BFF, contract, identity, servant, or AG-FE-ID-001 support paths after re-dispatch base. |
+| `gh pr view 66 --repo ajoe734/execute-plans --json state,mergeStateStatus,headRefOid,updatedAt,statusCheckRollup` | PR `#66` is `OPEN` / `UNSTABLE`; head `d1ae3149`; updated `2026-06-22T01:31:49Z`; `integration-gate` failed in run `27923882836`, job `82622466995`. |
+| `gh api repos/ajoe734/execute-plans/git/ref/heads/dev --jq .object.sha` | execute-plans `dev` is `ee835e2e6f1037e612d7929279a11efb32c61975`. |
+| `gh api repos/ajoe734/execute-plans/compare/ee835e2e...d1ae3149` | PR `#66` is three commits ahead of current `dev`; diff is limited to `AgoraApp.tsx`, `identity.ts`, `identity.test.ts`, `servant.ts`, and `servant.test.ts`. |
+| `gh pr view 63 --repo ajoe734/execute-plans --json state,mergeStateStatus,headRefOid,updatedAt` | PR `#63` remains `OPEN`; head `e1cb9125`; updated `2026-06-20T16:53:49Z`. |
 
-Suggested reopen command if changes are required:
+## 11. Review Approval And Owner Closeout
 
-```bash
-AI_NAME=Claude python3 scripts/ai_status.py reopen AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34 "Describe the exact packet correction needed."
-```
+Context: Claude reviewed and approved the initial FOLLOWUP-34 packet (commit
+`958e9aaa`) via approval file at `c9c12b31`. PR `#2164` merged both files into
+Pantheon dev. The task was not formally transitioned in ai-status.json at that
+time. Claude re-approved the re-dispatch refresh in the review file and
+ai-status now records `review_approved` with owner `Codex`, reviewer `Claude`.
 
-*Prepared by Claude2 for the `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` support slice.*
+Codex owner closeout confirms the packet remains support-only and does not
+mutate canonical truth. The BFF route ledger, operator journey, and parent
+absorption checklist remain accurate against current Pantheon dev
+`7b18c6c1`. Execute-plans PR `#66` remains open and `UNSTABLE`; the current
+head is `d1ae3149`, and the aggregate `integration-gate` still fails. Parent
+`AG-FE-ID-001` therefore remains blocked pending PR `#66` merge or a formal
+aggregate-gate disposition.
+
+*Prepared by Claude2 through re-dispatch refresh; finalized by Codex for the
+`AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-34` support slice on
+`2026-06-22`.*
