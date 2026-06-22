@@ -61,6 +61,18 @@ WORKSHOP_B = "ws_user_b_001"
 
 BUNDLE_V12_HASH = _sha256_bytes(b"bundle_index_v1_2_frozen_bytes")
 BUNDLE_V13_HASH = _sha256_bytes(b"bundle_index_v1_3_new_bytes")
+FORBIDDEN_EXECUTION_KEYS = frozenset(
+    {
+        "broker_order_id",
+        "order_route",
+        "order_id",
+        "filled_qty",
+        "runtime_binding_id",
+        "runtime_binding_ref",
+        "capital_binding_id",
+        "capital_binding_ref",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +191,31 @@ class TestXRCrossRepoCompatibility(unittest.TestCase):
 def _authorize(resource_owner: str, requesting_user: str, tenant: Optional[str] = None) -> bool:
     """Simulate authorization check: user can only access their own resources."""
     return resource_owner == requesting_user
+
+
+def _load_canonical_v4_schema(schema_name: str) -> dict:
+    return json.loads((SPECS_DIR / "v4" / schema_name).read_text(encoding="utf-8"))
+
+
+def _validate_canonical_v4(instance: dict, schema_name: str) -> None:
+    if JSONSCHEMA_AVAILABLE:
+        jsonschema.validate(instance=instance, schema=_load_canonical_v4_schema(schema_name))
+
+
+def _assert_no_forbidden_execution_keys(testcase: unittest.TestCase, value: object) -> None:
+    if isinstance(value, dict):
+        for key in FORBIDDEN_EXECUTION_KEYS:
+            testcase.assertNotIn(key, value, f"Forbidden execution key: {key}")
+        for item in value.values():
+            _assert_no_forbidden_execution_keys(testcase, item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_no_forbidden_execution_keys(testcase, item)
+
+
+def _schema_no_order_enum(schema_name: str) -> list[str]:
+    schema = _load_canonical_v4_schema(schema_name)
+    return schema["properties"]["no_order_route_proof"]["enum"]
 
 
 class TestISOUCrossUserIsolation(unittest.TestCase):
@@ -803,27 +840,124 @@ class TestNoOrderRouteProofInvariant(unittest.TestCase):
     """Verify no_order_route_proof is present and correct across all relevant schemas."""
 
     def test_research_plan_no_order_route_proof_value(self):
-        self.assertEqual("research_plan_no_order_route", "research_plan_no_order_route")
+        payload = {
+            "spec_version": "1.0",
+            "plan_id": "plan-no-order-001",
+            "workshop_id": WORKSHOP_A,
+            "strategy_id": "strat-no-order-001",
+            "strategy_spec_registry_id": "reg-no-order-001",
+            "status": "approved",
+            "stages": [
+                {
+                    "stage_id": "stage-data-validation",
+                    "stage_type": "data_validation",
+                    "status": "pending",
+                    "dependencies": [],
+                    "required_capability": "agora.research.v1",
+                    "routing": {"preferred_backend": "data_validation", "fallback_policy": "fail_closed"},
+                }
+            ],
+            "no_order_route_proof": "research_plan_no_order_route",
+            "created_at": NOW,
+        }
+        _validate_canonical_v4(payload, "research_plan_execution.schema.json")
+        self.assertEqual(payload["no_order_route_proof"], _schema_no_order_enum("research_plan_execution.schema.json")[0])
+        _assert_no_forbidden_execution_keys(self, payload)
 
     def test_research_run_no_order_route_proof_value(self):
-        self.assertEqual("research_only_not_direct_action", "research_only_not_direct_action")
+        payload = {
+            "spec_version": "1.0",
+            "run_id": "run-no-order-001",
+            "plan_id": "plan-no-order-001",
+            "workshop_id": WORKSHOP_A,
+            "strategy_id": "strat-no-order-001",
+            "strategy_spec_registry_id": "reg-no-order-001",
+            "stage_id": "stage-data-validation",
+            "stage_type": "data_validation",
+            "execution_status": "succeeded",
+            "outcome": "pass",
+            "progress": {"phase": "completed", "percent": 100, "updated_at": NOW},
+            "backend": {"requested": "data_validation", "effective": "data_validation", "mode": "real"},
+            "no_order_route_proof": "research_only_not_direct_action",
+            "created_at": NOW,
+        }
+        _validate_canonical_v4(payload, "research_run_projection.schema.json")
+        self.assertEqual(payload["no_order_route_proof"], _schema_no_order_enum("research_run_projection.schema.json")[0])
+        _assert_no_forbidden_execution_keys(self, payload)
 
     def test_trading_decision_no_order_route_proof_value(self):
-        self.assertEqual("agora_decision_support_only", "agora_decision_support_only")
+        payload = {
+            "spec_version": "1.0",
+            "decision_event_id": "decision-no-order-001",
+            "event_kind": "entry",
+            "origin": "servant_analysis",
+            "strategy_id": "strat-no-order-001",
+            "strategy_spec_registry_id": "reg-no-order-001",
+            "subject": {"symbol": "2330.TW"},
+            "state": "decided",
+            "triggered_at": NOW,
+            "confidence": {"value": 0.8, "basis": "statistical", "calibration_state": "calibrated"},
+            "probability": {"target_outcome": "winner_branch_entry", "horizon": "3m", "value": 0.7},
+            "expected_value": {"horizon": "3m", "unit": "pct_return", "gross": 0.12, "cost": 0.02, "net": 0.1, "downside": -0.04},
+            "rationale": [{"claim": "Winner branch score improved", "confidence": 0.8, "evidence_refs": []}],
+            "risk_notes": [{"severity": "watch", "domain": "liquidity", "summary": "Capacity requires validation"}],
+            "evidence_refs": [{"ref_type": "research_run", "ref_id": "run-no-order-001"}],
+            "invalidation": {"conditions": ["winner branch score decays"], "current_state": "valid"},
+            "suggested_action": "enter",
+            "no_order_route_proof": "agora_decision_support_only",
+        }
+        _validate_canonical_v4(payload, "trading_decision_event.schema.json")
+        self.assertEqual(payload["no_order_route_proof"], _schema_no_order_enum("trading_decision_event.schema.json")[0])
+        _assert_no_forbidden_execution_keys(self, payload)
 
     def test_governed_intent_handoff_no_order_route_proof_value(self):
-        self.assertEqual("agora_request_only_no_order_route", "agora_request_only_no_order_route")
+        payload = {
+            "spec_version": "1.0",
+            "handoff_id": "handoff-no-order-001",
+            "intent_id": "intent-no-order-001",
+            "decision_event_id": "decision-no-order-001",
+            "requested_stage": "paper",
+            "handoff_type": "paper_validation_request",
+            "state": "submitted",
+            "strategy_id": "strat-no-order-001",
+            "strategy_spec_registry_id": "reg-no-order-001",
+            "requested_by": {"actor_type": "trader", "actor_ref": USER_A},
+            "target_queue": "management_governance",
+            "action_proposal": {
+                "action": "enter",
+                "symbol": "2330.TW",
+                "direction": "long",
+                "size_hint": "small",
+                "portfolio_pct": 0.03,
+                "non_binding": True,
+            },
+            "evidence_refs": [{"ref_type": "research_run", "ref_id": "run-no-order-001"}],
+            "no_order_route_proof": "agora_request_only_no_order_route",
+            "created_at": NOW,
+        }
+        _validate_canonical_v4(payload, "governed_intent_handoff.schema.json")
+        self.assertEqual(payload["no_order_route_proof"], _schema_no_order_enum("governed_intent_handoff.schema.json")[0])
+        _assert_no_forbidden_execution_keys(self, payload)
 
     def test_no_order_route_proof_enum_coverage(self):
         known_proofs = {
-            "research_plan_no_order_route",
-            "research_only_not_direct_action",
-            "agora_decision_support_only",
-            "agora_request_only_no_order_route",
+            schema_name: tuple(_schema_no_order_enum(schema_name))
+            for schema_name in (
+                "research_plan_execution.schema.json",
+                "research_run_projection.schema.json",
+                "trading_decision_event.schema.json",
+                "governed_intent_handoff.schema.json",
+            )
         }
-        self.assertEqual(len(known_proofs), 4)
-        for proof in known_proofs:
-            self.assertTrue(proof.startswith(("research", "agora")))
+        self.assertEqual(
+            known_proofs,
+            {
+                "research_plan_execution.schema.json": ("research_plan_no_order_route",),
+                "research_run_projection.schema.json": ("research_only_not_direct_action",),
+                "trading_decision_event.schema.json": ("agora_decision_support_only",),
+                "governed_intent_handoff.schema.json": ("agora_request_only_no_order_route",),
+            },
+        )
 
 
 if __name__ == "__main__":
