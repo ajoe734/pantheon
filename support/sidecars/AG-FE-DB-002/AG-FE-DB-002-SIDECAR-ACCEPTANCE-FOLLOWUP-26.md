@@ -15,7 +15,7 @@
 | Current Pantheon dev | `0401cca0895f8e2b956d2338ef90160dd5a0d833` |
 | Active frontend remote | `ajoe734/execute-plans` `origin/dev` at `ee835e2e6f1037e612d7929279a11efb32c61975` |
 | Mutates canonical truth | `false` |
-| Status | Ready for Claude review |
+| Status | `review_approved`; ready for Codex owner closeout |
 
 ## Purpose
 
@@ -41,6 +41,20 @@ This packet does not reopen, unblock, implement, or close the parent. It does
 not change runtime, registry, schema, OpenAPI, BFF, governance, broker,
 RuntimeBinding, L1, or L2 truth surfaces.
 
+## Owner Closeout Note
+
+Claude approved this packet in
+`support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-26-REVIEW.md`.
+Owner closeout preserves the approved support-only boundary: this sidecar
+finalizes the packet and review support artifacts only, while parent
+`AG-FE-DB-002` remains with its current owner/reviewer flow.
+
+After this closeout commit merges to `dev`, Codex should run:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh done AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-26 "<checkpoint message>"
+```
+
 ## Prior Support Chain
 
 | Sidecar | State | Key decision or evidence |
@@ -56,7 +70,7 @@ RuntimeBinding, L1, or L2 truth surfaces.
 | Surface | Observed state | DB002 consequence |
 |---|---|---|
 | `AG-FE-DB-002` | Active `in_progress`; owner `Claude`; reviewer `Claude2`; `depends_on` `AG-FE-DB-001B`; next says reading design specs and starting `DashboardGridEditor`. | Parent may proceed only after proving the actual frontend base contains the required compose surface. |
-| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-26` | Active `in_progress`; owner `Codex`; reviewer `Claude`; artifact is this packet. | Support-only handoff to reviewer; parent status remains unchanged. |
+| `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-26` | Active `review_approved`; owner `Codex`; reviewer `Claude`; artifacts are this packet and the Claude review record. | Owner should merge the closeout commit, then run `AI_NAME=Codex ./scripts/ai-status.sh done`. Parent status remains unchanged. |
 | `AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-25` | Archived `done`; closeout PR #2103 merged at `4a86998c`. | Follow-up 26 starts from finalized follow-up 25 evidence. |
 | `AG-FE-DB-001B` | Archived `done`; records PR #2175/#2178 and delivery commit `6062cb2c`; review sidecar PR #2180 merged. | Status says dependency is closed, but active external frontend remote proof does not show the DB001B files on `origin/dev`. |
 | `AG-BE-DB-001` | Archived `done`; dashboard BFF CRUD/layout PATCH/widget validator and optimistic concurrency are merged in Pantheon. | Backend/dashboard contract prerequisite remains available. |
@@ -212,14 +226,17 @@ Expected non-zero probe results:
 - The active execute-plans package/types `rg` probes only match `recharts` and
   no dashboard layout PATCH keywords.
 
-## Reviewer Handoff
+Owner closeout verification:
 
-Please review this packet for:
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-26
+git diff --check -- support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-26.md support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-26-REVIEW.md .orchestrator/task-briefs/ag_fe_db_002_sidecar_acceptance_followup_26.md
+git status --short
+```
 
-1. Correct support-only boundary and no canonical/runtime mutation.
-2. Accurate separation between Pantheon status closure for `AG-FE-DB-001B` and
-   active external `execute-plans` remote proof.
-3. Completeness of the parent acceptance checklist and dependency map for the
-   next `AG-FE-DB-002` owner/reviewer decision.
+## Review Result
 
-Prepared by `Codex` for `Claude` review.
+Claude approved this packet for closeout. The approval covers the support-only
+boundary, the active execute-plans remote proof gap, the parent acceptance
+checklist, and the dependency map. No implementation changes are needed for
+this sidecar.
