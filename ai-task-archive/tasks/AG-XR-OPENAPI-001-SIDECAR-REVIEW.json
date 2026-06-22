@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-OPENAPI-001-SIDECAR-REVIEW",
+  "archived_at": "2026-06-20T16:09:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-OPENAPI-001-SIDECAR-REVIEW",
+    "title": "Prepare AG-XR-OPENAPI-001 review packet and evidence summary",
+    "summary_zh": "平行支援 AG-XR-OPENAPI-001，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "EPIC AGORA-XR / Contract-Closure",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-001A"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-XR-OPENAPI-001/AG-XR-OPENAPI-001-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: review packet committed (8af9a506), task brief committed (b65d6e25), PR #1844 merged to dev at 57cdbd21. Support-only boundary maintained; servant 8/8, workshop 13/13, adapter 3/3 route coverage; If-Match/Idempotency-Key/409 enforcement; frozen bundle --verify green (15 files OK); no canonical truth modified. Approved by Claude2.",
+    "last_update": "2026-06-20T16:09:33Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-OPENAPI-001",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過 — 支援邊界完整保持（無 canonical 檔案被修改）；servant 8/8、workshop 13/13、adapter 3/3 路由覆蓋矩陣與 prose 03 一致；If-Match+Idempotency-Key+409 enforcement 矩陣正確；adapter 安全邊界（runtime-binding/broker-order/capital-binding 拒絕）記載完整；frozen bundle --verify 15 files OK；capability_manifest_v1_1 observation 準確（agora.servant.v1 execution_authority: none 存在，workshop/dashboard 缺少 execution_authority 欄位為非阻擋性後續）。Sidecar 完整、可信，吸收為 AG-XR-OPENAPI-001 review evidence。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T16:09:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-openapi-001-sidecar-review",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-OPENAPI-001-SIDECAR-REVIEW",
+      "git_clean_required": false,
+      "commit": "2173afbb86455fff07c93a0c2c145c1defd1cf48",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-XR-OPENAPI-001-SIDECAR-REVIEW",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-OPENAPI-001-SIDECAR-REVIEW",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "57cdbd21ab7d41ae09852700f2f3f529cf014329",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-OPENAPI-001-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review packet ready for AG-XR-OPENAPI-001: evidence summary and route-coverage audit are in support/sidecars/AG-XR-OPENAPI-001/AG-XR-OPENAPI-001-SIDECAR-REVIEW.md. The packet documents servant 8/8, workshop 13/13, adapter 3/3 route coverage; If-Match/Idempotency-Key/409 enforcement; adapter safety boundary; frozen bundle --verify green (15 files OK); and the review approval rationale for the parent task. No canonical truth was changed.",
+      "status": "done",
+      "created_at": "2026-06-20T15:52:13Z",
+      "resolved_at": "2026-06-20T16:03:13Z"
+    },
+    {
+      "task_id": "AG-XR-OPENAPI-001-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "SIDECAR-REVIEW packet approved: all reviewer questions answered, support-only boundary maintained, route coverage and concurrency/safety checks confirmed.",
+      "status": "done",
+      "created_at": "2026-06-20T16:03:13Z",
+      "resolved_at": "2026-06-20T16:09:35Z"
+    }
+  ],
+  "blockers": []
+}

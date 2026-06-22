@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-22T01:01:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED BFF and frontend handoff packet",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Auto-integrator 在 split-tree 環境 done-guard 不相容、產生的巢狀 INTEGRATION-UNBLOCK 垃圾任務;integrator 已關閉,此 wrapper 作廢回收 slot。",
+    "last_update": "2026-06-22T01:01:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "BFF handoff packet for merge-unblock context approved: summarises PR #2139 merge resolution, post-merge BFF state (trading_room router still placeholder, tradingRoom.ts absent), cumulative sidecar packet scope, TypeScript type correction summary from FOLLOWUP-3, remaining open questions Q3/Q5/Q6/Q7, and frontend gate status — all as support material without modifying canonical truth."
+    ],
+    "review_file": "support/sidecars/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF handoff packet created at support/sidecars/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED/. Packet documents: merge-unblock resolution (PR #2139 merged 2026-06-21T20:32:35Z), post-merge BFF state (trading_room router placeholder, tradingRoom.ts absent), cumulative sidecar scope summary, TypeScript correction summary from FOLLOWUP-3, remaining open questions Q3/Q5/Q6/Q7, frontend gate status. Commit 8443f136. No canonical truth modified. Ready for Claude review.",
+      "status": "done",
+      "created_at": "2026-06-21T20:52:29Z",
+      "resolved_at": "2026-06-21T20:53:45Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF handoff packet for merge-unblock context approved for AG-BE-TR-001 owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T20:53:45Z",
+      "resolved_at": "2026-06-21T21:08:30Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF",
+      "owner": "Claude2",
+      "waiting_for": "Claude",
+      "message": "Status accidentally reset to in_progress by progress command during second-dispatch closeout. Task was review_approved with Claude approval on record. PR #2145 merged; all CI checks passed. Reviewer re-approval needed to restore review_approved so owner can run done.",
+      "status": "resolved",
+      "created_at": "2026-06-21T21:11:08Z",
+      "resolved_at": "2026-06-22T01:01:26Z"
+    }
+  ]
+}

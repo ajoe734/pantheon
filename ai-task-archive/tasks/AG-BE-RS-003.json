@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-RS-003",
+  "archived_at": "2026-06-20T18:47:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-RS-003",
+    "title": "Consult/committee/red-team ContextBundle workflows",
+    "summary_zh": "依 SD §5.6/§7.3 與 design-closure C1 expert-consult SPEC、B1 information-lead-proxy policy 做 consult/committee/red_team workflow:中央人格只收受限 ContextBundle(沿用 AG-BE-ID-004 redaction,raw_prompt_included=false),產出 ConsultMemo/RiskNote/CritiqueResult/EvidenceBundle。資訊領先只能產出 B1 允許的 proxy 並附 disclaimer,不得斷言內線/操縱。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "phase": "EPIC AGORA-RS / Phase 3",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-004"
+    ],
+    "artifacts": [
+      "integrations/openclaw/skills/agora/expert-consult/",
+      "services/control-plane/bff/agora/research.py"
+    ],
+    "acceptance": [
+      "consult/committee/red_team 走受限 ContextBundle;輸出符合 C1 schema;B1 disclaimer 強制;raw prompt 永不外洩;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "Owner finalized: 17/17 skill tests + 21/21 adapter tests verified. Privacy boundary immutable, B1 policy enforced. PR #1875 merged into dev.",
+    "last_update": "2026-06-20T18:47:05Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "review_notes_zh": [
+      "已審查 PR #1875。三項 C1 SPEC 黃金驗收全數通過：(1) 五路徑 committee consult 產出 5 份 memo、disagreements 完整保留、privacy manifest 恆為 False；(2) forbidden field (raw_prompt/user_identity) 觸發 RAW_PRIVATE_CONTENT_FORBIDDEN、zero memos；(3) session_adapter=None 回傳 EXPERT_UNAVAILABLE、memos=[]、missing_evidence 列出所有 required_expertise，不偽造 memo。B1 policy 在 memo conclusion 層強制，violated memo 進 warnings+disclaimer、非 memos。Literal[False] 設計防呆有效。scope 僅 integrations/openclaw/skills/agora/expert_consult/、無擴張 capability_manifest、無新 route/schema 自創、無 RuntimeBinding 寫入。17/17 + 21/21 adapter 測試全過。核准。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T18:47:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-rs-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-RS-003",
+      "git_clean_required": false,
+      "commit": "b9448dfde76add0448b940507240a3b3fd09cef6",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-RS-003",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-RS-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b6ee4d9e56865a0fcab8e2200a853f217ad147b3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-RS-003",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Implementation complete: agora-expert-consult skill per C1 SPEC + B1 policy. 17/17 tests passing. PR #1875 open. Please review per C1 SPEC golden evals (privacy boundary, expert unavailable, B1 enforcement) and B1 policy compliance.",
+      "status": "done",
+      "created_at": "2026-06-20T18:33:57Z",
+      "resolved_at": "2026-06-20T18:38:45Z"
+    },
+    {
+      "task_id": "AG-BE-RS-003",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Approved: 17/17 tests pass, all 3 C1 golden evals pass, B1 policy enforced, privacy boundary immutable. Owner Claude2 to finalize.",
+      "status": "done",
+      "created_at": "2026-06-20T18:38:45Z",
+      "resolved_at": "2026-06-20T18:47:06Z"
+    }
+  ],
+  "blockers": []
+}

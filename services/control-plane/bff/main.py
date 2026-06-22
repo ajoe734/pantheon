@@ -450,6 +450,69 @@ async def _request_dry_run_context(request: Request, call_next):
     finally:
         _REQUEST_DRY_RUN_CONTEXT.reset(token)
 
+
+def _explicit_token_capabilities(identity: OperatorIdentity) -> List[str]:
+    claims = getattr(identity, "claims", {}) or {}
+    if not isinstance(claims, dict):
+        return []
+    raw = (
+        claims.get("capabilities")
+        or claims.get("capability")
+        or claims.get("scp")
+        or claims.get("scope")
+        or []
+    )
+    if isinstance(raw, str):
+        values = re.split(r"[\s,]+", raw)
+    elif isinstance(raw, (list, tuple, set)):
+        values = list(raw)
+    else:
+        values = []
+    deduped: List[str] = []
+    seen = set()
+    for value in values:
+        clean = str(value or "").strip()
+        if clean and clean not in seen:
+            deduped.append(clean)
+            seen.add(clean)
+    return deduped
+
+
+def _is_agora_only_token(identity: OperatorIdentity) -> bool:
+    capabilities = _explicit_token_capabilities(identity)
+    return bool(capabilities) and all(capability.startswith("agora.") for capability in capabilities)
+
+
+@app.middleware("http")
+async def _management_rejects_agora_scope(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or not (path == "/bff/management" or path.startswith("/bff/management/")):
+        return await call_next(request)
+
+    authorization = request.headers.get("authorization")
+    if not authorization:
+        return await call_next(request)
+    try:
+        identity = _extract_identity(authorization)
+    except HTTPException:
+        return await call_next(request)
+
+    if not _is_agora_only_token(identity):
+        return await call_next(request)
+
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=403,
+        code=ErrorCode.FORBIDDEN,
+        message="Agora-scoped token cannot access Management routes",
+        correlation_id=correlation_id,
+        details={
+            "reason": "AGORA_SCOPE_VIOLATION",
+            "precondition_failed": "agora_scope",
+            "route": path,
+        },
+    )
+
 # --------------------------------------------------------------------------- #
 # Storage
 # --------------------------------------------------------------------------- #
@@ -19682,6 +19745,17 @@ async def patch_agora_journal_entry(
     patch = _validate_journal_merge_patch_payload(payload, identity)
 
     correlation_id = str(x_correlation_id or x_trace_id or "").strip() or None
+    existing_entry = next(
+        (
+            entry
+            for entry in read_store.list_decision_journal_entries()
+            if str(entry.get("id") or "") == entry_id
+        ),
+        None,
+    )
+    if existing_entry is not None and not _agora_private_record_visible(existing_entry, identity):
+        _raise_agora_cross_user_forbidden(resource="decision_journal_entry", resource_id=entry_id)
+
     request_hash = _stable_json_hash(
         {
             "route": "PATCH /bff/agora/journal/{id}",
@@ -19876,6 +19950,45 @@ def _agora_list_response(
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": _read_surface_meta(dataset, surface_key, snapshot_at=snapshot_at, total=total),
     }
+
+
+def _agora_private_record_owner(record: Dict[str, Any]) -> str:
+    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId"):
+        clean = str(record.get(key) or "").strip()
+        if clean:
+            return clean
+    owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
+    return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
+
+
+def _agora_private_record_visible(record: Dict[str, Any], identity: OperatorIdentity) -> bool:
+    visibility = str(record.get("visibility") or "private").strip().lower()
+    owner = _agora_private_record_owner(record)
+    if visibility != "private" or not owner:
+        return True
+    return owner == identity.operator_id
+
+
+def _agora_filter_private_records(
+    records: List[Dict[str, Any]],
+    identity: OperatorIdentity,
+) -> List[Dict[str, Any]]:
+    return [
+        record
+        for record in records
+        if isinstance(record, dict) and _agora_private_record_visible(record, identity)
+    ]
+
+
+def _raise_agora_cross_user_forbidden(*, resource: str, resource_id: str) -> None:
+    raise _bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Agora resource is outside the current user scope",
+        "CROSS_USER_ACCESS_FORBIDDEN",
+        precondition_failed="agora_user_scope",
+        details_extra={"resource": resource, "resource_id": resource_id},
+    )
 
 
 def _agora_record_id(record: Dict[str, Any], fields: List[str]) -> str:
@@ -21170,10 +21283,11 @@ async def bff_agora_journal(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
+    items = _agora_filter_private_records(read_store.list_decision_journal_entries(), identity)
     return _agora_list_response(
         dataset="decision_journal_entries",
         surface_key="agora_journal_list",
-        items=read_store.list_decision_journal_entries(),
+        items=items,
         page_token=page_token,
         page_size=page_size,
         snapshot_at=snapshot_at,

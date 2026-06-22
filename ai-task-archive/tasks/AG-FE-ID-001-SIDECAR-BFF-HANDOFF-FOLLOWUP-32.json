@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32",
+  "archived_at": "2026-06-21T15:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000",
+      "AG-BE-ID-003"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: support-only BFF/frontend handoff packet merged via PR #2098 and review/closeout record merged via PR #2099 at bf7ee9097affc6333215f146d86e8ef70e084fc6; parent AG-FE-ID-001 remains blocked on execute-plans PR #66 aggregate gate.",
+    "last_update": "2026-06-21T15:34:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：packet 範疇正確，無 canonical truth 異動，BFF 路由帳冊與 execute-plans gate 狀態均與原始驗證一致。",
+      "後續追蹤：parent AG-FE-ID-001 維持 blocked 直到 execute-plans PR #66 合併或 aggregate gate 獲正式 disposition。"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T15:34:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-32",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32",
+      "git_clean_required": false,
+      "commit": "7a8a54ef47c18199b83b9214ffc35a2eed037fc2",
+      "commit_subject": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32: finalize closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support artifact review record and task-scoped generated brief.",
+        "Not changing": "canonical truth, BFF runtime, route registries, execute-plans source, or parent AG-FE-ID-001 disposition.",
+        "Composes with": "packet PR #2098 merge 918bca12 and parent AG-FE-ID-001 blocked state.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_32.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32-REVIEW.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "bf7ee9097affc6333215f146d86e8ef70e084fc6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Followup-32 support-only BFF/frontend handoff packet prepared and pushed. PR #2098 open with auto-merge enabled. Commit 93af9355 adds the packet and generated task brief. Key facts: Pantheon dev is 7b391454; no checked Agora BFF/contract/AG-FE-ID-001 support-path delta since followup-31; AG-BE-RS-002 is now archived done; execute-plans PR #66 remains OPEN/UNSTABLE at de7834b8 with integration-gate failing; PR #63 remains OPEN/UNSTABLE. Verification: focused BFF pytest 39 passed in 36.17s; compatibility manifest deployment gate fail-closed as expected.",
+      "status": "done",
+      "created_at": "2026-06-21T15:28:54Z",
+      "resolved_at": "2026-06-21T15:30:48Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-32",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: scope-disciplined support packet; BFF ledger, gate state, and operator journey are factually accurate. Parent AG-FE-ID-001 remains blocked on execute-plans PR #66 aggregate gate.",
+      "status": "done",
+      "created_at": "2026-06-21T15:30:48Z",
+      "resolved_at": "2026-06-21T15:34:19Z"
+    }
+  ],
+  "blockers": []
+}

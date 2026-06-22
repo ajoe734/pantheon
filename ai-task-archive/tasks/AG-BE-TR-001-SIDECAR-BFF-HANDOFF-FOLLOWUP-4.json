@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-06-21T21:51:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare AG-BE-TR-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-TR-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar BFF/frontend handoff packet followup-4 finalized: support artifact committed (fd66d27d, 0522d001, 7f09f3c4), PR #2147 merged into dev (854cb911). Resolves Q3/Q5/Q6/Q7; identifies SSE catalog and router injection gaps; adds GovernedIntentHandoff type supplement. No canonical truth modified. Parent owner (Claude2) may absorb as needed.",
+    "last_update": "2026-06-21T21:51:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-TR-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Followup-4 BFF/frontend handoff packet approved: identifies SSE channel catalog gap (trading_room absent from SSE_CHANNEL_CATALOG) and router injection gap (get_read_store/SSE hooks/command store not passed to create_trading_room_router); resolves Q3 (in-process idempotency acceptable for initial ship, 24h TTL for production), Q5 (full TradingRoomAggregate snapshot as first SSE event on connect, TradingRoomStreamEvent type enumeration), Q6 (position_snapshot stored with event per D9, recommended PositionSnapshot fields), Q7 (decision_state is live projection updated as intent/handoff progresses); adds GovernedIntentHandoff type supplement (action_proposal shape, state lifecycle, target_queue mapping, requested_by actor, expires_at note) — all as support material without modifying canonical truth."
+    ],
+    "review_file": "support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T21:51:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-tr-001-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "60ad08da603fcb9ece8268d0764e62702d632185",
+      "commit_subject": "Merge branch 'dev' into task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "854cb911e481c7c42eb9b7e4d3f40efae2a15787",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup-4 BFF handoff packet committed (fd66d27d). Resolves Q3/Q5/Q6/Q7 from Followup-3 and adds two new codebase findings: SSE channel catalog gap (trading_room absent from SSE_CHANNEL_CATALOG in main.py) and router injection gap (create_trading_room_router missing get_read_store, SSE hooks, command store). Also adds GovernedIntentHandoff type supplement. Support artifact only; no canonical files changed.",
+      "status": "done",
+      "created_at": "2026-06-21T21:10:34Z",
+      "resolved_at": "2026-06-21T21:12:36Z"
+    },
+    {
+      "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only AG-BE-TR-001 BFF/frontend handoff followup-4 approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T21:12:36Z",
+      "resolved_at": "2026-06-21T21:51:50Z"
+    }
+  ],
+  "blockers": []
+}

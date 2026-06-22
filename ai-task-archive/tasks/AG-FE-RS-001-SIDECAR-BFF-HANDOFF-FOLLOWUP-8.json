@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+  "archived_at": "2026-06-22T07:20:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+    "title": "Prepare AG-FE-RS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed after PR #2218 merged to origin/dev at 5ebb5305663ebeeeae92e23dc97265b78c41f27a; support artifact reviewed by Claude; validation rerun: git diff --check, four Agora v4 JSON schema parses, and BFF focused pytest 27 passed.",
+    "last_update": "2026-06-22T07:20:01Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-RS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up packet approved: AG-FE-RS-001 query/parser/header/refetch contract, operator smoke plan, frontend test expectations, active stop lines, and no-order guardrails are documented; no canonical truth, runtime, schema, or frontend files changed."
+    ],
+    "review_file": "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T07:20:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-rs-001-sidecar-bff-handoff-followup-8",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "git_clean_required": false,
+      "commit": "5ebb5305663ebeeeae92e23dc97265b78c41f27a",
+      "commit_subject": "Merge pull request #2218 from ajoe734/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8": "add query handoff"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5ebb5305663ebeeeae92e23dc97265b78c41f27a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #2218 merged into dev at 5ebb5305663ebeeeae92e23dc97265b78c41f27a; support artifact commit a0d0bd1b99b269e14b1f802ae5e0f17d3e590d49. Focused validation passed: git diff --check, v4 schema JSON parses, and 27 BFF route/stream pytest checks. Ready for Claude review/approval.",
+      "status": "done",
+      "created_at": "2026-06-22T07:16:27Z",
+      "resolved_at": "2026-06-22T07:17:33Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-FE-RS-001 BFF/frontend handoff follow-up approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T07:17:33Z",
+      "resolved_at": "2026-06-22T07:20:02Z"
+    }
+  ],
+  "blockers": []
+}

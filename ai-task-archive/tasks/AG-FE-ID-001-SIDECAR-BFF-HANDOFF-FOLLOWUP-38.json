@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38",
+  "archived_at": "2026-06-22T04:42:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000",
+      "AG-BE-ID-003"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only BFF/frontend handoff packet. Packet PR #2200 merged at 026aee920adeac1a9e3a300374031c4c1de90be6; review artifact PR #2201 merged at f8b4fbaab2effeb85118b2309103a1f0a236a013. Final branch HEAD f8f92b24394d8bb685492fe7fe8b311107c439ca is merged into dev. Validation: git diff --check packet/review clean; PR #2201 Commit trailers, Runtime mirror guard, and Smoke acceptance passed.",
+    "last_update": "2026-06-22T04:42:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T04:42:28Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-38",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38",
+      "git_clean_required": false,
+      "commit": "f8f92b24394d8bb685492fe7fe8b311107c439ca",
+      "commit_subject": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38: merge dev",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "review artifact closeout branch update for the support-only handoff packet.",
+        "Not changing": "canonical truth, BFF runtime, route registries, compatibility manifest source, execute-plans source, or generated task brief context.",
+        "Composes with": "merged packet PR #2200, open review artifact PR #2201, and Pantheon dev before final done status.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check support packet/review clean; PR #2201 required checks pending after branch update"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f8b4fbaab2effeb85118b2309103a1f0a236a013",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "FOLLOWUP-38 support packet committed at 8ae62e9765d1668240e09f208af3a07acaac096f and PR #2200 opened with auto-merge enabled: https://github.com/ajoe734/pantheon/pull/2200. Scope is only support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38.md; generated task brief intentionally left uncommitted. Packet records Pantheon dev 9b429c43, only new dev delta since followup-37 is AG-FE-RS support packet PR #2199, identity/servant/Agora BFF paths unchanged, execute-plans PR #66 still OPEN/UNSTABLE on integration-gate, PR #63 still OPEN/UNSTABLE, and compatibility manifest still fail-closed. Local validation: 39 Agora identity/servant/session tests passed, 3 candidate-pool tests passed, 24 trading-room tests passed, expected manifest deployment gate fail-closed, git diff --check support packet clean. Please review scope discipline and factual accuracy.",
+      "status": "done",
+      "created_at": "2026-06-22T04:34:36Z",
+      "resolved_at": "2026-06-22T04:37:50Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved at review commit 4aeb357b. Packet is scope-disciplined (one file only in packet commit 8ae62e97, mutates_canonical false). Factually accurate: identity/servant/Agora BFF paths unchanged, single Pantheon dev delta is unrelated AG-FE-RS-001 PR #2199, execute-plans PR #66 and #63 remain OPEN/UNSTABLE on integration-gate, compatibility manifest fail-closed. Gate ownership preserved (Gate 1: Gemini, Gate 2/5/7: Codex, Gate 6: Codex2). Parent absorption blocked until PR #66 merges and manifest reports compatible.",
+      "status": "done",
+      "created_at": "2026-06-22T04:37:50Z",
+      "resolved_at": "2026-06-22T04:42:30Z"
+    }
+  ],
+  "blockers": []
+}

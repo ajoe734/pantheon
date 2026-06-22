@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+  "archived_at": "2026-06-20T16:19:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+    "title": "Prepare AG-FE-DB-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-FE-DB-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-DASH-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-DB-001/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: acceptance packet reviewed and approved by Claude2, closeout commit 4db8bf2c, PR #1842 merged into dev at 7ab267ad. Sidecar artifact records post-AG-XR-DASH-001 state with v2 schema hashes, 11 BFF routes, lib/renderer/IA decisions from doc 05, and remaining prerequisites. No canonical truth modified.",
+    "last_update": "2026-06-20T16:19:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-DB-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：follow-up 4 為純支援性 artifact，正確反映 AG-XR-DASH-001 已完成狀態（PR #1836，commit 2831f101），記錄 v2 schema 欄位重命名（data_source_id）、spec_version/registry_version 常數、lib/renderer/IA 決策（doc 05）、剩餘前置需求（v2 型別生成、圖表依賴），以及更新後的 dependency map。未修改 canonical truth、BFF 合約、registry 或 runtime 實作。三個 v2 schema 雜湊值與 bundle_index.v1_1.json 核實一致，11 條 BFF 路由已確認。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T16:19:25Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-db-001-sidecar-acceptance-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "4db8bf2c9b2fc4a2fff72352fe602b05ffec13dd",
+      "commit_subject": "AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4: acceptance packet closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars sidecar artifact and task-brief mirror.",
+        "Not changing": "canonical truth, BFF contracts, registry, renderer, runtime.",
+        "Composes with": "AG-FE-DB-001 parent task (Codex, todo, unblocked).",
+        "Verified": "ai_status.py show confirms review_approved; sidecar artifact reviewed scope-only",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7ab267adc9f88519149ae01a874764d8fd8c1108",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Acceptance packet complete. Records: AG-XR-DASH-001 done (parent now todo), v2 schema field changes (data_source_id rename, spec_version, registry_version constants), library+renderer dispatch decision from doc 05, UI IA placement, BFF route list from agora_v1_1.openapi.yaml, v2 type generation and chart-dep prerequisites not yet in in-repo mirror, updated dependency map. Commit 5551a799. Please review the support artifact for scope, accuracy, and policy compliance.",
+      "status": "done",
+      "created_at": "2026-06-20T15:58:43Z",
+      "resolved_at": "2026-06-20T16:06:02Z"
+    },
+    {
+      "task_id": "AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: follow-up 4 is support-only, all v2 schema hashes verified, 11 BFF routes confirmed, library/renderer/IA decisions recorded from doc 05, remaining prerequisites clearly stated, no canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-06-20T16:06:02Z",
+      "resolved_at": "2026-06-20T16:19:27Z"
+    }
+  ],
+  "blockers": []
+}

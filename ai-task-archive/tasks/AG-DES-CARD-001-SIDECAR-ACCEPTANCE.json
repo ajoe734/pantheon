@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "AG-DES-CARD-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-21T13:08:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DES-CARD-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare AG-DES-CARD-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-DES-CARD-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-V13 / Round2",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AG-DES-CARD-001/AG-DES-CARD-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet approved by Claude2: all 12 card types enumerated with field-level checks, dependency map complete, 6 attention points correctly scoped to parent reviewer. No canonical truth modified. Closeout commit f6b3417e merged via PR #2068.",
+    "last_update": "2026-06-21T13:08:15Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DES-CARD-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "payload extensibility (additionalProperties: true on payload) 屬於 parent BFF validation strategy，已確認不修改 canonical truth",
+      "stale trigger boundary 確認屬於 SSE + completeness-update layer，非 CARD layer"
+    ],
+    "review_file": "support/sidecars/AG-DES-CARD-001/AG-DES-CARD-001-SIDECAR-ACCEPTANCE-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T13:08:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-des-card-001-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DES-CARD-001-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "b50e5da5cd338dbda855314b846f22fb9f76984b",
+      "commit_subject": "Merge origin/dev into task/AG-DES-CARD-001-SIDECAR-ACCEPTANCE to clear BEHIND state before auto-merge",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DES-CARD-001-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "86a305373d79d65c88c92479bcab0aa661a90e1a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DES-CARD-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-21T12:51:49Z",
+      "resolved_at": "2026-06-21T12:52:13Z"
+    },
+    {
+      "task_id": "AG-DES-CARD-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Acceptance packet and dependency map for AG-DES-CARD-001 (workshop card projection contracts) is committed at support/sidecars/AG-DES-CARD-001/AG-DES-CARD-001-SIDECAR-ACCEPTANCE.md. Covers: 12-card-type acceptance checklist, BFF route criteria, upstream dependency map (VERS/RS/SSE/TR/SW-DB), downstream unblock targets (AG-FE-SW-001/002, AG-FE-RS-001, AG-FE-TR-001), and 6 reviewer attention points. No canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-06-21T12:58:40Z",
+      "resolved_at": "2026-06-21T13:03:47Z"
+    },
+    {
+      "task_id": "AG-DES-CARD-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Acceptance packet approved: all 12 card types enumerated with field-level checks, dependency map complete, 6 attention points correctly scoped to parent reviewer. No canonical truth modified. Returned to Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-06-21T13:03:47Z",
+      "resolved_at": "2026-06-21T13:08:17Z"
+    }
+  ],
+  "blockers": []
+}

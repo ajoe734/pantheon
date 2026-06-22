@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-06-21T17:44:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED BFF and frontend handoff packet",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-CP-001-SIDECAR-BFF-HANDOFF"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized review_approved: handoff packet committed (20f841b0), task brief committed (33c31b29), PR #2119 merged into dev. Support-only boundary maintained; no canonical truth modified. BFF gap matrix (G-01-G-08) and three AG-BE-CP-001 blockers recorded for parent owner absorption.",
+    "last_update": "2026-06-21T17:44:06Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Followup-2 BFF handoff packet approved: updated state (parent review_approved, PR #2114 open, PR #2116 merged), 8-route gap matrix unchanged, AG-BE-CP-001 still blocked on 3 schema/route/lifecycle items, Claude closeout steps correctly documented, support-only boundary maintained."
+    ],
+    "review_file": "support/sidecars/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T17:44:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/integration-unblock-ag-be-cp-001-sidecar-bff-handoff-ci-red-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "33c31b297369db223c9c4410b00f5a3eab26fba4",
+      "commit_subject": "SIDECAR-BFF-HANDOFF-FOLLOWUP-2: closeout task brief",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": ".orchestrator/task-briefs/ (task-scoped brief only)",
+        "Not changing": "canonical truth, BFF router, registry, schemas, OpenAPI,",
+        "Composes with": "PR #2119 (task branch -> dev); parent task",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+        "Reviewer": "Claude",
+        "Verified": "git status --short confirms only task-scoped files staged; CI all green on PR #2119"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4341eee5ad29d11824d9a4902d6737118277abc2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Followup-2 BFF handoff packet written and committed (PR #2119 open, auto-merge enabled). Packet documents: parent CI-red task is review_approved (PR #2114 open, Claude must finalize after merge); PR #2116 merged; 8-route BFF gap matrix unchanged; AG-BE-CP-001 still blocked on schema/route/lifecycle; Claude closeout steps stated. Support-only artifact; no canonical truth or runtime files changed.",
+      "status": "done",
+      "created_at": "2026-06-21T17:21:20Z",
+      "resolved_at": "2026-06-21T17:23:11Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup-2 BFF/frontend handoff packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T17:23:11Z",
+      "resolved_at": "2026-06-21T17:28:27Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Restoring to review_approved after progress command incorrectly downgraded from review_approved; task was already approved by Claude (review_notes_zh present). PR #2119 merged.",
+      "status": "done",
+      "created_at": "2026-06-21T17:42:08Z",
+      "resolved_at": "2026-06-21T17:44:08Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39",
+  "archived_at": "2026-06-22T05:03:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000",
+      "AG-BE-ID-003"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized after closeout PR #2204 merged into dev at dced92d4; owner closeout commit 81f000f3 and branch refresh 24d0d76d are durable. Support-only handoff remains non-canonical; execute-plans PR #66/#63 blockers carry forward to parent.",
+    "last_update": "2026-06-22T05:03:48Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "支援包範圍正確，事實準確，PR #66/#63 仍為 OPEN/UNSTABLE，相容性 manifest 仍為 fail-closed，Phase 1 shell 範圍未膨脹",
+      "交還 Codex 進行 done 收尾"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T05:03:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-39",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39",
+      "git_clean_required": false,
+      "commit": "24d0d76df5258da33312c20b94040d00625edbc7",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "dced92d4af76d5049415effea60ff5ec3b3802a2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "FOLLOWUP-39 support packet committed at e0ee7059 and PR #2202 opened with auto-merge enabled: https://github.com/ajoe734/pantheon/pull/2202. Scope is only support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39.md; generated task brief intentionally left uncommitted. Packet records Pantheon dev f8b4fbaa with no new commits since followup-38 closeout, identity/servant/Agora BFF paths unchanged, execute-plans PR #66 still OPEN/UNSTABLE on integration-gate, PR #63 still OPEN/UNSTABLE, and compatibility manifest still fail-closed. Local validation: 39 Agora identity/servant/session tests passed, 3 candidate-pool tests passed, 24 trading-room tests passed, expected manifest deployment gate fail-closed, git diff --check support packet clean. Please review scope discipline and factual accuracy.",
+      "status": "done",
+      "created_at": "2026-06-22T04:51:24Z",
+      "resolved_at": "2026-06-22T04:57:42Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Claude approves followup-39 support packet. Scope-disciplined (one file, no canonical truth changes). Pantheon dev still f8b4fbaa, identity/servant/Agora BFF paths unchanged, execute-plans PR #66 and #63 remain OPEN/UNSTABLE, compatibility manifest fail-closed. Gate ownership preserved. Review artifact committed at 5f125a16 and pushed as PR #2203. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-22T04:57:42Z",
+      "resolved_at": "2026-06-22T05:03:50Z"
+    }
+  ],
+  "blockers": []
+}

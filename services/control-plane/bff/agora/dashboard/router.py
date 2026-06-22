@@ -95,6 +95,54 @@ def _get_version_record(recipe_id: str, version: int) -> Optional[dict]:
     return _recipe_versions.get((recipe_id, version))
 
 
+def _identity_scope(identity: Any) -> Dict[str, str]:
+    claims = getattr(identity, "claims", {}) or {}
+    if not isinstance(claims, dict):
+        claims = {}
+    tenant_id = str(
+        claims.get("tenant_id")
+        or claims.get("tenantId")
+        or os.getenv("PANTHEON_BFF_TENANT_ID")
+        or os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID")
+        or os.getenv("PANTHEON_TENANT_ID")
+        or "pantheon-dev"
+    ).strip()
+    user_id = str(
+        claims.get("user_id")
+        or claims.get("userId")
+        or claims.get("sub")
+        or getattr(identity, "operator_id", "")
+        or ""
+    ).strip()
+    return {"tenant_id": tenant_id, "user_id": user_id}
+
+
+def _recipe_visible_to_identity(recipe_identity: Dict[str, Any], identity: Any) -> bool:
+    scope = _identity_scope(identity)
+    return (
+        str(recipe_identity.get("tenant_id") or "") == scope["tenant_id"]
+        and str(recipe_identity.get("user_id") or "") == scope["user_id"]
+    )
+
+
+def _raise_cross_user_forbidden(
+    *,
+    bff_error: Callable[..., HTTPException],
+    resource: str,
+    resource_id: str,
+) -> None:
+    from models import ErrorCode  # noqa: PLC0415
+
+    raise bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Agora resource is outside the current user scope",
+        "CROSS_USER_ACCESS_FORBIDDEN",
+        precondition_failed="agora_user_scope",
+        details_extra={"resource": resource, "resource_id": resource_id},
+    )
+
+
 def _validate_widget_spec(widget: dict) -> dict:
     """Validate a WidgetSpec v2 payload per A3 §7 rules."""
     errors: List[dict] = []
@@ -331,6 +379,8 @@ def create_dashboard_router(
         for recipe_id, ident in _recipe_identity.items():
             if ident.get("strategy_id") != strategy_id:
                 continue
+            if not _recipe_visible_to_identity(ident, identity):
+                continue
             ver = _get_version_record(recipe_id, ident["active_version"])
             if ver is None:
                 continue
@@ -410,8 +460,9 @@ def create_dashboard_router(
 
         now = utc_now()
         recipe_id = f"rec_{uuid.uuid4().hex[:12]}"
-        tenant_id = getattr(identity, "tenant_id", "") or ""
-        user_id = getattr(identity, "user_id", "") or ""
+        identity_scope = _identity_scope(identity)
+        tenant_id = identity_scope["tenant_id"]
+        user_id = identity_scope["user_id"]
 
         recipe_json: Dict[str, Any] = {
             "spec_version": "2.0",
@@ -484,6 +535,12 @@ def create_dashboard_router(
         ident = _recipe_identity.get(recipe_id)
         if not ident:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
+        if not _recipe_visible_to_identity(ident, identity):
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="dashboard_recipe",
+                resource_id=recipe_id,
+            )
 
         ver = _get_version_record(recipe_id, ident["active_version"])
         if not ver:
@@ -526,6 +583,12 @@ def create_dashboard_router(
         ident = _recipe_identity.get(recipe_id)
         if not ident:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
+        if not _recipe_visible_to_identity(ident, identity):
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="dashboard_recipe",
+                resource_id=recipe_id,
+            )
 
         active_version = ident["active_version"]
         cur_ver = _get_version_record(recipe_id, active_version)
@@ -616,6 +679,12 @@ def create_dashboard_router(
         ident = _recipe_identity.get(recipe_id)
         if not ident:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
+        if not _recipe_visible_to_identity(ident, identity):
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="dashboard_recipe",
+                resource_id=recipe_id,
+            )
 
         active_version = ident["active_version"]
         cur_ver = _get_version_record(recipe_id, active_version)
@@ -733,6 +802,12 @@ def create_dashboard_router(
         ident = _recipe_identity.get(recipe_id)
         if not ident:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
+        if not _recipe_visible_to_identity(ident, identity):
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="dashboard_recipe",
+                resource_id=recipe_id,
+            )
 
         active_version = ident["active_version"]
         cur_ver = _get_version_record(recipe_id, active_version)
@@ -817,6 +892,12 @@ def create_dashboard_router(
 
         if recipe_id not in _recipe_identity:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
+        if not _recipe_visible_to_identity(_recipe_identity[recipe_id], identity):
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="dashboard_recipe",
+                resource_id=recipe_id,
+            )
 
         rating = body.get("rating", "")
         context = body.get("context", "")
@@ -852,6 +933,12 @@ def create_dashboard_router(
 
         if recipe_id not in _recipe_identity:
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, f"Recipe '{recipe_id}' not found", "recipe_not_found")
+        if not _recipe_visible_to_identity(_recipe_identity[recipe_id], identity):
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="dashboard_recipe",
+                resource_id=recipe_id,
+            )
 
         versions = sorted(
             [v for (rid, _ver), v in _recipe_versions.items() if rid == recipe_id],

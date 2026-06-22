@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+  "archived_at": "2026-06-21T01:26:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Done: support-only handoff packet reviewed and merged. Packet PR #1940 merged at 997644ad1186ee9bbe3913f3e8ea447239a04cf0; owner closeout PR #1943 merged at c009f0a5774a81af0686b3a6e4eda21881918e0e with green checks. Closeout commit cee84809 updated only the sidecar support packet; no canonical truth or runtime paths changed.",
+    "last_update": "2026-06-21T01:26:08Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "批准 sidecar handoff packet：scope 保持 support-only；PR #1940 已 merge at 997644ad1186ee9bbe3913f3e8ea447239a04cf0 且 GitHub checks green；固定範圍 6a7b391f..159ec96b 對 BFF/OpenAPI/Agora spec/compatibility/AG-BE-ID-003 support/execute-plans Agora pathset 無底層 delta，159ec96b..997644ad 只加入本 followup-10 support packet；parent AG-BE-ID-003 仍 blocked on servant session type-contract decision，AG-FE-ID-001 仍依賴 AG-BE-ID-003，frontend/operator gates 保持保守。驗證：git diff --check -- support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md；git diff --name-only 6a7b391f7fcea6273c8536f357b3b3d563dc86ed..159ec96b204090ec30b907562fd02f99e3311f63 -- services/control-plane/openapi services/control-plane/bff services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-BE-ID-003 execute-plans/src/lib/bff-v1/agora；git diff --name-only 159ec96b204090ec30b907562fd02f99e3311f63..997644ad1186ee9bbe3913f3e8ea447239a04cf0；AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003；AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001；AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003；gh pr view 1940 --json number,state,mergeCommit,statusCheckRollup,url。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T01:26:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-10",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "git_clean_required": false,
+      "commit": "35970fc32a933fcbcc03577e240b679f7b6ac420",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c009f0a5774a81af0686b3a6e4eda21881918e0e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Followup-10 support-only BFF/frontend handoff packet is ready for review at support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md. PR #1940 merged at 997644ad1186ee9bbe3913f3e8ea447239a04cf0 with GitHub checks green. Scope changed only this support packet; no canonical truth, OpenAPI, BFF runtime, route registry, governance, compatibility manifest, or execute-plans source paths changed. Delta since followup-9: checked BFF/OpenAPI/Agora spec/compatibility/AG-BE-ID-003/execute-plans Agora pathset remains unchanged; dev only advanced through support/acceptance sidecar closeouts. Parent AG-BE-ID-003 remains blocked on the servant session type-contract decision and AG-FE-ID-001 remains gated. Verification: git diff --check -- support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md; gh pr view 1940 --json state,mergeCommit,statusCheckRollup; git merge-base --is-ancestor HEAD origin/dev.",
+      "status": "done",
+      "created_at": "2026-06-21T01:16:54Z",
+      "resolved_at": "2026-06-21T01:19:29Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2. Support-only packet boundary is acceptable; PR #1940 is merged at 997644ad1186ee9bbe3913f3e8ea447239a04cf0 with green checks. Owner Codex must perform closeout finalization before done.",
+      "status": "done",
+      "created_at": "2026-06-21T01:19:29Z",
+      "resolved_at": "2026-06-21T01:26:09Z"
+    }
+  ],
+  "blockers": []
+}

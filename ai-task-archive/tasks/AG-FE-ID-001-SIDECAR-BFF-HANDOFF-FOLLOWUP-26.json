@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26",
+  "archived_at": "2026-06-21T06:17:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout PR #2003 merged at 4192ba9ca0145771b344342bb10a28f0d2fb17b8; support-only followup-26 packet finalized by commit 3abb40f05dbba79d3810719eeb22ae07a5f2f550; parent AG-FE-ID-001 remains todo and AG-BE-ID-003 remains blocked.",
+    "last_update": "2026-06-21T06:17:22Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "支援材料審查通過；不變動 canonical truth",
+      "post-followup-25 delta 核實：僅 PR #1996 BE-ID-003 支援材料，session 仍阻塞",
+      "AG-BE-ID-003 servant session 型別合約待 Claude 決策；absorption checklist 守住",
+      "execute-plans PR #63 仍開放 / UNSTABLE；前端目標檔案缺失"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T06:17:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-26",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26",
+      "git_clean_required": false,
+      "commit": "3abb40f05dbba79d3810719eeb22ae07a5f2f550",
+      "commit_subject": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars/AG-FE-ID-001 owner closeout note for followup-26.",
+        "Not changing": "canonical truth, BFF/OpenAPI/runtime, route registries, governance policy, execute-plans source, compatibility manifest source, or generated task brief.",
+        "Composes with": "packet PR #1997, review record PR #1999, and parent AG-FE-ID-001 absorption decision by Claude.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26.md; AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26; git log --oneline 9a5ec4c836f82b1bcbd8ce8d998dceabd6c2d5f5..origin/dev; git diff --name-status 9a5ec4c836f82b1bcbd8ce8d998dceabd6c2d5f5..origin/dev"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4192ba9ca0145771b344342bb10a28f0d2fb17b8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only followup-26 BFF/frontend handoff packet merged in PR #1997 at 9a5ec4c836f82b1bcbd8ce8d998dceabd6c2d5f5; artifact support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26.md. Scope: support material only; no canonical truth, BFF/OpenAPI/runtime, manifest, or execute-plans source changes. Verification: focused pytest 35 passed, contract drift passed, deployment gate fail-closed as expected, private-index diff check clean, Branch CI green. Freshness: origin/dev advanced by AG-BE-ID-003 followup-13 PR #1996, which remains support-only and keeps AG-BE-ID-003 blocked on Claude's servant-session type-contract decision. Please review packet accuracy and support-only scope.",
+      "status": "done",
+      "created_at": "2026-06-21T05:56:07Z",
+      "resolved_at": "2026-06-21T06:12:15Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-26",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: packet is support-only, delta accurate, absorption checklist conservative, execute-plans risks correctly stated. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T06:12:15Z",
+      "resolved_at": "2026-06-21T06:17:23Z"
+    }
+  ],
+  "blockers": []
+}

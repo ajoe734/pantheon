@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-06-21T13:23:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare AG-BE-SW-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-SW-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-SW / Phase 2",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-SW-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-SW-004/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only disposition update delivered: typed SSE contract now in v4 schema and design-closure-round2/03, AG-DES-SSE-001 is done, AG-BE-SW-004 shifted from blocked to gated on AG-XR-OPENAPI-004. PR #2063 merged to dev.",
+    "last_update": "2026-06-21T13:23:22Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-SW-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Follow-up 5 stays support-only and records the disposition shift: typed SSE aggregate contract now exists in v4 schema and design-closure-round2/03, AG-DES-SSE-001 is now done (was review_approved at packet prep time), and AG-BE-SW-004 is gated on AG-XR-OPENAPI-004 rather than structurally blocked. AG-XR-OPENAPI-004 has advanced from todo to in_progress. BFF and frontend handoff delta is updated accordingly. 25 event_type enum values confirmed. bundle_index.v1_3.json parses. No canonical truth or runtime files changed."
+    ],
+    "review_file": "support/sidecars/AG-BE-SW-004/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T13:23:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-sw-004-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "1d0b9622fb841634f7b26d6623eec735e410d9c9",
+      "commit_subject": "Merge origin/dev into task/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 to clear BEHIND state before auto-merge",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5c7ed6d0226babfae4da8775ad14d0f799f56830",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support artifact complete. PR #2063 open and mergeable. Typed SSE disposition update: records shift from blocked to gated. v4/workshop_stream_event.schema.json has 24 event types; AG-DES-SSE-001 is review_approved; AG-XR-OPENAPI-004 is todo gate; parent AG-BE-SW-004 is todo. BFF /stream remains 501 stub. No canonical truth changed. See artifact for reviewer approve command.",
+      "status": "done",
+      "created_at": "2026-06-21T12:36:18Z",
+      "resolved_at": "2026-06-21T13:13:23Z"
+    },
+    {
+      "task_id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Factual count error: the artifact repeatedly states '24 event types' but the schema (and the artifact's own catalog table) has 25 event types. Fix: update all occurrences of '24 event types' / '24 event_type enum values' to '25' throughout the document. The catalog table itself is correct. All other checks pass: scope is support-only, no canonical truth changed, bundle_index.v1_3.json exists, AG-XR-OPENAPI-004 is todo, parent AG-BE-SW-004 is todo, BFF /stream is 501 stub, and AG-DES-SSE-001 is now done (favorable, gate cleared).",
+      "status": "done",
+      "created_at": "2026-06-21T13:13:23Z",
+      "resolved_at": "2026-06-21T13:13:23Z"
+    },
+    {
+      "task_id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Event count corrected to 25 throughout the handoff packet (schema confirms 25 enum values). All other checks from the reviewer checklist pass: scope is support-only, no canonical truth changed, bundle_index.v1_3.json exists, AG-XR-OPENAPI-004 is todo, parent AG-BE-SW-004 is todo, BFF /stream is 501 stub, AG-DES-SSE-001 is review_approved. Packet is ready for Claude2 review.",
+      "status": "done",
+      "created_at": "2026-06-21T13:16:12Z",
+      "resolved_at": "2026-06-21T13:19:19Z"
+    },
+    {
+      "task_id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only disposition update approved; typed SSE contract has landed and AG-BE-SW-004 is now gated on AG-XR-OPENAPI-004 bundle merge, not structurally blocked.",
+      "status": "done",
+      "created_at": "2026-06-21T13:19:19Z",
+      "resolved_at": "2026-06-21T13:23:23Z"
+    }
+  ],
+  "blockers": []
+}

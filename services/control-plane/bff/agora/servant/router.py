@@ -433,6 +433,23 @@ def _raise_scope_error(exc: AgoraScopeResolutionError, bff_error: Callable[..., 
     )
 
 
+def _raise_cross_user_session_forbidden(
+    *,
+    bff_error: Callable[..., HTTPException],
+    audit: Mapping[str, Any],
+) -> None:
+    from models import ErrorCode
+
+    raise bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Servant session is outside the current Agora user scope",
+        "CROSS_USER_ACCESS_FORBIDDEN",
+        precondition_failed="agora_user_scope",
+        details_extra={"resource": "servant_session", "audit": dict(audit)},
+    )
+
+
 def _servant_profile_for_scope(
     *,
     read_store: Any,
@@ -895,16 +912,7 @@ def create_servant_router(
             )
         record = _session_record(raw)
         if not _session_belongs_to_scope(record, scope=scope, profile=profile):
-            from models import ErrorCode
-
-            raise bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Servant session not found",
-                "Session is not visible in the current Agora user scope",
-                precondition_failed="session_id",
-                details_extra={"audit": audit},
-            )
+            _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
         return {
             "data": _session_view(record, profile=profile),
             "meta": _servant_meta(
@@ -965,16 +973,7 @@ def create_servant_router(
             )
         record = _session_record(raw)
         if not _session_belongs_to_scope(record, scope=scope, profile=profile):
-            from models import ErrorCode
-
-            raise bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Servant session not found",
-                "Session is not visible in the current Agora user scope",
-                precondition_failed="session_id",
-                details_extra={"audit": audit},
-            )
+            _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
         state = str(record.get("state") or record.get("status") or "").lower()
         if state in {"canceled", "cancelled", "failed"}:
             from models import ErrorCode
@@ -1123,16 +1122,7 @@ def create_servant_router(
             )
         record = _session_record(raw)
         if not _session_belongs_to_scope(record, scope=scope, profile=profile):
-            from models import ErrorCode
-
-            raise bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Servant session not found",
-                "Session is not visible in the current Agora user scope",
-                precondition_failed="session_id",
-                details_extra={"audit": audit},
-            )
+            _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
         _record_servant_event(
             session_id,
             "servant.session.terminated",
@@ -1201,16 +1191,7 @@ def create_servant_router(
             )
         record = _session_record(raw)
         if not _session_belongs_to_scope(record, scope=scope, profile=profile):
-            from models import ErrorCode
-
-            raise bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Servant session not found",
-                "Session is not visible in the current Agora user scope",
-                precondition_failed="session_id",
-                details_extra={"audit": audit},
-            )
+            _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
 
         def _iter_events() -> Iterator[str]:
             replay_events = _events_for_session(session_id, last_event_id)

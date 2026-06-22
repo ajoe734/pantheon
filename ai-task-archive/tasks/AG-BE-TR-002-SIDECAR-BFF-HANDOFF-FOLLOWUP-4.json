@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-06-21T22:09:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare AG-BE-TR-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-TR-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar BFF handoff packet (FOLLOWUP-4) finalized. Q5-Q8 resolved (CommandType/ObjectType enum gaps, ReadSurfaceStore trading_intents gap, Management-plane push gap). Test skeleton corrected, D10 error codes mapped. PR #2152 merged into dev. No canonical truth changed.",
+    "last_update": "2026-06-21T22:09:41Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-TR-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Followup-4 handoff packet approved: resolves Q5 (CommandType missing SUBMIT_GOVERNED_HANDOFF/WITHDRAW_TRADING_INTENT confirmed; PascalCase additions recommended), Q6 (ObjectType missing TRADING_INTENT/GOVERNED_HANDOFF confirmed; TargetObject targets TradingIntent not handoff), Q7 (ReadSurfaceStore has no trading_intents dataset or methods; agora_handoffs is a different construct; get_trading_intent/upsert pattern recommended), Q8 (no Management-plane push mechanism exists; three options documented; gap must be flagged in PR description). Includes test skeleton correction (update_command_result→update_status), D10 error-code canonical mapping (OPERATION_NOT_ALLOWED/HUMAN_GATE_PENDING/RESOURCE_CONFLICT), and updated _seeded_client pattern. No canonical truth, schemas, OpenAPI, BFF runtime, or frontend files changed."
+    ],
+    "review_file": "support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T22:09:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-tr-002-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "f25e3bdb7f5bd574c775c9286a97d6d2488513b2",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "db9b45e86c3dbcb0dc15fce50c027da472dbaf9a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "FOLLOWUP-4 BFF/frontend handoff packet ready for review. Resolves Q5 (CommandType gaps: SUBMIT_GOVERNED_HANDOFF and WITHDRAW_TRADING_INTENT missing from models.py), Q6 (ObjectType gaps: TRADING_INTENT and GOVERNED_HANDOFF missing; TargetObject guidance), Q7 (ReadSurfaceStore has no trading_intents dataset or methods; agora_handoffs is a separate construct; recommended additions documented), Q8 (no Management-plane push mechanism implemented; three options documented; PR-description gap flag recommended). Also corrects FOLLOWUP-3 test skeleton (update_command_result→update_status), documents D10 error-code canonical mapping, and provides updated _seeded_client pattern. Packet at support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md, commit 9039348d.",
+      "status": "done",
+      "created_at": "2026-06-21T21:57:07Z",
+      "resolved_at": "2026-06-21T21:58:33Z"
+    },
+    {
+      "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Followup-4 BFF/frontend handoff packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T21:58:33Z",
+      "resolved_at": "2026-06-21T22:09:42Z"
+    }
+  ],
+  "blockers": []
+}

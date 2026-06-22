@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-06-20T15:00:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed after PR #1824 merged into dev at 52f4d4aaa20f82b908b0f9c5a70e9b612a358f58; support-only packet approved by Claude; local verification: git diff --check on closeout files and pytest BFF Agora tests 22 passed.",
+    "last_update": "2026-06-20T15:00:59Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：packet 正確宣告不改 canonical truth 且確實未修改任何 L1/OpenAPI/runtime 檔案",
+      "BFF 路由狀態已獨立驗證：/me 與 /capabilities 僅存於 BFF runtime；/servant/ensure 正確回傳 501",
+      "22 個 BFF 測試通過（獨立執行）",
+      "§4 delta 正確捕捉唯一實質變更（backend support packet 已合併）並列出 FE parent 仍需回答的 8 個 backend 決策",
+      "Parent 可吸收此 packet；實作前須先完成 §9 absorption checklist"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T15:00:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "2e61e00e8a23db79b36408d7e1a558ccc2fd1c41",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "52f4d4aaa20f82b908b0f9c5a70e9b612a358f58",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "FOLLOWUP-6 support packet ready for review: support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md. Commit 42aa962a445272337fe8f336a77bdaee7cd728a9 pushed in PR #1824 with auto-merge enabled. Verification: new-file git diff --check --no-index emitted no whitespace errors; python3 -m pytest services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py -q returned 22 passed in 14.81s. Scope is support-only; no canonical truth/runtime/OpenClaw/execute-plans changes.",
+      "status": "done",
+      "created_at": "2026-06-20T14:52:12Z",
+      "resolved_at": "2026-06-20T14:55:49Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. Packet is support-only with no canonical truth mutations. Route truth verified independently. 22 BFF tests pass. §4 delta accurately captures the merged backend support packet and the 8 open backend decisions the FE parent must settle before implementation. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-20T14:55:49Z",
+      "resolved_at": "2026-06-20T15:01:00Z"
+    }
+  ],
+  "blockers": []
+}

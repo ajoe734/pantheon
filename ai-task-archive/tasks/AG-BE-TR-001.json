@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-001",
+  "archived_at": "2026-06-22T03:22:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-TR-001",
+    "title": "Trading room aggregate and event queues",
+    "summary_zh": "依 SD §12/§13.1 與 specs/agora/trading_event.schema.json 做 trading room aggregate 與 entry/add/reduce/exit/review 事件佇列,§17.4 endpoint;事件欄位(confidence/probability/EV/rationale/riskNotes/evidenceRefs/invalidation)對齊 schema。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-CP-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/trading_room.py",
+      "services/control-plane/specs/agora/trading_event.schema.json"
+    ],
+    "acceptance": [
+      "trading room aggregate 與事件佇列符合 trading_event.schema.json;§17.4 endpoint 到位;附測試;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "Trading room aggregate and event queues complete. PR #2191 merged into dev. 24/24 tests pass, 18/18 router tests pass. Implemented: entry/add/reduce/exit/review event queues, §17.4 endpoints, schema-aligned event fields (confidence/probability/EV/rationale/riskNotes/evidenceRefs/invalidation). All 3 CI checks green.",
+    "last_update": "2026-06-22T03:22:30Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "review_notes_zh": [
+      "未發現 blocking issue。已重讀 AG-BE-TR-001 task brief、design-closure-round2/04 Trading Room contract、v4 trading_room_aggregate/trading_decision_event schema、agora_v1_3 OpenAPI trading-room routes；確認三個 required fixes 已落地：aggregate 使用 model_dump(exclude_none=True)，store.upsert_decision_event 對 invalid/missing no_order_route_proof raise ValueError，pagination token 從上一頁 token 後一筆開始。驗證：python3 -m pytest services/control-plane/bff/agora/trading_room/test_trading_room.py -v（24 passed）；python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -v（18 passed）；git diff --check origin/dev...HEAD。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T03:22:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-tr-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-TR-001",
+      "git_clean_required": false,
+      "commit": "07cdf9cb04d64253be2ca38c71194b2759dae470",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-TR-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-TR-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "35d53db2af6dba878fc2322557d055099cb7edf6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implementation complete: trading room aggregate + decision event queues per design-closure-round2 doc 04 and v4 schemas. 18/18 pytest pass. Commit ae65237f on task/AG-BE-TR-001. Key files: trading_room/router.py (models + 9 routes), trading_room/store.py (in-memory store), trading_room/test_trading_room.py (18 tests). Safety invariant: no_order_route_proof enforced on all decision events and intent handoffs. Governed intent handoff stubs present; AG-BE-TR-002 owns full implementation.",
+      "status": "done",
+      "created_at": "2026-06-22T02:44:38Z",
+      "resolved_at": "2026-06-22T02:54:01Z"
+    },
+    {
+      "task_id": "AG-BE-TR-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review not approved. Required fixes: (1) schema-valid responses: TradingDecisionEvent.model_dump currently emits null optional fields (dedupe_key/candidate_ref/subject.asset_class/etc.) that violate v4 JSON Schema when present; serialize with exclude_none or otherwise match schema and add jsonschema regression. (2) enforce no_order_route_proof at store/router boundary: TradingRoomStore.upsert_decision_event accepts BROKER_ORDER_ALLOWED and list/detail return it unchanged, violating D1 safety invariant. (3) fix pagination token semantics: next_page_token currently repeats the previous page's last item (e0,e1 -> token e1 -> e1,e2); add regression. Focused pytest still passes: python3 -m pytest services/control-plane/bff/agora/trading_room/test_trading_room.py -v (18 passed). Branch also needs compose with current origin/dev before approval/closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T02:54:01Z",
+      "resolved_at": "2026-06-22T02:54:01Z"
+    },
+    {
+      "task_id": "AG-BE-TR-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "All three required fixes are implemented. (1) model_dump(exclude_none=True) on aggregate + 2 jsonschema regressions; (2) store.upsert_decision_event raises ValueError on invalid/missing no_order_route_proof + 2 regressions; (3) pagination offset fixed to start+1 + 2 regressions. 24/24 tests pass. Branch merged with origin/dev at e73d1dcd. Commit: 667a7abd. Please re-review and approve so we can proceed to closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T03:00:35Z",
+      "resolved_at": "2026-06-22T03:04:09Z"
+    },
+    {
+      "task_id": "AG-BE-TR-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved after re-review. No blocking issues found. Owner Claude2 should perform closeout finalization, open/merge the task PR, then mark done.",
+      "status": "done",
+      "created_at": "2026-06-22T03:04:09Z",
+      "resolved_at": "2026-06-22T03:07:54Z"
+    },
+    {
+      "task_id": "AG-BE-TR-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Restoring review_approved: Codex approved at 03:04:09Z (review_notes_zh present). Status was incorrectly downgraded to in_progress by supervisor re-dispatch. PR #2191 merged into dev. Proceeding to done.",
+      "status": "done",
+      "created_at": "2026-06-22T03:22:05Z",
+      "resolved_at": "2026-06-22T03:22:32Z"
+    }
+  ],
+  "blockers": []
+}

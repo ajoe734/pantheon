@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-21T05:10:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare AG-XR-OPENAPI-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-XR-OPENAPI-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-SW / Deep-Closure",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-DES-SW-PRIV-001",
+      "AG-DES-SW-REF-001",
+      "AG-DES-SW-DB-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-XR-OPENAPI-002/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed after PR #1989 merged to dev (merge commit fb4aa76f15d4d6b6e968d020dfa7aee54ebf001e); support packet and task brief finalized on task commit a33914ed; verified python3 -m pytest scripts/test_agora_v1_2_bundle.py -q, git diff --check, bundle diff guard, and GitHub Branch CI.",
+    "last_update": "2026-06-21T05:10:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-OPENAPI-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：support-only packet 已更新至 parent done baseline c1b18d8d，parent review artifact 已存在，未改 canonical/runtime surface。|驗證通過：python3 -m pytest scripts/test_agora_v1_2_bundle.py -q；git diff --check；bundle sha256/diff guard；GitHub Branch CI 全綠。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T05:10:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-openapi-002-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "a33914edc09cc57cc3cee66c36c6e68a2f86a0d3",
+      "commit_subject": "AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE: refresh closeout baseline",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only acceptance packet closeout baseline and verification note for AG-XR-OPENAPI-002.",
+        "Not changing": "L1 canonical truth, OpenAPI/capability/schema bundle files, runtime registry, BFF/adapter implementation, governance, broker, or capital authority.",
+        "Composes with": "PR #1989, reviewer sidecar PR #1988, FE sidecar closeout PR #1991, RBAC detail links PR #1990, parent closeout PR #1985, and downstream AG-BE/AG-FE implementation tasks.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m pytest scripts/test_agora_v1_2_bundle.py -q (5 passed); git diff --check -- support/sidecars/AG-XR-OPENAPI-002/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE.md; git diff --name-status HEAD -- v1.1/v1.2 bundle artifacts (clean)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fb4aa76f15d4d6b6e968d020dfa7aee54ebf001e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only acceptance packet prepared at support/sidecars/AG-XR-OPENAPI-002/AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE.md and PR #1989 opened with auto-merge. Scope: acceptance checklist, dependency map, evidence notes, reviewer attention item for missing parent review file. Verification: python3 -m pytest scripts/test_agora_v1_2_bundle.py -q (5 passed); git diff --check on sidecar packet clean.",
+      "status": "done",
+      "created_at": "2026-06-21T04:51:52Z",
+      "resolved_at": "2026-06-21T04:59:35Z"
+    },
+    {
+      "task_id": "AG-XR-OPENAPI-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after packet refresh c50d480a; owner Codex2 should finalize after PR #1989 merges.",
+      "status": "done",
+      "created_at": "2026-06-21T04:59:35Z",
+      "resolved_at": "2026-06-21T05:10:06Z"
+    }
+  ],
+  "blockers": []
+}

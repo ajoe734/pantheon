@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DB-004-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-20T17:29:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-DB-004-SIDECAR-ACCEPTANCE",
+    "title": "Prepare AG-FE-DB-004 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-FE-DB-004，整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-DB-001",
+      "AG-BE-DB-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-DB-004/AG-FE-DB-004-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed after PR #1861 merged into dev at d32fb4adb2d4d3ea3a5a3ab0dd17746bba0dfc00; support packet commit 4284db3f04d9dd330439868349973f5b18cc8253; verified git diff --check plus schema/type guard checks recorded in commit.",
+    "last_update": "2026-06-20T17:29:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-DB-004",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/AG-FE-DB-004/AG-FE-DB-004-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T17:29:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-db-004-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-DB-004-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "4284db3f04d9dd330439868349973f5b18cc8253",
+      "commit_subject": "AG-FE-DB-004-SIDECAR-ACCEPTANCE: prepare acceptance packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only acceptance packet for AG-FE-DB-004, including dependency state, parent acceptance checklist, v1.1 route/type guardrails, rollback/concurrency review gates, and reviewer handoff notes.",
+        "Not changing": "L1 canonical truth, schema/OpenAPI truth, BFF runtime code, frontend runtime code, widget registry behavior, governance logic, generated types, or parent implementation files.",
+        "Composes with": "AG-XR-DASH-001 v1.1 dashboard contract, AG-BE-DB-001 backend recipe/validator delivery, AG-FE-DB-001 renderer delivery, AG-FE-DB-003 widget revision drawer, and parent owner Codex implementation/review flow.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-FE-DB-004-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check -- support/sidecars/AG-FE-DB-004/AG-FE-DB-004-SIDECAR-ACCEPTANCE.md; jq -e '.properties.previous_version and (.properties.previousVersionId | not)' services/control-plane/specs/agora/v2/dashboard_recipe_v2.schema.json; python3 scripts/agora_schema_bundle.py --verify; node execute-plans/scripts/generate-agora-types.mjs --check --pantheon-root .; no previousVersionId/previousVersion references under execute-plans/src/agora execute-plans/src/lib/bff-v1/agora services/control-plane/specs/agora/v2/dashboard_recipe_v2.schema.json"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-DB-004-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ac0d55c1bffdd5791c529cc915ca531e08c2c8d2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-DB-004-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support packet ready for review and already merged via PR #1861 (merge d32fb4adb2d4d3ea3a5a3ab0dd17746bba0dfc00; task commit 4284db3f04d9dd330439868349973f5b18cc8253). Please review route/type guardrails, dependency map, previous_version mismatch warning, and rollback/concurrency checklist.",
+      "status": "done",
+      "created_at": "2026-06-20T17:20:56Z",
+      "resolved_at": "2026-06-20T17:24:40Z"
+    },
+    {
+      "task_id": "AG-FE-DB-004-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: DB004 acceptance packet captures v1.1 route/type truth, dependency state, previous_version guardrail, append-only rollback semantics, conflict handling, and support-only boundary. Verified with git diff --check; python3 scripts/agora_schema_bundle.py --verify; node execute-plans/scripts/generate-agora-types.mjs --check --pantheon-root .; rg previousVersionId/previousVersion.",
+      "status": "done",
+      "created_at": "2026-06-20T17:24:40Z",
+      "resolved_at": "2026-06-20T17:29:30Z"
+    }
+  ],
+  "blockers": []
+}
