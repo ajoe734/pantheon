@@ -31,8 +31,11 @@ RuntimeBinding.
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-001B` | Parent status, owner/reviewer, acceptance scope, and review notes. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-001` | Archived implementation commit, original widget renderer scope, and review caveats. |
 | GitHub PR `#2175` | Parent evidence PR state, merge commit, head commit, and required check results. |
+| GitHub PR `#2178` | Parent closeout PR state, merge commit, head commit, and required check results. |
 | Commit `82a02babed77b5ece209e0a217328aa08b29ce79` | Parent `AG-FE-DB-001B` acceptance evidence record. |
+| Commit `59281b585c113c913ffad2bd1f179c368dfe531c` | Parent task-brief closeout update marking `AG-FE-DB-001B` done. |
 | Commit `6062cb2cc850f032de9b890a47db55a60a6033cf` | Original widget registry/renderer implementation commit referenced by the parent evidence record. |
+| `origin/dev:.orchestrator/task-briefs/ag_fe_db_001b.md` | Latest parent brief status, closeout section, and composition notes. |
 | `execute-plans/src/agora/widgets/registry.ts` | Registry constants, checksum pins, active-widget gate, ChartSpec allowlists, blocked interactions, and sensitivity validation. |
 | `execute-plans/src/agora/widgets/WidgetRenderer.tsx` | Registry-gated shell and props-fed render path. |
 | `execute-plans/src/agora/widgets/ChartSpecRenderer.tsx` | Recharts/ECharts/builtin chart dispatch and unsafe render marker guard. |
@@ -43,13 +46,18 @@ RuntimeBinding.
 
 | Item | Evidence |
 |---|---|
-| Parent status at packet preparation | `review_approved`; owner `Claude`, reviewer `Claude2`. |
-| Parent review notes | `17/17` tests independently verified; all acceptance criteria met; owner closeout remains. |
+| Parent L0 status observed through `ai-status` | Active `review_approved`; owner `Claude`, reviewer `Claude2`. |
+| Parent review notes | `17/17` tests independently verified; all acceptance criteria met. |
 | Parent evidence PR | `https://github.com/ajoe734/pantheon/pull/2175` |
-| Parent PR state | `MERGED` into `dev` at `2026-06-22T01:44:21Z`. |
-| Parent merge commit | `7b18c6c149f6065cba6543624e4dcefd84694cf6` |
+| Parent evidence PR state | `MERGED` into `dev` at `2026-06-22T01:44:21Z`. |
+| Parent evidence merge commit | `7b18c6c149f6065cba6543624e4dcefd84694cf6` |
 | Parent evidence commit | `82a02babed77b5ece209e0a217328aa08b29ce79` |
-| Parent PR checks | Commit trailers, Runtime mirror guard, Smoke acceptance, and Forward to orchestrator reported `SUCCESS`. |
+| Parent closeout PR | `https://github.com/ajoe734/pantheon/pull/2178` |
+| Parent closeout PR state | `MERGED` into `dev` at `2026-06-22T02:10:11Z`. |
+| Parent closeout merge commit | `64bd78cbcbfe6e7c2ebce3573754ec552fcfc125` |
+| Parent closeout commit | `59281b585c113c913ffad2bd1f179c368dfe531c` |
+| Parent latest task brief | `origin/dev:.orchestrator/task-briefs/ag_fe_db_001b.md` marks status `done` and records the 2026-06-22 closeout. |
+| Parent PR checks | Commit trailers, Runtime mirror guard, Smoke acceptance, and Forward to orchestrator reported `SUCCESS` across PRs `#2175` and `#2178`. |
 | Original implementation commit | `6062cb2cc850f032de9b890a47db55a60a6033cf` (`AG-FE-DB-001: add Agora widget renderers`). |
 | Files under parent scope | `execute-plans/src/agora/widgets/registry.ts`, `WidgetRenderer.tsx`, `ChartSpecRenderer.tsx`, `execute-plans/package.json`. |
 
@@ -58,7 +66,7 @@ RuntimeBinding.
 | Area | Evidence | Sidecar assessment |
 |---|---|---|
 | Support-only boundary | This packet adds only `support/sidecars/AG-FE-DB-001B/AG-FE-DB-001B-SIDECAR-REVIEW.md`. | No canonical truth or runtime implementation is changed by this sidecar. |
-| Parent acceptance state | `ai-status` reports parent `AG-FE-DB-001B` as `review_approved` with 17/17 test review notes. | Parent is ready for owner closeout; this sidecar does not move the parent to `done`. |
+| Parent delivery state | `ai-status` reports parent `AG-FE-DB-001B` as active `review_approved`, while merged closeout PR `#2178` updates the task brief to `done`. | This sidecar records the state mismatch but does not mutate parent status or closeout truth. |
 | Registry checksum and catalog | `registry.ts` pins `AGORA_WIDGET_CONTRACT_HASHES`; `registry.test.ts` hashes `widget_registry.v1.json` and checks 42 registry entries. | Frontend registry evidence remains tied to the frozen A3 catalog and generated contract snapshot. |
 | Active widget gate | `validateWidgetSpecAgainstRegistry` rejects unknown or inactive widget types and unapproved data sources. | Renderer entry is registry-gated before display. |
 | ChartSpec grammar | `CHART_SPEC_KINDS`, encoding channels, transforms, and interactions are allowlisted in `registry.ts`; tests cover allowlist lengths and deviations. | Declarative ChartSpec dispatch is bounded by local allowlists. |
@@ -84,7 +92,7 @@ RuntimeBinding.
 
 | Caveat | Recommended handling |
 |---|---|
-| Parent `AG-FE-DB-001B` is `review_approved`, not `done`, at packet preparation time. | Parent owner `Claude` still needs to perform closeout finalization for the parent task. |
+| Parent `AG-FE-DB-001B` has merged task-brief closeout evidence, but local `ai-status` still reports active `review_approved`. | Parent owner/supervisor should reconcile L0 status separately if archival `done` is still required; this sidecar must not repair parent state. |
 | `npm ci` reported 4 existing audit findings and a Recharts 2.x deprecation warning. | Out of scope for this support slice; do not run `npm audit fix` here because it would change dependency truth. |
 | This sidecar validates the support packet and parent evidence record; it is not a second canonical implementation review of every widget line. | Reviewer should approve or request packet edits only within the support-only scope. |
 
@@ -92,9 +100,11 @@ RuntimeBinding.
 
 Please review this packet for:
 
-1. Accurate parent facts for PR `#2175`, merge commit
-   `7b18c6c149f6065cba6543624e4dcefd84694cf6`, and evidence commit
-   `82a02babed77b5ece209e0a217328aa08b29ce79`.
+1. Accurate parent facts for PR `#2175`, evidence merge commit
+   `7b18c6c149f6065cba6543624e4dcefd84694cf6`, evidence commit
+   `82a02babed77b5ece209e0a217328aa08b29ce79`, closeout PR `#2178`,
+   closeout merge commit `64bd78cbcbfe6e7c2ebce3573754ec552fcfc125`, and
+   closeout commit `59281b585c113c913ffad2bd1f179c368dfe531c`.
 2. Correct support-only boundary: no canonical truth, schema, OpenAPI, runtime,
    registry implementation, BFF behavior, broker authority, or RuntimeBinding
    mutation by this sidecar.
