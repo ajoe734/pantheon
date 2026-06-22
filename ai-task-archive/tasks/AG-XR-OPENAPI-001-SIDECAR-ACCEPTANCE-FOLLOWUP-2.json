@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+  "archived_at": "2026-06-20T16:45:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+    "title": "Prepare AG-XR-OPENAPI-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-XR-OPENAPI-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-XR / Contract-Closure",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-001A"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-XR-OPENAPI-001/AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: PR #1845 merged into dev at 2026-06-20T16:43:40Z. Sidecar packet verified 13/14 acceptance checks; dashboard scope deviation documented for parent owner decision; bundle index hash gap noted for AG-XR-003; dependency map updated. No canonical truth changed.",
+    "last_update": "2026-06-20T16:45:55Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-OPENAPI-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過 — sidecar acceptance packet 完整且正確，無 canonical truth 異動",
+      "後續追蹤：(1) parent owner 需確認 dashboard 路由是否為有意擴展，並更新 AG-XR-DASH-001 範疇；(2) bundle_index.v1_1.json 缺少 agora_v1_1.openapi.yaml hash，AG-XR-003 finalize 前需補齊"
+    ],
+    "review_file": "support/sidecars/AG-XR-OPENAPI-001/AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2-REVIEW-CLAUDE2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T16:45:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-openapi-001-sidecar-acceptance-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "eb35b5e5638ae795781ad25366c934fd26646fcf",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0fafe7f87cb913d4592c936a9449a89d090840b5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Sidecar acceptance packet complete and committed (d4f350d1). Verified agora_v1_1.openapi.yaml against 14-point checklist: 13 of 14 pass; 1 deviation (11 dashboard routes included, scope decision needed from parent owner). Bundle hash gap noted as AG-XR-003 prerequisite. AG-BE-ID-002 and AG-BE-SW-001 are unblocked.",
+      "status": "done",
+      "created_at": "2026-06-20T16:12:57Z",
+      "resolved_at": "2026-06-20T16:13:09Z"
+    },
+    {
+      "task_id": "AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Sidecar acceptance packet complete and committed (d4f350d1). Verified agora_v1_1.openapi.yaml against 14-point checklist: 13 of 14 pass; 1 deviation (11 dashboard routes included, scope decision needed from parent owner). Bundle hash gap noted as AG-XR-003 prerequisite. AG-BE-ID-002 and AG-BE-SW-001 are unblocked.",
+      "status": "done",
+      "created_at": "2026-06-20T16:13:09Z",
+      "resolved_at": "2026-06-20T16:18:38Z"
+    },
+    {
+      "task_id": "AG-XR-OPENAPI-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Sidecar acceptance packet approved; 13/14 checks pass; dashboard scope deviation recorded without scope ruling; bundle hash gap identified as AG-XR-003 prereq; owner to finalize.",
+      "status": "done",
+      "created_at": "2026-06-20T16:18:38Z",
+      "resolved_at": "2026-06-20T16:45:56Z"
+    }
+  ],
+  "blockers": []
+}

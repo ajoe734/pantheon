@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-06-22T07:39:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare AG-BE-TR-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-TR-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-TR-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar BFF handoff packet FOLLOWUP-6 (Q15-Q22) merged via PR #2221 into dev. Resolves Q15 (withdraw semantics with TradingRoomStore additions), Q16 (X-Request-Id enforcement). New gaps Q17-Q22 documented for parent owner Codex absorption. No canonical truth modified.",
+    "last_update": "2026-06-22T07:39:38Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-TR-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Followup-6 handoff packet approved: resolves Q15 (withdraw semantics: most recent non-terminal handoff plus intent both set to withdrawn; 404 on missing intent; 409 on already-withdrawn; TradingRoomStore additions upsert_handoff/get_governed_intent_handoffs_for_intent/get_latest_active_handoff), Q16 (X-Request-Id required: enforce 400 VALIDATION_FAILED; use as trace_id for IdempotencyRecord). New gaps Q17 (GovernedIntentHandoffRequest model accepts server-derived fields from client; needs GovernedIntentHandoffBody split), Q18 (submit returns status queued vs correct submitted), Q19 (TradingRoomStore has no handoff storage; use shared CommandStore for idempotency), Q20 (If-Match/Idempotency-Key/X-Request-Id not enforced as required; need explicit validation guards), Q21 (GET trading-intents missing ETag header; needs Response param and intent ETag), Q22 (withdraw silently succeeds on missing intent; needs 404 guard). No canonical truth, schemas, OpenAPI, BFF runtime, or frontend files changed."
+    ],
+    "review_file": "support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T07:39:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-tr-002-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "93a8e1176de0d38ecef737128f819517e4d2dbfa",
+      "commit_subject": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6: add followup-6 sidecar",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support artifact only — no canonical truth, schemas, OpenAPI,",
+        "Not changing": "L1 policy docs, v4 schemas, OpenAPI, BFF runtime, models.py.",
+        "Composes with": "AG-BE-TR-002 (in_progress, Codex); parent absorbs after review.",
+        "Resolves Q15 (withdraw semantics": "most recent non-terminal handoff + intent",
+        "TradingRoomStore additions": "upsert_handoff/get_governed_intent_handoffs_for_intent/",
+        "get_latest_active_handoff). Resolves Q16 (X-Request-Id required": "enforce 400",
+        "- Q17": "GovernedIntentHandoffRequest accepts server-derived fields from client",
+        "- Q18": "submit handler returns \"queued\" instead of \"submitted\" (per Q10)",
+        "- Q19": "TradingRoomStore has no _handoffs storage; use shared CommandStore",
+        "- Q20": "If-Match, Idempotency-Key, X-Request-Id not enforced as required",
+        "- Q21": "GET .../trading-intents/{intent_id} missing ETag header",
+        "- Q22": "withdraw silently returns 200 when intent not found (needs 404)",
+        "Major codebase update": "router.py is no longer a placeholder — active stubs",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+        "Reviewer": "Codex",
+        "Verified": "git status --short; ai_status.py show; router.py and store.py read; OpenAPI confirmed."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0c30d445e1b7e2eb7e86d1cbeb6916fefafc89e2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Followup-6 sidecar ready for review (commit 93a8e117). Resolves Q15 (withdraw semantics: TradingRoomStore handoff additions, 404/409 guards) and Q16 (X-Request-Id required, enforcement order). New gaps Q17-Q22 from reading the now-live router.py and store.py: GovernedIntentHandoffRequest accepts server-derived fields (Q17), submit returns 'queued' not 'submitted' (Q18), no handoff storage in TradingRoomStore (Q19), If-Match/Idempotency-Key/X-Request-Id not enforced (Q20), missing ETag header on GET (Q21), withdraw silent 200 on missing intent (Q22).",
+      "status": "done",
+      "created_at": "2026-06-22T07:33:23Z",
+      "resolved_at": "2026-06-22T07:35:44Z"
+    },
+    {
+      "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Followup-6 BFF/frontend handoff packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T07:35:44Z",
+      "resolved_at": "2026-06-22T07:39:39Z"
+    }
+  ],
+  "blockers": []
+}

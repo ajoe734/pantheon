@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-22T05:31:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-FE-SW-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-SW-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 2",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #2206 merged into dev at 4652e26ab1e2dc8b478642431df8528b2f6af941; support-only handoff packet commit 0b5a6490b80c3d3bc7184390fc7f00b29c50a7a2 is ready for AG-FE-SW-001 parent owner absorption.",
+    "last_update": "2026-06-22T05:31:28Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-SW-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only AG-FE-SW-001 BFF/frontend handoff packet approved: runtime-live workshop routes, v1.3 contract/type-generation boundaries, frontend gaps, stop-line blockers, and no-order safety guardrails are documented without canonical/runtime changes."
+    ],
+    "review_file": "support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T05:31:28Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-001-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-SW-001-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "0b5a6490b80c3d3bc7184390fc7f00b29c50a7a2",
+      "commit_subject": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF: add handoff packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Task": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF - support-only BFF/frontend handoff packet for AG-FE-SW-001.",
+        "Owned layer": "support/sidecars/AG-FE-SW-001 BFF query ledger, operator journey, frontend handoff notes, stop-line blockers, and reviewer checklist.",
+        "Not changing": "L1 canonical truth, OpenAPI/schema source, BFF runtime, route registry, governance/runtime implementation, or execute-plans source.",
+        "Composes with": "AG-FE-SW-001 parent frontend implementation, AG-BE-SW-001 workshop routes, AG-BE-SW-004 workshop SSE stream, and AG-XR-OPENAPI-004 v1.3 bundle.",
+        "- LC_ALL=C rg -n \"[^[": "ascii:]]\" support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF.md (no output)",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verified": "ASCII scan; diff whitespace check; 81 focused BFF tests passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-001-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4652e26ab1e2dc8b478642431df8528b2f6af941",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only BFF/frontend handoff packet is ready for review. Artifact: support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF.md. Commit: 0b5a6490. PR: https://github.com/ajoe734/pantheon/pull/2206. Scope stayed support-only; no canonical/runtime/schema/execute-plans changes. Validation: ASCII scan clean; diff whitespace check clean; 81 focused BFF tests passed.",
+      "status": "done",
+      "created_at": "2026-06-22T05:27:47Z",
+      "resolved_at": "2026-06-22T05:29:11Z"
+    },
+    {
+      "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-FE-SW-001 BFF/frontend handoff packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T05:29:11Z",
+      "resolved_at": "2026-06-22T05:31:29Z"
+    }
+  ],
+  "blockers": []
+}

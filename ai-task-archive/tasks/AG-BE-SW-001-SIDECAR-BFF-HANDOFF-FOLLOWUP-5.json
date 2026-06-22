@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-06-20T20:42:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare AG-BE-SW-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-SW-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-SW / Phase 2",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-SW-001/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff packet; PR #1896 and closeout PR #1899 merged; parent AG-BE-SW-001 remains blocked pending C1-C8 clarification.",
+    "last_update": "2026-06-20T20:42:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-SW-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：Followup-5 packet 僅新增支援性 handoff material，PR diff 限於 task brief 與 support/sidecars packet，未修改 L1 canonical truth、OpenAPI、BFF runtime、registry、migration、governance 或 execute-plans。",
+      "審查通過：C1-C8 正確保留 parent blocker，涵蓋 private content store、redaction/failure behavior、StrategySpec/completeness mapping、status mapping、index set 與 ETag source of truth；frontend guardrails 對 seed fallback、raw private content persistence、weak ETag reformatting 與 execution/capital authority 均保持 fail-closed。",
+      "後續：owner Codex 應依 closeout-finalization 在已 merged PR #1896 的基礎上整理 task artifact，再執行 done；parent AG-BE-SW-001 仍應保持 blocked 直到 C1-C8 被正式回答。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T20:42:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-sw-001-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "807bbf8d244243e2ee383c81c6cb22f6d3210c01",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "63d87b3b67cf597087b60ddfc9d69b79724adb4a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Followup-5 support packet is committed and PR #1896 is open with auto-merge. Please review support/sidecars/AG-BE-SW-001/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md for parent blocker clarification C1-C8, frontend guardrails, and support-only scope.",
+      "status": "done",
+      "created_at": "2026-06-20T20:32:07Z",
+      "resolved_at": "2026-06-20T20:36:31Z"
+    },
+    {
+      "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2: support-only packet is scoped correctly; C1-C8 and frontend guardrails are sufficient. Owner Codex should finalize after PR #1896 merge record.",
+      "status": "done",
+      "created_at": "2026-06-20T20:36:31Z",
+      "resolved_at": "2026-06-20T20:42:19Z"
+    }
+  ],
+  "blockers": []
+}

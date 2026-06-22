@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+  "archived_at": "2026-06-22T07:18:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+    "title": "Prepare AG-BE-SW-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-SW-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-SW / Phase 2",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-SW-001/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Stale closeout/sidecar garbage; parent 已處置,作廢回收 slot。",
+    "last_update": "2026-06-22T07:18:40Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-SW-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Followup-7 packet ready. Delta from followup-6: strategy_workshop/router.py received migration note docstring (commit AG-BE-000) listing routes still in main.py, but still returns empty APIRouter. No workshop routes implemented. C1-C8 gap set unchanged and unresolved. Parent AG-BE-SW-001 remains blocked. Packet stays support-only — no canonical truth modified. Please review.",
+      "status": "done",
+      "created_at": "2026-06-20T21:27:57Z",
+      "resolved_at": "2026-06-20T21:30:53Z"
+    },
+    {
+      "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "review approved: packet correctly stays support-only (1 file diff, no canonical truth modified); delta accurately records router.py migration note without overstating as runtime progress; C1-C8 disposition unchanged and conservative; parent remains blocked; 13 /bff/agora/workshops route operations confirmed unchanged in v1.1 OpenAPI; frontend handoff requirements preserved",
+      "status": "done",
+      "created_at": "2026-06-20T21:30:53Z",
+      "resolved_at": "2026-06-20T21:32:51Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "owner": "Claude2",
+      "waiting_for": "Claude",
+      "message": "Owner accidentally demoted status from review_approved to in_progress by running 'progress' at start of closeout. PR #1911 has since merged into dev (mergedAt 2026-06-20T21:39:26Z). Reviewer (Claude) must re-run approve to restore review_approved, then owner can run done. No additional implementation changes needed.",
+      "status": "resolved",
+      "created_at": "2026-06-20T21:41:51Z",
+      "resolved_at": "2026-06-22T07:18:40Z"
+    }
+  ]
+}

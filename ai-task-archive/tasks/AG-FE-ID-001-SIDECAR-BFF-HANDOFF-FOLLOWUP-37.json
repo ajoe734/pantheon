@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37",
+  "archived_at": "2026-06-22T04:13:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000",
+      "AG-BE-ID-003"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Approved sidecar packet merged; parent AG-FE-ID-001 remains blocked on execute-plans PR #66 aggregate gate.",
+    "last_update": "2026-06-22T04:13:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T04:13:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-37",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37",
+      "git_clean_required": false,
+      "commit": "9586e4aff578a5cdac760b7a39bdd13531d1815d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "582857407773db653060467b69e06f786ad1cb39",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "FOLLOWUP-37 support packet committed at 12f27730b369b732a445c608f43f393c5d39b0bd and PR #2197 opened with auto-merge enabled: https://github.com/ajoe734/pantheon/pull/2197. Scope is only support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37.md; generated task brief intentionally left out. Packet records Pantheon dev fd335b5c, only new dev delta since followup-36 is AG-FE-RS support packet PR #2196, identity/servant/Agora BFF paths unchanged, execute-plans PR #66 still OPEN/UNSTABLE on integration-gate, and compatibility manifest still fail-closed. Local validation: 39 Agora identity/servant/session tests passed, 3 candidate-pool tests passed, 24 trading-room tests passed, expected manifest deployment gate fail-closed, git diff --check HEAD~1 HEAD clean. Please review scope discipline and factual accuracy.",
+      "status": "done",
+      "created_at": "2026-06-22T04:03:06Z",
+      "resolved_at": "2026-06-22T04:07:42Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved - scope disciplined, factually accurate refresh; identity/servant paths unchanged, only dev delta is AG-FE-RS-001 support packet, PR #66 aggregate gate still blocking parent. Review file committed at 6286f924.",
+      "status": "done",
+      "created_at": "2026-06-22T04:07:42Z",
+      "resolved_at": "2026-06-22T04:13:46Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25",
+  "archived_at": "2026-06-21T05:41:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Review record PR #1994 merged at 0f88261fbd18106589e95600412924380681f02a; support-only followup-25 closed.",
+    "last_update": "2026-06-21T05:41:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：無新 dev delta；BFF query ledger 正確區分可用 support context 與 blocked surfaces；parent 依賴 AG-BE-ID-003 仍 blocked；execute-plans PR #63 仍 OPEN/UNSTABLE；前端目標檔案仍缺失；packet support-only 無 canonical truth 修改",
+      "後續追蹤：AG-BE-ID-003 需 Claude 做 servant-session type-contract 決定才能解鎖"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T05:41:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-25",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "605dba41df2bdd660fe72a5cf634a0a5be5d7185",
+      "commit_subject": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25: record review",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars/AG-FE-ID-001 review artifact.",
+        "Not changing": "canonical truth, BFF/OpenAPI/runtime, execute-plans sources, or task brief generation.",
+        "Composes with": "packet PR #1993 merged at 0c7eb8082452152dbaa435dfbfc9f1ee0b951e54.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25-REVIEW.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0f88261fbd18106589e95600412924380681f02a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only followup-25 BFF/frontend handoff packet merged in PR #1993 at 0c7eb8082452152dbaa435dfbfc9f1ee0b951e54; artifact support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25.md. Verified focused pytest 35 passed, private-index diff check clean, and no post-followup-24 dev delta in the checked handoff pathset. Please review packet accuracy and support-only scope.",
+      "status": "done",
+      "created_at": "2026-06-21T05:27:50Z",
+      "resolved_at": "2026-06-21T05:31:02Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-25",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: followup-25 packet is accurate, no dev delta since followup-24, support-only scope confirmed, AG-BE-ID-003 block and PR #63 risk properly recorded. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T05:31:02Z",
+      "resolved_at": "2026-06-21T05:41:19Z"
+    }
+  ],
+  "blockers": []
+}

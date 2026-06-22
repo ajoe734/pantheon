@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-06-22T05:44:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare AG-FE-SW-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-SW-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 2",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend handoff packet after Claude review approval; PR #2207 merged into dev at a93bdb71570a8a8b818e7e19bf9541aec2a97c9d.",
+    "last_update": "2026-06-22T05:44:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-SW-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T05:44:25Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-001-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "5a0881b21ff9e1aa3c63cd1aee533c8a5fd89aac",
+      "commit_subject": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2: add packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Task": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2 - support-only follow-up BFF/frontend handoff packet for AG-FE-SW-001.",
+        "Owned layer": "support/sidecars/AG-FE-SW-001 follow-up delta, parent-ready runtime route checklist, execute-plans freshness check, and stop-line blockers.",
+        "Not changing": "L1 canonical truth, OpenAPI/schema source, BFF runtime, route registry, governance/runtime implementation, execute-plans source, or generated collaboration state.",
+        "Composes with": "prior AG-FE-SW-001-SIDECAR-BFF-HANDOFF packet, AG-FE-SW-001 parent frontend implementation, AG-BE-SW-001 workshop routes, AG-BE-SW-004 workshop SSE stream, and AG-XR-OPENAPI-004 v1.3 bundle.",
+        "- LC_ALL=C rg -n \"[^[": "ascii:]]\" support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md (no output)",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+        "Reviewer": "Claude",
+        "Verified": "ASCII scan; diff whitespace check; focused BFF tests (79 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a93bdb71570a8a8b818e7e19bf9541aec2a97c9d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only follow-up BFF/frontend handoff packet is ready for review. Artifact: support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md. Commit: 5a0881b21ff9e1aa3c63cd1aee533c8a5fd89aac. PR: https://github.com/ajoe734/pantheon/pull/2207. Scope stayed support-only; no canonical/runtime/schema/execute-plans changes. Validation: ASCII scan clean; diff whitespace check clean; focused BFF tests passed (79).",
+      "status": "done",
+      "created_at": "2026-06-22T05:40:03Z",
+      "resolved_at": "2026-06-22T05:42:18Z"
+    },
+    {
+      "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed and approved. Support-only BFF/frontend handoff delta is scope-clean: no canonical/runtime/execute-plans changes, runtime-live routes match router inspection, four stop lines cover all unimplemented surfaces, and parent checklist is narrow and actionable. Owner (Codex) may finalize.",
+      "status": "done",
+      "created_at": "2026-06-22T05:42:18Z",
+      "resolved_at": "2026-06-22T05:44:26Z"
+    }
+  ],
+  "blockers": []
+}

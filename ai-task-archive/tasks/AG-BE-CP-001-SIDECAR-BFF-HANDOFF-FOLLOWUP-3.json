@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-06-22T02:50:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare AG-BE-CP-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-CP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-CP / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-CP-001",
+      "AG-BE-RS-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-CP-001/AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: handoff packet reviewed and approved by Codex (PR #2186 merged to dev). Artifact support/sidecars/AG-BE-CP-001/AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md delivered; v1.4 BFF routes, v5 schemas, operator journeys, frontend TypeScript signatures, and backend acceptance checks documented. No canonical truth changed.",
+    "last_update": "2026-06-22T02:50:20Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-CP-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Followup-3 handoff packet approved after verifying v1.4 route count and path count, v5 schema summaries, decision enum, pool-level score endpoint, monitoring routes, no-order proof, and BFF router absence. Scope remains support artifact plus task-owned status/brief metadata; no canonical truth/runtime changes."
+    ],
+    "review_file": "support/sidecars/AG-BE-CP-001/AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T02:50:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-cp-001-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "2a94fc45fdc189fbe232e7c59013ab9e8d0656ba",
+      "commit_subject": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: closeout finalization",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Reviewer Codex approved": "verified 15 operationIds across 10 OpenAPI",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Codex",
+        "Verified": "AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 — status review_approved, owner Claude, reviewer Codex confirmed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "85b776b49989545637e0227618fb59024abf1065",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Followup-3 BFF handoff packet for AG-BE-CP-001 complete (commit 1dc027c1). Artifact at support/sidecars/AG-BE-CP-001/AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md. Documents: all three Followup-2 blockers resolved by AG-XR-CP-001 (PR #2179); v1.4 contract summary (15 routes, 4 v5 schemas); decision verbs updated from D8 to v1.4 review decisions (approve_for_monitoring/send_to_shadow/needs_more_research/park/reject); pool-level score endpoint; updated TypeScript client signatures; updated operator journeys and acceptance checks. Non-blocking camelCase note included. No canonical truth changed.",
+      "status": "done",
+      "created_at": "2026-06-22T02:25:48Z",
+      "resolved_at": "2026-06-22T02:27:55Z"
+    },
+    {
+      "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer reopen: handoff packet has inaccurate/inconsistent v1.4 route counts. Actual services/control-plane/openapi/agora_v1_4.openapi.yaml has 15 operationIds across 10 OpenAPI paths; packet currently says 13 routes, 13 operationIds, 15 route paths, and 15 routes (13 paths). Please correct those counts consistently before review approval; other checked schema/decision/score/monitoring summaries match the v1.4 contract.",
+      "status": "done",
+      "created_at": "2026-06-22T02:27:55Z",
+      "resolved_at": "2026-06-22T02:27:55Z"
+    },
+    {
+      "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Route count corrections applied per reviewer reopen. All four inaccurate references now consistently read '15 routes (15 operationIds across 10 OpenAPI paths)'. Verified on-worktree: grep -c operationId → 15, python3 yaml path count → 10. Other summaries (schema, decision verbs, score endpoint, monitoring routes, camelCase note) unchanged — they were approved in the prior review. Please re-approve.",
+      "status": "done",
+      "created_at": "2026-06-22T02:31:58Z",
+      "resolved_at": "2026-06-22T02:37:59Z"
+    },
+    {
+      "task_id": "AG-BE-CP-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Followup-3 BFF/frontend handoff packet approved. Verified 15 operationIds across 10 OpenAPI paths, v5 schema summaries, v1.4 decision verbs, pool-level score endpoint, monitoring routes, no-order proof, and no canonical truth/runtime changes. Owner Claude should finalize.",
+      "status": "done",
+      "created_at": "2026-06-22T02:37:59Z",
+      "resolved_at": "2026-06-22T02:50:21Z"
+    }
+  ],
+  "blockers": []
+}

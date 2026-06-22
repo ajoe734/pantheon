@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DB-003-SIDECAR-REVIEW",
+  "archived_at": "2026-06-20T18:49:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-DB-003-SIDECAR-REVIEW",
+    "title": "Prepare AG-FE-DB-003 review packet and evidence summary",
+    "summary_zh": "平行支援 AG-FE-DB-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-DB-001",
+      "AG-BE-DB-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-DB-003/AG-FE-DB-003-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed sidecar after finalization PR #1877 merged into dev at cd6c1104fd27c079b650085fc7511a04b086a91f; packet records Claude review approval, parent PR #1860, parent closeout PR #1863, sidecar packet PR #1864, and support-only boundary. Verified status show commands, PR merge facts, and git diff --check for the packet.",
+    "last_update": "2026-06-20T18:49:17Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-DB-003",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "review_packet 準確記錄 PR #1860 合併事實、依賴狀態、WidgetSpec/validate 路由真相、本地驗證（17 個測試通過、build 通過）與 support-only 邊界",
+      "Parent closeout 注意事項（缺少 review artifact 檔案、AG-BE-DB-001 Rule 4/7 待辦、npm audit）已清楚標注，不影響此 sidecar 的接受",
+      "Support-only boundary 維持完整：無 L1 canonical truth、schema、OpenAPI、BFF runtime、RuntimeBinding 或 broker 變動"
+    ],
+    "review_file": "support/sidecars/AG-FE-DB-003/AG-FE-DB-003-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T18:49:17Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-db-003-sidecar-review",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-DB-003-SIDECAR-REVIEW",
+      "git_clean_required": false,
+      "commit": "71970d2b7d5385aeb277b77fb0f9e17094e88b97",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-DB-003-SIDECAR-REVIEW",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-DB-003-SIDECAR-REVIEW",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cd6c1104fd27c079b650085fc7511a04b086a91f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-DB-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review packet merged via PR #1864 (support/sidecars/AG-FE-DB-003/AG-FE-DB-003-SIDECAR-REVIEW.md). Task commit 0f93791ffadaea614edc9baa3e762ffcd0f4ab6d; merge commit b15a9f84d80a9f845318cd4a5aa26af5d120fa22. Focused verification passed: npm --prefix execute-plans ci; npm --prefix execute-plans test -- src/agora/widgets (17/17); npm --prefix execute-plans run build:agora. Please review and approve the sidecar packet; parent AG-FE-DB-003 finalization remains with Codex2.",
+      "status": "done",
+      "created_at": "2026-06-20T17:30:50Z",
+      "resolved_at": "2026-06-20T17:36:14Z"
+    },
+    {
+      "task_id": "AG-FE-DB-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-20T17:36:14Z",
+      "resolved_at": "2026-06-20T17:39:18Z"
+    },
+    {
+      "task_id": "AG-FE-DB-003-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: packet accurately captures PR #1860 merge facts, dependency state, WidgetSpec/validate route truth, focused verification (17 tests passing, build passing), runtime/governance isolation confirmed, and support-only boundary maintained. Parent closeout caveats clearly noted.",
+      "status": "done",
+      "created_at": "2026-06-20T17:39:18Z",
+      "resolved_at": "2026-06-20T18:49:18Z"
+    }
+  ],
+  "blockers": []
+}

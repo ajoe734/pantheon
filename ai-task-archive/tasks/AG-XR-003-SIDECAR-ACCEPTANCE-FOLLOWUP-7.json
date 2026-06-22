@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7",
+  "archived_at": "2026-06-20T20:54:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7",
+    "title": "Prepare AG-XR-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-XR-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-XR / Phase 0",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-001A"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only acceptance packet via PR #1902 merged at 81b17d678b4c029522a32eb26d9eb218a2350279; parent AG-XR-003 remains blocked on Claude2 / execute-plans PR #63 disposition.",
+    "last_update": "2026-06-20T20:54:20Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Reviewed support packet only; no canonical truth/runtime/registry/governance edits detected.",
+      "Re-ran focused checks: agora_schema_bundle verify passed; compat verify --allow-pending failed on generated_types_sha256 mismatch as packet states; deployment-gate failed closed as packet states; pytest showed expected 1 failed/3 passed; execute-plans contract:drift passed.",
+      "Confirmed execute-plans PR #63 remains OPEN/UNSTABLE with integration-gate failure at Aggregate release gate; parent AG-XR-003 should remain blocked pending Claude2/PR #63 disposition.",
+      "origin/dev advanced after packet commit, but AG-XR/Agora relevant paths had no changes in e51bc8fd..origin/dev; owner should refresh/finalize branch through task PR."
+    ],
+    "review_file": "support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T20:54:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-003-sidecar-acceptance-followup-7",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7",
+      "git_clean_required": false,
+      "commit": "3220ce1efc6eea28675061bfa571f6550dfc1925",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "81b17d678b4c029522a32eb26d9eb218a2350279",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Handoff to Codex: support-only acceptance follow-up packet committed at 404e2b80 in support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7.md. Parent AG-XR-003 remains blocked on Claude2 and execute-plans PR #63 disposition; local validation recorded in packet.",
+      "status": "done",
+      "created_at": "2026-06-20T20:42:25Z",
+      "resolved_at": "2026-06-20T20:46:36Z"
+    },
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-7",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only packet accepted; parent AG-XR-003 remains blocked on Claude2 and execute-plans PR #63 disposition. Owner Codex2 should finalize task branch through PR after refreshing with origin/dev.",
+      "status": "done",
+      "created_at": "2026-06-20T20:46:36Z",
+      "resolved_at": "2026-06-20T20:54:21Z"
+    }
+  ],
+  "blockers": []
+}

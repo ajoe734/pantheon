@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-06-21T14:40:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare AG-BE-RS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-RS / Phase 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-SW-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-RS-001/AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #2089 merged into dev at 96a770844e021c62caef6696f3b9ade4796e566d; support packet a66514b938439127e93bb428eb782c3f9c029773 is ready for parent reviewer use.",
+    "last_update": "2026-06-21T14:40:02Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-RS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up approved: it compares AG-BE-RS-001 PR #2087 against the research BFF handoff, records route coverage, frontend handoff deltas, and reviewer attention items for schema conformance, stage routing, governance gates, and thin run dispatch without modifying canonical truth or runtime files."
+    ],
+    "review_file": "support/sidecars/AG-BE-RS-001/AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T14:40:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-rs-001-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "a66514b938439127e93bb428eb782c3f9c029773",
+      "commit_subject": "AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2: add follow-up packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only follow-up handoff packet for AG-BE-RS-001 PR #2087 review-time BFF/frontend boundaries.",
+        "Not changing": "canonical docs, schemas, OpenAPI, BFF runtime, research services, registry/governance code, execute-plans frontend, or parent PR implementation.",
+        "Composes with": "AG-BE-RS-001 parent PR #2087, prior sidecar packet AG-BE-RS-001-SIDECAR-BFF-HANDOFF, AG-BE-RS-002 run projection, and AG-FE-RS-001 frontend cards.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check support/sidecars/AG-BE-RS-001/AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md; python3 -m json.tool research_plan_execution.schema.json; python3 -m json.tool research_run_projection.schema.json; gh pr view 2087"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "96a770844e021c62caef6696f3b9ade4796e566d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only follow-up packet is ready for review at support/sidecars/AG-BE-RS-001/AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md. PR #2089 merged into dev at merge commit 96a770844e021c62caef6696f3b9ade4796e566d; artifact commit a66514b938439127e93bb428eb782c3f9c029773. Validation passed: git diff --check on packet, json.tool on v4 research plan/run schemas, gh PR #2087/#2089 status checks. Packet is support-only and flags parent PR #2087 review attention items: schema conformance, stage routing policy, governance gates, and thin run dispatch boundary.",
+      "status": "done",
+      "created_at": "2026-06-21T14:35:22Z",
+      "resolved_at": "2026-06-21T14:36:50Z"
+    },
+    {
+      "task_id": "AG-BE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-BE-RS-001 BFF/frontend follow-up packet approved for parent reviewer use.",
+      "status": "done",
+      "created_at": "2026-06-21T14:36:50Z",
+      "resolved_at": "2026-06-21T14:40:04Z"
+    }
+  ],
+  "blockers": []
+}

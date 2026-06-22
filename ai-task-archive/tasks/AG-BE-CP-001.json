@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-CP-001",
+  "archived_at": "2026-06-22T02:35:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-CP-001",
+    "title": "CandidatePool/Member/Discussion/Monitoring records",
+    "summary_zh": "依 SD §8 與 A2 scoring recipe 做 candidate pool/member/discussion/monitoring 持久化；score endpoint 必須由 A2 recipe 計算，rejected 候選保留為 negative example。",
+    "phase": "EPIC AGORA-CP / Phase 4",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-CP-001",
+      "AG-BE-RS-002"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/research.py",
+      "services/control-plane/specs/agora/candidate_pool.schema.json"
+    ],
+    "acceptance": [
+      "candidate 形狀符合 schema;score 由 A2 recipe 算出且 components 對齊;rejected 保留;§17.3 endpoint 到位;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "PR #2181 merged into dev at 0401cca0895f8e2b956d2338ef90160dd5a0d833; verified py_compile router/store, git diff --check, pytest candidate pool 3 tests, router/projection suite 23 tests, undefined-call guard 2 tests. Worker worktree dirty only has generated task brief context.",
+    "last_update": "2026-06-22T02:35:20Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "review_notes_zh": [
+      "審查通過",
+      "A2 recipe scoring 與 components 完整對齊",
+      "rejected 保留為 negative example",
+      "所有 endpoint 到位且 no_order_route_proof 齊全",
+      "23 tests passed"
+    ],
+    "review_file": ".orchestrator/task-briefs/ag_be_cp_001_review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T02:35:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-cp-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-CP-001",
+      "git_clean_required": false,
+      "commit": "0401cca0895f8e2b956d2338ef90160dd5a0d833",
+      "commit_subject": "Merge pull request #2181 from ajoe734/task/AG-BE-CP-001",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-BE-CP-001": "implement candidate pool BFF"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-CP-001",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e01f19e7a4b73e7a70d0a8b607159e7db4192d6b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-CP-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-21T15:06:48Z",
+      "resolved_at": "2026-06-21T15:07:08Z"
+    },
+    {
+      "task_id": "AG-BE-CP-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #2181 (merge 0401cca0895f8e2b956d2338ef90160dd5a0d833; task commit 2b29d871b8ec5b2533eac43dec8f13c7861668b1). Validated py_compile, candidate-pool/research/router pytest group, no-undefined-symbol guard, and diff check. Please review/approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T02:27:21Z",
+      "resolved_at": "2026-06-22T02:31:30Z"
+    },
+    {
+      "task_id": "AG-BE-CP-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: A2 scoring recipe alignment, rejected-as-negative-example retention, all endpoints present, ETag/idempotency enforced. 23 tests passed. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T02:31:30Z",
+      "resolved_at": "2026-06-22T02:35:21Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "AG-BE-CP-001",
+      "owner": "Codex",
+      "waiting_for": "Claude2",
+      "message": "Blocked before implementation: task requires §17.3 endpoint:score and candidate pool/member/discussion/monitoring persistence, but the cited canonical files do not define a candidate score/review HTTP path or persistence schema. services/control-plane/openapi/agora_v1.openapi.yaml and agora_v1_3.openapi.yaml have no candidate pool/score route; design-closure-round2 D8 lists decision verbs but says to use the canonical AG-BE-CP-001 route without naming it; services/control-plane/specs/agora/candidate_pool.schema.json forbids additional candidate fields and has no score_components_json, discussion, monitoring, or negative-example fields. Brief forbids self-created route/schema/fields, so reviewer/design clarification is required before code changes.",
+      "status": "resolved",
+      "created_at": "2026-06-21T15:10:07Z",
+      "resolved_at": "2026-06-22T01:23:44Z",
+      "resolution_ref": "cp-001-routes-2026-06-22"
+    }
+  ]
+}

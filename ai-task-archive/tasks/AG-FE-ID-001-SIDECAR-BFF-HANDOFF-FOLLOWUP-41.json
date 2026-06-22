@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41",
+  "archived_at": "2026-06-22T06:52:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000",
+      "AG-BE-ID-003"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed followup-41 support slice: packet PR #2214 merged at 24bba125; review artifact PR #2215 merged at 3706c215. Parent AG-FE-ID-001 remains blocked on execute-plans PR #66 integration-gate / compatibility manifest readiness.",
+    "last_update": "2026-06-22T06:52:05Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T06:52:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-41",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41",
+      "git_clean_required": false,
+      "commit": "49a7de25273d2126353ac7afda93df6790890d1b",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3706c215b8ba42f638c238316d3e871d4758af30",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "FOLLOWUP-41 support packet committed at 97c66902 and PR #2214 opened with auto-merge enabled: https://github.com/ajoe734/pantheon/pull/2214. Scope is only support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41.md; generated task brief intentionally left uncommitted. Packet records Pantheon dev 80edfc2b, post-followup-40-closeout changes limited to AG-FE-RS support packets plus non-Agora MGMT-LIVE-EVIDENCE / CI-helper updates, identity/servant/Agora BFF paths unchanged, execute-plans PR #66 still OPEN/UNSTABLE on integration-gate, PR #63 still OPEN/UNSTABLE, and compatibility manifest still fail-closed. Local validation: 39 Agora identity/servant/session tests passed, 3 candidate-pool tests passed, 24 trading-room tests passed, expected manifest deployment gate fail-closed, trailing whitespace check clean. Please review scope discipline and factual accuracy.",
+      "status": "done",
+      "created_at": "2026-06-22T06:42:30Z",
+      "resolved_at": "2026-06-22T06:47:14Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review artifact committed at c3d214fa. Approved: scope-disciplined, factually accurate for the followup-41 refresh window (two AG-FE-RS-001 support packets plus five non-Agora MGMT-LIVE-EVIDENCE/CI-helper files, no identity/servant path changes). Execute-plans PR #66 and #63 remain OPEN/UNSTABLE; compatibility manifest remains fail-closed. Ready for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T06:47:14Z",
+      "resolved_at": "2026-06-22T06:52:06Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31",
+  "archived_at": "2026-06-21T15:04:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000",
+      "AG-BE-ID-003"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: support-only BFF/frontend handoff packet merged via pantheon PR #2093 at 4bde7a97b6481d1952e9add55aedc80c1055a98e; parent AG-FE-ID-001 remains blocked on execute-plans PR #66 integration-gate.",
+    "last_update": "2026-06-21T15:04:01Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T15:04:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-31",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31",
+      "git_clean_required": false,
+      "commit": "4bde7a97b6481d1952e9add55aedc80c1055a98e",
+      "commit_subject": "Merge pull request #2093 from ajoe734/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31": "add packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4bde7a97b6481d1952e9add55aedc80c1055a98e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Followup-31 support-only BFF/frontend handoff packet prepared and pushed. PR #2093 open with auto-merge enabled. Packet commits: ef82f321 add packet, eeddc748 refresh dev base after merging origin/dev 61b78053. Key facts: parent AG-FE-ID-001 remains blocked on execute-plans PR #66 aggregate integration-gate; PR #66 is OPEN/UNKNOWN at de7834b8; execute-plans dev has PR #68 types refresh; Pantheon AG-BE-RS-002 code PR #2092 merged but ai-status still active, research scope remains separate. Verification: git diff --check clean; focused BFF pytest 39 passed in 21.02s; Agora compatibility manifest gate fail-closed as expected. Review support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31.md.",
+      "status": "done",
+      "created_at": "2026-06-21T14:59:30Z",
+      "resolved_at": "2026-06-21T15:02:17Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-31",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Packet reviewed and approved. Dev advancement, BFF ledger, execute-plans gate state, and scope separation are all accurate. Identity/servant routes confirmed unchanged since followup-30. PR #2093 merged. Research/workshop surfaces correctly excluded from Phase 1. Parent AG-FE-ID-001 remains blocked pending execute-plans PR #66 integration-gate resolution. Owner Codex to finalize as done.",
+      "status": "done",
+      "created_at": "2026-06-21T15:02:17Z",
+      "resolved_at": "2026-06-21T15:04:02Z"
+    }
+  ],
+  "blockers": []
+}

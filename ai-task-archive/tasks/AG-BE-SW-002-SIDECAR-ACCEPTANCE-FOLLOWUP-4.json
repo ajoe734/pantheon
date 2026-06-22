@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+  "archived_at": "2026-06-21T10:36:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+    "title": "Prepare AG-BE-SW-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-BE-SW-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-SW / Phase 2",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-SW-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-SW-002/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed out approved support packet after PR #2038 merged to dev (merge 241d1ad0); sidecar remains support-only and parent AG-BE-SW-002 stays blocked pending StrategySpec/versioning clarification.",
+    "last_update": "2026-06-21T10:36:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-SW-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：packet 準確反映 dev 現況，AG-BE-SW-002 維持 blocked，scope 僅限 support artifact，無改動 canonical truth",
+      "後續追蹤：Codex2 進行 owner closeout，parent owner/reviewer 決定是否吸收進主線實作計畫"
+    ],
+    "review_file": "/tmp/ag-be-sw-002-followup-4-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T10:36:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-sw-002-sidecar-acceptance-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "2bdf803f4a885957946e6428e8485de6a792714b",
+      "commit_subject": "AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "AG-BE-SW-002 follow-up 4 sidecar support packet and task-scoped closeout brief.",
+        "Not changing": "L1/L2 canonical truth, OpenAPI/schema bundles, BFF runtime, StrategySpec Registry code, governance implementation, or the parent AG-BE-SW-002 blocker.",
+        "Composes with": "Claude review approval, current origin/dev sidecar support state, and the parent AG-BE-SW-002 owner/reviewer design-clarification flow.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4; git fetch origin dev plus dev-delta inspection"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "241d1ad0e5c0d92279407b8d18f71d53a229ff79",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Support-only follow-up 4 packet ready for Claude2 review; parent AG-BE-SW-002 remains blocked on StrategySpec versioning and patch-contract clarification.",
+      "status": "done",
+      "created_at": "2026-06-21T10:06:12Z",
+      "resolved_at": "2026-06-21T10:27:18Z"
+    },
+    {
+      "task_id": "AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Claude2 to Claude: Claude2 is dispatch-paused until 10:50:29Z (triggered 09:50:29Z); task is in review and cannot progress. Claude is active (chair-review worker live, no dispatch pause), is not the task owner (owner=Codex2), and can unblock this review immediately.",
+      "status": "done",
+      "created_at": "2026-06-21T10:27:18Z",
+      "resolved_at": "2026-06-21T10:30:33Z"
+    },
+    {
+      "task_id": "AG-BE-SW-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: packet accurately captures post-follow-up-3 dev state; AG-BE-SW-002 remains correctly blocked; no canonical truth modified; scope is clean. Returned to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T10:30:33Z",
+      "resolved_at": "2026-06-21T10:36:07Z"
+    }
+  ],
+  "blockers": []
+}

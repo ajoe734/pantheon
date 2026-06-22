@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+  "archived_at": "2026-06-21T07:27:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: packet and review record committed; PR #2008 merged at b52dff9c; no canonical truth changes; support-only sidecar complete",
+    "last_update": "2026-06-21T07:27:54Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：delta 事實、任務狀態、BFF 帳本與前端 surface 狀態均正確",
+      "後續：Claude2 進行 closeout，PR 合併後標記 done"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T07:27:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-28",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "git_clean_required": false,
+      "commit": "b52dff9cad4060269c41ab9a47a4f4d8fde1fd3b",
+      "commit_subject": "Merge pull request #2008 from ajoe734/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28": "closeout"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b52dff9cad4060269c41ab9a47a4f4d8fde1fd3b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF handoff packet prepared at commit 12baeb65; followup-27 closeout is the only dev delta; AG-BE-ID-003 still blocked; PR #63 still OPEN/UNSTABLE; all BFF/contract tests passed; please review for accuracy of delta facts, task state, BFF ledger, and frontend surface state",
+      "status": "done",
+      "created_at": "2026-06-21T07:21:33Z",
+      "resolved_at": "2026-06-21T07:24:24Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: delta correctly characterized as followup-27 closeout only; AG-BE-ID-003 still blocked; PR #63 still OPEN/UNSTABLE unchanged; frontend target files still absent; no canonical truth or BFF runtime changes. Returned to Claude2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-06-21T07:24:24Z",
+      "resolved_at": "2026-06-21T07:27:55Z"
+    }
+  ],
+  "blockers": []
+}

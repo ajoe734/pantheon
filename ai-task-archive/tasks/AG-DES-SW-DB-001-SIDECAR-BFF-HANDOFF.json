@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T03:45:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-DES-SW-DB-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DES-SW-DB-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-SW / Deep-Closure",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AG-DES-SW-DB-001/AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar BFF handoff packet finalized and merged into dev via PR #1968. Artifact support/sidecars/AG-DES-SW-DB-001/AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF.md is publication_ready: 13 BFF routes documented with table/index mapping, status filter alignment gap resolved (status_group=active vs status=active), full operator journey, ETag/concurrency contract, frontend implementation checklist, and dependency chain. No L1/L2 canonical docs modified. Ready for parent owner AG-DES-SW-DB-001 to absorb into mainline.",
+    "last_update": "2026-06-21T03:45:20Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DES-SW-DB-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過 (APPROVED with corrections)",
+      "C-1: §2.2 row 13 stream note 有事實錯誤 — stream route 在 v1.1 OpenAPI 已明確定義，非假設",
+      "C-2: §3.3 transition diagram 缺少 open→archived 箭頭 — design closure §6 明確列舉此 transition",
+      "C-3: §1.3 index 清單應標明「僅列 BFF read path indexes」，完整清單見 design closure §8",
+      "其餘內容（13 routes mapping、ETag contract、status filter、operator journey、dependency list）均通過核實"
+    ],
+    "review_file": "support/sidecars/AG-DES-SW-DB-001/AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T03:45:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-des-sw-db-001-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "de80c928eaddfde6f6e9e1150159d09bfa35bc9d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4181a9f35d29e01000335884974e5ab11b29c59d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF handoff packet complete (commit 6b0f5cbd). Covers: 13 unimplemented workshop BFF routes, status filter alignment gap (active→status_group), ETag concurrency contract, operator journey, and frontend checklist. Narrow docs/process review only — no L1/L2 files modified. Please verify route/table mapping against agora_v1_1.openapi.yaml and operator journey against the design closure write sequence.",
+      "status": "done",
+      "created_at": "2026-06-21T03:28:04Z",
+      "resolved_at": "2026-06-21T03:31:51Z"
+    },
+    {
+      "task_id": "AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved and returned to the owner for finalization. Three minor corrections requested (C-1 stream route note, C-2 open→archived transition, C-3 index list scope label); no L1/L2 changes needed, packet is fundamentally sound.",
+      "status": "done",
+      "created_at": "2026-06-21T03:31:51Z",
+      "resolved_at": "2026-06-21T03:45:21Z"
+    }
+  ],
+  "blockers": []
+}

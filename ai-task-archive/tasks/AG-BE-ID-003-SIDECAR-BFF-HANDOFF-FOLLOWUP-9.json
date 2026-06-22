@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+  "archived_at": "2026-06-21T01:00:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Done: support-only handoff packet reviewed and merged. Packet PR #1932 merged at 7169f6b1eafb52474188ae69a4fee8681b2fc6a3; owner closeout PR #1935 merged at 6a7b391f7fcea6273c8536f357b3b3d563dc86ed with green checks. Closeout commit aa03567634ad7407c63aeed29f153060cb73215f updated only the sidecar support packet; no canonical truth or runtime paths changed.",
+    "last_update": "2026-06-21T01:00:33Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "批准 sidecar handoff packet：scope 保持 support-only；packet commit 43bd6dab 只新增 support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md，PR #1932 已 merge at 7169f6b1eafb52474188ae69a4fee8681b2fc6a3 且 GitHub checks green；未變更 BFF/OpenAPI/Agora manifest/frontend mirror/runtime 路徑。復核 parent AG-BE-ID-003 仍 blocked on servant session type-contract decision，AG-FE-ID-001 仍依賴 AG-BE-ID-003，FE sidecar closeout 不代表 runtime readiness。驗證：git diff --check -- support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md；git show --name-status --oneline --no-renames 43bd6dab；git diff --name-only ccff7df1df4dec221de5eacf9264a5d16cbd0448..3a2caee4366eea1e5bc239ee860a9dc64bf69965 -- services/control-plane/openapi services/control-plane/bff services/control-plane/specs/agora docs/contracts/agora support/sidecars/AG-BE-ID-003 execute-plans/src/lib/bff-v1/agora；AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-ID-003；AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-ID-001；gh pr view 1932 --json state,mergeCommit,statusCheckRollup,url。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T01:00:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-9",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "git_clean_required": false,
+      "commit": "aa03567634ad7407c63aeed29f153060cb73215f",
+      "commit_subject": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "AG-BE-ID-003 sidecar BFF/frontend handoff support packet closeout note.",
+        "Not changing": "L1 canonical truth, OpenAPI, BFF runtime, route registries, governance policy, compatibility manifests, execute-plans source.",
+        "Composes with": "PR #1932 merge 7169f6b1eafb52474188ae69a4fee8681b2fc6a3 and parent AG-BE-ID-003 type-contract decision by Codex2/Claude.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+        "Reviewer": "Codex2",
+        "Verified": "git diff --check -- support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md; AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9; gh pr view 1932 --json number,state,headRefName,baseRefName,mergeCommit,url,statusCheckRollup; git merge-base --is-ancestor 7169f6b1eafb52474188ae69a4fee8681b2fc6a3 origin/dev; git show --stat --oneline --decorate --no-renames 43bd6dab"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6a7b391f7fcea6273c8536f357b3b3d563dc86ed",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Followup-9 support-only BFF/frontend handoff packet is ready for review at support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md. PR #1932 merged at 7169f6b1eafb52474188ae69a4fee8681b2fc6a3 with GitHub checks green. Delta since followup-8: no changes in checked BFF/OpenAPI/Agora spec/compatibility/AG-BE-ID-003 support paths; AG-BE-ID-003 remains blocked on the servant session type-contract decision; AG-FE-ID-001 remains dependent on AG-BE-ID-003 and should not treat FE sidecar closeout as runtime readiness. Verification: git diff --check -- support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md; gh pr view 1932 --json state,mergeCommit,statusCheckRollup.",
+      "status": "done",
+      "created_at": "2026-06-21T00:49:00Z",
+      "resolved_at": "2026-06-21T00:55:26Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2. Support-only packet boundary is acceptable; PR #1932 is merged at 7169f6b1eafb52474188ae69a4fee8681b2fc6a3 with green checks. Owner Codex must perform closeout finalization before done.",
+      "status": "done",
+      "created_at": "2026-06-21T00:55:26Z",
+      "resolved_at": "2026-06-21T01:00:34Z"
+    }
+  ],
+  "blockers": []
+}

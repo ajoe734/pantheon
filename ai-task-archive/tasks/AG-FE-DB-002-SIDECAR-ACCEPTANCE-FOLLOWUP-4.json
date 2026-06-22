@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+  "archived_at": "2026-06-20T20:58:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+    "title": "Prepare AG-FE-DB-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-FE-DB-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-DB-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed after PR #1903 merged to dev at 95f085da0ffaef2e45bdad331880f23538cc45a7; support-only packet approved by Codex, parent AG-FE-DB-002 remains blocked for Codex/Claude absorption.",
+    "last_update": "2026-06-20T20:58:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-DB-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/AG-FE-DB-002/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T20:58:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-db-002-sidecar-acceptance-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "538d981936b6516537080fbca25f88574af72255",
+      "commit_subject": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support packet and task-scoped brief closeout state.",
+        "Not changing": "AG-FE-DB-002 parent status, canonical truth, runtime, registry, governance, execute-plans, broker, or RuntimeBinding implementation.",
+        "Composes with": "parent AG-FE-DB-002 owner/reviewer blocker absorption path.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+        "Reviewer": "Codex",
+        "Verified": "AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4; git diff --check -- task files"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "95f085da0ffaef2e45bdad331880f23538cc45a7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only FOLLOWUP-4 packet committed at 92d168cf and PR #1900 opened with auto-merge. Please review parent blocked-status preservation, reviewed waiver evidence routing, current-dev compose/dependency map, DashboardGridEditor acceptance checklist, and support-only boundary; no canonical/runtime files changed.",
+      "status": "done",
+      "created_at": "2026-06-20T20:46:53Z",
+      "resolved_at": "2026-06-20T20:48:26Z"
+    },
+    {
+      "task_id": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: DB002 follow-up 4 preserves parent blocked status, routes reviewed waiver evidence, refreshes current-dev compose/dependency map, and keeps support-only boundaries without canonical/runtime changes.",
+      "status": "done",
+      "created_at": "2026-06-20T20:48:26Z",
+      "resolved_at": "2026-06-20T20:58:27Z"
+    }
+  ],
+  "blockers": []
+}

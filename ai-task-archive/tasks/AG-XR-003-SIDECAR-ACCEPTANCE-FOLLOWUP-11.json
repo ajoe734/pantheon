@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11",
+  "archived_at": "2026-06-20T23:04:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11",
+    "title": "Prepare AG-XR-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-XR-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-XR / Phase 0",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-001A"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: PR #1920 merged into dev at 2026-06-20T23:03:36Z. Task brief committed, dev merges kept branch up to date through multiple dev advances. Support packet (AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11.md) approved by reviewer Claude and durably merged. No canonical truth mutated; scope boundary preserved.",
+    "last_update": "2026-06-20T23:04:32Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T23:04:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-003-sidecar-acceptance-followup-11",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11",
+      "git_clean_required": false,
+      "commit": "c0af1ff82dbaf0c1e039fff2ced33304f06cc225",
+      "commit_subject": "Merge pull request #1920 from ajoe734/task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11": "followup-11 packet"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c0af1ff82dbaf0c1e039fff2ced33304f06cc225",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Follow-up 11 packet ready: support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11.md. origin/dev is now 3f3cf4eb. No AG-XR/Agora scope changes since followup-10 (f13a5b6c). Parent AG-XR-003 still blocked waiting for Claude2. PR #63 still open/unstable, same CI failure (run 27877483718). Local validation identical to followup-10. PR #1920 open with auto-merge. This sidecar is support material only.",
+      "status": "done",
+      "created_at": "2026-06-20T22:30:58Z",
+      "resolved_at": "2026-06-20T22:34:38Z"
+    },
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Reviewed followup-11 packet. Packet accurately documents current AG-XR-003 acceptance state: no AG-XR/Agora scope changes since followup-10 (f13a5b6c), PR #63 still open/unstable with same CI failure (run 27877483718), manifest stale (committed a6a9296... vs expected 0244eb11...), deployment-gate correctly fails closed on 6 errors. Support artifact only; no canonical truth mutated. Scope boundary maintained. Approved. Owner (Claude2) to finalize after PR #1920 merges into dev.",
+      "status": "done",
+      "created_at": "2026-06-20T22:34:38Z",
+      "resolved_at": "2026-06-20T23:04:34Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-06-20T21:07:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Followup 5 support packet finalized via PR #1904 merge 80f2832373aa390a952d61022b50933a473171ca; closeout artifacts record reviewer approval and freshness through db2254d3984b5e719dfc0d433048e74176bfa068; no canonical, runtime, manifest, governance, migration, or frontend source changes.",
+    "last_update": "2026-06-20T21:07:47Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過｜Followup-5 packet 僅新增 support packet/task brief，未修改 L1 canonical truth、OpenAPI、BFF runtime、capability manifest、registry、governance、DB migration 或 frontend source。",
+      "已對最新 origin/dev 81b17d678b4c029522a32eb26d9eb218a2350279 做 freshness sanity check；PR #1901 後只新增 AG-XR-003 sidecar support artifacts，未碰 AG-BE-ID-003 相關 BFF/OpenAPI/capability surfaces。",
+      "Parent blocker restatement 正確：ServantSessionCreateRequest 仍缺 public session_type/session kind contract，research_task mapping 仍需 parent reviewer decision；frontend/operator gates and parent absorption gates 可執行。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T21:07:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "dec5573a2bf5f55302d2eeb361242ed1003b0898",
+      "commit_subject": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5: fix dev sha",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief and AG-BE-ID-003 sidecar support packet closeout freshness metadata.",
+        "Not changing": "L1 canonical truth, OpenAPI, BFF runtime, capability manifest, registries, governance, database migrations, or execute-plans source.",
+        "Composes with": "PR #1904 closeout branch after merging latest origin/dev; newer dev changes are unrelated AG-BE-SW-001, AG-FE-ID-001, and AG-FE-DB-002 sidecar support artifacts.",
+        "Verified": "git diff --check -- .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_5.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md; git rev-parse db2254d3984b5e719dfc0d433048e74176bfa068; git diff --name-only 81b17d678b4c029522a32eb26d9eb218a2350279..origin/dev; git diff --stat 81b17d678b4c029522a32eb26d9eb218a2350279..origin/dev -- services/control-plane/openapi services/control-plane/bff services/control-plane/specs/agora docs/04/pantheon_agora_cross_repo_2026-06-20 scripts/dispatch_agora_cross_repo_2026-06-20.py support/sidecars/AG-BE-ID-003 .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_5.md",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+        "Reviewer": "Codex2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "80f2832373aa390a952d61022b50933a473171ca",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Followup-5 support-only packet is ready for review and merged through PR #1901 at 4a6a593d0edd33e6ac4d3b17e533ff047dd38530 (task commit 5feac63882551a884f7505e831fd227b36fd2d13). It refreshes the AG-BE-ID-003 servant-session session_type blocker against origin/dev 7e993734, records followup-4 as archived done, and updates frontend/operator gates without changing canonical truth or runtime code. Verification: private-index worker_commit dry run; git diff --cached --check; focused rg checks for servant session routes, capability manifest, and OPENCLAW_UPSTREAM_DEGRADED; GitHub checks passed.",
+      "status": "done",
+      "created_at": "2026-06-20T20:52:14Z",
+      "resolved_at": "2026-06-20T20:56:40Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Followup 5 support packet approved; support-only boundary, parent blocker restatement, frontend gates, and parent absorption gates are accurate. Freshness sanity checked against origin/dev 81b17d678b4c029522a32eb26d9eb218a2350279.",
+      "status": "done",
+      "created_at": "2026-06-20T20:56:40Z",
+      "resolved_at": "2026-06-20T21:07:48Z"
+    }
+  ],
+  "blockers": []
+}

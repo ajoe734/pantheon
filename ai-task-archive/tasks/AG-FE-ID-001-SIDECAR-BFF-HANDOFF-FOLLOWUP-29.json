@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29",
+  "archived_at": "2026-06-21T11:39:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete. Packet ff416b5f and review record b216e80c durable on dev via PRs #2019 and #2045. Worktree clean; no new commit needed—all task-owned changes already merged. Verification: 35 pytest passed (test_agora_router.py, test_persona_agent_sync.py, test_agora_identity_scope.py). Support material only; no canonical truth mutated. AG-BE-ID-003 advanced to todo at review time; servant-session routes still unimplemented. AG-FE-ID-001 parent remains todo.",
+    "last_update": "2026-06-21T11:39:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29-REVIEW.md",
+    "review_notes_zh": [
+      "審查通過；BFF handoff delta 正確；types.ts stale 新發現已記錄；AG-BE-ID-003 從 blocked 推進為 todo（servant session 實作尚未存在）；parent 吸收清單保持有效；packet 未修改 L1 canonical truth"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T11:39:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-29",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29",
+      "git_clean_required": false,
+      "commit": "074126908853f3efc653516bc8d824a26680df5e",
+      "commit_subject": "Merge origin/dev into task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29 to clear BEHIND state before auto-merge",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ccc70fa1af3777b37859ffab6f3f9ba7f44f2805",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF handoff packet prepared and committed (ff416b5f). Key delta since followup-28: strategy_workshop BFF additions (AG-BE-SW-001, v1.2 only), ops nl/ask grace tuning, execute-plans GATE-RBAC-NLASK-ALIGN (management-side only), and new finding that types.ts is stale per contract-drift-check. AG-BE-ID-003 still blocked; PR #63 still open with UNKNOWN merge state. 35 pytest passed; deployment gate fail-closed. Review support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29.md for accuracy of delta facts, BFF ledger, frontend surface state, and absorption checklist.",
+      "status": "done",
+      "created_at": "2026-06-21T08:22:39Z",
+      "resolved_at": "2026-06-21T08:28:22Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Packet approved (review record b216e80c). Delta facts accurate; BFF ledger and absorption checklist valid. State changes at review time noted: PR #63 back to UNSTABLE (CI re-eval, not a merge signal); AG-BE-ID-003 advanced from blocked to todo. Return to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T08:28:22Z",
+      "resolved_at": "2026-06-21T09:13:07Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Followup-29 BFF handoff packet and review record are committed and on dev (packet ff416b5f, review record b216e80c). PR #2019 merged. Requesting reviewer sign-off to complete formal task closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T09:47:58Z",
+      "resolved_at": "2026-06-21T09:50:14Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup-29 BFF handoff packet approved; delta characterisation, BFF ledger, frontend surface probe, and absorption checklist verified; returned to Claude2 for closeout",
+      "status": "done",
+      "created_at": "2026-06-21T09:50:14Z",
+      "resolved_at": "2026-06-21T11:37:30Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-29",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Restoring review_approved after accidental in_progress downgrade; prior Claude approval (b216e80c, review record on dev) is durable evidence.",
+      "status": "done",
+      "created_at": "2026-06-21T11:39:13Z",
+      "resolved_at": "2026-06-21T11:39:36Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DB-001",
+  "archived_at": "2026-06-20T17:00:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-DB-001",
+    "title": "WidgetRegistry/Renderer/ChartRenderer",
+    "summary_zh": "依 A3 catalog/schemas 實作 Agora frontend WidgetRegistry/WidgetRenderer/ChartSpecRenderer；首發只渲染 registry active widgets，ChartSpec 對齊 A3 grammar，禁止任意 code。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-DASH-001"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/widgets/registry.ts",
+      "execute-plans/src/agora/widgets/WidgetRenderer.tsx",
+      "execute-plans/src/agora/widgets/ChartSpecRenderer.tsx"
+    ],
+    "acceptance": [
+      "WidgetRegistry/Renderer 依 A3 registry;ChartSpec 渲染對齊 chart_spec.schema.json;非 registry widget 不渲染;無任意 code 注入;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "PR #1854 merged into dev at 34ec8a6a44dbfca43a3af3b0d15df4e065705fd4; focused widget renderer tests passed locally: npm test -- --run src/agora/widgets/registry.test.ts src/agora/widgets/WidgetRenderer.test.tsx src/agora/widgets/ChartSpecRenderer.test.tsx.",
+    "last_update": "2026-06-20T17:00:16Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "review_notes_zh": [
+      "審查通過",
+      "非阻塞觀察：validateChartSpecGrammar 在 spec_version 不符時返回 UNAPPROVED_CHART_KIND 而非 INVALID_SPEC_VERSION，語意偏差但功能正確；BuiltinWidgetRenderer 直接存取 widget.interactions.length 若型別允許 undefined 可能拋出，但 14 個測試通過且驗證已在上游攔截。"
+    ],
+    "review_file": ".orchestrator/task-reviews/ag_fe_db_001_review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T17:00:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-db-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-DB-001",
+      "git_clean_required": false,
+      "commit": "6062cb2cc850f032de9b890a47db55a60a6033cf",
+      "commit_subject": "AG-FE-DB-001: add Agora widget renderers",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "execute-plans Agora widget registry/renderers, v1.1 generated Agora type mirror, and focused widget tests.",
+        "Not changing": "BFF route helpers, dashboard live fetch/write flows, grid layout editor, revision drawer, recipe rollback/proposal flows, or backend persistence/checksum behavior.",
+        "Composes with": "AG-BE-DB-001 backend dashboard persistence/validator and downstream AG-FE-DB-002/003/004 UI slices.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-DB-001",
+        "Reviewer": "Claude2",
+        "Verified": "npx vitest run src/agora/widgets; node execute-plans/scripts/generate-agora-types.mjs --check --pantheon-root .; npm run contract:drift -- --pantheon-root ..; python3 scripts/agora_schema_bundle.py --verify; npm run build:agora; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 2,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-DB-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0176f9a4b70d7def6f8ab78f1d232323a11365c6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-DB-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-20T10:20:13Z",
+      "resolved_at": "2026-06-20T10:20:28Z"
+    },
+    {
+      "task_id": "AG-FE-DB-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation merged via PR #1854 (head 6062cb2cc850f032de9b890a47db55a60a6033cf, merge 34ec8a6a44dbfca43a3af3b0d15df4e065705fd4). Evidence: widgets Vitest 14 passed, contract drift passed, v1 schema bundle verify passed, build:agora passed. Please review registry/renderer acceptance and approve for owner done closeout.",
+      "status": "done",
+      "created_at": "2026-06-20T16:42:03Z",
+      "resolved_at": "2026-06-20T16:47:13Z"
+    },
+    {
+      "task_id": "AG-FE-DB-001",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved: registry/renderer acceptance passed. Active-only rendering, ChartSpec v1 grammar, blocked interactions, unsafe code prevention, and contract hash pinning all verified. Return to owner Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-20T16:47:13Z",
+      "resolved_at": "2026-06-20T17:00:18Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "AG-FE-DB-001",
+      "owner": "Codex",
+      "waiting_for": "Claude2",
+      "message": "STOP per task brief. Need Claude2/reviewer clarification before implementation: (1) brief cites SD §9.8 and UI §§9/10/11/12/23, but docs/04/pantheon_agora_cross_repo_2026-06-20/SD_2026-06-20.md only has §§0-8 plus §17/§22.1; no matching IA/layout/visual spec found. (2) canonical services/control-plane/specs/agora/widget_spec.schema.json is the frozen AG-XR-001 old schema and there is no canonical chart_spec.schema.json or widget_registry.v1.json there; execute-plans generated snapshot still uses old widget_spec checksum, so A3 frontend/backend registry checksum consistency is not reproducible. (3) target files execute-plans/src/agora/widgets/registry.ts, WidgetRenderer.tsx, ChartSpecRenderer.tsx and widgets directory do not exist in this baseline; confirm whether AG-FE-DB-001 should create them and how to wire them without inventing UI/route/layout. (4) package.json has neither echarts nor recharts; confirm approved chart library/dependency and whether AG-BE-DB-001 must land first.",
+      "status": "resolved",
+      "created_at": "2026-06-20T10:23:14Z",
+      "resolved_at": "2026-06-20T15:03:41Z",
+      "resolution_ref": "contract-closure-2026-06-20"
+    }
+  ]
+}

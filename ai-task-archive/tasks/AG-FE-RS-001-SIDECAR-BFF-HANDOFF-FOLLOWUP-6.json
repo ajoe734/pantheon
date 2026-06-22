@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-06-22T06:17:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare AG-FE-RS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete: packet PR #2211 and closeout PR #2212 merged; support-only AG-FE-RS-001 handoff delta is archived for parent owner absorption with active stop lines preserved.",
+    "last_update": "2026-06-22T06:17:17Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-RS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up packet approved: AG-FE-RS-001 packet chain precedence, parent-owner intake gate, route-backed first slice, active stop lines, and no-order guardrails are documented; no canonical truth, runtime, schema, or frontend files changed."
+    ],
+    "review_file": "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T06:17:17Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-rs-001-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "8cccc49670b723f8e1056699d788fc52c243e26d",
+      "commit_subject": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "followup-6 sidecar support packet closeout metadata.",
+        "Not changing": "L1 canonical truth, source-of-truth contracts, BFF runtime, route",
+        "Composes with": "packet PR #2211, Claude review approval, and parent AG-FE-RS-001",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+        "Reviewer": "Claude",
+        "Verified": "AI_NAME=Codex python3 scripts/ai_status.py show AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6; git diff --check -- support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3061422750d3f582edbdf2e49e3202e77bd1230f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only handoff packet follow-up 6 is committed and PR #2211 is open with auto-merge enabled. Packet adds parent-owner intake gate, packet-chain precedence, route-backed first-slice guidance, active stop lines, and no-order guardrails; no canonical truth, runtime, schema, or frontend files changed. Validation: git diff --check; json.tool on v4 research plan/run/workshop card/capability manifest; 27 BFF pytest regressions passed.",
+      "status": "done",
+      "created_at": "2026-06-22T06:10:43Z",
+      "resolved_at": "2026-06-22T06:12:06Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-FE-RS-001 BFF/frontend handoff intake delta approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T06:12:06Z",
+      "resolved_at": "2026-06-22T06:17:18Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+  "archived_at": "2026-06-22T06:31:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+    "title": "Prepare AG-FE-RS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed after reviewer approval and merged PR #2213; support packet remains support-only, no canonical/runtime/frontend files changed; validation: AI_NAME=Codex ai_status show, git merged-gate, and artifact review.",
+    "last_update": "2026-06-22T06:31:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-RS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up packet approved: BFF/card-projection handoff queue, route-backed parent absorption boundaries, active stop lines, and no-order guardrails are documented for AG-FE-RS-001; no canonical truth, runtime, schema, or frontend files changed."
+    ],
+    "review_file": "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T06:31:56Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-rs-001-sidecar-bff-handoff-followup-7",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "git_clean_required": false,
+      "commit": "f89763d930c5203e9b43052ff147337204160322",
+      "commit_subject": "Merge pull request #2213 from ajoe734/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7": "add gap queue"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f89763d930c5203e9b43052ff147337204160322",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #2213 merged into dev at f89763d930c5203e9b43052ff147337204160322; support artifact commit 6cdcb0c1409b748e36b6f8e810da70bcc5004c78. Focused validation passed: git diff --check, v4 schema JSON parses, and 27 BFF route/stream pytest checks. Ready for Claude review/approval.",
+      "status": "done",
+      "created_at": "2026-06-22T06:29:04Z",
+      "resolved_at": "2026-06-22T06:30:18Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-FE-RS-001 BFF/frontend handoff follow-up approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T06:30:18Z",
+      "resolved_at": "2026-06-22T06:31:58Z"
+    }
+  ],
+  "blockers": []
+}

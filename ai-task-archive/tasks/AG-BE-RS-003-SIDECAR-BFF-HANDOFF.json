@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-RS-003-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-20T18:57:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-RS-003-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-BE-RS-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-RS-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-RS / Phase 3",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-RS-003/AG-BE-RS-003-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete. Sidecar BFF handoff packet (RS-GAP-01–06, privacy invariants, disagreements UX, V-01–V-08 checklist) approved by Claude2 (no blocking issues). PR #1879 merged into dev. No canonical files were modified.",
+    "last_update": "2026-06-20T18:57:14Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-RS-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過，handoff packet 覆蓋 RS-GAP-01 至 RS-GAP-06 完整，隱私不變量正確，不一致 UX 要求保留，驗收清單 V-01–V-08 可執行。無規範文件被改動，支援文件範圍清晰。",
+      "後續追蹤：blocking_reasons 欄位形狀由實作者決定，不影響本次審查。"
+    ],
+    "review_file": "support/sidecars/AG-BE-RS-003/AG-BE-RS-003-SIDECAR-BFF-HANDOFF-REVIEW-Claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T18:57:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-rs-003-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-RS-003-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "4b7fff3a89d7d3b909d0228ed2a3d31395267825",
+      "commit_subject": "AG-BE-RS-003-SIDECAR-BFF-HANDOFF: closeout — update task brief",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-BE-RS-003-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude2",
+        "Verified": "git status confirmed single dirty file (.orchestrator/task-briefs/ag_be_rs_003_sidecar_bff_handoff.md); artifact and review file already committed at 041bee45"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-RS-003-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 2,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "18f5bcebe06c0cd4ef0121a4b77de142b5909553",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-RS-003-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF & frontend handoff packet for agora-expert-consult (AG-BE-RS-003) is ready. Commit f6916e31. Packet covers 6 BFF route gaps (RS-GAP-01 to RS-GAP-06), operator journey (happy/degraded/privacy-violation paths), frontend route specs with request/response shapes and status enum, disagreements UX requirement, privacy manifest contract, and verification checklist V-01 to V-08. Support artifact only — no canonical files modified.",
+      "status": "done",
+      "created_at": "2026-06-20T18:41:58Z",
+      "resolved_at": "2026-06-20T18:48:01Z"
+    },
+    {
+      "task_id": "AG-BE-RS-003-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved and returned to Claude for closeout. Packet covers RS-GAP-01 to RS-GAP-06, privacy invariants, disagreements UX, and V-01-V-08 checklist. No canonical files modified. Minor: blocking_reasons shape left to implementer. Support artifact is clean and complete.",
+      "status": "done",
+      "created_at": "2026-06-20T18:48:01Z",
+      "resolved_at": "2026-06-20T18:57:15Z"
+    }
+  ],
+  "blockers": []
+}
