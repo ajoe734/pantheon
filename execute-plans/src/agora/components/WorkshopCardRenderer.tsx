@@ -2,6 +2,8 @@ import React from "react";
 import type { WorkshopCard } from "@/lib/bff-v1/agora/workshops";
 import { ResearchPlanCard } from "./ResearchPlanCard";
 import { ConsultResultCard } from "./ConsultResultCard";
+import { ResearchRunCard } from "./ResearchRunCard";
+import { BacktestResultCard } from "./BacktestResultCard";
 import { VersionCompareCard } from "./VersionCompareCard";
 import type {
   PayloadUserStrategyDescription,
@@ -9,8 +11,6 @@ import type {
   PayloadCompletenessUpdate,
   PayloadMissingDefinition,
   PayloadNextQuestion,
-  PayloadResearchProgress,
-  PayloadResearchResult,
   PayloadVersionPatchProposal,
   PayloadReadinessGate,
   GateState,
@@ -293,121 +293,6 @@ function NextQuestionCard({ card, onContinueDiscussion }: WorkshopCardRendererPr
   );
 }
 
-function ResearchProgressCard({ card, onContinueDiscussion }: WorkshopCardRendererProps): JSX.Element {
-  const p = card.payload as unknown as PayloadResearchProgress;
-  const progressPct = Math.min(100, Math.max(0, p.progress));
-  const statusColor: Record<string, string> = {
-    queued: "#6b7280",
-    dispatching: "#2563eb",
-    running: "#2563eb",
-    succeeded: "#16a34a",
-    failed: "#dc2626",
-    cancelled: "#9ca3af",
-    timed_out: "#d97706",
-  };
-  return (
-    <CardShell card={card} testId={`workshop-card-research-prog-${card.card_id}`} onContinueDiscussion={onContinueDiscussion}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-        <span style={{ color: "#6b7280" }}>{p.backend}</span>
-        <span style={{ fontWeight: 600, color: statusColor[p.execution_status] ?? "#6b7280" }}>
-          {p.execution_status}
-        </span>
-      </div>
-      <div
-        style={{
-          height: 6,
-          background: "#e5e7eb",
-          borderRadius: 3,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          data-testid={`workshop-card-research-prog-${card.card_id}-bar`}
-          style={{
-            height: "100%",
-            width: `${progressPct}%`,
-            background: p.execution_status === "succeeded" ? "#16a34a" : "#2563eb",
-            borderRadius: 3,
-            transition: "width 0.3s",
-          }}
-        />
-      </div>
-      {p.latest_progress_message && (
-        <div style={{ fontSize: 11, color: "#6b7280" }}>{p.latest_progress_message}</div>
-      )}
-    </CardShell>
-  );
-}
-
-function ResearchResultCard({ card, onContinueDiscussion }: WorkshopCardRendererProps): JSX.Element {
-  const p = card.payload as unknown as PayloadResearchResult;
-  const outcomeColor: Record<string, string> = {
-    pending: "#6b7280",
-    pass: "#16a34a",
-    fail: "#dc2626",
-    inconclusive: "#ca8a04",
-  };
-  return (
-    <CardShell card={card} testId={`workshop-card-research-result-${card.card_id}`} onContinueDiscussion={onContinueDiscussion}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <span
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            color: outcomeColor[p.outcome] ?? "#6b7280",
-            padding: "1px 8px",
-            borderRadius: 4,
-            border: `1px solid ${outcomeColor[p.outcome] ?? "#e5e7eb"}`,
-          }}
-        >
-          {p.outcome}
-        </span>
-        {p.backend && (
-          <span style={{ fontSize: 11, color: "#9ca3af" }}>
-            {p.backend.effective} ({p.backend.mode})
-          </span>
-        )}
-      </div>
-      {p.metrics && p.metrics.length > 0 && (
-        <div data-testid={`workshop-card-research-result-${card.card_id}-metrics`}>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>Metrics</div>
-          {p.metrics.map((m, i) => (
-            <div
-              key={i}
-              style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "1px 0" }}
-            >
-              <span style={{ color: "#6b7280" }}>{m.name}</span>
-              <span style={{ fontWeight: 500, color: m.gate_result === "pass" ? "#16a34a" : m.gate_result === "fail" ? "#dc2626" : "#6b7280" }}>
-                {m.value}{m.unit ? ` ${m.unit}` : ""} · {m.gate_result}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {p.findings && p.findings.length > 0 && (
-        <div data-testid={`workshop-card-research-result-${card.card_id}-findings`}>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>Findings</div>
-          {p.findings.map((f) => (
-            <div
-              key={f.finding_id}
-              style={{
-                fontSize: 12,
-                padding: "3px 6px",
-                borderLeft: `2px solid ${f.severity === "critical" || f.severity === "high" ? "#dc2626" : f.severity === "warning" ? "#d97706" : "#e5e7eb"}`,
-                marginBottom: 2,
-                color: "#374151",
-              }}
-            >
-              <span style={{ fontWeight: 500 }}>{f.severity}: </span>
-              {f.summary}
-            </div>
-          ))}
-        </div>
-      )}
-    </CardShell>
-  );
-}
-
 function VersionPatchProposalCard({ card, onContinueDiscussion }: WorkshopCardRendererProps): JSX.Element {
   const p = card.payload as unknown as PayloadVersionPatchProposal;
   const statusColor: Record<string, string> = {
@@ -622,9 +507,9 @@ export function WorkshopCardRenderer({ card, onContinueDiscussion }: WorkshopCar
     case "research_plan_proposal":
       return <ResearchPlanCard card={card} onContinueDiscussion={onContinueDiscussion} />;
     case "research_progress":
-      return <ResearchProgressCard card={card} onContinueDiscussion={onContinueDiscussion} />;
+      return <ResearchRunCard card={card} onContinueDiscussion={onContinueDiscussion} />;
     case "research_result":
-      return <ResearchResultCard card={card} onContinueDiscussion={onContinueDiscussion} />;
+      return <BacktestResultCard card={card} onContinueDiscussion={onContinueDiscussion} />;
     case "consult_result":
       return <ConsultResultCard card={card} onContinueDiscussion={onContinueDiscussion} />;
     case "version_patch_proposal":

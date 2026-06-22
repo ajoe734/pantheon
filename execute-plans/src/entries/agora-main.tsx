@@ -2,6 +2,7 @@ import { StrictMode, useState, useCallback, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { TradingDeskLayout, type AgoraTab } from "@/agora/TradingDeskLayout";
 import { StrategyWorkshopPage } from "@/agora/pages/strategy-workshop/StrategyWorkshopPage";
+import { TradingRoomPage } from "@/agora/pages/trading-room/TradingRoomPage";
 
 // Legacy routes redirect to /agora/trading-room (canonical IA per §10)
 const LEGACY_PATH_PREFIXES = [
@@ -29,6 +30,11 @@ function workshopIdFromPath(pathname: string): string | undefined {
   return m ? decodeURIComponent(m[1]) : undefined;
 }
 
+function strategyIdFromPath(pathname: string): string | undefined {
+  const m = pathname.match(/^\/agora\/trading-room\/([^/?#]+)/);
+  return m ? decodeURIComponent(m[1]) : undefined;
+}
+
 // Apply initial redirect before React renders so the shell starts on the right route
 if (typeof window !== "undefined" && isLegacyOrBareAgora(window.location.pathname)) {
   window.history.replaceState(null, "", "/agora/trading-room");
@@ -47,6 +53,14 @@ function AgoraApp() {
 
   const activeTab = derivedTab(pathname);
   const workshopId = workshopIdFromPath(pathname);
+  const [strategyId, setStrategyId] = useState<string | undefined>(() =>
+    strategyIdFromPath(typeof window !== "undefined" ? window.location.pathname : ""),
+  );
+
+  // Sync strategyId from URL on popstate (back/forward navigation)
+  useEffect(() => {
+    setStrategyId(strategyIdFromPath(pathname));
+  }, [pathname]);
 
   const handleTabChange = useCallback((tab: AgoraTab) => {
     const tabPaths: Record<AgoraTab, string> = {
@@ -58,11 +72,27 @@ function AgoraApp() {
     setPathname(tabPaths[tab]);
   }, []);
 
+  const handleStrategySelect = useCallback((id: string | undefined) => {
+    const newPath = id
+      ? `/agora/trading-room/${encodeURIComponent(id)}`
+      : "/agora/trading-room";
+    window.history.pushState(null, "", newPath);
+    setPathname(newPath);
+    setStrategyId(id);
+  }, []);
+
   let pageContent: React.ReactNode;
   if (activeTab === "strategy-workshop") {
     pageContent = <StrategyWorkshopPage workshopId={workshopId} />;
+  } else if (activeTab === "trading-room") {
+    pageContent = (
+      <TradingRoomPage
+        strategyId={strategyId}
+        onStrategySelect={handleStrategySelect}
+      />
+    );
   } else {
-    // Placeholder for tabs implemented in subsequent tasks (AG-FE-TR-001, AG-FE-PERF-001)
+    // Placeholder for tabs implemented in subsequent tasks (AG-FE-PERF-001)
     pageContent = (
       <div
         className="flex h-full items-center justify-center"
