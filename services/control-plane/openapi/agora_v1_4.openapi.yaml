@@ -1,0 +1,628 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.4 Extension
+  version: "1.4.0"
+  description: |
+    Additive extension over the Agora v1.3 contract (agora_v1_3.openapi.yaml).
+    It preserves the frozen v1/v1.1/v1.2 bundle and the v1.3 extension. This
+    file adds v1.4 candidate pool capabilities:
+
+    v1.4 changes (§17.3 additive candidate pool routes):
+    - CandidatePool CRUD: create, list, and retrieve pool snapshots.
+    - Score runs: trigger and retrieve CandidateScoreResult projections driven
+      by the versioned CandidateScoringRecipe (A2 design closure). Score output
+      always includes rawScore, penaltyScore, evidenceConfidence, and
+      effectiveScore together; the BFF must not surface only effectiveScore.
+    - score_components are aligned to the recipe components; rejected candidates
+      are preserved as negative examples for Shadow/preference learning.
+    - Pool member CRUD: list and retrieve individual candidate projections.
+    - Review: trader submits review decisions (approve_for_monitoring,
+      send_to_shadow, needs_more_research, park, reject).
+    - Discussion threads: pool-level and member-level collaborative review.
+    - Monitoring watchlist: add, retrieve, and remove candidates from monitoring.
+
+    Governance contract:
+    - Agora never places broker orders, never binds capital, never writes
+      RuntimeBinding. This surface is operator-scoped review-only.
+    - no_order_route_proof = "candidate_pool_bff_request_only_no_order_route"
+
+    All v1.4 schemas live in services/control-plane/specs/agora/v5/.
+    Candidate pool base schema: services/control-plane/specs/agora/candidate_pool.schema.json
+    Scoring recipe design: docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/
+
+    v1/v1.1/v1.2/v1.3 files remain immutable. This file together with
+    agora_v1.openapi.yaml, agora_v1_1.openapi.yaml, agora_v1_2.openapi.yaml,
+    and agora_v1_3.openapi.yaml form the additive v1.4 bundle described in
+    bundle_index.v1_4.json.
+  contact:
+    name: Pantheon Platform
+  x-extends-contract: "services/control-plane/openapi/agora_v1_3.openapi.yaml"
+
+servers:
+  - url: "{bff_base}"
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    PoolId:
+      name: pool_id
+      in: path
+      required: true
+      schema: { type: string }
+    ArtifactId:
+      name: artifact_id
+      in: path
+      required: true
+      schema: { type: string }
+    DiscussionId:
+      name: discussion_id
+      in: path
+      required: true
+      schema: { type: string }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      schema: { type: string }
+
+  schemas:
+    # ── Base pool schema (reused, not extended) ──────────────────────────────
+    CandidatePool:
+      $ref: "../specs/agora/candidate_pool.schema.json"
+
+    # ── v1.4 new schemas ─────────────────────────────────────────────────────
+    CandidateScoreResult:
+      $ref: "../specs/agora/v5/candidate_score_result.schema.json"
+    CandidateMemberReview:
+      $ref: "../specs/agora/v5/candidate_member_review.schema.json"
+    CandidateDiscussion:
+      $ref: "../specs/agora/v5/candidate_discussion.schema.json"
+    CandidateMonitoringStatus:
+      $ref: "../specs/agora/v5/candidate_monitoring_status.schema.json"
+
+    # ── Shared envelopes (mirrors v1.3; redeclared for standalone use) ────────
+    CommandResponse:
+      type: object
+      required: [status, data, meta]
+      properties:
+        status:
+          type: string
+          enum: [accepted, queued, completed]
+        data: {}
+        meta:
+          type: object
+          additionalProperties: true
+
+    DetailEnvelope:
+      type: object
+      required: [object_ref, status, allowedActions, meta, links, data]
+      properties:
+        object_ref:
+          type: object
+          required: [type, id]
+          properties:
+            type: { type: string }
+            id: { type: string }
+        status: { type: string }
+        lifecycle_state: { type: string }
+        allowedActions:
+          type: object
+          additionalProperties: { type: boolean }
+        meta:
+          type: object
+          additionalProperties: true
+        links:
+          type: object
+          additionalProperties: true
+        data: {}
+      additionalProperties: false
+
+    ListEnvelope:
+      type: object
+      required: [items, page_info, meta]
+      properties:
+        items:
+          type: array
+          items: {}
+        page_info:
+          type: object
+          required: [next_page_token, page_size, has_more]
+          properties:
+            next_page_token:
+              type: [string, "null"]
+            page_size:
+              type: integer
+            has_more:
+              type: boolean
+            total:
+              type: integer
+        meta:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+
+    # ── Pool creation request ─────────────────────────────────────────────────
+    CreatePoolRequest:
+      type: object
+      required: [operator_id]
+      properties:
+        operator_id:
+          type: string
+          minLength: 1
+        filter:
+          type: object
+          description: Filter criteria matching CandidatePool.filter schema.
+          properties:
+            asset_classes:
+              type: array
+              items: { type: string }
+            strategy_families:
+              type: array
+              items: { type: string }
+            lifecycle_states:
+              type: array
+              items:
+                type: string
+                enum: [candidate, review, approved]
+            persona_ids:
+              type: array
+              items: { type: string }
+          additionalProperties: false
+        recipe_id:
+          type: string
+          description: >
+            Override the default scoring recipe. If omitted the current active
+            recipe for the strategy family is used.
+      additionalProperties: false
+
+    # ── Score run trigger ─────────────────────────────────────────────────────
+    ScoreRunRequest:
+      type: object
+      properties:
+        recipe_id:
+          type: string
+          description: Override recipe. If omitted, use pool's recipe_id.
+        force_rescore:
+          type: boolean
+          default: false
+          description: Re-run even if a current score run exists for this pool.
+      additionalProperties: false
+
+paths:
+  # ── Candidate Pools ─────────────────────────────────────────────────────────
+
+  /bff/agora/candidate-pools:
+    get:
+      operationId: listCandidatePools
+      summary: List CandidatePool snapshots for the authenticated operator
+      parameters:
+        - name: lifecycle_state
+          in: query
+          schema:
+            type: string
+            enum: [candidate, review, approved]
+        - name: strategy_family
+          in: query
+          schema: { type: string }
+        - name: page_token
+          in: query
+          schema: { type: string }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        "200":
+          description: Pool snapshot list (items are CandidatePool objects)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+    post:
+      operationId: createCandidatePool
+      summary: >
+        Create a new CandidatePool snapshot. The BFF computes the pool from
+        the registry projection filtered by the supplied criteria. Agora never
+        places orders or binds capital; this is a read-projection snapshot.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePoolRequest" }
+      responses:
+        "201":
+          description: Pool snapshot created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "422":
+          description: Invalid filter or operator scope
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/candidate-pools/{pool_id}:
+    get:
+      operationId: getCandidatePool
+      summary: Get CandidatePool snapshot detail
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+      responses:
+        "200":
+          description: Pool detail (data is CandidatePool)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "404":
+          description: Pool not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  # ── Candidate Score Runs ────────────────────────────────────────────────────
+
+  /bff/agora/candidate-pools/{pool_id}/score:
+    get:
+      operationId: getCandidatePoolScore
+      summary: >
+        Get current score results for a pool. Returns CandidateScoreResult
+        projections for all members. All four score fields (rawScore,
+        penaltyScore, evidenceConfidence, effectiveScore) are always present;
+        the BFF must not suppress any of them.
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+      responses:
+        "200":
+          description: Score results list (items are CandidateScoreResult objects)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+        "202":
+          description: Score run in progress; no results yet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404":
+          description: Pool not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+    post:
+      operationId: triggerCandidatePoolScore
+      summary: >
+        Trigger a scoring run for the pool using the active CandidateScoringRecipe.
+        score_components in the result are aligned to recipe components; rejected
+        candidates are preserved as negative examples for Shadow/preference learning.
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScoreRunRequest" }
+      responses:
+        "202":
+          description: Score run queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "409":
+          description: Score run already active for this pool
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  # ── Pool Members ────────────────────────────────────────────────────────────
+
+  /bff/agora/candidate-pools/{pool_id}/members:
+    get:
+      operationId: listCandidatePoolMembers
+      summary: >
+        List candidate members of a pool with their BFF projection. Items include
+        lifecycle_state, producing_persona_id, and current score band when a score
+        run has completed.
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - name: lifecycle_state
+          in: query
+          schema:
+            type: string
+            enum: [candidate, review, approved, rejected]
+        - name: band
+          in: query
+          schema:
+            type: string
+            enum: [priority_review, discuss, needs_research, park, suppressed]
+        - name: page_token
+          in: query
+          schema: { type: string }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        "200":
+          description: Pool member list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+        "404":
+          description: Pool not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}:
+    get:
+      operationId: getCandidatePoolMember
+      summary: Get detail projection for one candidate member including its current score result
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - $ref: "#/components/parameters/ArtifactId"
+      responses:
+        "200":
+          description: >
+            Member detail (data includes candidate entry from CandidatePool.candidates
+            and current CandidateScoreResult when available)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "404":
+          description: Pool or member not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  # ── Member Review ───────────────────────────────────────────────────────────
+
+  /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/review:
+    post:
+      operationId: reviewCandidatePoolMember
+      summary: >
+        Submit a trader review decision for a candidate. Decisions include
+        approve_for_monitoring, send_to_shadow, needs_more_research, park, or
+        reject. Rejected candidates are preserved as negative examples.
+        Agora does not place broker orders; approve_for_monitoring only adds the
+        candidate to the monitoring watchlist.
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - $ref: "#/components/parameters/ArtifactId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CandidateMemberReview" }
+      responses:
+        "200":
+          description: Review decision recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "409":
+          description: Candidate not in a reviewable state or ETag mismatch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  # ── Pool Discussions ────────────────────────────────────────────────────────
+
+  /bff/agora/candidate-pools/{pool_id}/discussions:
+    get:
+      operationId: listCandidatePoolDiscussions
+      summary: List pool-level discussion threads
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - name: kind
+          in: query
+          schema:
+            type: string
+            enum: [comment, research_task, score_question, risk_flag, approval_note]
+        - name: resolved
+          in: query
+          schema: { type: boolean }
+        - name: page_token
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pool discussion list (items are CandidateDiscussion objects)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+        "404":
+          description: Pool not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+    post:
+      operationId: createCandidatePoolDiscussion
+      summary: Create a pool-level discussion entry
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CandidateDiscussion" }
+      responses:
+        "201":
+          description: Discussion entry created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+
+  # ── Member Discussions ──────────────────────────────────────────────────────
+
+  /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/discussions:
+    get:
+      operationId: listCandidateMemberDiscussions
+      summary: List discussion threads for one candidate member
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - $ref: "#/components/parameters/ArtifactId"
+        - name: resolved
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Member discussion list (items are CandidateDiscussion objects)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+        "404":
+          description: Pool or member not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+    post:
+      operationId: createCandidateMemberDiscussion
+      summary: Create a candidate-level discussion entry
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - $ref: "#/components/parameters/ArtifactId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CandidateDiscussion" }
+      responses:
+        "201":
+          description: Discussion entry created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+
+  # ── Pool Monitoring ─────────────────────────────────────────────────────────
+
+  /bff/agora/candidate-pools/{pool_id}/monitoring:
+    get:
+      operationId: listCandidatePoolMonitoring
+      summary: >
+        List monitoring watchlist entries for candidates in this pool.
+        Read-only aggregate; Agora does not route orders or bind capital.
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - name: monitoring_state
+          in: query
+          schema:
+            type: string
+            enum: [active, paused, graduated, removed]
+        - name: page_token
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Monitoring list (items are CandidateMonitoringStatus objects)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+        "404":
+          description: Pool not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  # ── Member Monitoring ───────────────────────────────────────────────────────
+
+  /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor:
+    post:
+      operationId: addCandidateToMonitoring
+      summary: >
+        Add a candidate to the monitoring watchlist after approve_for_monitoring
+        review decision. Agora does not place broker orders; monitoring is
+        operator-scoped read/alert surface only.
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - $ref: "#/components/parameters/ArtifactId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CandidateMonitoringStatus" }
+      responses:
+        "201":
+          description: Monitoring entry created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "409":
+          description: Candidate already on watchlist or not in approved_for_monitoring state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+    delete:
+      operationId: removeCandidateFromMonitoring
+      summary: Remove a candidate from the monitoring watchlist
+      parameters:
+        - $ref: "#/components/parameters/PoolId"
+        - $ref: "#/components/parameters/ArtifactId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "200":
+          description: Monitoring entry removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404":
+          description: Monitoring entry not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
