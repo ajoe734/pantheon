@@ -4,6 +4,7 @@ import { ResearchPlanCard } from "./ResearchPlanCard";
 import { ConsultResultCard } from "./ConsultResultCard";
 import { ResearchRunCard } from "./ResearchRunCard";
 import { BacktestResultCard } from "./BacktestResultCard";
+import { VersionCompareCard } from "./VersionCompareCard";
 import type {
   PayloadUserStrategyDescription,
   PayloadServantReconstruction,
@@ -11,10 +12,11 @@ import type {
   PayloadMissingDefinition,
   PayloadNextQuestion,
   PayloadVersionPatchProposal,
-  PayloadVersionCompare,
   PayloadReadinessGate,
   GateState,
   GateName,
+  GateRequirement,
+  RequirementState,
 } from "./workshop-card-types";
 
 export interface WorkshopCardRendererProps {
@@ -339,49 +341,6 @@ function VersionPatchProposalCard({ card, onContinueDiscussion }: WorkshopCardRe
   );
 }
 
-function VersionCompareCard({ card, onContinueDiscussion }: WorkshopCardRendererProps): JSX.Element {
-  const p = card.payload as unknown as PayloadVersionCompare;
-  return (
-    <CardShell card={card} testId={`workshop-card-compare-${card.card_id}`} onContinueDiscussion={onContinueDiscussion}>
-      <div style={{ fontSize: 12, color: "#6b7280" }}>
-        Base: {p.base_version.label} vs {p.candidate_versions.map((v) => v.label).join(", ")}
-      </div>
-      {p.field_diffs.length > 0 && (
-        <div data-testid={`workshop-card-compare-${card.card_id}-diffs`}>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>
-            {p.field_diffs.length} field change{p.field_diffs.length !== 1 ? "s" : ""}
-          </div>
-          {p.field_diffs.slice(0, 5).map((d, i) => (
-            <div key={i} style={{ fontSize: 12, fontFamily: "monospace", color: "#374151", padding: "1px 0" }}>
-              <span
-                style={{
-                  color:
-                    d.change_kind === "added"
-                      ? "#16a34a"
-                      : d.change_kind === "removed"
-                      ? "#dc2626"
-                      : "#374151",
-                }}
-              >
-                {d.change_kind === "added" ? "+" : d.change_kind === "removed" ? "-" : "~"}{" "}
-              </span>
-              {d.path}
-            </div>
-          ))}
-          {p.field_diffs.length > 5 && (
-            <div style={{ fontSize: 11, color: "#9ca3af" }}>+{p.field_diffs.length - 5} more</div>
-          )}
-        </div>
-      )}
-      {p.recommendation?.rationale && (
-        <div style={{ fontSize: 12, color: "#374151", fontStyle: "italic" }}>
-          Recommendation: {p.recommendation.rationale}
-        </div>
-      )}
-    </CardShell>
-  );
-}
-
 const GATE_LABELS: Record<GateName, string> = {
   preliminary_research: "Preliminary Research",
   full_validation: "Full Validation",
@@ -396,6 +355,14 @@ const GATE_STATE_COLOR: Record<GateState, string> = {
   stale: "#d97706",
 };
 
+const REQUIREMENT_STATE_COLOR: Record<RequirementState, string> = {
+  missing: "#dc2626",
+  partial: "#d97706",
+  satisfied: "#16a34a",
+  waived: "#6b7280",
+  stale: "#d97706",
+};
+
 function ReadinessGateCard({ card, onContinueDiscussion }: WorkshopCardRendererProps): JSX.Element {
   const p = card.payload as unknown as PayloadReadinessGate;
   return (
@@ -404,32 +371,101 @@ function ReadinessGateCard({ card, onContinueDiscussion }: WorkshopCardRendererP
         {p.gates.map((gate) => {
           const color = GATE_STATE_COLOR[gate.state] ?? "#6b7280";
           const label = GATE_LABELS[gate.gate as GateName] ?? gate.gate;
+          const missingItems = gate.requirements.filter(
+            (r: GateRequirement) => r.state === "missing" || r.state === "partial"
+          );
           return (
             <div
               key={gate.gate}
+              data-testid={`workshop-card-readiness-${card.card_id}-gate-${gate.gate}`}
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "4px 0",
+                padding: "6px 0",
                 borderBottom: "1px solid #f3f4f6",
-                fontSize: 12,
               }}
             >
-              <span>{label}</span>
-              <span style={{ fontWeight: 600, color }}>{gate.state}</span>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ fontWeight: 500 }}>{label}</span>
+                <span style={{ fontWeight: 600, color, fontSize: 11 }}>{gate.state}</span>
+              </div>
+              {missingItems.length > 0 && (
+                <div
+                  data-testid={`workshop-card-readiness-${card.card_id}-gate-${gate.gate}-missing`}
+                  style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}
+                >
+                  {missingItems.map((req: GateRequirement) => (
+                    <div
+                      key={req.requirement_id}
+                      style={{
+                        fontSize: 11,
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 4,
+                        paddingLeft: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: REQUIREMENT_STATE_COLOR[req.state] ?? "#6b7280",
+                          fontWeight: 600,
+                          flexShrink: 0,
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {req.hardness === "hard" ? "✗" : "○"}
+                      </span>
+                      <span style={{ color: "#374151", lineHeight: 1.4 }}>
+                        {req.title}
+                        {req.summary && (
+                          <span style={{ color: "#9ca3af", marginLeft: 4 }}>— {req.summary}</span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {gate.conditional_assumptions && gate.conditional_assumptions.length > 0 && (
+                <div
+                  style={{
+                    marginTop: 3,
+                    fontSize: 11,
+                    color: "#ca8a04",
+                    paddingLeft: 8,
+                    fontStyle: "italic",
+                  }}
+                >
+                  Assumptions: {gate.conditional_assumptions.join("; ")}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
       {p.hard_blockers && p.hard_blockers.length > 0 && (
-        <div style={{ fontSize: 12, color: "#dc2626" }}>
+        <div
+          data-testid={`workshop-card-readiness-${card.card_id}-hard-blockers`}
+          style={{ fontSize: 12, color: "#dc2626" }}
+        >
           <span style={{ fontWeight: 600 }}>Blockers: </span>
           {p.hard_blockers.join("; ")}
         </div>
       )}
+      {p.staleness_reasons && p.staleness_reasons.length > 0 && (
+        <div style={{ fontSize: 11, color: "#d97706" }}>
+          Stale: {p.staleness_reasons.join("; ")}
+        </div>
+      )}
       {p.highest_ready_gate && (
-        <div style={{ fontSize: 12, color: "#6b7280" }}>
+        <div
+          data-testid={`workshop-card-readiness-${card.card_id}-highest-gate`}
+          style={{ fontSize: 12, color: "#6b7280" }}
+        >
           Highest ready: {GATE_LABELS[p.highest_ready_gate] ?? p.highest_ready_gate}
         </div>
       )}

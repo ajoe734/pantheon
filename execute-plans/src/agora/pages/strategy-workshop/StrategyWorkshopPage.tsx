@@ -101,9 +101,10 @@ function WorkshopListView(): JSX.Element {
 
 interface SessionViewProps {
   workshopId: string;
+  onAddToTradingRoom?: () => void;
 }
 
-function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
+function WorkshopSessionView({ workshopId, onAddToTradingRoom }: SessionViewProps): JSX.Element {
   const [workshop, setWorkshop] = useState<StrategyWorkshop | null>(null);
   const [completeness, setCompleteness] = useState<StrategyCompleteness | null>(null);
   const [readiness, setReadiness] = useState<StrategyReadinessAssessment | null>(null);
@@ -239,17 +240,78 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
         </div>
       </div>
 
-      {/* Right: completeness rail */}
+      {/* Right: completeness rail + trading room CTA */}
       <div
         data-testid="completeness-rail"
-        style={{ width: 240, borderLeft: "1px solid #e2e8f0", overflow: "hidden" }}
+        style={{
+          width: 240,
+          borderLeft: "1px solid #e2e8f0",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
       >
-        <StrategyCompletenessRail
-          completeness={completeness}
-          readiness={readiness}
-          nextQuestion={nextQuestion}
-        />
-        {/* Legacy test-id shim for existing tests that check completeness-grade */}
+        <div style={{ flex: 1, overflow: "auto" }}>
+          <StrategyCompletenessRail
+            completeness={completeness}
+            readiness={readiness}
+            nextQuestion={nextQuestion}
+          />
+        </div>
+
+        {/* Add to Trading Room — enabled only when trading_room gate ready AND handler provided */}
+        <div
+          style={{
+            padding: "10px 12px",
+            borderTop: "1px solid #e2e8f0",
+            flexShrink: 0,
+          }}
+        >
+          {(() => {
+            const tradingRoomReady = readiness?.highest_ready_gate === "trading_room";
+            const isActive = tradingRoomReady && !!onAddToTradingRoom;
+            const disabledReason = readiness
+              ? tradingRoomReady
+                ? null
+                : `Trading Room gate not yet ready (highest: ${readiness.highest_ready_gate ?? "none"})`
+              : "Readiness not yet assessed";
+            return (
+              <>
+                <button
+                  data-testid="add-to-trading-room-btn"
+                  disabled={!isActive}
+                  aria-disabled={!isActive}
+                  title={disabledReason ?? undefined}
+                  onClick={isActive ? onAddToTradingRoom : undefined}
+                  style={{
+                    width: "100%",
+                    padding: "7px 12px",
+                    borderRadius: 6,
+                    border: "none",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: isActive ? "pointer" : "not-allowed",
+                    background: isActive ? "#1d4ed8" : "#e5e7eb",
+                    color: isActive ? "#fff" : "#9ca3af",
+                    transition: "background 0.15s",
+                  }}
+                >
+                  Add to Trading Room
+                </button>
+                {disabledReason && (
+                  <div
+                    data-testid="add-to-trading-room-reason"
+                    style={{ fontSize: 10, color: "#9ca3af", marginTop: 4, textAlign: "center" }}
+                  >
+                    {disabledReason}
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
+
+        {/* Legacy test-id shims for existing tests */}
         {completeness && (
           <div data-testid="completeness-grade" style={{ display: "none" }}>
             {completeness.overall_grade}
@@ -271,11 +333,12 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
 
 interface StrategyWorkshopPageProps {
   workshopId?: string;
+  onAddToTradingRoom?: () => void;
 }
 
-export function StrategyWorkshopPage({ workshopId }: StrategyWorkshopPageProps): JSX.Element {
+export function StrategyWorkshopPage({ workshopId, onAddToTradingRoom }: StrategyWorkshopPageProps): JSX.Element {
   if (workshopId) {
-    return <WorkshopSessionView workshopId={workshopId} />;
+    return <WorkshopSessionView workshopId={workshopId} onAddToTradingRoom={onAddToTradingRoom} />;
   }
   return <WorkshopListView />;
 }
