@@ -28,6 +28,10 @@ import {
   type CandidateReviewDecision,
 } from "@/lib/bff-v1/agora/candidatePool";
 
+function newUUID(): string {
+  return crypto.randomUUID();
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const BAND_STYLE: Record<string, { bg: string; text: string; border: string }> = {
@@ -352,6 +356,8 @@ interface CandidateDecisionRowProps {
   artifactId: string;
   candidateTitle: string;
   lifecycleState: string;
+  /** ETag from the most recent listCandidatePoolMembers response — forwarded as If-Match. */
+  poolEtag: string | null;
   onDecisionRecorded?: (artifactId: string, decision: CandidateReviewDecision) => void;
 }
 
@@ -360,6 +366,7 @@ function CandidateDecisionRow({
   artifactId,
   candidateTitle,
   lifecycleState,
+  poolEtag,
   onDecisionRecorded,
 }: CandidateDecisionRowProps): JSX.Element {
   const [callState, setCallState] = useState<DecisionCallState>("idle");
@@ -382,11 +389,19 @@ function CandidateDecisionRow({
     setCallState("loading");
     setCallError(null);
     try {
-      await reviewCandidateMember(poolId, artifactId, {
-        decision: pendingDecision,
-        rationale: rationale.trim() || undefined,
-        reviewed_by: "operator",
-      });
+      await reviewCandidateMember(
+        poolId,
+        artifactId,
+        {
+          decision: pendingDecision,
+          rationale: rationale.trim() || undefined,
+          reviewed_by: "operator",
+        },
+        {
+          ifMatch: poolEtag ?? undefined,
+          idempotencyKey: newUUID(),
+        },
+      );
       setConfirmedDecision(pendingDecision);
       setCallState("success");
       setPendingDecision(null);
@@ -546,6 +561,7 @@ export function CandidateReviewDrawer({
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [scores, setScores] = useState<CandidateScoreResult[]>([]);
   const [members, setMembers] = useState<CandidatePoolMember[]>([]);
+  const [poolEtag, setPoolEtag] = useState<string | null>(null);
   const [decompositionTarget, setDecompositionTarget] = useState<string | null>(null);
 
   useEffect(() => {
@@ -555,13 +571,15 @@ export function CandidateReviewDrawer({
     setLoadState("loading");
     setScores([]);
     setMembers([]);
+    setPoolEtag(null);
     setDecompositionTarget(null);
 
     Promise.all([getCandidatePoolScore(poolId), listCandidatePoolMembers(poolId)])
-      .then(([scoreResults, memberList]) => {
+      .then(([scoreResults, membersResult]) => {
         if (cancelled) return;
         setScores(scoreResults);
-        setMembers(memberList);
+        setMembers(membersResult.items);
+        setPoolEtag(membersResult.etag);
         setLoadState("loaded");
       })
       .catch(() => {
@@ -918,6 +936,7 @@ export function CandidateReviewDrawer({
                           artifactId={score.candidate_id}
                           candidateTitle={title}
                           lifecycleState={lifecycle}
+                          poolEtag={poolEtag}
                           onDecisionRecorded={onDecisionRecorded}
                         />
                       </td>

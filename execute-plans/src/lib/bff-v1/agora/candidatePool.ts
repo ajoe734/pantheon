@@ -2,6 +2,11 @@
  * BFF client for the Candidate Pool surface (v1.4, agora.research.v1).
  * All data reads go through these functions; pages must not call fetch() directly.
  * No order routing, no capital binding — read/review/score only.
+ *
+ * Mutating methods (reviewCandidateMember, triggerCandidatePoolScore) require:
+ *   If-Match       — ETag captured from the preceding GET response
+ *   Idempotency-Key — client-generated UUID per submission
+ * AG-BE-CP-001 rejects writes that omit these headers.
  */
 
 // ── Types (snake_case matches BFF JSON response) ──────────────────────────────
@@ -140,8 +145,7 @@ export async function getCandidatePoolScore(
  */
 export async function triggerCandidatePoolScore(
   poolId: string,
-  etag?: string,
-  idempotencyKey?: string,
+  options?: { ifMatch?: string; idempotencyKey?: string },
   baseUrl?: string,
 ): Promise<void> {
   const base = resolvedBase(baseUrl);
@@ -150,8 +154,8 @@ export async function triggerCandidatePoolScore(
     Accept: "application/json",
     "Content-Type": "application/json",
   };
-  if (etag) headers["If-Match"] = etag;
-  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+  if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
+  if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
   const res = await fetch(url, {
     method: "POST",
     credentials: "include",
@@ -167,11 +171,17 @@ export async function triggerCandidatePoolScore(
   }
 }
 
-/** List candidate pool members (metadata, lifecycle state). */
+export interface CandidatePoolMembersResult {
+  items: CandidatePoolMember[];
+  /** ETag from the response — forward as If-Match in subsequent writes. */
+  etag: string | null;
+}
+
+/** List candidate pool members (metadata, lifecycle state). Returns items + ETag for If-Match. */
 export async function listCandidatePoolMembers(
   poolId: string,
   baseUrl?: string,
-): Promise<CandidatePoolMember[]> {
+): Promise<CandidatePoolMembersResult> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/candidate-pools/${encodeURIComponent(poolId)}/members`;
   const res = await fetch(url, {
@@ -187,7 +197,10 @@ export async function listCandidatePoolMembers(
     throw new Error(String(message));
   }
   const body = await parseJson(res);
-  return extractItems<CandidatePoolMember>(body);
+  return {
+    items: extractItems<CandidatePoolMember>(body),
+    etag: res.headers.get("ETag"),
+  };
 }
 
 /**
@@ -195,13 +208,15 @@ export async function listCandidatePoolMembers(
  * Decisions: approve_for_monitoring, send_to_shadow, needs_more_research, park, reject.
  * park and reject require a non-empty rationale.
  * Rejected candidates are retained as negative/preference examples; they are not deleted.
+ *
+ * options.ifMatch     — ETag from listCandidatePoolMembers; required by AG-BE-CP-001.
+ * options.idempotencyKey — client-generated UUID; required by AG-BE-CP-001.
  */
 export async function reviewCandidateMember(
   poolId: string,
   artifactId: string,
   body: CandidateReviewBody,
-  etag?: string,
-  idempotencyKey?: string,
+  options?: { ifMatch?: string; idempotencyKey?: string },
   baseUrl?: string,
 ): Promise<Record<string, unknown>> {
   const base = resolvedBase(baseUrl);
@@ -210,8 +225,8 @@ export async function reviewCandidateMember(
     Accept: "application/json",
     "Content-Type": "application/json",
   };
-  if (etag) headers["If-Match"] = etag;
-  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+  if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
+  if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
   const res = await fetch(url, {
     method: "POST",
     credentials: "include",

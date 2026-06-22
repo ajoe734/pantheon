@@ -110,7 +110,7 @@ describe("CandidateReviewDrawer — closed state", () => {
 
 describe("CandidateReviewDrawer — loading state", () => {
   it("shows loading indicator while fetching", () => {
-    // Never resolve
+    // Never resolve — listCandidatePoolMembers now returns { items, etag }
     mockGetScore.mockReturnValue(new Promise(() => undefined));
     mockListMembers.mockReturnValue(new Promise(() => undefined));
     render(
@@ -123,7 +123,7 @@ describe("CandidateReviewDrawer — loading state", () => {
 describe("CandidateReviewDrawer — error state", () => {
   it("shows error message when fetch fails", async () => {
     mockGetScore.mockRejectedValueOnce(new Error("BFF unavailable"));
-    mockListMembers.mockResolvedValueOnce([]);
+    mockListMembers.mockResolvedValueOnce({ items: [], etag: null });
     render(
       <CandidateReviewDrawer poolId="pool-alpha" open={true} onClose={() => undefined} />,
     );
@@ -136,7 +136,7 @@ describe("CandidateReviewDrawer — error state", () => {
 describe("CandidateReviewDrawer — empty state", () => {
   it("shows empty message when score list is empty (pool not yet scored)", async () => {
     mockGetScore.mockResolvedValueOnce([]);
-    mockListMembers.mockResolvedValueOnce([baseMember]);
+    mockListMembers.mockResolvedValueOnce({ items: [baseMember], etag: null });
     render(
       <CandidateReviewDrawer poolId="pool-alpha" open={true} onClose={() => undefined} />,
     );
@@ -149,7 +149,7 @@ describe("CandidateReviewDrawer — empty state", () => {
 describe("CandidateReviewDrawer — loaded state", () => {
   beforeEach(async () => {
     mockGetScore.mockResolvedValue([baseScore]);
-    mockListMembers.mockResolvedValue([baseMember]);
+    mockListMembers.mockResolvedValue({ items: [baseMember], etag: '"pool-etag-v1"' });
   });
 
   function renderOpen() {
@@ -317,7 +317,7 @@ describe("CandidateReviewDrawer — loaded state", () => {
 describe("CandidateReviewDrawer — decision flow", () => {
   beforeEach(async () => {
     mockGetScore.mockResolvedValue([baseScore]);
-    mockListMembers.mockResolvedValue([baseMember]);
+    mockListMembers.mockResolvedValue({ items: [baseMember], etag: '"pool-etag-v1"' });
   });
 
   it("selecting approve_for_monitoring and confirming calls reviewCandidateMember", async () => {
@@ -351,6 +351,10 @@ describe("CandidateReviewDrawer — decision flow", () => {
       "pool-alpha",
       "cand-001",
       expect.objectContaining({ decision: "approve_for_monitoring" }),
+      expect.objectContaining({
+        ifMatch: '"pool-etag-v1"',
+        idempotencyKey: expect.any(String),
+      }),
     );
     expect(onDecisionRecorded).toHaveBeenCalledWith("cand-001", "approve_for_monitoring");
   });
@@ -382,6 +386,10 @@ describe("CandidateReviewDrawer — decision flow", () => {
         "pool-alpha",
         "cand-001",
         expect.objectContaining({ decision: "park", rationale: "Weak liquidity profile" }),
+        expect.objectContaining({
+          ifMatch: '"pool-etag-v1"',
+          idempotencyKey: expect.any(String),
+        }),
       );
     });
   });
@@ -449,7 +457,7 @@ describe("CandidateReviewDrawer — score decomposition missing_policy", () => {
       title: "Capped Candidate",
     };
     mockGetScore.mockResolvedValueOnce([scoreWithCap]);
-    mockListMembers.mockResolvedValueOnce([memberWithCap]);
+    mockListMembers.mockResolvedValueOnce({ items: [memberWithCap], etag: null });
     render(
       <CandidateReviewDrawer poolId="pool-alpha" open={true} onClose={() => undefined} />,
     );

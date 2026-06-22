@@ -17,6 +17,10 @@ import {
   type DecisionChoice,
 } from "@/lib/bff-v1/agora/tradingRoom";
 
+function newUUID(): string {
+  return crypto.randomUUID();
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const EVENT_KIND_LABEL: Record<string, string> = {
@@ -88,12 +92,18 @@ type DecisionCallState = "idle" | "loading" | "success" | "error";
 
 export interface TradeDecisionCardProps {
   event: TradingDecisionEvent;
+  /**
+   * ETag from the GET that loaded this event — forwarded as If-Match to decideOnEvent.
+   * Required by AG-BE-TR-002; the route rejects writes that omit If-Match.
+   */
+  etag?: string;
   /** Called after a successful trader decision. */
   onDecisionRecorded?: (choice: DecisionChoice, eventId: string) => void;
 }
 
 export function TradeDecisionCard({
   event,
+  etag,
   onDecisionRecorded,
 }: TradeDecisionCardProps): JSX.Element {
   const [callState, setCallState] = useState<DecisionCallState>("idle");
@@ -117,7 +127,15 @@ export function TradeDecisionCard({
     setCallState("loading");
     setCallError(null);
     try {
-      await decideOnEvent(event.decision_event_id, { decision: choice });
+      await decideOnEvent(
+        event.decision_event_id,
+        { decision: choice },
+        {
+          ifMatch: etag,
+          idempotencyKey: newUUID(),
+          requestId: newUUID(),
+        },
+      );
       setDecidedChoice(choice);
       setCallState("success");
       onDecisionRecorded?.(choice, event.decision_event_id);

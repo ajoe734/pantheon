@@ -2,6 +2,12 @@
  * BFF client for the Trading Room surface (v1.3, live strict).
  * All data reads go through these functions; pages must not call fetch() directly.
  * No order routing, no capital binding — read/observe/intent-request only.
+ *
+ * Mutating method (decideOnEvent) requires:
+ *   If-Match        — ETag from the preceding GET response
+ *   Idempotency-Key — client-generated UUID per submission
+ *   X-Request-Id    — client-generated UUID per request
+ * AG-BE-TR-002 rejects writes that omit these headers.
  */
 
 // ── Types derived from v4 schemas ──────────────────────────────────────────────
@@ -266,11 +272,17 @@ export interface ListDecisionEventsParams {
   state?: string;
 }
 
-/** List Trading Room decision events. Filterable by kind and state. */
+export interface DecisionEventsResult {
+  items: TradingDecisionEvent[];
+  /** ETag from the response — forward as If-Match in subsequent writes. */
+  etag: string | null;
+}
+
+/** List Trading Room decision events. Filterable by kind and state. Returns items + ETag for If-Match. */
 export async function listDecisionEvents(
   params?: ListDecisionEventsParams,
   baseUrl?: string,
-): Promise<TradingDecisionEvent[]> {
+): Promise<DecisionEventsResult> {
   const base = resolvedBase(baseUrl);
   const qs = new URLSearchParams();
   if (params?.event_kind) qs.set("event_kind", params.event_kind);
@@ -288,7 +300,10 @@ export async function listDecisionEvents(
     throw new Error(String(message));
   }
   const body = await parseJson(res);
-  return extractDecisionEvents(body);
+  return {
+    items: extractDecisionEvents(body),
+    etag: res.headers.get("ETag"),
+  };
 }
 
 /** Get a single decision event by ID. */
@@ -316,12 +331,15 @@ export async function getDecisionEvent(
 /**
  * Record a trader decision on a decision event.
  * "approve" may create a TradingIntent (request-only; no order route; no capital binding).
+ *
+ * options.ifMatch       — ETag from listDecisionEvents or getDecisionEvent; required by AG-BE-TR-002.
+ * options.idempotencyKey — client-generated UUID per submission; required by AG-BE-TR-002.
+ * options.requestId      — client-generated UUID per request; required by AG-BE-TR-002.
  */
 export async function decideOnEvent(
   decisionEventId: string,
   body: DecisionBody,
-  etag?: string,
-  idempotencyKey?: string,
+  options?: { ifMatch?: string; idempotencyKey?: string; requestId?: string },
   baseUrl?: string,
 ): Promise<Record<string, unknown>> {
   const base = resolvedBase(baseUrl);
@@ -330,8 +348,9 @@ export async function decideOnEvent(
     Accept: "application/json",
     "Content-Type": "application/json",
   };
-  if (etag) headers["If-Match"] = etag;
-  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+  if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
+  if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
+  if (options?.requestId) headers["X-Request-Id"] = options.requestId;
   const res = await fetch(url, {
     method: "POST",
     credentials: "include",

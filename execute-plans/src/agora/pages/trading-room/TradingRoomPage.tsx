@@ -8,6 +8,10 @@ import {
   type TradingDecisionEvent,
   type DecisionChoice,
 } from "@/lib/bff-v1/agora/tradingRoom";
+
+function newUUID(): string {
+  return crypto.randomUUID();
+}
 import { getDashboardRecipeById } from "@/lib/bff-v1/agora/dashboard";
 import type { DashboardRecipeV2, WidgetSpecV2 } from "@/lib/bff-v1/agora/types";
 import { DashboardGridEditor } from "@/agora/dashboard/DashboardGridEditor";
@@ -180,7 +184,11 @@ function DecisionEventDetailPanel({ event }: DecisionEventDetailPanelProps): JSX
     setCallState("loading");
     setCallError(null);
     try {
-      await decideOnEvent(event.decision_event_id, { decision: choice });
+      await decideOnEvent(
+        event.decision_event_id,
+        { decision: choice },
+        { idempotencyKey: newUUID(), requestId: newUUID() },
+      );
       setDecidedChoice(choice);
       setCallState("success");
     } catch (err) {
@@ -779,9 +787,9 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
     setEventsLoading(true);
 
     listDecisionEvents()
-      .then((evs) => {
+      .then(({ items }) => {
         if (cancelled) return;
-        setEvents(evs);
+        setEvents(items);
         setEventsLoading(false);
       })
       .catch(() => {

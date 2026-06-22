@@ -139,7 +139,10 @@ afterEach(cleanup);
 describe("TradingRoomPage", () => {
   beforeEach(() => {
     vi.mocked(tradingRoomModule.getTradingRoom).mockResolvedValue(MOCK_AGGREGATE);
-    vi.mocked(tradingRoomModule.listDecisionEvents).mockResolvedValue([MOCK_DECISION_EVENT]);
+    vi.mocked(tradingRoomModule.listDecisionEvents).mockResolvedValue({
+      items: [MOCK_DECISION_EVENT],
+      etag: null,
+    });
     vi.mocked(dashboardModule.getDashboardRecipeById).mockResolvedValue(MOCK_RECIPE);
     vi.mocked(tradingRoomModule.decideOnEvent).mockResolvedValue({});
   });
@@ -150,7 +153,9 @@ describe("TradingRoomPage", () => {
 
   it("shows loading state before data resolves", () => {
     vi.mocked(tradingRoomModule.getTradingRoom).mockReturnValue(new Promise(() => {}));
-    vi.mocked(tradingRoomModule.listDecisionEvents).mockReturnValue(new Promise(() => {}));
+    vi.mocked(tradingRoomModule.listDecisionEvents).mockReturnValue(
+      new Promise<{ items: typeof MOCK_DECISION_EVENT[], etag: null }>(() => {}),
+    );
     render(<TradingRoomPage />);
     expect(screen.getByTestId("trading-room-loading")).toBeDefined();
   });
@@ -201,7 +206,9 @@ describe("TradingRoomPage", () => {
   });
 
   it("shows loading state for event queue while events are pending", async () => {
-    vi.mocked(tradingRoomModule.listDecisionEvents).mockReturnValue(new Promise(() => {}));
+    vi.mocked(tradingRoomModule.listDecisionEvents).mockReturnValue(
+      new Promise<{ items: typeof MOCK_DECISION_EVENT[], etag: null }>(() => {}),
+    );
     render(<TradingRoomPage />);
     await screen.findByTestId("trading-room-page");
     expect(screen.getByTestId("event-queue-loading")).toBeDefined();
@@ -225,10 +232,10 @@ describe("TradingRoomPage", () => {
       decision_event_id: "evt-002",
       strategy_id: "strat-002",
     };
-    vi.mocked(tradingRoomModule.listDecisionEvents).mockResolvedValue([
-      MOCK_DECISION_EVENT,
-      otherEvent,
-    ]);
+    vi.mocked(tradingRoomModule.listDecisionEvents).mockResolvedValue({
+      items: [MOCK_DECISION_EVENT, otherEvent],
+      etag: null,
+    });
     render(<TradingRoomPage strategyId="strat-001" />);
     await screen.findByTestId("strategy-workspace-strat-001");
     expect(screen.getByTestId("event-row-evt-001")).toBeDefined();
@@ -405,7 +412,7 @@ describe("TradingRoomPage", () => {
     expect(screen.getByTestId("decide-modify-evt-001")).toBeDefined();
   });
 
-  it("calls decideOnEvent when trader clicks approve", async () => {
+  it("calls decideOnEvent with idempotencyKey and requestId when trader clicks approve", async () => {
     render(<TradingRoomPage />);
     await screen.findByTestId("event-row-evt-001");
     fireEvent.click(screen.getByTestId("event-row-evt-001"));
@@ -414,6 +421,10 @@ describe("TradingRoomPage", () => {
       expect(tradingRoomModule.decideOnEvent).toHaveBeenCalledWith(
         "evt-001",
         { decision: "approve" },
+        expect.objectContaining({
+          idempotencyKey: expect.any(String),
+          requestId: expect.any(String),
+        }),
       ),
     );
   });

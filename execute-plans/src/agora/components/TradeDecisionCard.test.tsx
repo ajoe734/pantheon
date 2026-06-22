@@ -228,18 +228,32 @@ describe("TradeDecisionCard", () => {
   it("calls decideOnEvent and shows success state on approve", async () => {
     mockDecideOnEvent.mockResolvedValueOnce({});
     const onDecisionRecorded = vi.fn();
-    render(<TradeDecisionCard event={baseEvent} onDecisionRecorded={onDecisionRecorded} />);
+    render(
+      <TradeDecisionCard
+        event={baseEvent}
+        etag='"evt-etag-v1"'
+        onDecisionRecorded={onDecisionRecorded}
+      />,
+    );
     fireEvent.click(screen.getByTestId("trade-decision-card-decide-approve-evt-001"));
     await waitFor(() => {
       expect(screen.getByTestId("trade-decision-card-confirmed-evt-001")).toBeDefined();
     });
-    expect(mockDecideOnEvent).toHaveBeenCalledWith("evt-001", { decision: "approve" });
+    expect(mockDecideOnEvent).toHaveBeenCalledWith(
+      "evt-001",
+      { decision: "approve" },
+      expect.objectContaining({
+        ifMatch: '"evt-etag-v1"',
+        idempotencyKey: expect.any(String),
+        requestId: expect.any(String),
+      }),
+    );
     expect(onDecisionRecorded).toHaveBeenCalledWith("approve", "evt-001");
   });
 
   it("shows error state when decideOnEvent rejects", async () => {
     mockDecideOnEvent.mockRejectedValueOnce(new Error("Network error"));
-    render(<TradeDecisionCard event={baseEvent} />);
+    render(<TradeDecisionCard event={baseEvent} etag='"evt-etag-v1"' />);
     fireEvent.click(screen.getByTestId("trade-decision-card-decide-reject-evt-001"));
     await waitFor(() => {
       expect(screen.getByTestId("trade-decision-card-error-evt-001")).toBeDefined();
