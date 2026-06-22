@@ -8,6 +8,10 @@ import {
   type TradingDecisionEvent,
   type DecisionChoice,
 } from "@/lib/bff-v1/agora/tradingRoom";
+
+function newUUID(): string {
+  return crypto.randomUUID();
+}
 import { getDashboardRecipeById } from "@/lib/bff-v1/agora/dashboard";
 import type { DashboardRecipeV2, WidgetSpecV2 } from "@/lib/bff-v1/agora/types";
 import { DashboardGridEditor } from "@/agora/dashboard/DashboardGridEditor";
@@ -164,9 +168,11 @@ type DecisionCallState = "idle" | "loading" | "success" | "error";
 
 interface DecisionEventDetailPanelProps {
   event: TradingDecisionEvent;
+  /** ETag from the listDecisionEvents response — forwarded as If-Match to decideOnEvent. */
+  etag?: string | null;
 }
 
-function DecisionEventDetailPanel({ event }: DecisionEventDetailPanelProps): JSX.Element {
+function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps): JSX.Element {
   const [callState, setCallState] = useState<DecisionCallState>("idle");
   const [callError, setCallError] = useState<string | null>(null);
   const [decidedChoice, setDecidedChoice] = useState<DecisionChoice | null>(null);
@@ -180,7 +186,11 @@ function DecisionEventDetailPanel({ event }: DecisionEventDetailPanelProps): JSX
     setCallState("loading");
     setCallError(null);
     try {
-      await decideOnEvent(event.decision_event_id, { decision: choice });
+      await decideOnEvent(
+        event.decision_event_id,
+        { decision: choice },
+        { ifMatch: etag ?? undefined, idempotencyKey: newUUID(), requestId: newUUID() },
+      );
       setDecidedChoice(choice);
       setCallState("success");
     } catch (err) {
@@ -383,9 +393,11 @@ const STATE_LABEL: Record<string, string> = {
 interface TradingEventQueueProps {
   events: TradingDecisionEvent[];
   loading: boolean;
+  /** ETag from listDecisionEvents — forwarded to each DecisionEventDetailPanel as If-Match. */
+  eventsEtag?: string | null;
 }
 
-function TradingEventQueue({ events, loading }: TradingEventQueueProps): JSX.Element {
+function TradingEventQueue({ events, loading, eventsEtag }: TradingEventQueueProps): JSX.Element {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   function toggleExpand(id: string) {
@@ -444,7 +456,7 @@ function TradingEventQueue({ events, loading }: TradingEventQueueProps): JSX.Ele
                   </td>
                 </tr>
                 {expandedId === ev.decision_event_id && (
-                  <DecisionEventDetailPanel event={ev} />
+                  <DecisionEventDetailPanel event={ev} etag={eventsEtag} />
                 )}
               </React.Fragment>
             ))}
@@ -547,6 +559,7 @@ interface AggregateViewProps {
   aggregate: TradingRoomAggregate;
   events: TradingDecisionEvent[];
   eventsLoading: boolean;
+  eventsEtag: string | null;
   onStrategySelect: (strategyId: string) => void;
 }
 
@@ -554,6 +567,7 @@ function AggregateView({
   aggregate,
   events,
   eventsLoading,
+  eventsEtag,
   onStrategySelect,
 }: AggregateViewProps): JSX.Element {
   return (
@@ -570,7 +584,7 @@ function AggregateView({
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <StrategyList strategies={aggregate.strategies} onSelect={onStrategySelect} />
-          <TradingEventQueue events={events} loading={eventsLoading} />
+          <TradingEventQueue events={events} loading={eventsLoading} eventsEtag={eventsEtag} />
         </div>
         <PositionActionQueue positionSummaries={aggregate.position_summaries ?? []} />
       </div>
@@ -651,6 +665,7 @@ interface StrategyWorkspaceViewProps {
   aggregate: TradingRoomAggregate;
   events: TradingDecisionEvent[];
   eventsLoading: boolean;
+  eventsEtag: string | null;
 }
 
 function StrategyWorkspaceView({
@@ -659,6 +674,7 @@ function StrategyWorkspaceView({
   aggregate,
   events,
   eventsLoading,
+  eventsEtag,
 }: StrategyWorkspaceViewProps): JSX.Element {
   const filteredEvents = events.filter((ev) => ev.strategy_id === strategyId);
 
@@ -732,7 +748,7 @@ function StrategyWorkspaceView({
             </div>
           )}
 
-          <TradingEventQueue events={filteredEvents} loading={eventsLoading} />
+          <TradingEventQueue events={filteredEvents} loading={eventsLoading} eventsEtag={eventsEtag} />
         </div>
         <PositionActionQueue positionSummaries={aggregate.position_summaries ?? []} />
       </div>
@@ -754,6 +770,7 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
   const [aggregate, setAggregate] = useState<TradingRoomAggregate | null>(null);
   const [events, setEvents] = useState<TradingDecisionEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsEtag, setEventsEtag] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -779,9 +796,10 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
     setEventsLoading(true);
 
     listDecisionEvents()
-      .then((evs) => {
+      .then(({ items, etag }) => {
         if (cancelled) return;
-        setEvents(evs);
+        setEvents(items);
+        setEventsEtag(etag);
         setEventsLoading(false);
       })
       .catch(() => {
@@ -841,12 +859,14 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
           aggregate={aggregate}
           events={events}
           eventsLoading={eventsLoading}
+          eventsEtag={eventsEtag}
         />
       ) : (
         <AggregateView
           aggregate={aggregate}
           events={events}
           eventsLoading={eventsLoading}
+          eventsEtag={eventsEtag}
           onStrategySelect={(id) => handleStrategySelect(id)}
         />
       )}
