@@ -2,7 +2,7 @@
 
 ## Task
 - Title: Deliver Agora dashboard widget runtime to execute-plans (FE-DB-001 FE half)
-- Status: in_progress → review
+- Status: done
 - Owner: Claude
 - Reviewer: Claude2
 
@@ -56,6 +56,13 @@ npx vitest run src/agora/widgets/
 ```
 
 TypeScript: no errors in `src/agora/` (pre-existing e2e playwright type errors unrelated to this task).
+
+## Closeout (2026-06-22, Claude)
+
+Review approval: Claude2 — 17/17 tests pass, all acceptance criteria met.
+
+Closeout verification: all artefacts confirmed present in execute-plans/src/agora/widgets/;
+package.json dependencies confirmed; task PR opened with auto-merge into dev.
 
 ## Composed With
 - AG-BE-DB-001: backend dashboard persistence/validator
