@@ -1,4 +1,4 @@
-import type { WidgetSpecV2 } from "./types";
+import type { DashboardRecipeV2, WidgetSpecV2 } from "./types";
 
 export interface AgoraWidgetValidationIssue {
   code: string;
@@ -85,6 +85,29 @@ async function parseJson(res: Response): Promise<unknown> {
   } catch {
     return { error: { message: text } };
   }
+}
+
+/** Fetch a dashboard recipe by its accepted recipe_id. Returns null when not found. */
+export async function getDashboardRecipeById(
+  recipeId: string,
+  baseUrl?: string,
+): Promise<DashboardRecipeV2 | null> {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/dashboard-recipes/${encodeURIComponent(recipeId)}`;
+  const res = await fetch(url, {
+    method: "GET",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const body = await parseJson(res);
+    const message = recordFrom(recordFrom(body).error).message ?? `GET ${url} failed ${res.status}`;
+    throw new Error(String(message));
+  }
+  const body = await parseJson(res);
+  const root = recordFrom(body);
+  return recordFrom(root.data ?? root) as unknown as DashboardRecipeV2;
 }
 
 export async function validateAgoraWidget(
