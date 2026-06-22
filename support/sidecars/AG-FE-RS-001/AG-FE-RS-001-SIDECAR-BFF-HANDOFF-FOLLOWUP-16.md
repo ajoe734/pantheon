@@ -7,7 +7,7 @@
 | Parent task | `AG-FE-RS-001` - Research plan/run/consult/backtest cards |
 | Owner / reviewer | `Codex` / `Claude` |
 | Date | 2026-06-22 |
-| Pantheon dev base inspected | `a20d0f652deb1b516f83269b27bc98445d1082f8` |
+| Pantheon dev base inspected | `cf56cfce8f04f4252c51de697cb598e46b244104` |
 | Prior AG-FE-RS packet | Follow-up 15 archived `done` at `2026-06-22T11:28:23Z` (PR #2256 merged) |
 | Mutates canonical truth | `false` |
 | Status | Ready for reviewer handoff after task PR |
@@ -21,11 +21,11 @@ Follow-up 16 records the new current-state delta after Follow-up 15: parent
 `AG-FE-RS-001` has moved from `in_progress` to `review_approved`, and Pantheon
 PR #2264 has merged to `dev` at `68a7f4df3562195896cf7bb1275c6b0017f9b1b0`.
 The latest inspected `origin/dev` has since advanced to
-`a20d0f652deb1b516f83269b27bc98445d1082f8` through adjacent SW-003 support PR
-#2266, with no AG-FE-RS pathset delta after the parent merge. The route-backed
-AG-FE-RS artifacts are now present on inspected `origin/dev`, but the parent task
-still reports `review_approved`; owner closeout still needs to run `done` after
-confirming the merged state and task records.
+`cf56cfce8f04f4252c51de697cb598e46b244104` through adjacent SW-003 PRs #2266
+and #2265, with no AG-FE-RS pathset delta after the parent merge. The
+route-backed AG-FE-RS artifacts are now present on inspected `origin/dev`, but
+the parent task still reports `review_approved`; owner closeout still needs to
+run `done` after confirming the merged state and task records.
 
 ---
 
@@ -43,6 +43,7 @@ confirming the merged state and task records.
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-SW-003` | Adjacent SW-003 is `review_approved`; its acceptance sidecar PR #2266 has merged after AG-FE-RS #2264, and parent AG-FE-RS #2264 preserved both VersionCompare and research card renderer imports. |
 | `gh pr view 2264 --repo ajoe734/pantheon ...` | Parent PR #2264 is merged from `task/AG-FE-RS-001` at `99e226ffbfd79208c3914b930ad966335097ad42`; merge commit is `68a7f4df3562195896cf7bb1275c6b0017f9b1b0`; visible Branch CI checks passed. |
 | `gh pr view 2266 --repo ajoe734/pantheon ...` | Later dev PR #2266 merged adjacent `AG-FE-SW-003-SIDECAR-ACCEPTANCE.md` at `a20d0f652deb1b516f83269b27bc98445d1082f8`; it did not change the AG-FE-RS pathset. |
+| `gh pr view 2265 --repo ajoe734/pantheon ...` | Later dev PR #2265 merged adjacent `AG-FE-SW-003` task brief/test updates at `cf56cfce8f04f4252c51de697cb598e46b244104`; it did not change the AG-FE-RS pathset. |
 | `gh pr diff 2264 --repo ajoe734/pantheon --name-only` | PR #2264 files are `.orchestrator/task-briefs/ag_fe_rs_001.md`, `ResearchRunCard`, `BacktestResultCard`, `WorkshopCardRenderer`, and `research.ts` plus tests. |
 | `git ls-tree -r --name-only origin/dev ...` | At inspected `origin/dev`, `research.ts`, `ResearchRunCard.tsx`, and `BacktestResultCard.tsx` are present; `.orchestrator/reviews/AG-FE-RS-001-review-codex.md` is still absent. |
 | `git diff --name-status fdc658663205b01e93cd9b4e8f055722af402ec9..origin/dev -- <AG-FE-RS pathset>` | Since Follow-up 15, dev added the parent task brief, `research.ts`, `ResearchRunCard`, `BacktestResultCard`, and updated `WorkshopCardRenderer.tsx`; no AG-FE-RS review file was added. |
@@ -75,7 +76,7 @@ rules, or operator journeys from the base packet and Follow-ups 7-15.
 | Parent PR | Pantheon #2264 merged from `task/AG-FE-RS-001` to `dev` | PR publication is complete; owner still needs status closeout to `done`. |
 | PR head | `99e226ffbfd79208c3914b930ad966335097ad42` | Reviewed implementation branch head. |
 | Parent merge commit | `68a7f4df3562195896cf7bb1275c6b0017f9b1b0` | Current inspected `origin/dev` includes the parent implementation. |
-| Latest inspected dev head | `a20d0f652deb1b516f83269b27bc98445d1082f8` | Later adjacent SW-003 support merge; no AG-FE-RS pathset delta after `68a7f4df`. |
+| Latest inspected dev head | `cf56cfce8f04f4252c51de697cb598e46b244104` | Later adjacent SW-003 support/test merges; no AG-FE-RS pathset delta after `68a7f4df`. |
 | Visible PR checks | Commit trailers, Runtime mirror guard, Smoke acceptance, and Forward to orchestrator passed | No visible #2264 CI blocker remains. |
 | Review evidence | `ai-status` contains reviewer notes; referenced review file absent locally | Closeout owner should make sure the review evidence expected by the task is durable before `done`. |
 
@@ -196,6 +197,7 @@ AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-SW-003
 
 gh pr view 2264 --repo ajoe734/pantheon --json number,state,mergeStateStatus,mergedAt,mergeCommit,headRefOid,url,statusCheckRollup,files,commits
 gh pr view 2266 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,files,url
+gh pr view 2265 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,files,url
 gh pr diff 2264 --repo ajoe734/pantheon --name-only
 git ls-remote origin refs/heads/task/AG-FE-RS-001 refs/pull/2264/head refs/heads/dev
 
@@ -229,8 +231,9 @@ required for this support-only packet.
 
 Results:
 
-- `git status --short`: only the generated task brief and this support artifact
-  are untracked before commit.
+- `git status --short`: before the first support commit, only the generated task
+  brief and this support artifact were untracked; after refreshing against
+  latest dev, only this packet was modified for the `cf56cfce` readback update.
 - ASCII scan for this packet: no output.
 - Trailing-whitespace scan across the task brief and packet: no output.
 - Status checks: this task is active `in_progress`; Follow-up 15 is archived
@@ -241,8 +244,12 @@ Results:
 - PR #2266: `MERGED` at `2026-06-22T12:21:55Z`, merge commit
   `a20d0f652deb1b516f83269b27bc98445d1082f8`; only
   `support/sidecars/AG-FE-SW-003/AG-FE-SW-003-SIDECAR-ACCEPTANCE.md` changed.
+- PR #2265: `MERGED` at `2026-06-22T12:24:30Z`, merge commit
+  `cf56cfce8f04f4252c51de697cb598e46b244104`; only
+  `.orchestrator/task-briefs/ag_fe_sw_003.md` and
+  `execute-plans/src/agora/components/VersionCompareCard.test.tsx` changed.
 - `git ls-remote origin refs/heads/task/AG-FE-RS-001 refs/pull/2264/head refs/heads/dev`:
-  `dev` is `a20d0f652deb1b516f83269b27bc98445d1082f8`; parent task branch and
+  `dev` is `cf56cfce8f04f4252c51de697cb598e46b244104`; parent task branch and
   PR #2264 head remain `99e226ffbfd79208c3914b930ad966335097ad42`.
 - `git ls-tree -r --name-only origin/dev | rg ...`: outputs
   `BacktestResultCard.tsx`, `ResearchRunCard.tsx`, and `research.ts`; no
