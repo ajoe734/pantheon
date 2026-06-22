@@ -8,7 +8,7 @@
 | Parent owner / reviewer | `Claude` / `Codex` |
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | 2026-06-22 |
-| Pantheon dev base inspected | `873b701433f7c1dfaf3686c3b1e4a5d767b7fece` |
+| Pantheon dev base inspected | `1f13146d2b69e76d6c5b2cc96c45d2e9d1ce0910` |
 | execute-plans dev ref inspected | `origin/dev` at `40fef8769435fa479c87c2892417a76186913ecf` |
 | execute-plans parent branch inspected | `origin/task/AG-FE-SW-001` at `476aa043c3b5196823a50106f956331262123b40` |
 | Prior packets | `AG-FE-SW-001-SIDECAR-BFF-HANDOFF.md`, `FOLLOWUP-2.md`, `FOLLOWUP-3.md` |
