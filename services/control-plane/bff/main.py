@@ -1065,6 +1065,33 @@ def _stub_identity_capabilities(token_capabilities: List[str]) -> List[str]:
     )
 
 
+def _with_structured_identity_capabilities(identity: OperatorIdentity) -> OperatorIdentity:
+    if identity.token_kind != "structured":
+        return identity
+    claims = dict(identity.claims or {})
+    raw_capabilities = claims.get("capabilities") or claims.get("capability") or []
+    if isinstance(raw_capabilities, str):
+        token_capabilities = _split_claim_string(raw_capabilities)
+    elif isinstance(raw_capabilities, list):
+        token_capabilities = [str(cap) for cap in raw_capabilities]
+    else:
+        token_capabilities = []
+    capabilities = _stub_identity_capabilities(token_capabilities)
+    if not capabilities:
+        return identity
+    claims["capabilities"] = capabilities
+    try:
+        return identity.model_copy(update={"claims": claims})
+    except AttributeError:
+        return OperatorIdentity(
+            operator_id=identity.operator_id,
+            roles=identity.roles,
+            mfa_verified=identity.mfa_verified,
+            claims=claims,
+            token_kind=identity.token_kind,
+        )
+
+
 def _extract_identity_jwt(
     authorization: Optional[str],
     mfa_token: Optional[str] = None,
@@ -1146,13 +1173,14 @@ def _extract_identity_jwt(
             reason="AUTH_JWT_SUBJECT_MISSING",
             suggestion="Re-authenticate with a valid JWT bearer token",
         )
-    return OperatorIdentity(
+    identity = OperatorIdentity(
         operator_id=ctx.actor_id,
         roles=sorted(ctx.roles),
         mfa_verified=ctx.mfa_verified,
         claims=dict(ctx.claims),
         token_kind=ctx.token_kind,
     )
+    return _with_structured_identity_capabilities(identity)
 
 
 def _bff_error(
