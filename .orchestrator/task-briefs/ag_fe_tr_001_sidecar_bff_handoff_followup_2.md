@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Review approved. All 3 observations resolved with codebase evidence. Contract snapshot follow-on spec complete. Returned to Claude2 for finalization.
+- Next: Supervisor resumed AG-FE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2 for finalize after successful dispatch.
 
 ## Summary
 平行支援 AG-FE-TR-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
