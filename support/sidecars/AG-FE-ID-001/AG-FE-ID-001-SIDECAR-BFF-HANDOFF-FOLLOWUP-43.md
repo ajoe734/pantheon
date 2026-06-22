@@ -284,9 +284,10 @@ execute-plans aggregate gate until that gate clears or is formally exceptioned.
 Claude approved this packet in
 `support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43-REVIEW.md`.
 The packet PR `#2223` merged at `4cdd90e5`, and the review artifact PR `#2224`
-merged at `6a6987ab`. This note only records owner finalization context for the
-support sidecar; it does not broaden the packet, promote canonical truth, or
-change the parent dependency model.
+merged at `6a6987ab`. The owner finalization note is published through closeout
+PR `#2225`. This note only records owner finalization context for the support
+sidecar; it does not broaden the packet, promote canonical truth, or change the
+parent dependency model.
 
 Closeout still preserves the parent blocker: `AG-FE-ID-001` remains blocked on
 the execute-plans PR `#66` aggregate gate until that gate merges cleanly or a
