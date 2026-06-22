@@ -7,7 +7,7 @@
 **Sidecar owner:** `Claude`
 **Sidecar reviewer:** `Codex`
 **Date:** `2026-06-22`
-**Status:** `in-progress`
+**Status:** `review-ready`
 
 > Scope constraint: support artifact only. This packet summarizes acceptance
 > criteria, dependency routing, verification evidence, and reviewer attention
@@ -64,7 +64,7 @@ docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/06_winner_bra
 
 ## 3. Attention Items (Preconditions & Safety Constraints)
 
-Before the parent owner begins implementation, verify the following:
+Finalization checklist — verify the following before closing the parent PR:
 
 ### A. Isolation Matrix Merge Gate (Finalization Check)
 
