@@ -400,6 +400,7 @@ function CandidateDecisionRow({
         {
           ifMatch: poolEtag ?? undefined,
           idempotencyKey: newUUID(),
+          requestId: newUUID(),
         },
       );
       setConfirmedDecision(pendingDecision);

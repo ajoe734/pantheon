@@ -4,8 +4,9 @@
  * No order routing, no capital binding — read/review/score only.
  *
  * Mutating methods (reviewCandidateMember, triggerCandidatePoolScore) require:
- *   If-Match       — ETag captured from the preceding GET response
+ *   If-Match        — ETag captured from the preceding GET response
  *   Idempotency-Key — client-generated UUID per submission
+ *   X-Request-Id    — client-generated UUID per request
  * AG-BE-CP-001 rejects writes that omit these headers.
  */
 
@@ -145,7 +146,7 @@ export async function getCandidatePoolScore(
  */
 export async function triggerCandidatePoolScore(
   poolId: string,
-  options?: { ifMatch?: string; idempotencyKey?: string },
+  options?: { ifMatch?: string; idempotencyKey?: string; requestId?: string },
   baseUrl?: string,
 ): Promise<void> {
   const base = resolvedBase(baseUrl);
@@ -156,6 +157,7 @@ export async function triggerCandidatePoolScore(
   };
   if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
   if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
+  if (options?.requestId) headers["X-Request-Id"] = options.requestId;
   const res = await fetch(url, {
     method: "POST",
     credentials: "include",
@@ -209,14 +211,15 @@ export async function listCandidatePoolMembers(
  * park and reject require a non-empty rationale.
  * Rejected candidates are retained as negative/preference examples; they are not deleted.
  *
- * options.ifMatch     — ETag from listCandidatePoolMembers; required by AG-BE-CP-001.
+ * options.ifMatch       — ETag from listCandidatePoolMembers; required by AG-BE-CP-001.
  * options.idempotencyKey — client-generated UUID; required by AG-BE-CP-001.
+ * options.requestId      — client-generated UUID per request; required by AG-BE-CP-001.
  */
 export async function reviewCandidateMember(
   poolId: string,
   artifactId: string,
   body: CandidateReviewBody,
-  options?: { ifMatch?: string; idempotencyKey?: string },
+  options?: { ifMatch?: string; idempotencyKey?: string; requestId?: string },
   baseUrl?: string,
 ): Promise<Record<string, unknown>> {
   const base = resolvedBase(baseUrl);
@@ -227,6 +230,7 @@ export async function reviewCandidateMember(
   };
   if (options?.ifMatch) headers["If-Match"] = options.ifMatch;
   if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
+  if (options?.requestId) headers["X-Request-Id"] = options.requestId;
   const res = await fetch(url, {
     method: "POST",
     credentials: "include",

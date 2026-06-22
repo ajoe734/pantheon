@@ -354,6 +354,7 @@ describe("CandidateReviewDrawer — decision flow", () => {
       expect.objectContaining({
         ifMatch: '"pool-etag-v1"',
         idempotencyKey: expect.any(String),
+        requestId: expect.any(String),
       }),
     );
     expect(onDecisionRecorded).toHaveBeenCalledWith("cand-001", "approve_for_monitoring");
@@ -389,6 +390,7 @@ describe("CandidateReviewDrawer — decision flow", () => {
         expect.objectContaining({
           ifMatch: '"pool-etag-v1"',
           idempotencyKey: expect.any(String),
+          requestId: expect.any(String),
         }),
       );
     });

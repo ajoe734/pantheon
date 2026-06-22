@@ -1,10 +1,10 @@
 // AG-FE-TR-002 — focused tests for candidate pool BFF client header contract.
 //
 // Coverage:
-//   * reviewCandidateMember forwards If-Match and Idempotency-Key when provided
+//   * reviewCandidateMember forwards If-Match, Idempotency-Key, and X-Request-Id when provided
 //   * reviewCandidateMember sends POST to the correct URL
 //   * listCandidatePoolMembers returns items + etag from response header
-//   * triggerCandidatePoolScore forwards If-Match and Idempotency-Key
+//   * triggerCandidatePoolScore forwards If-Match, Idempotency-Key, and X-Request-Id
 //   * Read-only methods do NOT send mutation headers
 //   * Error handling: non-2xx throws with message from error.message
 
@@ -31,8 +31,26 @@ afterEach(() => {
 
 // ── reviewCandidateMember — header forwarding ────────────────────────────────
 
-describe("reviewCandidateMember — If-Match and Idempotency-Key", () => {
-  it("sends If-Match and Idempotency-Key when provided", async () => {
+describe("reviewCandidateMember — If-Match, Idempotency-Key, and X-Request-Id", () => {
+  it("sends If-Match, Idempotency-Key, and X-Request-Id when all provided", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok({ data: { lifecycle_state: "approved" } }));
+    globalThis.fetch = fetchMock;
+
+    await reviewCandidateMember(
+      "pool-001",
+      "artifact-001",
+      { decision: "approve_for_monitoring", reviewed_by: "operator" },
+      { ifMatch: '"etag-v3"', idempotencyKey: "idem-key-review-1", requestId: "req-review-1" },
+      BASE,
+    );
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers["If-Match"]).toBe('"etag-v3"');
+    expect(headers["Idempotency-Key"]).toBe("idem-key-review-1");
+    expect(headers["X-Request-Id"]).toBe("req-review-1");
+  });
+
+  it("sends If-Match and Idempotency-Key when provided (without requestId)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok({ data: { lifecycle_state: "approved" } }));
     globalThis.fetch = fetchMock;
 
@@ -47,6 +65,7 @@ describe("reviewCandidateMember — If-Match and Idempotency-Key", () => {
     const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
     expect(headers["If-Match"]).toBe('"etag-v3"');
     expect(headers["Idempotency-Key"]).toBe("idem-key-review-1");
+    expect(headers["X-Request-Id"]).toBeUndefined();
   });
 
   it("does NOT send If-Match when omitted", async () => {
@@ -149,8 +168,24 @@ describe("listCandidatePoolMembers — ETag in response", () => {
 
 // ── triggerCandidatePoolScore — header forwarding ────────────────────────────
 
-describe("triggerCandidatePoolScore — If-Match and Idempotency-Key", () => {
-  it("forwards If-Match and Idempotency-Key when provided", async () => {
+describe("triggerCandidatePoolScore — If-Match, Idempotency-Key, and X-Request-Id", () => {
+  it("forwards If-Match, Idempotency-Key, and X-Request-Id when all provided", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok({}, 202));
+    globalThis.fetch = fetchMock;
+
+    await triggerCandidatePoolScore(
+      "pool-001",
+      { ifMatch: '"score-etag-v1"', idempotencyKey: "idem-score-1", requestId: "req-score-1" },
+      BASE,
+    );
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers["If-Match"]).toBe('"score-etag-v1"');
+    expect(headers["Idempotency-Key"]).toBe("idem-score-1");
+    expect(headers["X-Request-Id"]).toBe("req-score-1");
+  });
+
+  it("forwards If-Match and Idempotency-Key when provided (without requestId)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok({}, 202));
     globalThis.fetch = fetchMock;
 
@@ -163,6 +198,7 @@ describe("triggerCandidatePoolScore — If-Match and Idempotency-Key", () => {
     const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
     expect(headers["If-Match"]).toBe('"score-etag-v1"');
     expect(headers["Idempotency-Key"]).toBe("idem-score-1");
+    expect(headers["X-Request-Id"]).toBeUndefined();
   });
 });
 

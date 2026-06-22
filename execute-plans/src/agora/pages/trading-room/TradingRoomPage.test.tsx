@@ -141,7 +141,7 @@ describe("TradingRoomPage", () => {
     vi.mocked(tradingRoomModule.getTradingRoom).mockResolvedValue(MOCK_AGGREGATE);
     vi.mocked(tradingRoomModule.listDecisionEvents).mockResolvedValue({
       items: [MOCK_DECISION_EVENT],
-      etag: null,
+      etag: '"events-etag-v1"',
     });
     vi.mocked(dashboardModule.getDashboardRecipeById).mockResolvedValue(MOCK_RECIPE);
     vi.mocked(tradingRoomModule.decideOnEvent).mockResolvedValue({});
@@ -412,7 +412,7 @@ describe("TradingRoomPage", () => {
     expect(screen.getByTestId("decide-modify-evt-001")).toBeDefined();
   });
 
-  it("calls decideOnEvent with idempotencyKey and requestId when trader clicks approve", async () => {
+  it("calls decideOnEvent with ifMatch, idempotencyKey, and requestId when trader clicks approve", async () => {
     render(<TradingRoomPage />);
     await screen.findByTestId("event-row-evt-001");
     fireEvent.click(screen.getByTestId("event-row-evt-001"));
@@ -422,6 +422,7 @@ describe("TradingRoomPage", () => {
         "evt-001",
         { decision: "approve" },
         expect.objectContaining({
+          ifMatch: '"events-etag-v1"',
           idempotencyKey: expect.any(String),
           requestId: expect.any(String),
         }),
