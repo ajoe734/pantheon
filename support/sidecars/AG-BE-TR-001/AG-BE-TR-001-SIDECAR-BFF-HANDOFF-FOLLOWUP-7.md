@@ -393,7 +393,7 @@ AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLO
 AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-TR-001
 # source: active; status: todo; owner: Claude2; reviewer: Codex
 
-python3 -c 'import ast, pathlib; p=pathlib.Path("services/control-plane/bff/main.py"); tree=ast.parse(p.read_text()); vals={}; 
+python3 -c 'import ast, pathlib; p=pathlib.Path("services/control-plane/bff/main.py"); tree=ast.parse(p.read_text()); vals={};
 for n in tree.body:
     if isinstance(n, ast.Assign):
         for t in n.targets:
@@ -406,7 +406,7 @@ print("has trading_room channel", "trading_room" in vals.get("SSE_CHANNEL_CATALO
 # has ETag expose False
 # has trading_room channel False
 
-python3 -c 'import yaml; d=yaml.safe_load(open("services/control-plane/openapi/agora_v1_3.openapi.yaml")); paths=d["paths"]; keys=["/bff/agora/trading-room/decision-events/{decision_event_id}/decisions","/bff/agora/trading-intents/{intent_id}/handoffs","/bff/agora/trading-intents/{intent_id}/withdraw"]; 
+python3 -c 'import yaml; d=yaml.safe_load(open("services/control-plane/openapi/agora_v1_3.openapi.yaml")); paths=d["paths"]; keys=["/bff/agora/trading-room/decision-events/{decision_event_id}/decisions","/bff/agora/trading-intents/{intent_id}/handoffs","/bff/agora/trading-intents/{intent_id}/withdraw"];
 for k in keys:
     op=paths[k]["post"]
     print(k, [p.get("$ref", p.get("name")) for p in op.get("parameters", [])], list(op.get("responses", {}).keys()), "requestBody" in op)'
