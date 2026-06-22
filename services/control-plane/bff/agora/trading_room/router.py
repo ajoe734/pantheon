@@ -221,11 +221,56 @@ class TraderDecisionRequest(BaseModel):
     modifications: Optional[Dict[str, Any]] = None
 
 
+class TradingIntentSubject(BaseModel):
+    symbol: str = Field(min_length=1)
+    asset_class: Optional[str] = None
+    venue: Optional[str] = None
+    strategy_ref: Optional[str] = None
+
+
+class TradingIntent(BaseModel):
+    """Aligned with services/control-plane/specs/agora/trading_intent.schema.json."""
+    spec_version: Literal["1.0"] = "1.0"
+    intent_id: str
+    operator_id: str
+    persona_id: Optional[str] = None
+    session_id: Optional[str] = None
+    intent_type: Literal[
+        "buy_interest",
+        "sell_interest",
+        "hold_decision",
+        "reduce_exposure",
+        "increase_exposure",
+        "hedge_intent",
+        "exit_intent",
+        "entry_interest",
+    ]
+    direction: Literal["long", "short", "neutral", "reduce", "exit"]
+    subject: TradingIntentSubject
+    rationale: Optional[str] = None
+    size_hint: Optional[Literal["small", "medium", "large", "full_position"]] = None
+    timeframe_hint: Optional[str] = None
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    linked_event_ids: List[str] = Field(default_factory=list)
+    learning_eligible: bool = True
+    no_order_route_proof: Literal["agora_intent_record_only"] = "agora_intent_record_only"
+    expressed_at: str
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class GovernedActionProposal(BaseModel):
+    action: Optional[Literal["enter", "add", "reduce", "exit", "review"]] = None
+    symbol: Optional[str] = None
+    direction: Optional[str] = None
+    size_hint: Optional[str] = None
+    portfolio_pct: Optional[float] = None
+    non_binding: Literal[True] = True
+
+
 class GovernedIntentHandoffRequest(BaseModel):
     """Request body for POST /bff/agora/trading-intents/{intent_id}/handoffs.
 
     Field-aligned with services/control-plane/specs/agora/v4/governed_intent_handoff.schema.json.
-    Validation is delegated to AG-BE-TR-002 full implementation.
     """
     spec_version: Literal["1.0"] = "1.0"
     handoff_id: str
@@ -240,7 +285,8 @@ class GovernedIntentHandoffRequest(BaseModel):
     no_order_route_proof: Literal["agora_request_only_no_order_route"] = "agora_request_only_no_order_route"
     created_at: str
     target_queue: Optional[Literal["shadow_research", "management_governance", "promotion_review"]] = None
-    action_proposal: Optional[Dict[str, Any]] = None
+    required_gate_refs: List[str] = Field(default_factory=list)
+    action_proposal: Optional[GovernedActionProposal] = None
     rationale: Optional[str] = None
     risk_summary: Optional[str] = None
     management_handoff_ref: Optional[str] = None
@@ -260,6 +306,7 @@ def create_trading_room_router(
     require_read_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
+    trading_room_store: Optional[TradingRoomStore] = None,
 ) -> APIRouter:
     """Trading-room router — agora.trading.v1.
 
@@ -267,10 +314,161 @@ def create_trading_room_router(
     All routes are operator-scoped (user-private read predicate enforced).
     """
     router = APIRouter(tags=["agora-trading"])
-    store = _get_store()
+    store = trading_room_store if trading_room_store is not None else _get_store()
 
-    def _meta(capability: str = "agora.trading.v1") -> Dict[str, Any]:
-        return {"snapshot_at": utc_now(), "capability": capability}
+    def _meta(capability: str = "agora.trading.v1", **extra: Any) -> Dict[str, Any]:
+        meta = {"snapshot_at": utc_now(), "capability": capability}
+        meta.update({key: value for key, value in extra.items() if value is not None})
+        return meta
+
+    def _error_code_enum() -> Any:
+        try:
+            from models import ErrorCode
+        except ModuleNotFoundError:
+            from bff.models import ErrorCode
+        return ErrorCode
+
+    def _require_idempotency_key(key: Optional[str]) -> str:
+        clean = str(key or "").strip()
+        if clean:
+            return clean
+        ErrorCode = _error_code_enum()
+
+        raise bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            "Idempotency-Key header is required",
+            "missing_idempotency_key",
+            suggestion="Supply a UUID v4 in the Idempotency-Key request header",
+        )
+
+    def _require_x_request_id(key: Optional[str]) -> str:
+        clean = str(key or "").strip()
+        if clean:
+            return clean
+        ErrorCode = _error_code_enum()
+
+        raise bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            "X-Request-Id header is required",
+            "missing_x_request_id",
+            suggestion="Supply a stable request identifier in X-Request-Id",
+        )
+
+    def _require_if_match(header: Optional[str]) -> str:
+        clean = str(header or "").strip()
+        if clean:
+            return clean
+        ErrorCode = _error_code_enum()
+
+        raise bff_error(
+            428,
+            ErrorCode.PRECONDITION_FAILED,
+            "If-Match header is required",
+            "missing_if_match",
+            suggestion="GET the intent or event first and supply the returned ETag in If-Match",
+        )
+
+    def _idempotency_scope(identity: Dict[str, Any], endpoint: str) -> str:
+        tenant_id = identity.get("tenant_id", "unknown")
+        user_id = identity.get("user_id", "unknown")
+        return f"{tenant_id}:{user_id}:{endpoint}"
+
+    def _check_idempotency(identity: Dict[str, Any], endpoint: str, key: str) -> None:
+        if store.check_and_record_idempotency_key(_idempotency_scope(identity, endpoint), key):
+            ErrorCode = _error_code_enum()
+
+            raise bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Duplicate Idempotency-Key",
+                key,
+            )
+
+    def _handoff_stage_rule(stage: str) -> Dict[str, str]:
+        return {
+            "shadow": {"handoff_type": "shadow_start", "target_queue": "shadow_research"},
+            "paper": {"handoff_type": "paper_validation_request", "target_queue": "management_governance"},
+            "canary": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
+            "live": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
+        }[stage]
+
+    def _intent_type_for_action(action: str) -> str:
+        return {
+            "enter": "entry_interest",
+            "entry": "entry_interest",
+            "add": "increase_exposure",
+            "reduce": "reduce_exposure",
+            "exit": "exit_intent",
+            "review": "hold_decision",
+            "no_action": "hold_decision",
+        }.get(action, "hold_decision")
+
+    def _direction_for_action(action: str, modifications: Dict[str, Any]) -> str:
+        requested = str(modifications.get("direction") or "").strip()
+        if requested in {"long", "short", "neutral", "reduce", "exit"}:
+            return requested
+        return {
+            "reduce": "reduce",
+            "exit": "exit",
+            "review": "neutral",
+            "no_action": "neutral",
+        }.get(action, "neutral")
+
+    def _rationale_text(event: Dict[str, Any], fallback: Optional[str]) -> Optional[str]:
+        if fallback:
+            return fallback
+        claims = [
+            str(item.get("claim", "")).strip()
+            for item in event.get("rationale", [])
+            if isinstance(item, dict) and str(item.get("claim", "")).strip()
+        ]
+        return "; ".join(claims) if claims else None
+
+    def _intent_from_decision(
+        *,
+        event: Dict[str, Any],
+        decision_record: Dict[str, Any],
+        body: TraderDecisionRequest,
+        identity: Dict[str, Any],
+        intent_id: str,
+        x_request_id: str,
+    ) -> Dict[str, Any]:
+        modifications = body.modifications or {}
+        action = str(
+            modifications.get("action")
+            or event.get("suggested_action")
+            or event.get("event_kind")
+            or "review"
+        )
+        subject = dict(event.get("subject") or {})
+        subject["strategy_ref"] = event.get("strategy_id")
+        suggested_size = event.get("suggested_size") or {}
+        size_hint = modifications.get("size_hint") or suggested_size.get("size_hint")
+        if size_hint not in {"small", "medium", "large", "full_position"}:
+            size_hint = None
+
+        intent = TradingIntent(
+            intent_id=intent_id,
+            operator_id=str(identity.get("user_id", "unknown")),
+            session_id=identity.get("session_id"),
+            intent_type=_intent_type_for_action(action),  # type: ignore[arg-type]
+            direction=_direction_for_action(action, modifications),  # type: ignore[arg-type]
+            subject=TradingIntentSubject(**subject),
+            rationale=_rationale_text(event, body.rationale),
+            size_hint=size_hint,
+            confidence=(event.get("confidence") or {}).get("value"),
+            linked_event_ids=[str(event["decision_event_id"])],
+            expressed_at=str(decision_record["decided_at"]),
+            metadata={
+                "decision_record_id": decision_record["decision_record_id"],
+                "decision": body.decision,
+                "x_request_id": x_request_id,
+                "source": "agora_trading_room",
+            },
+        )
+        return intent.model_dump(exclude_none=True)
 
     # ------------------------------------------------------------------
     # GET /bff/agora/trading-room
@@ -421,16 +619,25 @@ def create_trading_room_router(
         """Record a trader decision against a pending decision event.
 
         Allowed decisions: approve | reject | defer | modify
-        approve/modify may create a TradingIntent (not yet persisted here — AG-BE-TR-002).
+        approve/modify creates and persists a TradingIntent.
         reject/defer are retained as Shadow/Learn evidence subject to consent policy.
         This route NEVER routes live orders.
         """
         identity = extract_identity(authorization)
         require_read_role(identity)
+        idem_key = _require_idempotency_key(idempotency_key)
+        _require_if_match(if_match)
+        request_id = _require_x_request_id(x_request_id)
 
         event = store.get_decision_event(decision_event_id)
         if event is None:
             raise bff_error(404, "NOT_FOUND", f"Decision event {decision_event_id!r} not found", "decision_event_not_found")
+
+        _check_idempotency(
+            identity,
+            f"POST:/bff/agora/trading-room/decision-events/{decision_event_id}/decisions",
+            idem_key,
+        )
 
         if event.get("state") in ("decided", "expired", "invalidated", "superseded"):
             raise bff_error(
@@ -454,16 +661,29 @@ def create_trading_room_router(
         intent_ref: Optional[str] = None
         if body.decision in ("approve", "modify"):
             intent_ref = str(uuid.uuid4())
+            intent = _intent_from_decision(
+                event=event,
+                decision_record=decision_record,
+                body=body,
+                identity=identity,
+                intent_id=intent_ref,
+                x_request_id=request_id,
+            )
+            store.upsert_intent(intent, state="draft")
+
+        data = {
+            "decision_record_id": decision_record["decision_record_id"],
+            "decision_event_id": decision_event_id,
+            "decision": body.decision,
+            "intent_ref": intent_ref,
+        }
+        if intent_ref:
+            data["no_order_route_proof"] = "agora_intent_record_only"
 
         return {
             "status": "completed",
-            "data": {
-                "decision_record_id": decision_record["decision_record_id"],
-                "decision_event_id": decision_event_id,
-                "decision": body.decision,
-                "intent_ref": intent_ref,
-            },
-            "meta": _meta(),
+            "data": data,
+            "meta": _meta(idempotency_key=idem_key, x_request_id=request_id),
         }
 
     # ------------------------------------------------------------------
@@ -506,16 +726,18 @@ def create_trading_room_router(
         intent = store.get_intent(intent_id)
         if intent is None:
             raise bff_error(404, "NOT_FOUND", f"TradingIntent {intent_id!r} not found", "intent_not_found")
+        state = store.get_intent_state(intent_id) or "draft"
+        handoffs = store.list_handoffs_for_intent(intent_id)
 
         return {
             "object_ref": {"type": "trading_intent", "id": intent_id},
-            "status": intent.get("state", "draft"),
-            "lifecycle_state": intent.get("state", "draft"),
+            "status": state,
+            "lifecycle_state": state,
             "allowedActions": {
-                "submit_handoff": intent.get("state") == "draft",
-                "withdraw": intent.get("state") in ("draft", "submitted"),
+                "submit_handoff": state == "draft",
+                "withdraw": state in ("draft", "submitted"),
             },
-            "meta": _meta(),
+            "meta": _meta(handoff_count=len(handoffs)),
             "links": {
                 "handoffs": f"/bff/agora/trading-intents/{intent_id}/handoffs",
                 "withdraw": f"/bff/agora/trading-intents/{intent_id}/withdraw",
@@ -544,11 +766,14 @@ def create_trading_room_router(
         RuntimeBinding, or binds capital.  Management/governance paths remain
         authoritative.
 
-        Full validation of handoff state gates and Management routing is
-        owned by AG-BE-TR-002.
+        Validation enforces v1.3 stage/type semantics and keeps canary/live
+        request-only.
         """
         identity = extract_identity(authorization)
         require_read_role(identity)
+        idem_key = _require_idempotency_key(idempotency_key)
+        _require_if_match(if_match)
+        request_id = _require_x_request_id(x_request_id)
 
         if body.no_order_route_proof != "agora_request_only_no_order_route":
             raise bff_error(
@@ -566,6 +791,70 @@ def create_trading_room_router(
                 "intent_id_mismatch",
             )
 
+        intent = store.get_intent(intent_id)
+        if intent is None:
+            raise bff_error(404, "NOT_FOUND", f"TradingIntent {intent_id!r} not found", "intent_not_found")
+
+        _check_idempotency(
+            identity,
+            f"POST:/bff/agora/trading-intents/{intent_id}/handoffs",
+            idem_key,
+        )
+
+        intent_state = store.get_intent_state(intent_id) or "draft"
+        if intent_state != "draft":
+            raise bff_error(
+                409,
+                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
+                f"TradingIntent {intent_id!r} is not draft; current state is '{intent_state}'",
+                "intent_not_handoffable",
+            )
+
+        if body.state not in {"draft", "submitted"}:
+            raise bff_error(
+                409,
+                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
+                "Agora can only create draft/submitted request-only handoffs",
+                "handoff_state_not_request_only",
+            )
+
+        stage_rule = _handoff_stage_rule(body.requested_stage)
+        if body.handoff_type != stage_rule["handoff_type"]:
+            raise bff_error(
+                409,
+                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
+                (
+                    f"requested_stage '{body.requested_stage}' requires "
+                    f"handoff_type '{stage_rule['handoff_type']}'"
+                ),
+                "stage_handoff_type_mismatch",
+            )
+
+        if body.target_queue is not None and body.target_queue != stage_rule["target_queue"]:
+            raise bff_error(
+                409,
+                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
+                (
+                    f"requested_stage '{body.requested_stage}' requires "
+                    f"target_queue '{stage_rule['target_queue']}'"
+                ),
+                "stage_target_queue_mismatch",
+            )
+
+        if store.get_handoff(body.handoff_id) is not None:
+            raise bff_error(
+                409,
+                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
+                f"handoff_id {body.handoff_id!r} already exists",
+                "duplicate_handoff_id",
+            )
+
+        handoff = body.model_dump(exclude_none=True)
+        handoff["state"] = "submitted"
+        handoff["target_queue"] = stage_rule["target_queue"]
+        handoff["updated_at"] = handoff.get("updated_at") or utc_now()
+        store.upsert_handoff(handoff)
+
         return {
             "status": "queued",
             "data": {
@@ -573,9 +862,11 @@ def create_trading_room_router(
                 "intent_id": intent_id,
                 "requested_stage": body.requested_stage,
                 "handoff_type": body.handoff_type,
+                "target_queue": stage_rule["target_queue"],
                 "state": "submitted",
+                "no_order_route_proof": "agora_request_only_no_order_route",
             },
-            "meta": _meta(),
+            "meta": _meta(idempotency_key=idem_key, x_request_id=request_id),
         }
 
     # ------------------------------------------------------------------
@@ -597,19 +888,32 @@ def create_trading_room_router(
         """
         identity = extract_identity(authorization)
         require_read_role(identity)
+        idem_key = _require_idempotency_key(idempotency_key)
+        _require_if_match(if_match)
+        request_id = _require_x_request_id(x_request_id)
 
-        intent = store.get_intent(intent_id)
-        if intent is not None:
-            intent["state"] = "withdrawn"
+        if store.get_intent(intent_id) is None:
+            raise bff_error(404, "NOT_FOUND", f"TradingIntent {intent_id!r} not found", "intent_not_found")
+
+        _check_idempotency(
+            identity,
+            f"POST:/bff/agora/trading-intents/{intent_id}/withdraw",
+            idem_key,
+        )
+
+        withdrawn_at = utc_now()
+        withdrawn = store.withdraw_intent(intent_id, withdrawn_at=withdrawn_at)
+        withdrawn_handoff_ids = withdrawn.get("withdrawn_handoff_ids", []) if withdrawn else []
 
         return {
             "status": "completed",
             "data": {
                 "intent_id": intent_id,
                 "state": "withdrawn",
-                "withdrawn_at": utc_now(),
+                "withdrawn_at": withdrawn_at,
+                "withdrawn_handoff_ids": withdrawn_handoff_ids,
             },
-            "meta": _meta(),
+            "meta": _meta(idempotency_key=idem_key, x_request_id=request_id),
         }
 
     return router
