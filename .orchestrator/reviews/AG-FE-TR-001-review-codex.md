@@ -1,6 +1,6 @@
 # AG-FE-TR-001 Review - Codex
 
-Disposition: Changes requested
+Disposition: Approved after final review
 
 ## Findings
 
@@ -112,3 +112,33 @@ Disposition: Changes requested
 - Static contract check against
   `services/control-plane/bff/agora/trading_room/router.py` and
   `services/control-plane/openapi/agora_v1_3.openapi.yaml`.
+
+## Final Review - 2026-06-22
+
+Disposition: Approved
+
+### Resolution
+
+- Reviewed head `d16ceb85`. The second review finding is resolved:
+  `StrategyWorkspaceView` now reads `strategy.dashboard_recipe_id` from the
+  Trading Room aggregate and fetches the recipe through
+  `getDashboardRecipeById` (`GET /bff/agora/dashboard-recipes/{recipe_id}`).
+- The page no longer imports `getTradingRoomStrategy` or uses the non-contract
+  `extractRecipe` helper for recipe loading.
+- Static contract checks line up: `TradingRoomStrategy` includes
+  `dashboard_recipe_id`; `dashboard/router.py` returns the active
+  `DashboardRecipeV2` in the `data` envelope for the canonical recipe route.
+- No new order, capital-binding, RuntimeBinding, or expanded capability route
+  use was found in the reviewed patch.
+
+### Verification
+
+- `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-TR-001` -> active task is
+  `review`, owner `Claude`, reviewer `Codex`.
+- `npm ci` in `execute-plans` -> dependencies installed; npm reported existing
+  audit warnings (2 moderate, 1 high, 1 critical).
+- `npm test -- src/agora/pages/trading-room/TradingRoomPage.test.tsx` -> 40
+  tests passed.
+- `npm test -- src/agora` -> 97 tests passed.
+- `npm run build:agora` -> passed; Vite reported the existing large chunk size
+  warning for the Agora bundle.
