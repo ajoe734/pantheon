@@ -2,6 +2,52 @@ import type { StrategyWorkshop, StrategyCompleteness } from "./types";
 
 export type { StrategyWorkshop, StrategyCompleteness };
 
+export type WorkshopStreamEventType =
+  | "workshop.snapshot"
+  | "workshop.message.accepted"
+  | "workshop.servant.response.started"
+  | "workshop.servant.response.delta"
+  | "workshop.servant.response.completed"
+  | "workshop.completeness.updated"
+  | "workshop.next_question.updated"
+  | "workshop.patch.proposed"
+  | "workshop.patch.validated"
+  | "workshop.version.created"
+  | "workshop.version.selected"
+  | "workshop.readiness.updated"
+  | "research.plan.created"
+  | "research.plan.approved"
+  | "research.plan.cancelled"
+  | "research.run.queued"
+  | "research.run.progress"
+  | "research.run.completed"
+  | "research.run.failed"
+  | "consultation.started"
+  | "consultation.completed"
+  | "workshop.concluded"
+  | "workshop.archived"
+  | "stream.heartbeat"
+  | "stream.error";
+
+export interface WorkshopStreamEvent {
+  spec_version: "1.0";
+  event_id: string;
+  event_type: WorkshopStreamEventType;
+  aggregate_type: "strategy_workshop";
+  aggregate_id: string;
+  sequence_no: number;
+  causal_parent_id?: string | null;
+  event_time: string;
+  emitted_at: string;
+  trace_id: string;
+  request_id?: string;
+  idempotency_key: string;
+  data_cutoff?: string;
+  visibility?: "owner_private" | "owner_and_redacted_management";
+  payload_schema?: string;
+  payload: Record<string, unknown>;
+}
+
 export interface ReadinessGate {
   gate: "preliminary_research" | "full_validation" | "trading_room";
   state: "not_assessed" | "blocked" | "conditional" | "ready" | "stale";
@@ -192,4 +238,27 @@ export async function listWorkshopCards(workshopId: string, baseUrl?: string): P
   }
   const body = await parseJson(res);
   return cardsFrom(body);
+}
+
+/**
+ * Opens the SSE stream for a workshop and returns a teardown function.
+ * Per design-closure-round2/03: sequence_no-ordered, at-least-once, Last-Event-ID replay.
+ */
+export function openWorkshopStream(
+  workshopId: string,
+  onEvent: (event: WorkshopStreamEvent) => void,
+  baseUrl?: string,
+): () => void {
+  const base = resolvedBase(baseUrl);
+  const url = `${base}/bff/agora/workshops/${encodeURIComponent(workshopId)}/stream`;
+  const es = new EventSource(url, { withCredentials: true });
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data) as WorkshopStreamEvent;
+      onEvent(data);
+    } catch {
+      /* ignore malformed frames */
+    }
+  };
+  return () => es.close();
 }
