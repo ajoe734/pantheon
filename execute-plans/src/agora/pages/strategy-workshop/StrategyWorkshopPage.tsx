@@ -101,9 +101,10 @@ function WorkshopListView(): JSX.Element {
 
 interface SessionViewProps {
   workshopId: string;
+  onAddToTradingRoom?: () => void;
 }
 
-function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
+function WorkshopSessionView({ workshopId, onAddToTradingRoom }: SessionViewProps): JSX.Element {
   const [workshop, setWorkshop] = useState<StrategyWorkshop | null>(null);
   const [completeness, setCompleteness] = useState<StrategyCompleteness | null>(null);
   const [readiness, setReadiness] = useState<StrategyReadinessAssessment | null>(null);
@@ -258,7 +259,7 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
           />
         </div>
 
-        {/* Add to Trading Room — disabled until trading_room gate is ready */}
+        {/* Add to Trading Room — enabled only when trading_room gate ready AND handler provided */}
         <div
           style={{
             padding: "10px 12px",
@@ -268,6 +269,7 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
         >
           {(() => {
             const tradingRoomReady = readiness?.highest_ready_gate === "trading_room";
+            const isActive = tradingRoomReady && !!onAddToTradingRoom;
             const disabledReason = readiness
               ? tradingRoomReady
                 ? null
@@ -277,9 +279,10 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
               <>
                 <button
                   data-testid="add-to-trading-room-btn"
-                  disabled={!tradingRoomReady}
-                  aria-disabled={!tradingRoomReady}
+                  disabled={!isActive}
+                  aria-disabled={!isActive}
                   title={disabledReason ?? undefined}
+                  onClick={isActive ? onAddToTradingRoom : undefined}
                   style={{
                     width: "100%",
                     padding: "7px 12px",
@@ -287,9 +290,9 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
                     border: "none",
                     fontSize: 12,
                     fontWeight: 600,
-                    cursor: tradingRoomReady ? "pointer" : "not-allowed",
-                    background: tradingRoomReady ? "#1d4ed8" : "#e5e7eb",
-                    color: tradingRoomReady ? "#fff" : "#9ca3af",
+                    cursor: isActive ? "pointer" : "not-allowed",
+                    background: isActive ? "#1d4ed8" : "#e5e7eb",
+                    color: isActive ? "#fff" : "#9ca3af",
                     transition: "background 0.15s",
                   }}
                 >
@@ -330,11 +333,12 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
 
 interface StrategyWorkshopPageProps {
   workshopId?: string;
+  onAddToTradingRoom?: () => void;
 }
 
-export function StrategyWorkshopPage({ workshopId }: StrategyWorkshopPageProps): JSX.Element {
+export function StrategyWorkshopPage({ workshopId, onAddToTradingRoom }: StrategyWorkshopPageProps): JSX.Element {
   if (workshopId) {
-    return <WorkshopSessionView workshopId={workshopId} />;
+    return <WorkshopSessionView workshopId={workshopId} onAddToTradingRoom={onAddToTradingRoom} />;
   }
   return <WorkshopListView />;
 }

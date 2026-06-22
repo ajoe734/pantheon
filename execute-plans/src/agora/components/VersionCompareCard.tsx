@@ -92,6 +92,19 @@ const RISK_CHANGE_COLOR: Record<string, string> = {
   uncertain: "#d97706",
 };
 
+function groupByCandidate<T extends { candidate_version_id: string }>(
+  items: T[]
+): Array<{ candidateId: string; rows: T[] }> {
+  const order: string[] = [];
+  const map: Record<string, T[]> = {};
+  for (const item of items) {
+    const id = item.candidate_version_id;
+    if (!map[id]) { order.push(id); map[id] = []; }
+    map[id].push(item);
+  }
+  return order.map((id) => ({ candidateId: id, rows: map[id] }));
+}
+
 function SectionHeader({ children }: { children: React.ReactNode }): JSX.Element {
   return (
     <div
@@ -105,6 +118,26 @@ function SectionHeader({ children }: { children: React.ReactNode }): JSX.Element
       }}
     >
       {children}
+    </div>
+  );
+}
+
+function CandidateGroupHeader({ label }: { label: string }): JSX.Element {
+  return (
+    <div
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        color: "#1d4ed8",
+        padding: "1px 6px",
+        background: "#eff6ff",
+        borderRadius: 3,
+        marginTop: 4,
+        marginBottom: 4,
+        display: "inline-block",
+      }}
+    >
+      {label}
     </div>
   );
 }
@@ -266,12 +299,49 @@ function ReadinessDiffRow({ diff }: { diff: ReadinessDiff }): JSX.Element {
   );
 }
 
+const PREDICTED_SEPARATOR_STYLE = {
+  fontSize: 10,
+  color: "#92400e",
+  fontWeight: 600,
+  marginTop: 4,
+  marginBottom: 2,
+  fontStyle: "italic",
+} as const;
+
+function MetricDiffSection({ diffs }: { diffs: MetricDiff[] }): JSX.Element {
+  const observed = diffs.filter((m) => m.evidence_class !== "predicted");
+  const predicted = diffs.filter((m) => m.evidence_class === "predicted");
+  return (
+    <>
+      {observed.map((diff, i) => (
+        <MetricDiffRow key={`obs-${i}`} diff={diff} />
+      ))}
+      {predicted.length > 0 && (
+        <>
+          {observed.length > 0 && (
+            <div style={PREDICTED_SEPARATOR_STYLE}>
+              Predicted effects (not observed — subject to uncertainty)
+            </div>
+          )}
+          {predicted.map((diff, i) => (
+            <MetricDiffRow key={`pred-${i}`} diff={diff} />
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
 export function VersionCompareCard({
   card,
   onContinueDiscussion,
 }: VersionCompareCardProps): JSX.Element {
   const p = card.payload as unknown as PayloadVersionCompare;
 
+  const candidateMap = Object.fromEntries(
+    p.candidate_versions.map((v) => [v.workshop_version_id, v.label])
+  );
+  const multiCandidate = p.candidate_versions.length > 1;
   const candidateLabels = p.candidate_versions.map((v) => v.label).join(", ");
 
   return (
@@ -292,6 +362,11 @@ export function VersionCompareCard({
         <div style={{ fontWeight: 600, fontSize: 13 }}>{card.title}</div>
         <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 8 }}>#{card.sequence_no}</span>
       </div>
+
+      {/* Summary — matches CardShell behavior for other card types */}
+      {card.summary && (
+        <div style={{ fontSize: 12, color: "#6b7280" }}>{card.summary}</div>
+      )}
 
       {/* Version breadcrumb */}
       <div
@@ -335,49 +410,33 @@ export function VersionCompareCard({
           <SectionHeader>
             Field Changes ({p.field_diffs.length})
           </SectionHeader>
-          {p.field_diffs.map((diff, i) => (
-            <FieldDiffRow key={`${diff.path}-${i}`} diff={diff} />
-          ))}
+          {multiCandidate
+            ? groupByCandidate(p.field_diffs).map(({ candidateId, rows }) => (
+                <div key={candidateId}>
+                  <CandidateGroupHeader label={candidateMap[candidateId] ?? candidateId} />
+                  {rows.map((diff, i) => (
+                    <FieldDiffRow key={`${diff.path}-${i}`} diff={diff} />
+                  ))}
+                </div>
+              ))
+            : p.field_diffs.map((diff, i) => (
+                <FieldDiffRow key={`${diff.path}-${i}`} diff={diff} />
+              ))}
         </div>
       )}
 
-      {/* Metric diffs — grouped by evidence class */}
+      {/* Metric diffs — grouped by evidence class (predicted last, visually distinct) */}
       {p.metric_diffs.length > 0 && (
         <div data-testid={`version-compare-card-${card.card_id}-metric-diffs`}>
           <SectionHeader>Metric Differences</SectionHeader>
-          {/* Predicted metrics rendered last and visually distinct */}
-          {(() => {
-            const observed = p.metric_diffs.filter((m) => m.evidence_class !== "predicted");
-            const predicted = p.metric_diffs.filter((m) => m.evidence_class === "predicted");
-            return (
-              <>
-                {observed.map((diff, i) => (
-                  <MetricDiffRow key={`obs-${i}`} diff={diff} />
-                ))}
-                {predicted.length > 0 && (
-                  <>
-                    {observed.length > 0 && (
-                      <div
-                        style={{
-                          fontSize: 10,
-                          color: "#92400e",
-                          fontWeight: 600,
-                          marginTop: 4,
-                          marginBottom: 2,
-                          fontStyle: "italic",
-                        }}
-                      >
-                        Predicted effects (not observed — subject to uncertainty)
-                      </div>
-                    )}
-                    {predicted.map((diff, i) => (
-                      <MetricDiffRow key={`pred-${i}`} diff={diff} />
-                    ))}
-                  </>
-                )}
-              </>
-            );
-          })()}
+          {multiCandidate
+            ? groupByCandidate(p.metric_diffs).map(({ candidateId, rows }) => (
+                <div key={candidateId}>
+                  <CandidateGroupHeader label={candidateMap[candidateId] ?? candidateId} />
+                  <MetricDiffSection diffs={rows} />
+                </div>
+              ))
+            : <MetricDiffSection diffs={p.metric_diffs} />}
         </div>
       )}
 
@@ -385,9 +444,18 @@ export function VersionCompareCard({
       {p.risk_diffs && p.risk_diffs.length > 0 && (
         <div data-testid={`version-compare-card-${card.card_id}-risk-diffs`}>
           <SectionHeader>Risk Changes</SectionHeader>
-          {p.risk_diffs.map((diff, i) => (
-            <RiskDiffRow key={i} diff={diff} />
-          ))}
+          {multiCandidate
+            ? groupByCandidate(p.risk_diffs).map(({ candidateId, rows }) => (
+                <div key={candidateId}>
+                  <CandidateGroupHeader label={candidateMap[candidateId] ?? candidateId} />
+                  {rows.map((diff, i) => (
+                    <RiskDiffRow key={i} diff={diff} />
+                  ))}
+                </div>
+              ))
+            : p.risk_diffs.map((diff, i) => (
+                <RiskDiffRow key={i} diff={diff} />
+              ))}
         </div>
       )}
 
@@ -395,9 +463,18 @@ export function VersionCompareCard({
       {p.readiness_diffs.length > 0 && (
         <div data-testid={`version-compare-card-${card.card_id}-readiness-diffs`}>
           <SectionHeader>Readiness Gate Changes</SectionHeader>
-          {p.readiness_diffs.map((diff, i) => (
-            <ReadinessDiffRow key={i} diff={diff} />
-          ))}
+          {multiCandidate
+            ? groupByCandidate(p.readiness_diffs).map(({ candidateId, rows }) => (
+                <div key={candidateId}>
+                  <CandidateGroupHeader label={candidateMap[candidateId] ?? candidateId} />
+                  {rows.map((diff, i) => (
+                    <ReadinessDiffRow key={i} diff={diff} />
+                  ))}
+                </div>
+              ))
+            : p.readiness_diffs.map((diff, i) => (
+                <ReadinessDiffRow key={i} diff={diff} />
+              ))}
         </div>
       )}
 
