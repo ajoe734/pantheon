@@ -6,16 +6,16 @@
 | Helper kind | `acceptance_packet` |
 | Parent task | `AG-FE-DB-002` - Drag/resize/add/remove/change chart editor |
 | Current parent owner / reviewer | `Claude` / `Claude2` |
-| Parent status from ai-status | `in_progress` |
-| Parent GitHub PR | `#2187` merged to Pantheon `dev` at `23b557a5ca1ff3f9847e0e5256b487d14a26bda9` |
+| Parent status from ai-status | `review_approved` |
+| Parent GitHub PRs | Implementation `#2187` merged at `23b557a5ca1ff3f9847e0e5256b487d14a26bda9`; closeout brief `#2189` merged at `a7a27778b5c6cf590151218d7e2d924b91bfe575` |
 | Prepared by | `Codex` |
 | Reviewer | `Claude` |
 | Date | `2026-06-22` |
 | Baseline | follow-up 26 archived `done`; closeout PR #2184 merged to `dev` at `5452bbd18f114cfbdb74d4cd684ae1a88965c4b5` |
-| Current Pantheon dev | `8809835963a8cec4b2ef438aa46279d7b19179cc` |
+| Current Pantheon dev | `a7a27778b5c6cf590151218d7e2d924b91bfe575` |
 | Active frontend remote | `ajoe734/execute-plans` `origin/dev` at `ee835e2e6f1037e612d7929279a11efb32c61975` |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff |
+| Status | Review approved; owner closeout prepared |
 
 ## Purpose
 
@@ -27,9 +27,9 @@ The material delta since follow-up 26 is:
 
 - Pantheon `dev` now contains `execute-plans/src/agora/dashboard/DashboardGridEditor.tsx`
   and `DashboardGridEditor.test.tsx` from PR `#2187`.
-- The only later first-parent merge on current Pantheon `dev` is an
-  `AG-FE-ID-001` sidecar support packet; it does not change DB002 dashboard
-  editor surfaces.
+- Later Pantheon `dev` first-parent merges include an `AG-FE-ID-001` sidecar
+  support packet and parent closeout brief PR `#2189`; neither changes DB002
+  dashboard editor runtime surfaces.
 - The focused Pantheon mirror suite passes locally after installing dependencies:
   `npm --prefix execute-plans test -- --run src/agora/dashboard/DashboardGridEditor.test.tsx`
   reports 16 passing tests.
@@ -56,9 +56,9 @@ governance, broker, RuntimeBinding, L1, or L2 truth surfaces.
 
 | Surface | Observed state | DB002 consequence |
 |---|---|---|
-| `AG-FE-DB-002` status | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-002` reports `in_progress`; next says PR #2187 open with auto-merge enabled and waiting for CI. | Status is stale relative to GitHub/Pantheon `dev`: PR #2187 is already merged. Parent owner/reviewer should reconcile status before final closeout. |
-| `AG-FE-DB-002` GitHub PR | `gh pr view 2187 --repo ajoe734/pantheon` reports `MERGED`; merge commit `23b557a5...`; Branch CI Gate checks succeeded. | Pantheon repo now has the parent implementation in the legacy in-repo `execute-plans/` mirror. |
-| Pantheon `origin/dev` | Contains `DashboardGridEditor.tsx`, `DashboardGridEditor.test.tsx`, DB001 widget files, DB003/DB004 dashboard files, `react-grid-layout`, ECharts, and `patchDashboardRecipeLayout` metadata under `execute-plans/`. | Useful as Pantheon review evidence, but this is still the in-repo mirror path. |
+| `AG-FE-DB-002` status | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-002` reports `review_approved`; next says the supervisor resumed AG-FE-DB-002 for finalize after successful dispatch. | Parent reviewer gate is passed, but the parent owner still owns formal `done` finalization if it has not already archived. |
+| `AG-FE-DB-002` GitHub PRs | `gh pr view 2187 --repo ajoe734/pantheon` reports implementation `MERGED`; `gh pr view 2189 --repo ajoe734/pantheon` reports closeout brief `MERGED`; Branch CI Gate checks succeeded on both. | Pantheon repo has the parent implementation and review-approved parent task brief in the legacy in-repo `execute-plans/` mirror lane. |
+| Pantheon `origin/dev` | Contains `DashboardGridEditor.tsx`, `DashboardGridEditor.test.tsx`, DB001 widget files, DB003/DB004 dashboard files, `react-grid-layout`, ECharts, `patchDashboardRecipeLayout` metadata under `execute-plans/`, and the parent task brief at `review_approved`. | Useful as Pantheon review evidence, but the executable frontend delivery target remains a separate active external repository. |
 | Active `ajoe734/execute-plans` `origin/dev` | `ee835e2e...`; only lists `package.json`, `package-lock.json`, and `src/lib/bff-v1/agora/types.ts` for the inspected Agora paths. | Still lacks the frontend delivery surface expected by repository guidance. |
 | Active frontend dependencies | `origin/dev:package.json` matches only `recharts`; no `react-grid-layout`, `@types/react-grid-layout`, `echarts`, or `echarts-for-react`. | The active frontend base cannot run the DB002 editor as merged in Pantheon mirror. |
 | Active frontend generated types | `origin/dev:src/lib/bff-v1/agora/types.ts` contains `PersonalizationEvent`, but no `patchDashboardRecipeLayout`, dashboard recipe layout route, `move_widget`, `resize_widget`, `add_registered_widget`, or `WidgetPlacement` matches. | Active frontend base still lacks the typed layout PATCH compose surface. |
@@ -101,19 +101,18 @@ graph TD
 
 ## Recommended Parent Handling
 
-1. Reconcile parent status: central `ai-status` still says `AG-FE-DB-002` is
-   `in_progress` and waiting for PR #2187 CI, while GitHub and Pantheon `dev`
-   show PR #2187 merged.
-2. Decide whether parent acceptance is allowed to close on the Pantheon legacy
-   `execute-plans/` mirror evidence or must be synced to the active external
-   `ajoe734/execute-plans` repository before closeout.
+1. Parent `AG-FE-DB-002` has advanced to `review_approved` after PR `#2189`;
+   its owner still owns any remaining formal `done` finalization.
+2. Keep the parent closeout record explicit that approval is based on Pantheon
+   legacy `execute-plans/` mirror evidence unless/until the active external
+   `ajoe734/execute-plans` repository receives the same delivery surface.
 3. If parent closeout requires persisted layout writes, record caller-level
    evidence for `PATCH /bff/agora/dashboard-recipes/{recipe_id}/layout`,
    allowed layout operations, `If-Match`, `expected_version`, and
    `Idempotency-Key`. PR #2187's component tests prove callback/event behavior,
    not BFF persistence.
 4. Keep downstream `AG-E2E-TR-001` gated until DB002 has a reconciled delivery
-   target and final parent status.
+   target and final parent `done`/archive state.
 
 ## Verification Performed
 
@@ -134,6 +133,7 @@ AI_NAME=Codex ./scripts/ai-status.sh show AG-E2E-TR-001
 git fetch origin --prune
 git merge --ff-only origin/dev
 gh pr view 2187 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,url,title,statusCheckRollup
+gh pr view 2189 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,url,title,statusCheckRollup
 git -C /home/lupin/code/execute-plans fetch origin --prune
 git -C /home/lupin/code/execute-plans rev-parse origin/dev
 git -C /home/lupin/code/execute-plans ls-tree -r --name-only origin/dev src/agora/widgets src/agora/dashboard src/lib/bff-v1/agora package.json package-lock.json
@@ -150,6 +150,8 @@ npm --prefix execute-plans test -- --run src/agora/dashboard/DashboardGridEditor
 Observed validation results:
 
 - PR #2187 is merged, with Branch CI Gate checks reporting success.
+- PR #2189 is merged, and central status reports parent `AG-FE-DB-002` as
+  `review_approved` during this sidecar closeout.
 - `npm --prefix execute-plans ci` completed and reported 4 npm audit
   vulnerabilities in the dependency tree; no tracked repo diff was produced.
 - `npm --prefix execute-plans test -- --run src/agora/dashboard/DashboardGridEditor.test.tsx`
@@ -174,3 +176,20 @@ Please review this support-only follow-up for:
 If approved, return the sidecar to `Codex` for closeout finalization. Parent
 `AG-FE-DB-002` remains owned by `Claude` with reviewer `Claude2`; this sidecar
 does not replace that owner/reviewer decision.
+
+## Reviewer Approval And Closeout Boundary
+
+Central status records Claude approval for this sidecar. The approved packet:
+
+- accurately records the split between Pantheon `dev` and active
+  `execute-plans` `origin/dev`;
+- distinguishes component-level editor evidence from unproven caller/BFF
+  persistence evidence;
+- keeps the recommended parent handling non-invasive and support-only.
+
+Owner closeout keeps the scope limited to this support packet and the
+task-scoped brief. During closeout, parent PR `#2189` advanced Pantheon `dev`
+and the packet was refreshed to record the resulting parent `review_approved`
+state. This sidecar does not change parent task status, canonical truth,
+runtime, registry, schema, BFF, governance, broker, RuntimeBinding, L1, or L2
+surfaces.
