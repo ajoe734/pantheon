@@ -6,7 +6,7 @@ import {
   getWorkshopReadiness,
   listWorkshopCards,
   type WorkshopCard,
-  type WorkshopReadiness,
+  type StrategyReadinessAssessment,
 } from "@/lib/bff-v1/agora/workshops";
 import type { StrategyWorkshop, StrategyCompleteness } from "@/lib/bff-v1/agora/workshops";
 
@@ -64,7 +64,7 @@ interface SessionViewProps {
 function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
   const [workshop, setWorkshop] = useState<StrategyWorkshop | null>(null);
   const [completeness, setCompleteness] = useState<StrategyCompleteness | null>(null);
-  const [readiness, setReadiness] = useState<WorkshopReadiness | null>(null);
+  const [readiness, setReadiness] = useState<StrategyReadinessAssessment | null>(null);
   const [cards, setCards] = useState<WorkshopCard[]>([]);
 
   useEffect(() => {
@@ -100,7 +100,7 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
           )}
           {cards.map((card) => (
             <div key={card.card_id} data-testid={`workshop-card-${card.card_id}`}>
-              {card.kind}
+              {card.card_type}
             </div>
           ))}
         </div>
@@ -124,7 +124,9 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
           <div>—</div>
         )}
         {readiness && (
-          <div data-testid="workshop-readiness">{readiness.ready ? "Ready" : "Not ready"}</div>
+          <div data-testid="workshop-readiness">
+            {readiness.highest_ready_gate ?? "Not ready"}
+          </div>
         )}
       </div>
     </div>

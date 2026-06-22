@@ -2,19 +2,48 @@ import type { StrategyWorkshop, StrategyCompleteness } from "./types";
 
 export type { StrategyWorkshop, StrategyCompleteness };
 
-export interface WorkshopReadiness {
+export interface ReadinessGate {
+  gate: "preliminary_research" | "full_validation" | "trading_room";
+  state: "not_assessed" | "blocked" | "conditional" | "ready" | "stale";
+  requirements: unknown[];
+  blocking_requirement_ids?: string[];
+  conditional_assumptions?: string[];
+  evaluated_at?: string;
+}
+
+export interface StrategyReadinessAssessment {
+  spec_version: string;
+  assessment_id: string;
   workshop_id: string;
-  ready: boolean;
-  blocking_dimensions?: string[];
-  checked_at: string;
+  strategy_id: string;
+  workshop_version_id: string;
+  strategy_spec_registry_id: string;
+  assessment_version: number;
+  gates: ReadinessGate[];
+  highest_ready_gate?: "preliminary_research" | "full_validation" | "trading_room" | null;
+  staleness_reasons?: string[];
+  assessed_at: string;
+  valid_until?: string;
+  evidence_refs?: unknown[];
 }
 
 export interface WorkshopCard {
+  spec_version: string;
   card_id: string;
+  card_type: string;
   workshop_id: string;
-  kind: string;
-  content: Record<string, unknown>;
+  sequence_no: number;
+  status: string;
+  title: string;
+  payload: Record<string, unknown>;
   created_at: string;
+  source_event_ids?: string[];
+  workshop_version_id?: string;
+  strategy_spec_registry_id?: string;
+  summary?: string;
+  evidence_refs?: unknown[];
+  allowed_actions?: Record<string, boolean>;
+  updated_at?: string;
 }
 
 function resolvedBase(baseUrl?: string): string {
@@ -62,10 +91,10 @@ function completenessFrom(value: unknown): StrategyCompleteness {
   return data as unknown as StrategyCompleteness;
 }
 
-function readinessFrom(value: unknown): WorkshopReadiness {
+function readinessFrom(value: unknown): StrategyReadinessAssessment {
   const root = recordFrom(value);
   const data = recordFrom(root.data ?? root);
-  return data as unknown as WorkshopReadiness;
+  return data as unknown as StrategyReadinessAssessment;
 }
 
 function cardsFrom(value: unknown): WorkshopCard[] {
@@ -73,7 +102,7 @@ function cardsFrom(value: unknown): WorkshopCard[] {
   const items = root.data ?? root;
   if (Array.isArray(items)) return items as WorkshopCard[];
   const data = recordFrom(items);
-  const list = data.cards ?? data.events ?? data.items ?? data.results;
+  const list = data.items ?? data.cards ?? data.results;
   return Array.isArray(list) ? (list as WorkshopCard[]) : [];
 }
 
@@ -130,7 +159,7 @@ export async function getWorkshopCompleteness(workshopId: string, baseUrl?: stri
   return completenessFrom(body);
 }
 
-export async function getWorkshopReadiness(workshopId: string, baseUrl?: string): Promise<WorkshopReadiness | null> {
+export async function getWorkshopReadiness(workshopId: string, baseUrl?: string): Promise<StrategyReadinessAssessment | null> {
   const base = resolvedBase(baseUrl);
   const url = `${base}/bff/agora/workshops/${encodeURIComponent(workshopId)}/readiness`;
   const res = await fetch(url, {
@@ -150,7 +179,7 @@ export async function getWorkshopReadiness(workshopId: string, baseUrl?: string)
 
 export async function listWorkshopCards(workshopId: string, baseUrl?: string): Promise<WorkshopCard[]> {
   const base = resolvedBase(baseUrl);
-  const url = `${base}/bff/agora/workshops/${encodeURIComponent(workshopId)}/events`;
+  const url = `${base}/bff/agora/workshops/${encodeURIComponent(workshopId)}/cards`;
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
