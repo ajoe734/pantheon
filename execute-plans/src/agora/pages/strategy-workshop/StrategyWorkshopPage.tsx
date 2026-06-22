@@ -239,17 +239,76 @@ function WorkshopSessionView({ workshopId }: SessionViewProps): JSX.Element {
         </div>
       </div>
 
-      {/* Right: completeness rail */}
+      {/* Right: completeness rail + trading room CTA */}
       <div
         data-testid="completeness-rail"
-        style={{ width: 240, borderLeft: "1px solid #e2e8f0", overflow: "hidden" }}
+        style={{
+          width: 240,
+          borderLeft: "1px solid #e2e8f0",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
       >
-        <StrategyCompletenessRail
-          completeness={completeness}
-          readiness={readiness}
-          nextQuestion={nextQuestion}
-        />
-        {/* Legacy test-id shim for existing tests that check completeness-grade */}
+        <div style={{ flex: 1, overflow: "auto" }}>
+          <StrategyCompletenessRail
+            completeness={completeness}
+            readiness={readiness}
+            nextQuestion={nextQuestion}
+          />
+        </div>
+
+        {/* Add to Trading Room — disabled until trading_room gate is ready */}
+        <div
+          style={{
+            padding: "10px 12px",
+            borderTop: "1px solid #e2e8f0",
+            flexShrink: 0,
+          }}
+        >
+          {(() => {
+            const tradingRoomReady = readiness?.highest_ready_gate === "trading_room";
+            const disabledReason = readiness
+              ? tradingRoomReady
+                ? null
+                : `Trading Room gate not yet ready (highest: ${readiness.highest_ready_gate ?? "none"})`
+              : "Readiness not yet assessed";
+            return (
+              <>
+                <button
+                  data-testid="add-to-trading-room-btn"
+                  disabled={!tradingRoomReady}
+                  aria-disabled={!tradingRoomReady}
+                  title={disabledReason ?? undefined}
+                  style={{
+                    width: "100%",
+                    padding: "7px 12px",
+                    borderRadius: 6,
+                    border: "none",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: tradingRoomReady ? "pointer" : "not-allowed",
+                    background: tradingRoomReady ? "#1d4ed8" : "#e5e7eb",
+                    color: tradingRoomReady ? "#fff" : "#9ca3af",
+                    transition: "background 0.15s",
+                  }}
+                >
+                  Add to Trading Room
+                </button>
+                {disabledReason && (
+                  <div
+                    data-testid="add-to-trading-room-reason"
+                    style={{ fontSize: 10, color: "#9ca3af", marginTop: 4, textAlign: "center" }}
+                  >
+                    {disabledReason}
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
+
+        {/* Legacy test-id shims for existing tests */}
         {completeness && (
           <div data-testid="completeness-grade" style={{ display: "none" }}>
             {completeness.overall_grade}
