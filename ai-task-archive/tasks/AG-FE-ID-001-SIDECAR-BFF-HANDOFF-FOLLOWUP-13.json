@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+  "archived_at": "2026-06-20T20:00:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout PR #1885 merged at 5bc93c6e; review artifact recorded and support packet finalized without canonical/runtime/frontend changes.",
+    "last_update": "2026-06-20T20:00:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "支援包無新實作、無 canonical truth 變更、正確保留 AG-BE-ID-003 封鎖狀態與缺少前端目標檔案的陳述",
+      "請 Codex2 進行 closeout"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T20:00:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-13",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "git_clean_required": false,
+      "commit": "dcbc22c262d0534a76c3a329489c4d776b734814",
+      "commit_subject": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Support-only review artifact and task brief review-approved checkpoint.",
+        "Not changing": "L1 canonical truth, runtime, OpenAPI, frontend implementation, registry/governance, or OpenClaw adapter.",
+        "Composes with": "PR #1884 handoff packet on dev and parent AG-FE-ID-001 owner absorption.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- task brief and review artifact"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5bc93c6eca3ccb2437d465dba9a8fd3b9ca441ce",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support packet ready for review. PR #1884 open with auto-merge enabled; commit b7077bbe. Artifact: support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md. Scope support-only plus task brief; no canonical/runtime/OpenAPI/frontend implementation changed. Validation passed: 35 focused BFF/identity/servant/OpenClaw tests, agora_schema_bundle --verify, v1.1 YAML parse, generate-agora-types --check, and scoped git diff --check. Key delta from FOLLOWUP-12: FOLLOWUP-12 is archived done via PR #1882/#1883 at dev 25811546; parent AG-FE-ID-001 remains todo; AG-BE-ID-003 session blocker and missing frontend targets remain.",
+      "status": "done",
+      "created_at": "2026-06-20T19:53:52Z",
+      "resolved_at": "2026-06-20T19:56:07Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Review approved: support packet is an accurate freshness checkpoint, scope-constrained, no canonical mutations. FOLLOWUP-12 baseline preserved, AG-BE-ID-003 session gate honoured, missing frontend targets explicit. Returned to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-20T19:56:07Z",
+      "resolved_at": "2026-06-20T20:00:19Z"
+    }
+  ],
+  "blockers": []
+}

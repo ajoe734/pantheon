@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-06-22T04:23:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare AG-FE-RS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #2199 merged into dev at 9b429c439f505be5c94528a0471f013a7a4c040a; support-only handoff packet approved and closeout validation passed: JSON schema checks, BFF pytest 27 passed, git diff --check.",
+    "last_update": "2026-06-22T04:23:44Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-RS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up packet approved: parent-owner intake checklist, BFF route/envelope/header mapping, card source matrix, and stop-line blockers are documented for AG-FE-RS-001; no canonical truth, runtime, schema, or frontend files changed."
+    ],
+    "review_file": "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T04:23:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-rs-001-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "9b429c439f505be5c94528a0471f013a7a4c040a",
+      "commit_subject": "Merge pull request #2199 from ajoe734/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4": "prepare handoff"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9b429c439f505be5c94528a0471f013a7a4c040a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only Follow-up 4 packet is merged in PR #2199. Task commit 9c2fa257889a634d569b138132bb9b5153d44992, merge commit 9b429c439f505be5c94528a0471f013a7a4c040a. Artifact: support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md. Scope stayed support-only: parent intake checklist, BFF route/envelope/header mapping, card source matrix, and stop-line blockers. Validation: schema json.tool checks passed, BFF pytest 27 passed, git diff --check passed, GitHub Commit trailers/Runtime mirror guard/Smoke acceptance passed. Ready for Claude review/approve.",
+      "status": "done",
+      "created_at": "2026-06-22T04:20:38Z",
+      "resolved_at": "2026-06-22T04:21:52Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-FE-RS-001 BFF/frontend follow-up packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T04:21:52Z",
+      "resolved_at": "2026-06-22T04:23:45Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-06-20T22:41:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "BFF handoff packet reviewed and approved by Claude2; closeout PR #1919 merged into dev; sidecar artifact complete at support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md; no canonical truth modified.",
+    "last_update": "2026-06-20T22:41:13Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar 邊界完整保守，parent blocker 陳述準確，v1.1 discovery 區分正確，frontend/operator gate 保持保守，parent absorption gates 具體可操作且未實作 canonical truth。",
+      "小注：Section 10 仍稱 Codex2 為 reviewer（原始指派），chair 已在 dispatch 前改為 Claude2，屬外觀差異，不影響內容效力。"
+    ],
+    "review_file": "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T22:41:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "99770787b8c522c26f11682c24086a2b5b2a97b5",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ef236683afa0f5bb9ec0239518a64fc8e9971b28",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Followup-6 support-only packet is ready for review and merged through PR #1909 at f7d2a456ecba80a9cc46250f63b30f13341fa0b5 (task commit b843a4b475975de380bbd2b876b762952a56a2a6). It refreshes the AG-BE-ID-003 servant-session contract blocker against dev f49e257c plus later unrelated sidecar merges, adds the v1.1 capability/compatibility nuance, and keeps frontend/operator gates conservative. Verification: private-index worker_commit dry run, cached diff --check, PR checks Commit trailers/Runtime mirror guard/Smoke acceptance passed; no canonical/runtime/frontend source changes.",
+      "status": "done",
+      "created_at": "2026-06-20T21:27:44Z",
+      "resolved_at": "2026-06-20T22:04:17Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex2 to Claude2: Codex2 is quota_terminal (paused until 2026-06-21T15:29 UTC, ~17h) and cannot perform the review; Claude2 is running and auth-ready. Reassigning unblocks the sidecar review cycle without waiting for Codex2 quota reset.",
+      "status": "done",
+      "created_at": "2026-06-20T22:04:17Z",
+      "resolved_at": "2026-06-20T22:06:09Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved; packet stays within sidecar bounds, accurately restates parent blocker, and provides conservative actionable guidance without overriding canonical truth. Returned to owner (Codex) for finalization.",
+      "status": "done",
+      "created_at": "2026-06-20T22:06:09Z",
+      "resolved_at": "2026-06-20T22:23:12Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-20T22:23:12Z",
+      "resolved_at": "2026-06-20T22:24:12Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-20T22:24:13Z",
+      "resolved_at": "2026-06-20T22:41:14Z"
+    }
+  ],
+  "blockers": []
+}

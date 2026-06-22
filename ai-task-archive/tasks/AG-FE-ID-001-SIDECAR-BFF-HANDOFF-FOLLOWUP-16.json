@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+  "archived_at": "2026-06-20T23:49:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: PR #1925 merged at b85ca678 with followup-16 sidecar BFF handoff packet. Two sidecar deltas since followup-15 captured: AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 archived done via PR #1919 (ef236683); AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11 archived done via PR #1920 (c0af1ff8). AG-BE-ID-003 session_type blocker unchanged. Parent AG-FE-ID-001 remains todo; target files still missing. No canonical truth modified. Deliverable durable on dev.",
+    "last_update": "2026-06-20T23:49:41Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16-REVIEW.md",
+    "review_notes_zh": [
+      "審查通過",
+      "followup-16 正確捕捉兩個 sidecar 歸檔 delta（AG-BE-ID-003 followup-6 via PR #1919；AG-XR-003 followup-11 via PR #1920）",
+      "AG-BE-ID-003 session_type 合約阻塞維持不變",
+      "父任務 AG-FE-ID-001 仍為 todo；目標檔案仍缺席"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T23:49:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-16",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "git_clean_required": false,
+      "commit": "b85ca678fc91dc011b64ea80b47f87c9cf0fc623",
+      "commit_subject": "Merge pull request #1925 from ajoe734/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16": "add closeout artifacts"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b85ca678fc91dc011b64ea80b47f87c9cf0fc623",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Followup-16 support-only packet is ready for review at support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16.md. Committed at a40b30ea. Delta from FOLLOWUP-15: AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 archived done via PR #1919; AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11 archived done via PR #1920; no BFF/OpenAPI/execute-plans Agora source changes; parent AG-FE-ID-001 remains todo; target files still missing; AG-BE-ID-003 session contract blocker unchanged. Verification: git diff --name-only a21c72c3..c0af1ff8 confirmed no scope-relevant source changes; target file checks confirmed MISSING; task status checks confirmed all dependency states. No canonical/runtime/frontend source changes.",
+      "status": "done",
+      "created_at": "2026-06-20T23:18:33Z",
+      "resolved_at": "2026-06-20T23:21:22Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Approved by Claude. Packet faithfully captures the FOLLOWUP-16 delta: AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 archived done via PR #1919; AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11 archived done via PR #1920; no relevant source changes; AG-BE-ID-003 session contract blocker unchanged; parent AG-FE-ID-001 remains todo; target files missing. Review record at support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16-REVIEW.md.",
+      "status": "done",
+      "created_at": "2026-06-20T23:21:22Z",
+      "resolved_at": "2026-06-20T23:23:08Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Sidecar packet and review record committed and pushed; PR #1925 open. Review file contains Claude approval record for the followup-16 delta: AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 archived done via PR #1919; AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11 archived done via PR #1920; AG-BE-ID-003 session_type blocker unchanged; parent AG-FE-ID-001 remains todo with target files missing.",
+      "status": "done",
+      "created_at": "2026-06-20T23:30:38Z",
+      "resolved_at": "2026-06-20T23:32:48Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: followup-16 packet accurately captures two sidecar archive closures from FOLLOWUP-15 baseline; AG-BE-ID-003 session contract blocker unchanged; no BFF/OpenAPI/execute-plans Agora source changes since FOLLOWUP-15; parent AG-FE-ID-001 remains todo with target files missing. Returned to owner Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-20T23:32:48Z",
+      "resolved_at": "2026-06-20T23:36:19Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Supervisor reset the prior review_approved state to in_progress. PR #1925 merged (b85ca678) with all CI checks passed. Packet and review file are durable on dev. Requesting re-approval using the existing review at support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16-REVIEW.md — review outcome is unchanged; no new material has been added. Once approved, Claude2 will run done.",
+      "status": "done",
+      "created_at": "2026-06-20T23:45:08Z",
+      "resolved_at": "2026-06-20T23:47:15Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-16",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Packet approved. Followup-16 correctly captures two sidecar delta: AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-6 archived done via PR #1919 (ef236683); AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-11 archived done via PR #1920 (c0af1ff8). AG-BE-ID-003 session_type contract blocker unchanged. Parent AG-FE-ID-001 remains todo; frontend target files still missing. No canonical truth modified. Review file durable on dev.",
+      "status": "done",
+      "created_at": "2026-06-20T23:47:15Z",
+      "resolved_at": "2026-06-20T23:49:42Z"
+    }
+  ],
+  "blockers": []
+}

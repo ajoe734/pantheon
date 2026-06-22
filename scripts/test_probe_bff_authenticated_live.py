@@ -123,6 +123,68 @@ def test_request_json_accepts_expected_bff_error_envelope(monkeypatch) -> None:
     assert result["error_code"] == "FORBIDDEN"
 
 
+def test_main_follows_management_ai_conversation_href_for_readback(tmp_path, monkeypatch) -> None:
+    probe = _load_probe_module()
+    output = tmp_path / "authenticated-live.json"
+    observed: list[tuple[str, str]] = []
+
+    def fake_request_json(
+        *,
+        base_url: str,
+        probe: Any,
+        token: str | None,
+        timeout: float,
+        idempotency_prefix: str,
+    ):
+        assert base_url == "https://bff.example.test"
+        assert timeout == 2.0
+        assert idempotency_prefix.startswith("bff-live-smoke-")
+        observed.append((probe.family, probe.path))
+        result = {
+            "family": probe.family,
+            "method": probe.method,
+            "path": probe.path,
+            "status": 200,
+            "ok": True,
+            "missing_required_paths": [],
+            "error_envelope": False,
+        }
+        if probe.family == "management-ai-multiturn":
+            result["conversation_href"] = (
+                "https://bff.example.test/bff/management/ai/conversations/session-abc?includeTurns=1"
+            )
+        return result
+
+    monkeypatch.setenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "primary-live-token")
+    monkeypatch.setattr(probe, "request_json", fake_request_json)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "probe_bff_authenticated_live.py",
+            "--base-url",
+            "https://bff.example.test",
+            "--output",
+            str(output),
+            "--timeout",
+            "2",
+        ],
+    )
+
+    assert probe.main() == 0
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert (
+        "management-ai-conversation-readback",
+        "/bff/management/ai/conversations/session-abc?includeTurns=1",
+    ) in observed
+    assert any(
+        result["family"] == "management-ai-conversation-readback"
+        for result in payload["routes"]
+    )
+    assert payload["summary"]["failed"] == 0
+
+
 def test_build_dry_run_results_attaches_per_probe_side_effect_proofs(monkeypatch) -> None:
     probe = _load_probe_module()
 

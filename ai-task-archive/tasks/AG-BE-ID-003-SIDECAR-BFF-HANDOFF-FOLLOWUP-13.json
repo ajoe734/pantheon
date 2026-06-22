@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+  "archived_at": "2026-06-21T06:06:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout PR #2001 merged at b4a74e92fd4ad270c6933ad81fbf4698ce96243a; support-only packet finalized after Codex review approval PR #1998; parent AG-BE-ID-003 remains blocked on Claude servant-session type-contract decision.",
+    "last_update": "2026-06-21T06:06:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：followup-13 support-only packet 準確保留 AG-BE-ID-003 blocked on Claude servant-session type-contract decision；v1.2 bundle 只作 additive context，不解鎖 runtime/session readiness；BFF runtime grep 無 servant-session/degraded code；execute-plans PR #63 仍 OPEN 且 integration-gate failed；未批准 canonical truth/runtime/schema/registry/governance/database/OpenClaw/execute-plans source 改動。",
+      "驗證通過：review record PR #1998 merged at 9e30393645e221abb2549bc4756bdf06da8cd124；schema bundle verify passed；v1.2 bundle tests 5 passed；Agora router tests 18 passed。"
+    ],
+    "review_file": "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T06:06:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-13",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "git_clean_required": false,
+      "commit": "5a84eea2d03701a401db2c48e1d1881c19d5cd17",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b4a74e92fd4ad270c6933ad81fbf4698ce96243a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-21T05:39:33Z",
+      "resolved_at": "2026-06-21T05:39:44Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only AG-BE-ID-003 BFF/frontend handoff packet is ready for review at support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13.md. PR #1996 merged into dev at fa4894300d79254ef45ef293a997c2b95285a4fa; task commit d307dbe94390a5afcf1edb16ceb3b4f80e7b6bca. Scope changed only the task brief and support packet; no canonical truth, OpenAPI, BFF runtime, route registry, governance, database, OpenClaw adapter, compatibility manifest source, or execute-plans source files changed. Verification passed: schema bundle verify; v1.2 bundle tests 5 passed; Agora router tests 18 passed. Key conclusion: AG-BE-ID-003 remains blocked on Claude's servant-session type-contract decision; v1.2 bundle and FE support closeouts are context, not runtime/session readiness.",
+      "status": "done",
+      "created_at": "2026-06-21T05:49:02Z",
+      "resolved_at": "2026-06-21T05:59:34Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex. Review record PR #1998 merged at 9e30393645e221abb2549bc4756bdf06da8cd124; support-only packet is accurate and returns to Codex2 for closeout. Parent AG-BE-ID-003 remains blocked on Claude's servant-session type-contract decision.",
+      "status": "done",
+      "created_at": "2026-06-21T05:59:34Z",
+      "resolved_at": "2026-06-21T06:06:20Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+  "archived_at": "2026-06-20T15:21:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "FOLLOWUP-7 sidecar closed after Claude approval; support packet and review artifact merged in PR #1830.",
+    "last_update": "2026-06-20T15:21:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "支援包正確吸收 contract-closure 作為未來方向",
+      "BFF query ledger 與 501 stub 狀態獨立驗證一致",
+      "servant/session 成功路徑保持封鎖直至 v1.1 合約與型別著陸"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T15:21:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-7",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "git_clean_required": false,
+      "commit": "098dc46be4031a6e5dfd43172a0502c75e6a6c75",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "01dca74e8f48fdd6c5f0b9bf15114aef64ba8fc4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "FOLLOWUP-7 support packet is committed and PR #1830 is open for Claude review; scope is support-only and keeps servant/session success blocked until v1.1 contract/type/backend predecessors land.",
+      "status": "done",
+      "created_at": "2026-06-20T15:09:47Z",
+      "resolved_at": "2026-06-20T15:13:49Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "FOLLOWUP-7 sidecar approved; support-only packet accurately incorporates contract-closure delta while preserving blocked servant/session success path. 22 BFF tests pass; route ledger verified; missing FE artifacts confirmed; no leakage found.",
+      "status": "done",
+      "created_at": "2026-06-20T15:13:49Z",
+      "resolved_at": "2026-06-20T15:21:41Z"
+    }
+  ],
+  "blockers": []
+}

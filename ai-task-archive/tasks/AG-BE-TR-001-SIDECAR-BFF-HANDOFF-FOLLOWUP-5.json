@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-06-21T23:01:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare AG-BE-TR-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-TR-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Followup-5 sidecar packet finalized and published via PR #2158 (merged 2026-06-21): CommandResponse shape correction, DetailEnvelope/ListEnvelope wrappers, TradingIntent schema, StrategyReadinessAssessment gate structure. No canonical truth modified.",
+    "last_update": "2026-06-21T23:01:58Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-TR-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Followup-5 BFF/frontend handoff packet approved: corrects CommandResponse shape (Packet 2 had wrong fields; v1.3 schema uses {status: accepted/queued/completed, data, meta} not {command_id, status: accepted/created, resource_id}); documents DetailEnvelope/ListEnvelope wrappers for strategies/{id}, decision-events list, and trading-intents/{id} routes; reveals TradingIntent schema (not in v4 bundle, no_order_route_proof='agora_intent_record_only' distinct from GovernedIntentHandoff's 'agora_request_only_no_order_route', 8-value intent_type enum, 5-value direction enum, linked_event_ids, learning_eligible); documents StrategyReadinessAssessment gate structure (3 named gates, state enum, highest_ready_gate) and how it drives readiness_state in TradingRoomStrategy; adds intent_type/direction field mapping recommendations and allowedActions guidance for DetailEnvelope — all as support material without modifying canonical truth."
+    ],
+    "review_file": "support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T23:01:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-tr-001-sidecar-bff-handoff-followup-5",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "git_clean_required": false,
+      "commit": "2f7c335952544f31992ca3171c2c31300fd945d8",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "eb43e7851f6c00bae1cd7c9a684ecd8b9fb572ac",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "FOLLOWUP-5 packet ready for review: CommandResponse shape correction (Packet 2 type wrong; v1.3 uses {status: accepted/queued/completed, data, meta}), DetailEnvelope/ListEnvelope wrapper documentation for strategies/{id}/decision-events list/trading-intents/{id} routes, TradingIntent schema revealed (not in v4 bundle, no_order_route_proof='agora_intent_record_only' distinct from GovernedIntentHandoff, 8-value intent_type enum, 5-value direction enum, linked_event_ids, learning_eligible), StrategyReadinessAssessment 3-gate structure and how it drives readiness_state, allowedActions guidance for DetailEnvelope, updated TypeScript types and acceptance checks. Commit: 0c282726 on task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.",
+      "status": "done",
+      "created_at": "2026-06-21T22:45:42Z",
+      "resolved_at": "2026-06-21T22:51:23Z"
+    },
+    {
+      "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only AG-BE-TR-001 BFF/frontend handoff followup-5 approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T22:51:23Z",
+      "resolved_at": "2026-06-21T23:01:59Z"
+    }
+  ],
+  "blockers": []
+}

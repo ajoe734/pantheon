@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-21T03:53:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare AG-DES-SW-REF-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-DES-SW-REF-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-SW / Deep-Closure",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AG-DES-SW-REF-001/AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar acceptance packet complete and merged via PR #1969. All 13 acceptance checklist items documented, 5 design gaps captured, dependency map produced, conclude/no-parallel-store prohibitions stated. No canonical truth modified. Claude2 approved all 8 review points.",
+    "last_update": "2026-06-21T03:53:20Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DES-SW-REF-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：八個審查點全部通過",
+      "support-only 邊界乾淨：無 canonical 文件修改",
+      "三識別子模型正確導出自 §5.1",
+      "no-parallel-store 禁令在 R7 明確聲明",
+      "conclude 無 Registry 生命週期晉升 (R6)",
+      "strategy_spec_ref 廢棄路徑正確映射至 strategy_spec_registry_id",
+      "strategy_workshop_version_link schema 含全部 9 欄位及兩個 UNIQUE 約束",
+      "依賴圖無假序：PRIV-001/REF-001/DB-001 平行",
+      "broker/capital/RuntimeBinding 權限已排除"
+    ],
+    "review_file": "support/sidecars/AG-DES-SW-REF-001/AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T03:53:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-des-sw-ref-001-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "00844c8295358f063ac63cbe103d1671cdc2052d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c99f051e0df79d5877da2d89a434b1abf775920b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Acceptance packet ready for review. support/sidecars/AG-DES-SW-REF-001/AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE.md documents: five gaps between current schemas and design closure requirements, canonical three-identifier model (strategy_id / strategy_spec_registry_id / active_strategy_spec_registry_id), strategy_workshop_version_link schema and constraints, conclude semantics with explicit prohibition on lifecycle promotion, strategy_spec_ref deprecation path, and dependency map confirming REF-001 is parallel to PRIV-001 and DB-001. No canonical truth was modified.",
+      "status": "done",
+      "created_at": "2026-06-21T03:29:43Z",
+      "resolved_at": "2026-06-21T03:35:13Z"
+    },
+    {
+      "task_id": "AG-DES-SW-REF-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all eight reviewer questions pass. Acceptance packet and dependency map accepted as support artifact. Returned to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-06-21T03:35:13Z",
+      "resolved_at": "2026-06-21T03:53:23Z"
+    }
+  ],
+  "blockers": []
+}

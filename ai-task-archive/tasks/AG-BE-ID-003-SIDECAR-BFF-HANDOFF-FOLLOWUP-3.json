@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-06-20T20:15:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only sidecar: packet PR #1886 merged at 0295310683c92601e5b880e8166e7b1f71fc2875; closeout PR #1890 merged at c8d571afaf88c10b783b2534913966b899a2171d; verified git diff --check and BFF Agora router pytest (18 passed).",
+    "last_update": "2026-06-20T20:15:24Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過｜PR #1886 已 merge 到 dev；packet scope 僅限 support/sidecars/AG-BE-ID-003，不修改 canonical truth/runtime/OpenAPI/manifest。重跑 git diff --check 與 BFF agora router pytest 通過，並抽查 OpenAPI、manifest、BFF legacy/ask/servant surfaces，結論支持 AG-BE-ID-003 session_type contract blocker 與 frontend gates。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T20:15:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "839b6fd5648028d896ed74c2e878d88feb67a45e",
+      "commit_subject": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout metadata for the support packet and generated task brief.",
+        "Not changing": "L1 canonical truth, OpenAPI, capability manifests, BFF runtime/router code, registry/governance, database migrations, or execute-plans frontend implementation.",
+        "Composes with": "PR #1886 handoff packet on dev and AG-BE-ID-003 parent owner Codex2 absorption decision.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Codex2",
+        "Verified": "git diff --check -- .orchestrator/task-briefs/ag_be_id_003_sidecar_bff_handoff_followup_3.md support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md; python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q (18 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 11,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c8d571afaf88c10b783b2534913966b899a2171d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Followup-3 support-only packet ready for review in PR #1886 / commit bb2db57f. It records the AG-BE-ID-003 servant-session contract blocker, route-family decision, legacy session caveats, and AG-FE-ID-001 frontend gates. Verification: git diff --check on packet; python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q (18 passed).",
+      "status": "done",
+      "created_at": "2026-06-20T20:03:06Z",
+      "resolved_at": "2026-06-20T20:06:26Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2. PR #1886 is merged to dev at merge commit 0295310683c92601e5b880e8166e7b1f71fc2875; support packet commit bb2db57f2ef6a46c3656848fa6b01d455c5625ba is an ancestor of origin/dev. Verified: git diff --check -- support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md; python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q (18 passed); source spot-checks for OpenAPI servant session schema/routes, capability manifest route prefixes, BFF legacy/ask session gaps, and missing OPENCLAW_UPSTREAM_DEGRADED enum. Owner Codex should finalize done.",
+      "status": "done",
+      "created_at": "2026-06-20T20:06:26Z",
+      "resolved_at": "2026-06-20T20:15:25Z"
+    }
+  ],
+  "blockers": []
+}

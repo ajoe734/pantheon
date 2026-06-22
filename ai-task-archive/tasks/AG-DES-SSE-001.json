@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "AG-DES-SSE-001",
+  "archived_at": "2026-06-21T12:44:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DES-SSE-001",
+    "title": "Typed workshop SSE event contract (v1.3)",
+    "summary_zh": "依 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/03_workshop_sse_contract.md 落地 v4 schema workshop_stream_event:typed envelope(§C1 event_id/type/aggregate/sequence_no/causal_parent/times/trace/idempotency/data_cutoff/visibility/payload_schema/payload)、event catalog(§C2 ~25 種 workshop.*/research.*/consultation.*/stream.*)、latency(§C3 p95 首個 persisted ack <2s,LLM/研究非同步)、ordering/replay(§C4 per-workshop 單調序、at-least-once、dedupe、Last-Event-ID replay≥24h/10k、heartbeat 15s、45s 降級、缺 replay 回 SSE_REPLAY_UNAVAILABLE)。 【有疑問一定要 STOP 開 blocker】動工前讀完權威設計 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/ (MASTER_SD_RESPONSE.md + 對應 0X 文件 + schemas/*.json + 08 OpenAPI delta)。鐵律:不可改動或重雜湊 frozen v1/v1.1/v1.2(bundle_index.json/.v1_1/.v1_2、agora_v1*.openapi.yaml);一律 additive 到 services/control-plane/specs/agora/v4/ 與 agora_v1_3.openapi.yaml / bundle_index.v1_3.json(後者 extends 並 hash v1.2 精確 bytes)。schema 內容以 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/schemas/ 同名檔為準逐欄落地,不自創欄位/route/enum;Agora 永不下單/綁資金/寫 RuntimeBinding(governed handoff 只建 request)。遇任何不確定先 blocker。",
+    "phase": "EPIC AGORA-V13 / Round2",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/specs/agora/v4/workshop_stream_event.schema.json"
+    ],
+    "acceptance": [
+      "workshop_stream_event schema 落 v4 且對齊 03;envelope+catalog 完整;replay/ordering/heartbeat 語意到位;<2s ack 目標明列;【驗收】frozen v1/v1.1/v1.2 + 其 bundle_index sha256 全不變;新增物逐欄對齊 design-closure-round2;遇疑問先 blocker 不自行實作"
+    ],
+    "next": "Closeout complete: workshop_stream_event.schema.json delivered in dev (PR #2062, f6cb2c6c); review approved by Claude2 (SHA256 match, 25 events, frozen files clean, no invented fields); closeout artifacts in dev via PR #2064.",
+    "last_update": "2026-06-21T12:44:18Z",
+    "auto_created_by": "dispatch_agora_v13_round2_2026-06-21",
+    "review_notes_zh": [
+      "審查通過：schema 與 reference 完全一致，SHA256 匹配，25 event catalog 正確，frozen files 未被觸動，無自創欄位。"
+    ],
+    "review_file": ".orchestrator/reviews/ag_des_sse_001_claude2_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T12:44:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-des-sse-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DES-SSE-001",
+      "git_clean_required": false,
+      "commit": "9e6eba6b81e719f9f9bbc401ec887a0639c85a6f",
+      "commit_subject": "Merge origin/dev into task/AG-DES-SSE-001 to clear BEHIND state before auto-merge",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DES-SSE-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "82992fc27e819bfb5a45ab10252888ec0ed9aa93",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DES-SSE-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "workshop_stream_event schema landed at services/control-plane/specs/agora/v4/workshop_stream_event.schema.json; SHA256 matches bundle_index.v1_3.template.json expectation (37c21e77...); all 25 event types from §C2 present; envelope fields per §C1 complete; frozen v1/v1.1/v1.2 bundle_index files verified unchanged; commit f6cb2c6c on task/AG-DES-SSE-001",
+      "status": "done",
+      "created_at": "2026-06-21T11:53:17Z",
+      "resolved_at": "2026-06-21T12:11:28Z"
+    },
+    {
+      "task_id": "AG-DES-SSE-001",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex to Claude2: Codex lanes (codex1, codex2) are paused; AG-DES-SSE-001 has been in review since 2026-06-21T11:53Z with no Codex worker available. Claude2 is not the owner and is the natural replacement given its active review workload this cycle.",
+      "status": "done",
+      "created_at": "2026-06-21T12:11:28Z",
+      "resolved_at": "2026-06-21T12:18:10Z"
+    },
+    {
+      "task_id": "AG-DES-SSE-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved; schema byte-identical to reference, SHA256 matches bundle template, 25 events correct, frozen files clean. Returned to Claude for closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T12:18:10Z",
+      "resolved_at": "2026-06-21T12:44:20Z"
+    }
+  ],
+  "blockers": []
+}

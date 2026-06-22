@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-",
+  "archived_at": "2026-06-22T01:01:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-",
+    "title": "Unblock integration for INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF: ci-red",
+    "summary_zh": "auto-integrator 無法安全整合 INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF: ci-red. 請修正 PR/rebase/CI 後交回整合。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF"
+    ],
+    "artifacts": [
+      "ai-status.json",
+      ".orchestrator/task-briefs",
+      "scripts/git/auto_integrator.py"
+    ],
+    "acceptance": [
+      "Root cause for INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-MERGE-STATE-BLOCKED-SIDECAR-BFF-HANDOFF integration blocker is documented",
+      "original PR is updated or superseded",
+      "task no longer strands in review_approved"
+    ],
+    "next": "Auto-integrator 在 split-tree 環境 done-guard 不相容、產生的巢狀 INTEGRATION-UNBLOCK 垃圾任務;integrator 已關閉,此 wrapper 作廢回收 slot。",
+    "last_update": "2026-06-22T01:01:33Z",
+    "auto_created_by": "auto_integrator",
+    "auto_generated": true,
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

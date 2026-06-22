@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-06-20T18:57:27Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete. Sidecar BFF handoff followup packet (F1/F2/F3 findings, G2a/G2b/G7 gates) merged via PR #1874. Support-only boundary confirmed; no L1 doc or code changed.",
+    "last_update": "2026-06-20T18:57:27Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：三項新發現（F1/F2/F3）均經原始碼核實；G2a/G2b/G7 gate 推導正確；ask/sessions 分析完整；前端 gate 更新具可操作性；support-only 邊界確認。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T18:57:27Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "2442bcaa9a22312fa8848e5f193187adb691f475",
+      "commit_subject": "Merge remote-tracking branch 'origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2' into task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "18f5bcebe06c0cd4ef0121a4b77de142b5909553",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup BFF handoff packet ready for review. PR #1874 open with auto-merge. Three new findings (F1: ask/sessions surface split, F2: quick_ask default, F3: router migration scope) added on top of six confirmed-open gaps. Artifact: support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+      "status": "done",
+      "created_at": "2026-06-20T18:25:04Z",
+      "resolved_at": "2026-06-20T18:32:58Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Followup BFF handoff packet approved. F1 (ask/sessions split), F2 (quick_ask default non-canonical), F3 (identity/router migration scope) all verified against source. G2a/G2b/G7 gate additions are correct. ask/sessions surface analysis complete and correctly scoped to ASK-001. Frontend gate update is actionable for AG-FE-ID-001. Support-only boundary confirmed — no code or L1 doc changed.",
+      "status": "done",
+      "created_at": "2026-06-20T18:32:58Z",
+      "resolved_at": "2026-06-20T18:57:28Z"
+    }
+  ],
+  "blockers": []
+}

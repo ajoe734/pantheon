@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-RS-002",
+  "archived_at": "2026-06-21T15:06:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-RS-002",
+    "title": "Unified run/progress/result projection",
+    "summary_zh": "依 SD §7.3 與 specs/agora/research_run_summary.schema.json 做統一 ResearchRunSummary 投影:run/progress/result/metrics/artifactRefs/evidenceRefs,§17.2 research-runs list/create,SSE progress。研究工具不得寫 RuntimeBinding(§7.4 §9 治理鐵律)。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "phase": "EPIC AGORA-RS / Phase 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/research.py"
+    ],
+    "acceptance": [
+      "run 進度/結果以 ResearchRunSummary 形狀投影且可查證據;no-order-route 測試通過;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "Closed after PR #2094 merged closeout evidence. Implementation PR #2092 merged at 61b78053d4af0da094ba9edd3b85693678cdb9d2; closeout merge 3566d9e6ee1f531e84c536fd3ff0d4b44e0744c4; verification rerun: git diff --check, py_compile targeted BFF files, pytest 173 passed.",
+    "last_update": "2026-06-21T15:06:34Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "review_notes_zh": [
+      "審查通過",
+      "實作與 v4 schema 逐欄位一致，無自創欄位",
+      "SSE 事件命名對齊 v1.3 research.* 規範，progress payload 對應欄位正確",
+      "no_order_route_proof 正確，無 RuntimeBinding/order route/capital binding",
+      "GET /research-runs/{run_id} 正確移除 envelope，直接回傳 projection",
+      "測試覆蓋 schema validation、SSE 事件序列、artifact 列表，173 pytest 通過"
+    ],
+    "review_file": "/tmp/ag_be_rs_002_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T15:06:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-rs-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-RS-002",
+      "git_clean_required": false,
+      "commit": "0cc83784e09731be4d1c563830bc22a3d0b6dcfe",
+      "commit_subject": "AG-BE-RS-002: finalize closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "AG-BE-RS-002 task-scoped closeout evidence in the worker task brief.",
+        "Not changing": "Agora research runtime, schema/OpenAPI/capability allowlists, research backend ownership, order routing, capital binding, or RuntimeBinding.",
+        "Composes with": "implementation PR #2092 merged to dev and the central status done/archive transition after this closeout PR merges.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-BE-RS-002",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile services/control-plane/bff/agora/research/router.py services/control-plane/bff/agora/strategy_workshop/router.py services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py; PYTHONDONTWRITEBYTECODE=1 python3 -m pytest services/control-plane/bff/tests/test_agora_research_run_projection.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py services/control-plane/tests/agora/test_winner_branch_e2e_v13.py services/control-plane/tests/agora/test_agora_isolation_matrix.py -q (173 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-RS-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3566d9e6ee1f531e84c536fd3ff0d4b44e0744c4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-RS-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #2092 merged into dev at 61b78053d4af0da094ba9edd3b85693678cdb9d2. Implemented canonical ResearchRunProjection output, run list/artifact projections, v1.3 research.* SSE publication, and focused regression tests. Verified locally: diff --check, py_compile, and 173 pytest contract/BFF tests passed. Ready for Claude review/approval.",
+      "status": "done",
+      "created_at": "2026-06-21T14:55:48Z",
+      "resolved_at": "2026-06-21T14:59:51Z"
+    },
+    {
+      "task_id": "AG-BE-RS-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: implementation aligns with v4 ResearchRunProjection schema, SSE v1.3 event naming correct, no RuntimeBinding/order-route violations. 173 tests passed. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-21T14:59:51Z",
+      "resolved_at": "2026-06-21T15:06:35Z"
+    }
+  ],
+  "blockers": []
+}

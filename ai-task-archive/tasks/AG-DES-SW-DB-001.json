@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "task_id": "AG-DES-SW-DB-001",
+  "archived_at": "2026-06-21T04:20:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DES-SW-DB-001",
+    "title": "Workshop tables + 4-state lifecycle + section-8 index migration",
+    "summary_zh": "依 sw001-deep-closure §6/§7/§8 在既有 store 慣例(Python 模組內嵌 CREATE TABLE IF NOT EXISTS,參 bff/assistant_conversation_store.py;**無 .sql migration**)產出 workshop 持久化:5 張表(strategy_workshop_session / strategy_workshop_event / strategy_workshop_version_link / strategy_completeness_snapshot / agora_private_content_object,欄位/型別/NOT NULL/FK/PK 完全照 §7)、4 狀態 lifecycle CHECK(open/in_review/concluded/archived)、event message 的 (private_content_ref+redacted_summary+redaction_policy_version) CHECK、§8 全部索引(含 partial/unique)。沿用既有 idempotency store(services/foundation/idempotency.py,aggregate type strategy_workshop),不另建 idempotency 子系統。 【有疑問一定要 STOP 開 blocker,不要自己亂做】動工前先讀完權威設計docs/04/pantheon_agora_cross_repo_2026-06-20/sw001-deep-closure/AG-BE-SW-001_deep_design_closure_2026-06-21.md(該文件為準)+ contract-closure/ + 既有 frozen bundle。鐵律:不可改動或重雜湊 frozen v1(specs/agora/bundle_index.json、openapi/agora_v1.openapi.yaml)與 v1.1(bundle_index.v1_1.json、openapi/agora_v1_1.openapi.yaml);一律 additive 到 specs/agora/v3/ 與 agora_v1_2.openapi.yaml / bundle_index.v1_2.json(後者必須 extends 並 hash v1_1 的精確 bytes)。raw 私有內容永不進 log/audit/trace/error/DB 明文。加密/金鑰/保留/狀態/映射語意一律照設計稿,不臆測、不自創 schema/route/enum/capability。",
+    "phase": "EPIC AGORA-SW / Deep-Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff/agora/strategy_workshop/store.py"
+    ],
+    "acceptance": [
+      "5 表/欄位/約束逐欄對齊 §7;4 狀態 CHECK 到位;§8 每條索引存在(migration/bootstrap 測試斷言);message event 約束強制 redaction 欄位;重用既有 idempotency store;【驗收】frozen v1/v1.1 檔案與其 bundle_index sha256 不變;新增物逐欄位對齊 sw001-deep-closure;遇疑問先 blocker 不自行實作"
+    ],
+    "next": "PR #1978 merged into dev at 0841c0f9e2dfe39aa8c1486bc4f9b8c87a22d684; head e86f8b3e1cae62ebd734cffe7d085b3dd1e28575 is merged; focused pytest 7 passed; GitHub Branch CI Gate and Orchestrator Sync passed.",
+    "last_update": "2026-06-21T04:20:33Z",
+    "auto_created_by": "dispatch_agora_sw001_predecessors_2026-06-21",
+    "review_notes_zh": [
+      "審查通過：5 表/欄位/約束逐欄對齊 §7；4 狀態 CHECK 到位；§8 全部 18 條索引存在含 partial/unique；message event 約束強制 redaction 欄位；重用既有 idempotency store；frozen v1/v1.1 檔案與 SHA256 不變；7 項 pytest 全部通過。"
+    ],
+    "review_file": ".orchestrator/reviews/ag_des_sw_db_001_review_claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T04:20:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-des-sw-db-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DES-SW-DB-001",
+      "git_clean_required": false,
+      "commit": "e86f8b3e1cae62ebd734cffe7d085b3dd1e28575",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-DES-SW-DB-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DES-SW-DB-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7271174c9e7b12968bd3423254a2e4a23c93125c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DES-SW-DB-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #1978 opened with auto-merge enabled. Scope: workshop Postgres DDL store, v3 persistence contract, v1.2 OpenAPI/bundle, focused tests. Local verification: pytest store/bundle tests, agora_schema_bundle --verify, git diff --check.",
+      "status": "done",
+      "created_at": "2026-06-21T04:12:06Z",
+      "resolved_at": "2026-06-21T04:15:34Z"
+    },
+    {
+      "task_id": "AG-DES-SW-DB-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — all §6/§7/§8 requirements met, frozen bundles intact, 7 tests pass. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-21T04:15:34Z",
+      "resolved_at": "2026-06-21T04:20:35Z"
+    }
+  ],
+  "blockers": []
+}

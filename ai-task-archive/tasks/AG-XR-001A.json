@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-001A",
+  "archived_at": "2026-06-20T15:23:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-001A",
+    "title": "Additive Agora contract extension bundle (v1.1)",
+    "summary_zh": "依 contract-closure 02_schema_coexistence_and_migration.md 建立 additive v2 bundle,frozen AG-XR-001 一律不可就地修改:新增 services/control-plane/specs/agora/v2/{widget_spec_v2,chart_spec_v1,dashboard_recipe_v2,compatibility_manifest}.schema.json 與 capability_manifest_v1_1.json,以及 services/control-plane/specs/agora/bundle_index.v1_1.json(extends frozen v1、記錄 base bundle_index_sha256)。A3 內容以 v2 檔名/ID 採納,不覆寫 v1。WidgetSpec v1 維持 legacy 可讀;v1->v2 投影失敗回 LEGACY_WIDGET_MAPPING_REQUIRED 不臆測。schema 內容取自 contract-closure 同名 v2 schema 檔。 【有疑問一定要提出,不要自己亂做】動工前先讀完 contract-closure 文件(docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/ 01-07 + v2 schema + ARCHIVE_NOTES.md)與 frozen 基線(services/control-plane/specs/agora/ + openapi/agora_v1.openapi.yaml + bundle_index.json)。prose 03/04 為合約權威,agora_openapi_extension_v1_1.yaml 只是 seed(24/32 route)不可照抄當完整契約。只要遇到任何疑問、設計沒寫到、與既有 code 對不上、依賴不清或衝突,一律 STOP 開 blocker 等澄清,不可臆測、補洞、繞過。鐵律:不得改動 frozen AG-XR-001 檔案、不得讓其 bundle_index.json sha256 失效、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "phase": "EPIC AGORA-XR / Contract-Closure",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/specs/agora/v2/widget_spec_v2.schema.json",
+      "services/control-plane/specs/agora/v2/chart_spec_v1.schema.json",
+      "services/control-plane/specs/agora/v2/dashboard_recipe_v2.schema.json",
+      "services/control-plane/specs/agora/v2/compatibility_manifest.schema.json",
+      "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json",
+      "services/control-plane/specs/agora/bundle_index.v1_1.json"
+    ],
+    "acceptance": [
+      "v2 bundle 通過驗證且 frozen v1 + bundle_index.json sha256 完全不變;bundle_index.v1_1.json 正確 extends 並記錄 base sha256;TS 型別保留 WidgetSpecV1/WidgetSpecV2 明確命名;【驗收】frozen v1 檔案與 bundle_index.json sha256 不變(agora_schema_bundle.py --verify 仍綠);新增物逐欄位對齊 contract-closure prose;遇疑問先 blocker 不自行實作"
+    ],
+    "next": "Closed AG-XR-001A after PR #1828 implementation merge and PR #1833 closeout merge; verification green and frozen v1 bundle unchanged.",
+    "last_update": "2026-06-20T15:23:35Z",
+    "auto_created_by": "dispatch_agora_contract_closure_2026-06-20",
+    "review_notes_zh": [
+      "審查通過:frozen v1 驗證全綠,sha256 一致,五個 v2 檔案 sha256 完全匹配,commit 純增量無刪除,鐵律全部滿足",
+      "後續:Codex 依 task-closeout-finalization.md 做 done 收尾"
+    ],
+    "review_file": "/tmp/AG-XR-001A-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T15:23:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-001a",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-001A",
+      "git_clean_required": false,
+      "commit": "a4d3f18b16b894814b15755b6f3a61fd335053b0",
+      "commit_subject": "Merge pull request #1833 from ajoe734/task/AG-XR-001A",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-XR-001A": "close out additive Agora bundle"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-001A",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a4d3f18b16b894814b15755b6f3a61fd335053b0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-001A",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-20T15:02:56Z",
+      "resolved_at": "2026-06-20T15:03:11Z"
+    },
+    {
+      "task_id": "AG-XR-001A",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "PR #1828 merged into dev at e28e6e492579681df8f8f27bcfb3929e5443992f; local validation and GitHub checks passed. Awaiting Claude review_approved before owner done closeout.",
+      "status": "done",
+      "created_at": "2026-06-20T15:10:14Z",
+      "resolved_at": "2026-06-20T15:14:48Z"
+    },
+    {
+      "task_id": "AG-XR-001A",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all iron rules satisfied, agora_schema_bundle.py --verify green, all sha256 cross-checks pass, pure-additive commit. Returned to Codex for done closeout.",
+      "status": "done",
+      "created_at": "2026-06-20T15:14:48Z",
+      "resolved_at": "2026-06-20T15:23:36Z"
+    }
+  ],
+  "blockers": []
+}

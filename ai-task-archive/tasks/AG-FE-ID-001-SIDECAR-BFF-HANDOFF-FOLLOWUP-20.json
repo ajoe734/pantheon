@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20",
+  "archived_at": "2026-06-21T01:34:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20",
+    "title": "Prepare AG-FE-ID-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-ID-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-000"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support packet finalized via closeout PR; scope remained support-only; AG-BE-ID-003 session contract blocker unchanged; AG-XR-003 compatibility gate unchanged; AG-FE-ID-001 remains todo; target files AgoraApp.tsx identity.ts servant.ts remain absent from both origin/main and origin/dev; parent must confirm frontend delivery branch before implementation.",
+    "last_update": "2026-06-21T01:34:06Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-ID-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "followup-20 支援封包正確代表自 followup-19 以來的窄幅差異；AG-BE-ID-003 及 AG-XR-003 仍然 blocked；AG-FE-ID-001 父任務仍為 todo；execute-plans 目標檔案仍缺失；35 項 BFF/OpenClaw 測試通過；無 canonical truth 改動"
+    ],
+    "review_file": "support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T01:34:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-id-001-sidecar-bff-handoff-followup-20",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20",
+      "git_clean_required": false,
+      "commit": "880e81dc59bdb748861f0798809b6e0e48deac26",
+      "commit_subject": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20: closeout refresh",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout refresh note and task brief merge-readiness sync for the support-only AG-FE-ID-001 followup-20 packet.",
+        "Not changing": "BFF runtime, OpenAPI, capability manifests, canonical truth, governance policy, frontend source, or L1 documents.",
+        "Composes with": "PR #1944 after refreshing against origin/dev at c009f0a5; parent AG-FE-ID-001 decides whether to absorb the handoff.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20",
+        "Reviewer": "Claude",
+        "Verified": "AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20; git diff --check -- .orchestrator/task-briefs/ag_fe_id_001_sidecar_bff_handoff_followup_20.md support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b3b5b1c3c3cdb37121dd6cc4d3c8f3634cc75c56",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Followup-20 support-only BFF/frontend handoff packet is ready for review at support/sidecars/AG-FE-ID-001/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20.md. PR #1941 merged into dev at f881e203ec8a4f5736142941d9b59a542cd4c1a0 with Commit trailers, Runtime mirror guard, and Smoke acceptance green. Delta since followup-19: dev advanced through AG-XR-003 followup-12, unrelated AG-FE-DB-002 followup-10, and AG-BE-ID-003 followup-10 support material; no BFF/OpenAPI/Agora spec/execute-plans source or AG-FE-ID-001 support implementation delta. AG-FE-ID-001 remains todo; AG-BE-ID-003 remains blocked on the servant session type-contract decision; AG-XR-003 remains blocked; execute-plans target files AgoraApp.tsx identity.ts servant.ts remain absent from both checked origin/main and origin/dev. No canonical/runtime/OpenAPI/frontend source changes.",
+      "status": "done",
+      "created_at": "2026-06-21T01:21:28Z",
+      "resolved_at": "2026-06-21T01:25:32Z"
+    },
+    {
+      "task_id": "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-20",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. Followup-20 support packet correctly captures the narrow delta since followup-19: AG-XR-003 followup-12 and AG-BE-ID-003 followup-10 both landed as support material only, keeping their parent tasks blocked. Execute-plans target files AgoraApp.tsx identity.ts servant.ts remain absent from both origin/main and origin/dev. No canonical truth, BFF runtime, OpenAPI, or frontend source changes. 35 BFF/OpenClaw tests passed; schema bundle and OpenAPI YAML verified. Returning to owner Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T01:25:32Z",
+      "resolved_at": "2026-06-21T01:34:08Z"
+    }
+  ],
+  "blockers": []
+}

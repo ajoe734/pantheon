@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-06-20T18:22:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare AG-BE-SW-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-SW-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-SW / Phase 2",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-SW-001/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar finalized: D8 trainer session surface ownership and D9 committee route family distinctions confirmed by Claude2 review. D1-D9 decision table consolidated. Packet merged to dev via PR #1871. Parent owner (AG-BE-SW-001) must record D8 and D9 decisions before FE live adapter work proceeds.",
+    "last_update": "2026-06-20T18:22:54Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-SW-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：D8 trainer 路由歸屬、D9 committees vs bff/agora/committee 區分均準確。D1-D9 合併決策表完整。封包未觸及 canonical truth。",
+      "父任務擁有者需針對 D8 與 D9 各自記錄決策後方可進行 FE live 實作。"
+    ],
+    "review_file": "support/sidecars/AG-BE-SW-001/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T18:22:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-sw-001-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "0f041ba4abedbc0b8c39223d52e816e7dc99456a",
+      "commit_subject": "Merge dev into task/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 (closeout sync)",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e9386da7ad30991e5b72cd8e5964e4534b68e17c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup-3 packet authored. New observations: (1) api/v1/trainer session route family is fully implemented but TrainerStudio.tsx has no path helpers or adapter wiring — parent must decide surface ownership; (2) api/v1/committees (read-only governance projection) vs /bff/agora/committee/sessions (Agora workshop lifecycle) distinction clarified; (3) consolidated D1-D9 open decision list from all three packets. Commit 85dfa296. Please review support/sidecars/AG-BE-SW-001/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md.",
+      "status": "done",
+      "created_at": "2026-06-20T18:01:09Z",
+      "resolved_at": "2026-06-20T18:03:00Z"
+    },
+    {
+      "task_id": "AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: packet accurately surfaces D8 trainer session surface ownership gap and D9 committee route family distinction. D1-D9 consolidated table ready for parent owner action. Returning to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-06-20T18:03:00Z",
+      "resolved_at": "2026-06-20T18:22:55Z"
+    }
+  ],
+  "blockers": []
+}

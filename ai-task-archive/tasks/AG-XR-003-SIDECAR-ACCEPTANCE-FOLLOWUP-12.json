@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12",
+  "archived_at": "2026-06-21T01:09:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12",
+    "title": "Prepare AG-XR-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-XR-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-XR / Phase 0",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-001A"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed after PR #1936 merged at 519aa95478c74f69813e76ff38d8f0ccc0dc4bba; support packet refreshed against origin/dev b97af2ee; parent AG-XR-003 remains blocked on execute-plans PR #63 integration gate.",
+    "last_update": "2026-06-21T01:09:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過: sidecar 只新增 support packet, 未改 canonical/runtime surface。",
+      "抽查通過: latest origin/dev 6a7b391f 對 AG-XR/Agora implementation path 仍無變更; PR #63 仍 open/UNSTABLE; verify/deployment-gate/pytest/contract:drift 結果與 packet 一致。",
+      "收尾注意: PR #1936 目前 mergeStateStatus=BEHIND, owner closeout 前需刷新 base 並等 PR merge 後才能 done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T01:09:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-003-sidecar-acceptance-followup-12",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12",
+      "git_clean_required": false,
+      "commit": "6978f0dc121b1e441374190666200f381a37232b",
+      "commit_subject": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12: closeout refresh",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support packet and task-scoped brief for AG-XR-003 sidecar follow-up 12.",
+        "Not changing": "canonical L1/L2 docs, runtime, registry, governance, manifest JSON, agora_compat_manifest.py, execute-plans types, or deployment workflow.",
+        "Composes with": "PR #1936 auto-merge into dev and AG-XR-003 parent blocker disposition by Claude2.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12",
+        "Reviewer": "Codex",
+        "Verified": "git diff --name-only 6de042cd..HEAD over AG-XR/Agora implementation paths; AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12/AG-XR-003/AG-XR-001A; gh pr view 63/1936"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "519aa95478c74f69813e76ff38d8f0ccc0dc4bba",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Follow-up 12 packet ready: support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12.md. PR #1936 is open with auto-merge enabled. Parent AG-XR-003 remains blocked waiting for Claude2; Pantheon PR #1852 merged; execute-plans PR #63 still open/unstable at head e1cb9125 with latest PR run 27877483718 failing. Local evidence recorded: verify --allow-pending fails on generated-types hash mismatch, deployment-gate fails closed on 6 errors, pytest 1 stale assertion failure / 3 passed, contract:drift passes. Support-only; no canonical/runtime changes.",
+      "status": "done",
+      "created_at": "2026-06-21T00:59:59Z",
+      "resolved_at": "2026-06-21T01:03:08Z"
+    },
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-12",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only packet accurately captures AG-XR-003 blocker state and dependency map; local recheck matched expected failures/passes. PR #1936 is currently BEHIND after origin/dev advanced to 6a7b391f, so owner must refresh/merge the PR before done closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T01:03:08Z",
+      "resolved_at": "2026-06-21T01:09:20Z"
+    }
+  ],
+  "blockers": []
+}

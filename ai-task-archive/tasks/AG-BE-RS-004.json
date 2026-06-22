@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-RS-004",
+  "archived_at": "2026-06-21T16:10:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-RS-004",
+    "title": "Evidence/result synthesis skill",
+    "summary_zh": "依 design-closure C1 result-synthesis SPEC 與 SD §7 做 evidence-grounded 結果整合 skill:把多個 ResearchRunSummary + ConsultMemo 整合成可討論卡片資料(VersionPatchProposal/EvidenceSummary),每個結論必須 grounded 在 evidence_refs,不得無根據生成。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "phase": "EPIC AGORA-RS / Phase 3",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "integrations/openclaw/skills/agora/result-synthesis/"
+    ],
+    "acceptance": [
+      "synthesis 輸出符合 C1 SPEC 且每結論有 evidence_refs;無 ungrounded 主張;附測試;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "Closeout complete: evidence scope filter and VPP schema validation implemented per C1 SPEC; 28 tests pass; PR #2096 (implementation) and PR #2102 (closeout brief) both merged to dev",
+    "last_update": "2026-06-21T16:10:07Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T16:10:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-rs-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-RS-004",
+      "git_clean_required": false,
+      "commit": "8227b8925f25869f5f4a5d9c0c2f6b22a73a406e",
+      "commit_subject": "Merge branch 'dev' into task/AG-BE-RS-004",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-RS-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "88c7ecd42a5cd1e98cf4290c8f03e21398150a06",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-RS-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: agora-result-synthesis skill per C1 design-closure SPEC. Deliverables: integrations/openclaw/skills/agora/result_synthesis/ with skill.py, SPEC.md, test_skill.py (__init__.py). All 21 tests pass (3 golden evals: V3→V4 quantitative comparison, OOS-fail/IS-pass verdict enforcement, consult disagreement preservation). Evidence-grounding enforced: non-insufficient verdict blocked if output evidence_refs empty. Stub/fixture detection with verdict downgrade. Conflict preservation via unresolved_decisions pass-through. No RuntimeBinding/capital-bind/order-route paths introduced. Anchor commit 4de6e0f6 on task/AG-BE-RS-004, PR #2096 open with auto-merge. Please verify against C1 SPEC §Input/Output, golden evals, and hard rules.",
+      "status": "done",
+      "created_at": "2026-06-21T15:16:15Z",
+      "resolved_at": "2026-06-21T15:22:11Z"
+    },
+    {
+      "task_id": "AG-BE-RS-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review not approved: proposed_version_patches must validate against v1.3 VersionPatchProposal schema, and output evidence_refs must be validated against the provided/loaded evidence scope so invented refs cannot ground a non-insufficient verdict. See PR #2096 comment https://github.com/ajoe734/pantheon/pull/2096#issuecomment-4762418462",
+      "status": "done",
+      "created_at": "2026-06-21T15:22:11Z",
+      "resolved_at": "2026-06-21T15:22:11Z"
+    },
+    {
+      "task_id": "AG-BE-RS-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Both reviewer rejections addressed (commit 0fc5877c, PR #2096 updated): (1) output evidence_refs now filtered to input scope — invented refs emit INVENTED_EVIDENCE_REF warning and cannot ground a non-insufficient verdict; (2) each proposed_version_patches entry validated against v1.3 version_patch_proposal.schema.json via jsonschema.Draft7Validator — violations block with PATCH_SCHEMA_INVALID. Stub tests corrected (adapter refs now match input scope). 28 tests pass.",
+      "status": "done",
+      "created_at": "2026-06-21T15:33:34Z",
+      "resolved_at": "2026-06-21T15:36:40Z"
+    },
+    {
+      "task_id": "AG-BE-RS-004",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved in PR #2096 comment https://github.com/ajoe734/pantheon/pull/2096#issuecomment-4762455360; local verification 28 result-synthesis tests + 11 v1.3 VersionPatchProposal tests passed; PR is still BEHIND and needs branch refresh before merge if required.",
+      "status": "done",
+      "created_at": "2026-06-21T15:36:40Z",
+      "resolved_at": "2026-06-21T16:10:08Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-20T18:00:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "BFF/frontend handoff packet for AG-BE-ID-003 finalized. Support artifact documents 6 session BFF gaps (G1–G6), §8.2 audit field contract, operator journey, FE handoff gates, and parent absorption criteria. Reviewed and approved by Claude2. PR #1867 merged into dev.",
+    "last_update": "2026-06-20T18:00:30Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：support-only 範圍確認",
+      "G1–G6 BFF 缺口正確識別",
+      "§8.2 稽核欄位合約正確",
+      "Operator journey 與 FE handoff 目標完整可用"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T18:00:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "704acfd158eaa3f8ad202a3b0ff559c2a381fa2f",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "15195f38bc0248021964b0964d3bdc6c082608c6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-20T17:24:27Z",
+      "resolved_at": "2026-06-20T17:24:51Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF handoff packet complete. Sidecar documents six query gaps (missing terminate route, session_type enforcement, §8.2 audit fields, OPENCLAW_UPSTREAM_DEGRADED degradation path, non-scoped SSE alias, and main.py migration), the operator journey for interactive/trainer/research sessions, and the frontend handoff gates blocking AG-FE-ID-001 command-line skeleton. Packet at support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF.md. No canonical truth or runtime code changed.",
+      "status": "done",
+      "created_at": "2026-06-20T17:36:23Z",
+      "resolved_at": "2026-06-20T17:38:51Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-20T17:38:51Z",
+      "resolved_at": "2026-06-20T17:41:25Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Sidecar BFF/frontend handoff packet approved; support-only artifact accurately documents AG-BE-ID-003 session BFF gaps (G1–G6), audit field contract, operator journey, and FE handoff gates. No canonical files changed.",
+      "status": "done",
+      "created_at": "2026-06-20T17:41:25Z",
+      "resolved_at": "2026-06-20T18:00:31Z"
+    }
+  ],
+  "blockers": []
+}
