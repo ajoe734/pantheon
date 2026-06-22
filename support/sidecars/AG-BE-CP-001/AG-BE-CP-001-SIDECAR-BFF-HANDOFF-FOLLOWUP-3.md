@@ -30,8 +30,8 @@ implementation.
 
 | Change | Detail |
 |---|---|
-| `AG-XR-CP-001` is done | PR #2179 merged to `dev` at `ac7b358b`. Delivered `agora_v1_4.openapi.yaml` (13 routes), four new v5 JSON Schemas, `capability_manifest_v1_4.json`, and `bundle_index.v1_4.json`. All CI checks green (commit-trailers, runtime-mirror-guard, smoke-acceptance). |
-| Blocker 1 resolved: §17.3 route now formally defined | `agora_v1_4.openapi.yaml` defines all candidate pool BFF routes; 13 operationIds added. The §17.3 gap is formally addressed. |
+| `AG-XR-CP-001` is done | PR #2179 merged to `dev` at `ac7b358b`. Delivered `agora_v1_4.openapi.yaml` (15 routes — 15 operationIds across 10 OpenAPI paths), four new v5 JSON Schemas, `capability_manifest_v1_4.json`, and `bundle_index.v1_4.json`. All CI checks green (commit-trailers, runtime-mirror-guard, smoke-acceptance). |
+| Blocker 1 resolved: §17.3 route now formally defined | `agora_v1_4.openapi.yaml` defines all candidate pool BFF routes; 15 operationIds across 10 OpenAPI paths added. The §17.3 gap is formally addressed. |
 | Blocker 2 resolved: `candidate_score.schema.json` delivered | `services/control-plane/specs/agora/v5/candidate_score_result.schema.json` defines `CandidateScoreResult` as a JSON Schema (not just TypeScript types). All four score fields are `required`. |
 | Blocker 3 resolved: decision verbs and lifecycle state formalized | `services/control-plane/specs/agora/v5/candidate_member_review.schema.json` defines valid review decisions: `approve_for_monitoring`, `send_to_shadow`, `needs_more_research`, `park`, `reject`. |
 | Decision verbs changed from Followup-2 | v1.4 uses `approve_for_monitoring / send_to_shadow / needs_more_research / park / reject` — not the D8 verbs from Followup-2 (`add_to_monitoring / remove / park / request_research / start_shadow / create_entry_watch`). Implementation must use v1.4 verbs. |
@@ -107,7 +107,7 @@ All write operations require:
 | `services/control-plane/bff/agora/servant/router.py` | No candidate pool routes registered. `candidates` appears only as a list traversal variable name; not a route. | Implement all 15 routes in a new `candidate_pool.py` router module or extend the agora router. |
 | `candidate_pool.schema.json` | v1.0 present, unchanged, `additionalProperties: false`. Used by `$ref` from v1.4 OpenAPI. | Reuse for pool/member serialization validation. Do not extend. |
 | `v5/` schemas | All four v5 schemas present and valid per the bundle_index.v1_4.json hashes. | Validate BFF responses against these schemas. |
-| `agora_v1_4.openapi.yaml` | Present, 15 route paths defined, all with required-field schemas. | Implement to the contract. Do not deviate from operationIds or response schemas. |
+| `agora_v1_4.openapi.yaml` | Present, 15 routes (15 operationIds across 10 OpenAPI paths) defined, all with required-field schemas. | Implement to the contract. Do not deviate from operationIds or response schemas. |
 | Score computation | No BFF score implementation exists. | BFF must call the A2 recipe engine or a scoring projection service; the exact downstream service path is `AG-BE-CP-001`'s implementation decision. |
 | Review decision persistence | No BFF review persistence exists. | BFF must persist `CandidateMemberReview` records and transition `lifecycle_state` per the decision verb. |
 
@@ -284,7 +284,7 @@ Codex review should verify:
 | Check | Expected result |
 |---|---|
 | Scope | Only this support artifact and task-owned status/brief metadata are in scope; no canonical files changed. |
-| Accuracy of v1.4 route summary | 15 routes (13 paths) accurately summarized from `agora_v1_4.openapi.yaml`. |
+| Accuracy of v1.4 route summary | 15 routes (15 operationIds across 10 OpenAPI paths) accurately summarized from `agora_v1_4.openapi.yaml`. |
 | Accuracy of v5 schema summary | Four schema files accurately summarized from `services/control-plane/specs/agora/v5/`. |
 | Decision verb accuracy | v1.4 decisions (`approve_for_monitoring`, `send_to_shadow`, `needs_more_research`, `park`, `reject`) accurately stated; Followup-2 D8 verbs are superseded. |
 | Score endpoint accuracy | Pool-level score endpoint (`GET/POST /bff/agora/candidate-pools/{pool_id}/score`) accurately stated; no per-member score endpoint. |
@@ -331,7 +331,7 @@ AI_NAME=Claude python3 scripts/ai_status.py show AG-BE-CP-001
 AI_NAME=Claude python3 scripts/ai_status.py show AG-XR-CP-001
 # source: archive; terminal_status: done; PR #2179 merged to dev
 
-# Confirmed v1.4 OpenAPI routes exist:
+# Confirmed v1.4 OpenAPI routes exist (15 operationIds across 10 paths):
 grep "operationId:" services/control-plane/openapi/agora_v1_4.openapi.yaml
 # listCandidatePools, createCandidatePool, getCandidatePool,
 # getCandidatePoolScore, triggerCandidatePoolScore,
@@ -340,6 +340,9 @@ grep "operationId:" services/control-plane/openapi/agora_v1_4.openapi.yaml
 # listCandidatePoolDiscussions, createCandidatePoolDiscussion,
 # listCandidateMemberDiscussions, createCandidateMemberDiscussion,
 # listCandidatePoolMonitoring, addCandidateToMonitoring, removeCandidateFromMonitoring
+# → 15 operationIds (grep -c gives 15)
+# python3 -c "import yaml; doc=yaml.safe_load(open('services/control-plane/openapi/agora_v1_4.openapi.yaml')); print(len(doc['paths']))"
+# → 10 OpenAPI paths
 
 # Confirmed v5 schemas exist:
 ls services/control-plane/specs/agora/v5/
