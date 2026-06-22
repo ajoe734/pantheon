@@ -16,5 +16,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 - Reviewer approval is recorded in central status with Claude review notes.
 - Closeout scope remains limited to the support packet and task brief.
+- Parent `AG-FE-DB-002` advanced to `review_approved` during sidecar closeout;
+  the support packet records that delta without changing parent status.
 - No L1/L2 canonical truth, runtime, BFF, schema, registry, governance,
   broker, or RuntimeBinding surface is changed by this sidecar.
