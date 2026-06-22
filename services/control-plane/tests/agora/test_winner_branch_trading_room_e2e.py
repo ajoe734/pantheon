@@ -307,25 +307,6 @@ class TestStep10TradingRoomAndDashboard(unittest.TestCase):
             },
         }
 
-    def _make_widget_spec(self, widget_type: str, widget_id: str) -> dict:
-        data_source_by_type = {
-            "winner_branch_scoreboard": "winner_branch.score_breakdown",
-            "candidate_ranking_table": "agora.candidate.score_components",
-            "branch_profitability_table": "winner_branch.branch_profitability",
-            "signal_decision_queue": "agora.trading.events",
-            "winner_branch_score_breakdown": "winner_branch.score_breakdown",
-            "expected_value_distribution": "winner_branch.score_breakdown",
-            "risk_invalidation_panel": "agora.monitoring.events",
-        }
-        return {
-            "widget_id": widget_id,
-            "widget_type": widget_type,
-            "data_source": data_source_by_type.get(widget_type, "agora.strategy.summary"),
-            "phase": "candidate_review",
-            "sensitivity": "user_private",
-            "registry_version": "widget_registry.v1",
-        }
-
     def test_trading_room_aggregate_schema_valid_when_ready(self) -> None:
         room = self._make_trading_room_aggregate("ready")
         _validate(room, V13_SCHEMA_DIR / "trading_room_aggregate.schema.json")
@@ -363,17 +344,31 @@ class TestStep10TradingRoomAndDashboard(unittest.TestCase):
         )
 
     def test_all_widgets_in_recipe_come_from_registry(self) -> None:
-        """KEY: every widget_type in the recipe must be in widget_registry.v1.json."""
+        """KEY: every widget_id in the recipe must map to a registered widget_type.
+
+        _make_dashboard_recipe uses the naming convention wgt_{widget_type}_001.
+        We decode that mapping explicitly so the test proves recipe widget_ids
+        are tied to registered types, not invented ones.
+        """
         registered_types = _registered_widget_types()
-        widget_specs = {
-            wt: self._make_widget_spec(wt, f"wgt_{wt}_001")
-            for wt in self.WINNER_BRANCH_WIDGET_TYPES
+        # Build widget_id → widget_type map using the same naming convention
+        # that _make_dashboard_recipe uses: widget_id = f"wgt_{wt}_001".
+        widget_id_to_type = {
+            f"wgt_{wt}_001": wt for wt in self.WINNER_BRANCH_WIDGET_TYPES
         }
-        for widget_type, spec in widget_specs.items():
+        recipe = self._make_dashboard_recipe()
+        for widget in recipe["widgets"]:
+            wid = widget["widget_id"]
             self.assertIn(
-                widget_type,
+                wid,
+                widget_id_to_type,
+                f"widget_id '{wid}' has no corresponding WINNER_BRANCH_WIDGET_TYPES entry",
+            )
+            wtype = widget_id_to_type[wid]
+            self.assertIn(
+                wtype,
                 registered_types,
-                f"Widget type '{widget_type}' is not in canonical A3 registry",
+                f"Widget type '{wtype}' (id: '{wid}') is not in canonical A3 registry",
             )
 
     def test_no_unregistered_widgets_allowed(self) -> None:
