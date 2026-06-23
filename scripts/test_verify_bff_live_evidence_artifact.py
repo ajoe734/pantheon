@@ -84,6 +84,18 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
 
 def write_passing_artifact(artifact_dir: Path) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
+        json.dumps(
+            {
+                "strict_live_evidence_preflight": True,
+                "github_environment": "dev",
+                "missing": [],
+                "invalid": [],
+                "secret_values_written": False,
+            }
+        ),
+        encoding="utf-8",
+    )
     write_summary(artifact_dir)
     write_strict_auth_json(artifact_dir)
     write_strict_sse_json(artifact_dir)
@@ -128,6 +140,47 @@ def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:
     assert payload["criteria"]["preflight_ready"]["status"] == "fail"
     assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in payload["criteria"]["preflight_ready"]["note"]
     assert payload["criteria"]["rbac_matrix"]["status"] == "missing"
+
+
+def test_verifier_fails_when_preflight_secret_safety_flag_is_missing(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    (artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
+        json.dumps(
+            {
+                "strict_live_evidence_preflight": True,
+                "github_environment": "dev",
+                "missing": [],
+                "invalid": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["overall"] == "fail"
+    assert payload["criteria"]["preflight_ready"]["status"] == "fail"
+    assert "secret_values_written must be false" in payload["criteria"]["preflight_ready"]["note"]
+
+
+def test_verifier_fails_when_preflight_reports_secret_values_written(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight = json.loads((artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").read_text(encoding="utf-8"))
+    preflight["secret_values_written"] = True
+    (artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
+        json.dumps(preflight),
+        encoding="utf-8",
+    )
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["overall"] == "fail"
+    assert payload["criteria"]["preflight_ready"]["status"] == "fail"
+    assert "secret_values_written must be false" in payload["criteria"]["preflight_ready"]["note"]
 
 
 def test_verifier_rejects_historical_audit_paths_even_when_checks_pass(tmp_path: Path) -> None:
