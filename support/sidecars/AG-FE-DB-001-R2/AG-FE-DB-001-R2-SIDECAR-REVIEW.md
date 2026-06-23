@@ -29,6 +29,8 @@ governance implementation, broker authority, or RuntimeBinding.
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-002` | Downstream dashboard editor closeout state and dependency context. |
 | `gh pr view 2280 --repo ajoe734/pantheon --json ...` | Parent PR merge facts, file list, commits, checks, and auto-merge metadata. |
 | `gh pr checks 2280 --repo ajoe734/pantheon` | Current visible GitHub check outcomes for PR `#2280`. |
+| `gh pr view 2282 --repo ajoe734/pantheon --json ...` | Parent closeout PR merge facts and task-brief `done` sync evidence. |
+| `gh pr checks 2282 --repo ajoe734/pantheon` | Current visible GitHub check outcomes for PR `#2282`. |
 | `/tmp/ag-fe-db-001-r2-review.md` | Claude2 review record captured by `ai-status` as the parent `review_file`. |
 | `git show 32cc9b90083d6640fab725406b699d92d2d89ae5:...` | Merged Pantheon `origin/dev` file content for widget runtime evidence. |
 | `/home/lupin/code/execute-plans` `origin/dev` inspection | External frontend repository delivery-target check required by the parent brief's anti-phantom rule. |
@@ -37,7 +39,8 @@ governance implementation, broker authority, or RuntimeBinding.
 
 | Item | Evidence |
 |---|---|
-| Parent active status | `review_approved` at packet time. |
+| Parent active status from `ai-status` | `review_approved` at packet time; `ai-status` had not yet reflected the later task-brief closeout PR. |
+| Parent task brief status on Pantheon `origin/dev` | `done` after PR `#2282`, with next note: PR `#2280` merged, deliverables verified in `origin/dev`, registry checksum consistent, BFF-only data path, security gates active, CI 3/3. |
 | Parent review notes | Claude2 approved the registry, `WidgetRenderer`, `ChartSpecRenderer`, BFF-only data path, safe declarative rendering, CI gates, and scatter size-encoding improvement. |
 | Parent review file | `/tmp/ag-fe-db-001-r2-review.md`; this sidecar records it as external review evidence and does not move that temporary file into repo truth. |
 | Parent PR | `https://github.com/ajoe734/pantheon/pull/2280` |
@@ -47,7 +50,9 @@ governance implementation, broker authority, or RuntimeBinding.
 | PR changed files | `.orchestrator/task-briefs/ag_fe_db_001_r2.md`; `execute-plans/src/agora/widgets/ChartSpecRenderer.tsx`. |
 | PR diff size | 2 files, 28 insertions, 3 deletions. |
 | Visible checks | Branch CI Gate `Commit trailers`, `Runtime mirror guard`, and `Smoke acceptance` passed on both visible runs; `Forward to orchestrator` passed. |
-| Parent task brief freshness | The merged task brief still says `in_progress` / "PR #2280 open ... waiting for CI and merge"; `ai-status` and GitHub PR metadata are newer and show `review_approved` plus merged PR. |
+| Parent closeout PR | PR `#2282` merged into `dev` at `2026-06-23T01:23:45Z`; merge commit `4b4e297004dd80570ee0c193db1e1c831c3e1ab2`. |
+| Parent closeout checks | PR `#2282` visible Branch CI Gate and Orchestrator Sync checks passed. |
+| Lifecycle freshness caveat | `ai-status show` still reports `review_approved`, while the task brief on Pantheon `origin/dev` reports `done`. This packet records both surfaces and does not resolve the status mirror drift. |
 
 ## R2 Delta Assessment
 
@@ -90,6 +95,7 @@ Current evidence is split:
 | Target | Observed state |
 |---|---|
 | Pantheon repo `origin/dev` | Updated to merge commit `32cc9b90083d6640fab725406b699d92d2d89ae5`; `execute-plans/src/agora/widgets/ChartSpecRenderer.tsx` contains the R2 scatter size-encoding code. |
+| Pantheon task brief closeout | PR `#2282` updates `.orchestrator/task-briefs/ag_fe_db_001_r2.md` to `done` and states deliverables were verified in `origin/dev`. |
 | External repo `ajoe734/execute-plans` `origin/dev` | Updated to `98e7189beb63d1a02f9c98db56416f92e41ced22`; inspected tree has no `src/agora/widgets/ChartSpecRenderer.tsx` and no `src/agora/widgets/` directory. |
 | External repo PR lookup | `gh pr view 2280 --repo ajoe734/execute-plans` could not resolve a PR with that number. |
 | External repo dependencies | `package.json` has `recharts`, but not `echarts`, `echarts-for-react`, `react-grid-layout`, or `@types/react-grid-layout` on `origin/dev`. |
@@ -122,10 +128,14 @@ AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DB-002
 gh pr view 2280 --repo ajoe734/pantheon --json number,state,isDraft,mergedAt,mergeCommit,url,title,headRefName,baseRefName,commits,files,statusCheckRollup,reviewDecision,autoMergeRequest
 gh pr checks 2280 --repo ajoe734/pantheon
 gh pr diff 2280 --repo ajoe734/pantheon --name-only
+gh pr view 2282 --repo ajoe734/pantheon --json number,state,isDraft,mergedAt,mergeCommit,url,title,headRefName,baseRefName,commits,files,statusCheckRollup
+gh pr checks 2282 --repo ajoe734/pantheon
 sed -n '1,220p' /tmp/ag-fe-db-001-r2-review.md
 git fetch origin dev:refs/remotes/origin/dev
 git show --stat --oneline 32cc9b90083d6640fab725406b699d92d2d89ae5
+git show --stat --oneline 4b4e2970
 git show dddcc31bad3960813c01c91ead625be13c2d3b01 -- execute-plans/src/agora/widgets/ChartSpecRenderer.tsx
+git show origin/dev:.orchestrator/task-briefs/ag_fe_db_001_r2.md
 git show origin/dev:execute-plans/src/agora/widgets/ChartSpecRenderer.tsx | rg -n "scatter|size|symbolSize|maxSizeValue"
 git show origin/dev:execute-plans/package.json | rg -n "echarts|echarts-for-react|react-grid-layout|@types/react-grid-layout|recharts"
 git -C /home/lupin/code/execute-plans fetch origin dev:refs/remotes/origin/dev
@@ -140,8 +150,10 @@ git -C /home/lupin/code/execute-plans ls-remote --heads origin task/AG-FE-DB-001
 Observed results:
 
 - Pantheon PR `#2280` is merged into `dev` at `32cc9b90083d6640fab725406b699d92d2d89ae5`.
+- Parent closeout PR `#2282` is merged into `dev` at `4b4e297004dd80570ee0c193db1e1c831c3e1ab2`.
 - Visible GitHub checks for PR `#2280` passed.
-- Parent status is `review_approved`, not `done`, and Claude2's review says owner may finalize.
+- Visible GitHub checks for PR `#2282` passed.
+- Parent `ai-status` still reports `review_approved`, while Pantheon `origin/dev` task brief reports `done`.
 - Pantheon `origin/dev` contains the R2 scatter size-encoding change.
 - External `execute-plans origin/dev` does not contain `src/agora/widgets/ChartSpecRenderer.tsx` or the widget runtime directory.
 - This sidecar changed only this support artifact.
@@ -158,7 +170,10 @@ Please review this support-only packet for:
    already-delivered baseline plus Claude2 review.
 3. Whether the delivery target caveat correctly preserves the parent brief's
    anti-phantom rule without changing parent task status or canonical truth.
-4. Whether the packet is acceptable as a reviewer-facing evidence summary for
+4. Whether the packet correctly records the lifecycle-surface mismatch:
+   `ai-status` still says `review_approved`, while the task brief on Pantheon
+   `origin/dev` says `done` after PR `#2282`.
+5. Whether the packet is acceptable as a reviewer-facing evidence summary for
    parent owner/reviewer closeout decisions.
 
 If accurate, approve `AG-FE-DB-001-R2-SIDECAR-REVIEW` and return it to `Codex`
