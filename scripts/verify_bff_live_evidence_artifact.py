@@ -84,10 +84,17 @@ def summary_check_status(summary: Any, key: str) -> tuple[str, str]:
 def preflight_item(root: Path) -> dict[str, str]:
     file_path = find_file(root, PREFLIGHT_JSON_NAME)
     if not file_path:
-        return status_item("pass", "Strict preflight is not blocking live probes")
+        return status_item("fail", "Strict preflight evidence is present", note=f"{PREFLIGHT_JSON_NAME} missing")
     payload = read_json(file_path)
     if not isinstance(payload, dict):
         return status_item("fail", "Strict preflight is parseable", evidence=rel(file_path, root), note="invalid JSON")
+    if payload.get("secret_values_written") is not False:
+        return status_item(
+            "fail",
+            "Strict preflight does not write secret values",
+            evidence=rel(file_path, root),
+            note="secret_values_written must be false",
+        )
     missing = payload.get("missing") if isinstance(payload.get("missing"), list) else []
     invalid = payload.get("invalid") if isinstance(payload.get("invalid"), list) else []
     if missing or invalid:
