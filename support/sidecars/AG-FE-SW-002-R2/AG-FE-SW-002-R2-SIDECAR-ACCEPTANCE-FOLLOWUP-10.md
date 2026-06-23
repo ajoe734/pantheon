@@ -26,9 +26,10 @@ FOLLOWUP-10 contributes:
    `~2026-06-23T03:55Z`; FU10 dispatch (`last_update` from ai_status.py) is
    `2026-06-23T04:18:14Z`. Elapsed from block (`01:14:37Z`) to FU10 dispatch: **~3h03m**.
    The 4h chair-review threshold (`05:14:37Z`) is now approximately **56 minutes away**.
-2. **Imminent-threshold alert** — with ~56 minutes remaining before the 4h window closes,
-   FU10 issues the strongest pre-threshold alert in the chain. Any further dispatched packet
-   will likely arrive after the threshold has been crossed.
+2. **Threshold-approaching alert** — with ~56 minutes remaining before the 4h window closes,
+   FU10 issues a threshold-approaching alert. At the observed cadence of ~12–23 minutes per
+   packet, FOLLOWUP-11 and possibly FOLLOWUP-12 may still arrive before the threshold; however,
+   the 4h window is closing imminently and chair-review should act now.
 3. **Reiteration of loop halt recommendation** — unchanged from FU7, FU8, and FU9.
 4. **Updated chain state table** — adds FOLLOWUP-10 to the chain record.
 
@@ -44,7 +45,7 @@ truth, BFF runtime code, frontend runtime code, registry behavior, or governance
 | FU7 | `~2026-06-23T03:18Z` | Yes — formal termination notice embedded in packet prose |
 | FU8 | `~2026-06-23T03:45Z` | Yes — supervisor loop halt recommendation addressed to chair-review |
 | FU9 | `~2026-06-23T03:55Z` | Yes — pre-threshold chair-review alert; loop halt reiterated |
-| FU10 | `2026-06-23T04:18:14Z` | This packet — imminent-threshold alert; loop halt reiterated |
+| FU10 | `2026-06-23T04:18:14Z` | This packet — threshold-approaching alert; loop halt reiterated |
 
 The auto-dispatch loop does not parse termination notices or halt recommendations embedded in
 packet prose. These notices are directed at chair-review and Human/Ops operators. FOLLOWUP-10
@@ -92,12 +93,14 @@ Elapsed from block to FU10 dispatch: **~3h03m**.
 | 4–24 hours — chair-review must surface pending decision | `05:14:37Z`–`2026-06-24T01:14:37Z` | Not yet reached |
 | > 24 hours — Human/Ops escalation warranted | After `2026-06-24T01:14:37Z` | Not yet reached |
 
-**Imminent-threshold chair-review alert:**
+**Threshold-approaching chair-review alert:**
 
-> With **~56 minutes remaining** before the 4h normal-latency window closes, this is the last
-> expected pre-threshold packet in the sidecar chain (assuming the dispatch loop continues at its
-> current cadence of ~12–23 minutes per packet). Any FOLLOWUP-11 or later packet will likely
-> arrive **after** `05:14:37Z`, at which point the 4h threshold will have been crossed.
+> With **~56 minutes remaining** before the 4h normal-latency window closes, FU10 issues a
+> **threshold-approaching alert**. At the observed cadence of ~12–23 minutes per packet,
+> FOLLOWUP-11 and possibly FOLLOWUP-12 may still arrive before `05:14:37Z`; however, packets
+> arriving in the last ~12–23 minutes of the window are likely to cross or nearly cross the
+> threshold. Chair-review should treat the 4h window as **imminently closing** regardless of
+> which packet arrives next.
 >
 > **If chair-review reads this packet after `2026-06-23T05:14:37Z`**, the threshold is already
 > crossed. Chair-review must surface the pending gate decision to Claude now. The gate decision
@@ -185,7 +188,7 @@ AI_NAME=Claude ./scripts/ai-status.sh blocker AG-FE-SW-002-R2 \
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-7.md` | `done` | Escalation window advance (~2h03m), supervisor dispatch termination notice, single-action brief | `2026-06-23T03:31:51Z` |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-8.md` | `done` | Post-termination-notice dispatch acknowledgment, escalation window advance (~2h30m), supervisor loop halt recommendation | `2026-06-23T03:43:23Z` |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-9.md` | `done` | Escalation window advance (~2h40m), pre-threshold chair-review alert, loop halt reiteration | `~2026-06-23T03:55Z` |
-| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-10.md` | `in_progress` | Escalation window advance (~3h03m), imminent-threshold alert (~56 min to 4h), loop halt reiteration | — |
+| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-10.md` | `in_progress` | Escalation window advance (~3h03m), threshold-approaching alert (~56 min to 4h window), loop halt reiteration | — |
 
 ---
 
@@ -229,9 +232,10 @@ To `Codex`, sidecar reviewer:
 - Verify the escalation window advance correctly reflects ~3h03m elapsed (block `01:14:37Z`,
   FU10 dispatch `04:18:14Z`) and places the 4h threshold at `05:14:37Z` (~56 min remaining at
   FU10 dispatch).
-- Verify the imminent-threshold alert correctly identifies this as the last likely pre-threshold
-  packet given the observed ~12–23 min per-packet cadence, and correctly states the threshold
-  time and the required action.
+- Verify the threshold-approaching alert correctly states the 4h threshold time (`05:14:37Z`)
+  and the required action. Confirm the alert does **not** claim FOLLOWUP-10 is the last
+  pre-threshold packet — at the observed ~12–23 min per-packet cadence with ~56 min remaining,
+  FOLLOWUP-11 and possibly FOLLOWUP-12 may still arrive before the threshold.
 - Verify the supervisor loop halt recommendation is unchanged from FU7, FU8, and FU9 (three
   qualifying triggers: Decision B with new gap, post-merge contract mismatch, new scope
   addition).
@@ -249,7 +253,7 @@ Suggested reviewer command:
 AI_NAME=Codex \
   REVIEW_FILE=support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-10.md \
   ./scripts/ai-status.sh approve AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-10 \
-  "Review approved: followup-10 packet provides escalation window advance (~3h03m elapsed, 4h threshold at 05:14:37Z ~56 min remaining), imminent-threshold alert, reiterated supervisor loop halt recommendation, and single-action brief unchanged from FU7/FU8/FU9."
+  "Review approved: followup-10 packet provides escalation window advance (~3h03m elapsed, 4h threshold at 05:14:37Z ~56 min remaining), threshold-approaching alert (no last-packet claim; FU11/FU12 may precede threshold at ~12-23 min cadence), reiterated supervisor loop halt recommendation, and single-action brief unchanged from FU7/FU8/FU9."
 ```
 
 Prepared by `Claude` for the `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-10` support slice.
