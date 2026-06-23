@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Claude` / `Codex` |
 | Date | `2026-06-23` |
 | Mutates canonical truth | `false` |
-| Status | In progress — awaiting Codex sidecar review |
+| Status | done — approved by Codex; owner finalized |
 | Builds on | Full sidecar chain: base + FOLLOWUP-2 + FOLLOWUP-3 + FOLLOWUP-4 + FOLLOWUP-5 + FOLLOWUP-6 |
 
 ## Purpose
@@ -160,7 +160,7 @@ AI_NAME=Claude ./scripts/ai-status.sh blocker AG-FE-SW-002-R2 \
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md` | `done` | Master 16-row acceptance traceability matrix (14 PASS / 2 PENDING), escalation timeline | — |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-5.md` | `done` | Chain index, one-page reviewer handout, Decision B contingency plan | `2026-06-23T02:36:43Z` |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-6.md` | `done` | Post-chain state snapshot, escalation checkpoint, dependency map refresh | `2026-06-23T02:54:15Z` |
-| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-7.md` | `in_progress` | Escalation window advance, supervisor dispatch termination notice, single-action brief | — |
+| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-7.md` | `done` | Escalation window advance, supervisor dispatch termination notice, single-action brief | `2026-06-23T03:18:09Z` |
 
 ---
 
