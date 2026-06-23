@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Claude` / `Codex` |
 | Date | `2026-06-23` |
 | Mutates canonical truth | `false` |
-| Status | in_progress — owner packet production |
+| Status | done — review_approved; closeout commit in progress |
 | Builds on | Full sidecar chain: base + FOLLOWUP-2 through FOLLOWUP-18 |
 
 ## Purpose
@@ -241,7 +241,7 @@ AI_NAME=Claude ./scripts/ai-status.sh blocker AG-FE-SW-002-R2 \
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-16.md` | `done` | Cadence-continued note (FU15→FU16 ~34m; FU15 production extended window), escalation window advance (~5h45m elapsed), loop halt reiteration | `2026-06-23` |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-17.md` | `done` | Cadence-continued note (FU16→FU17 ~10m; FU16 production very quick ~3.5m), escalation window advance (~5h55m elapsed), loop halt reiteration | `2026-06-23` |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-18.md` | `done` | Cadence-continued note with extended-gap annotation (FU17→FU18 ~8h28m; two BFF-LIVE-EVIDENCE tasks #2309/#2310 ran during gap), escalation window advance (~14h23m elapsed), 24h Human/Ops threshold approaching (~9h36m remaining), loop halt reiteration | `2026-06-23` (PR #2311 merged) |
-| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-19.md` | `in_progress` | **Cadence-continued note** (FU18→FU19 ~11m; normal cadence resumed after extended FU17→FU18 gap), escalation window advance (~14h34m elapsed), **24h Human/Ops threshold approaching (~9h26m remaining)**, loop halt reiteration | — |
+| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-19.md` | `done` | **Cadence-continued note** (FU18→FU19 ~11m; normal cadence resumed after extended FU17→FU18 gap), escalation window advance (~14h34m elapsed), **24h Human/Ops threshold approaching (~9h26m remaining)**, loop halt reiteration | `2026-06-23` |
 
 ---
 
