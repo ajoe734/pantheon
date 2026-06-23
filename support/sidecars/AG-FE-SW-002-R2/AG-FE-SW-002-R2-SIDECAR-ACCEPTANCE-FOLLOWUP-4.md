@@ -53,39 +53,40 @@ Execute-plans PR #70 gate summary:
 
 ## Master Acceptance Traceability Matrix
 
-All 16 acceptance criteria from `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE.md`. Evidence sources:
+All 16 acceptance criteria from `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE.md`, in original order. Evidence
+sources:
 - **FU2** = FOLLOWUP-2 code-level verification (commit `70a3bfab`)
 - **Gate** = Requires live PR gate output
 - **Build** = Covered by `npx tsc --noEmit` passing
 
 | # | Acceptance criterion | Evidence source | Verdict |
 |---|---|---|---|
-| 1 | Contract source: use `WorkshopCard` from `v4/workshop_card.schema.json` and v1.3 route | FU2 §6 — `workshop-card-types.ts` field-for-field with v4 schema | **PASS** |
+| 1 | Contract source: use `WorkshopCard` from `v4/workshop_card.schema.json` and v1.3 route; no invented aliases (`evidence_summary`, `backtest_result`, etc.) | FU2 §6 — `workshop-card-types.ts` field-for-field with v4 schema; FU2 §2 — alias grep scan negative across R2 component files | **PASS** |
 | 2 | Card envelope: all 10 required fields respected per card; tests include canonical fixture | FU2 §1 — renderer covers all 12 card types; test coverage confirmed | **PASS** |
 | 3 | Card coverage: `ResearchPlanCard` covers 3 types; `ConsultResultCard` covers 1; unknown → typed fallback | FU2 §1 — switch dispatches all 12; `default` → `UnknownCard` with `data-testid` | **PASS** |
-| 4 | No invented card type aliases (`evidence_summary`, `backtest_result`, etc.) | FU2 §2 — grep scan negative across R2 component files | **PASS** |
-| 5 | `ResearchPlanCard` payload fields and `allowed_actions` contract respected | FU2 §6 — `PayloadResearchPlanProposal` interface field-for-field with schema | **PASS** |
-| 6 | `research_result.backend.mode` labeled visibly; no mode-hiding path | FU2 §6 — `PayloadResearchResult.backend.mode` typed as `"real" \| "fixture" \| "stub"` | **PASS** |
-| 7 | `ConsultResultCard` payload fields respected; no raw cross-user content access | FU2 §6 — `PayloadConsultResult` interface aligned; no raw content path | **PASS** |
-| 8 | Completeness rail: six display states shown; no write-back to schema grades | FU2 §5 — props-only, no write-back path in `StrategyCompletenessRail.tsx` | **PASS** |
-| 9 | User description privacy: `owner_visible_content` not in browser storage | FU2 §3 (implicit) — no localStorage/sessionStorage write of card payload found | **PASS** |
-| 10 | Servant reconstruction: inferred fields visibly separated from confirmed facts | Build — TypeScript interface enforces `needs_confirmation` boolean; rendering gate | **PASS** |
-| 11 | SSE consumer accepts only `WorkshopStreamEvent` types; dedupes by `event_id` | Build — typed consumer enforced by TypeScript; runtime contract enforced | **PASS** |
-| 12 | SSE replay/heartbeat: `Last-Event-ID` on reconnect; 45 s degraded; 30 s backoff cap | Build — implementation on PR branch `70a3bfab`; runtime contract enforced | **PASS** |
-| 13 | Cache key isolation: tenant/user/workshop scoping prevents cross-session leakage | Build — React Query keys scoped by workshop_id; no guessable shared keys | **PASS** |
-| 14 | BFF boundary: pages/components use `bff-v1/agora/*`; no raw `fetch()` | FU2 §3 — `grep -n "fetch("` negative across R2 component files | **PASS** |
-| 15 | Agora safety: no Management/broker/RuntimeBinding/capital/order routes | FU2 §4 — only hit is CSS `textTransform: "capitalize"`; no route references | **PASS** |
-| 16 | `AG-E2E-SW-001` regression: existing workshop E2E tests must not regress | Gate — requires E2E suite run on PR branch (FU3 P2 assessment framework) | **PENDING** |
+| 4 | `ResearchPlanCard` payload fields and `allowed_actions` contract respected | FU2 §6 — `PayloadResearchPlanProposal` interface field-for-field with schema | **PASS** |
+| 5 | `research_result.backend.mode` labeled visibly; no mode-hiding path | FU2 §6 — `PayloadResearchResult.backend.mode` typed as `"real" \| "fixture" \| "stub"` | **PASS** |
+| 6 | `ConsultResultCard` payload fields respected; no raw cross-user content access | FU2 §6 — `PayloadConsultResult` interface aligned; no raw content path | **PASS** |
+| 7 | Completeness rail: six display states shown; no write-back to schema grades | FU2 §5 — props-only, no write-back path in `StrategyCompletenessRail.tsx` | **PASS** |
+| 8 | User description privacy: `owner_visible_content` not in browser storage | FU2 §3 (implicit) — no localStorage/sessionStorage write of card payload found | **PASS** |
+| 9 | Servant reconstruction: inferred fields visibly separated from confirmed facts | Build — TypeScript interface enforces `needs_confirmation` boolean; rendering gate | **PASS** |
+| 10 | SSE consumer accepts only `WorkshopStreamEvent` types; dedupes by `event_id` | Build — typed consumer enforced by TypeScript; runtime contract enforced | **PASS** |
+| 11 | SSE replay/heartbeat: `Last-Event-ID` on reconnect; 45 s degraded; 30 s backoff cap | Build — implementation on PR branch `70a3bfab`; runtime contract enforced | **PASS** |
+| 12 | Cache key isolation: tenant/user/workshop scoping prevents cross-session leakage | Build — React Query keys scoped by workshop_id; no guessable shared keys | **PASS** |
+| 13 | BFF boundary: pages/components use `bff-v1/agora/*`; no raw `fetch()` | FU2 §3 — `grep -n "fetch("` negative across R2 component files | **PASS** |
+| 14 | Agora safety: no Management/broker/RuntimeBinding/capital/order routes | FU2 §4 — only hit is CSS `textTransform: "capitalize"`; no route references | **PASS** |
+| 15 | `AG-E2E-SW-001` regression: existing workshop E2E tests must not regress | Gate — requires E2E suite run on PR branch (FU3 P2 assessment framework) | **PENDING** |
+| 16 | Downstream compatibility: `ResearchPlanCard` and `ConsultResultCard` must be compositionally compatible with `AG-FE-RS-001`'s specialisation layer (already merged) | Gate — requires TypeScript/props check against RS-001 extensions; no committed evidence closes this (FU3 P3 assessment framework) | **PENDING** |
 
-Three items from FU3 (P1/P2/P3) map onto rows 16 above and two additional checks:
+Three items from FU3 (P1/P2/P3) map onto rows 15–16 and one cross-cutting check:
 
 | Item | Criterion # | Assessment path | Resolution |
 |---|---|---|---|
 | P1 — Aggregate gate attribution | (cross-cutting) | Scan PR #70 gate log for R2 path references | Gate log review |
-| P2 — E2E regression | Row 16 | Run `npx vitest run` workshop E2E suite on PR branch | Live test run |
-| P3 — RS-001 compatibility | (downstream) | Check `ResearchPlanCard`/`ConsultResultCard` props vs RS-001 extensions | TypeScript build gate |
+| P2 — E2E regression | Row 15 | Run `npx vitest run` workshop E2E suite on PR branch | Live test run |
+| P3 — RS-001 compatibility | Row 16 | Check `ResearchPlanCard`/`ConsultResultCard` props vs RS-001 extensions | TypeScript build gate |
 
-**Current master verdict: 15 of 16 criteria PASS. Row 16 and P1/P3 are gate-dependent and require live PR review to close.**
+**Current master verdict: 14 of 16 criteria PASS. Rows 15 (E2E regression) and 16 (downstream RS-001 compatibility) are gate-dependent and require live PR review to close. P1 aggregate gate attribution is a cross-cutting check on the gate log.**
 
 ---
 
@@ -214,7 +215,7 @@ If condition 1 is not met but conditions 2–3 are met, the sidecar series has d
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE.md` | Claude2 | Yes | Initial acceptance checklist, dependency map, contract guardrails (12 card types, completeness rail boundary, SSE rules, BFF boundary) |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md` | Claude | Yes | Code-level verification evidence (8 PASS items), gate decision framework (A/B/C criteria), updated dependency state |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md` | Claude | Yes | Consolidated evidence table, P1/P2/P3 assessment framework, Decision A/B/C action guide with exact commands, post-merge Codex closeout checklist |
-| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md` | Claude | *this packet* | Master acceptance traceability matrix (15 PASS, 1 gate-pending), compact decision reference, escalation timeline, sidecar chain closure conditions |
+| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md` | Claude | *this packet* | Corrected master acceptance traceability matrix (14 of 16 PASS; rows 15 E2E + 16 RS-001 downstream compatibility pending; P1 aggregate attribution cross-cutting), compact decision reference, escalation timeline, sidecar chain closure conditions |
 
 ---
 
@@ -244,7 +245,9 @@ graph TD
 
 To `Codex`, sidecar reviewer:
 
-- Verify the master acceptance traceability matrix (16 rows) accurately maps each criterion to its evidence source.
+- Verify the master acceptance traceability matrix (16 rows, original order from base packet) accurately maps each criterion to its evidence source. Key corrections from prior draft: "No invented card type aliases" is now embedded as a guardrail note in row 1 (Contract source) rather than a standalone row; row 16 is restored as the explicit "Downstream compatibility / AG-FE-RS-001" criterion (PENDING — no committed evidence closes RS-001 compatibility).
+- Verify the FU3 items table correctly maps P2 to row 15 (E2E) and P3 to row 16 (RS-001 compatibility), with P1 remaining a cross-cutting gate-log check.
+- Verify the master verdict reads "14 of 16 PASS" (rows 1–14 PASS, rows 15–16 PENDING).
 - Verify the compact decision reference (A/B/C) is consistent with FU3 commands and adds no new conflicting guidance.
 - Verify the escalation timeline provides actionable thresholds for Human/Ops routing.
 - Verify the sidecar chain closure conditions correctly describe when no further FOLLOWUP packets are needed.
@@ -256,7 +259,7 @@ Suggested reviewer command:
 AI_NAME=Codex \
   REVIEW_FILE=support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md \
   ./scripts/ai-status.sh approve AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-4 \
-  "Review approved: followup-4 packet provides master acceptance traceability matrix (15 PASS, 1 gate-pending), compact decision reference, escalation timeline, and sidecar chain closure conditions."
+  "Review approved: followup-4 packet provides corrected master acceptance traceability matrix (14 of 16 PASS; rows 15 E2E and 16 RS-001 downstream compatibility pending; P1 aggregate attribution cross-cutting), compact decision reference, escalation timeline, and sidecar chain closure conditions."
 ```
 
 Prepared by `Claude` for the `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-4` support slice.
