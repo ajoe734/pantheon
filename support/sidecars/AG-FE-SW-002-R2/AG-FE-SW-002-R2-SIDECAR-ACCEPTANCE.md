@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Claude2` / `Codex` |
 | Date | `2026-06-23` |
 | Mutates canonical truth | `false` |
-| Status | Draft — pending reviewer acceptance |
+| Status | Accepted by Codex — `review_approved`; owner closeout in progress |
 
 ## Purpose
 
