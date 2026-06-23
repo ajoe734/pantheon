@@ -115,6 +115,7 @@ def test_verifier_accepts_complete_strict_live_artifact(tmp_path: Path) -> None:
     assert payload["criteria"]["two_man_race"]["status"] == "pass"
     assert payload["criteria"]["sse_reconnect_soak"]["status"] == "pass"
     assert payload["criteria"]["current_run_only"]["status"] == "pass"
+    assert payload["criteria"]["raw_secret_scan"]["status"] == "pass"
 
 
 def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:
@@ -181,6 +182,42 @@ def test_verifier_fails_when_preflight_reports_secret_values_written(tmp_path: P
     assert payload["overall"] == "fail"
     assert payload["criteria"]["preflight_ready"]["status"] == "fail"
     assert "secret_values_written must be false" in payload["criteria"]["preflight_ready"]["note"]
+
+
+def test_verifier_rejects_raw_bearer_material_without_echoing_secret(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    leaked = "Bearer live-secret-token-abc123456"
+    (artifact_dir / "leaky.json").write_text(json.dumps({"Authorization": leaked}), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["overall"] == "fail"
+    item = payload["criteria"]["raw_secret_scan"]
+    assert item["status"] == "fail"
+    assert "leaky.json:raw_bearer" in item["note"]
+    assert "live-secret-token-abc123456" not in item["note"]
+
+
+def test_verifier_rejects_jwt_shaped_material_without_echoing_secret(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    leaked = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiJsaXZlLXNtb2tlIn0."
+        "signaturepart123456"
+    )
+    (artifact_dir / "jwt-leak.json").write_text(json.dumps({"token": leaked}), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["overall"] == "fail"
+    item = payload["criteria"]["raw_secret_scan"]
+    assert item["status"] == "fail"
+    assert "jwt-leak.json:jwt" in item["note"]
+    assert leaked not in item["note"]
 
 
 def test_verifier_rejects_historical_audit_paths_even_when_checks_pass(tmp_path: Path) -> None:
