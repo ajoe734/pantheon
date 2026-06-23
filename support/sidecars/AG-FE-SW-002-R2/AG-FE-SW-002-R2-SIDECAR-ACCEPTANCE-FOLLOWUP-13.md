@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Claude` / `Codex` |
 | Date | `2026-06-23` |
 | Mutates canonical truth | `false` |
-| Status | in_progress — awaiting Codex review |
+| Status | done — review_approved by Codex; closeout finalized |
 | Builds on | Full sidecar chain: base + FOLLOWUP-2 through FOLLOWUP-12 |
 
 ## Purpose
@@ -199,7 +199,7 @@ AI_NAME=Claude ./scripts/ai-status.sh blocker AG-FE-SW-002-R2 \
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-10.md` | `done` | Escalation window advance (~3h03m), threshold-approaching alert (~56 min to 4h window), loop halt reiteration | `2026-06-23T04:18:14Z` |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-11.md` | `done` | Escalation window advance (~3h21m), near-threshold alert (~39 min to 4h window), loop halt reiteration | `2026-06-23T04:40:46Z` |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-12.md` | `done` | Threshold-crossed notification (~4h34m elapsed, 4h crossed at `05:14:37Z`), extended cadence note (FU11→FU12 ~1h14m), loop halt reiteration | — |
-| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-13.md` | `in_progress` | **Cadence-resumed note** (FU12→FU13 ~9m), escalation window advance (~4h43m elapsed), loop halt reiteration | — |
+| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-13.md` | `done` | **Cadence-resumed note** (FU12→FU13 ~9m), escalation window advance (~4h43m elapsed), loop halt reiteration | `2026-06-23` |
 
 ---
 
@@ -231,7 +231,7 @@ graph TD
     PostMerge --> CloseoutCommit["Codex: closeout commit in Pantheon repo"]
     CloseoutCommit --> Done["ai-status.sh done AG-FE-SW-002-R2"]
 
-    SidecarChain["Sidecar chain EXHAUSTED (post-FU13)<br/>Base + FU2 through FU13<br/>16-row matrix: 14 PASS, 2 gate-dependent PENDING<br/>Supervisor loop halt recommended (FU7–FU13)<br/>4h threshold CROSSED ~43m ago — chair-review escalation PAST-DUE"] -.->|"acceptance guardrail"| FESW002R2
+    SidecarChain["Sidecar chain EXHAUSTED (FU13 done)<br/>Base + FU2 through FU13<br/>16-row matrix: 14 PASS, 2 gate-dependent PENDING<br/>Supervisor loop halt recommended (FU7–FU13)<br/>4h threshold CROSSED — chair-review escalation PAST-DUE"] -.->|"acceptance guardrail"| FESW002R2
 ```
 
 ---
