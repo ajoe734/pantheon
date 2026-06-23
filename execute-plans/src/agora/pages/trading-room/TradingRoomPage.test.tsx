@@ -98,11 +98,12 @@ const MOCK_DECISION_EVENT = {
   no_order_route_proof: "agora_decision_support_only" as const,
 };
 
-const MOCK_RECIPE = {
+const MOCK_RECIPE: import("@/lib/bff-v1/agora/types").DashboardRecipeV2 = {
   recipe_id: "recipe-001",
   spec_version: "2.0",
   tenant_id: "tenant-001",
   user_id: "user-001",
+  strategy_id: "strat-001",
   strategy_version_id: "v1",
   workspace: "trading_room",
   phase: "monitoring",
