@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Claude` / `Codex` |
 | Date | `2026-06-23` |
 | Mutates canonical truth | `false` |
-| Status | in_progress — prepared by Claude; pending Codex review |
+| Status | review_approved — reviewed and approved by Codex |
 | Builds on | Full sidecar chain: base + FOLLOWUP-2 through FOLLOWUP-9 |
 
 ## Purpose
