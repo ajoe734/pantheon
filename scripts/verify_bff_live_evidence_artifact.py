@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,10 @@ SSE_JSON_NAME = "BFF-CONSOL-011-sse-replay-smoke.json"
 PREFLIGHT_JSON_NAME = "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
 SUMMARY_JSON_NAME = "release-gate-summary.json"
 FORBIDDEN_AUDIT_DIR_NAMES = {"historical", "archive", "archives", "baseline"}
+SECRET_LEAK_PATTERNS = (
+    ("raw_bearer", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
+)
 
 CHECK_LABELS = {
     "rbac_matrix": "Authenticated: strict bearer RBAC matrix evidence passed.",
@@ -127,6 +132,27 @@ def artifact_scope_item(root: Path, summary: Any) -> dict[str, str]:
     return status_item("pass", CHECK_LABELS["current_run_only"], note=f"{len(files)} artifact file(s); no historical/archive paths")
 
 
+def secret_leak_item(root: Path) -> dict[str, str]:
+    findings: list[tuple[str, str]] = []
+    for path in list_files(root):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for name, pattern in SECRET_LEAK_PATTERNS:
+            if pattern.search(text):
+                findings.append((rel(path, root), name))
+                break
+    if findings:
+        note = "possible raw secret material: " + ",".join(f"{path}:{name}" for path, name in findings[:5])
+        return status_item(
+            "fail",
+            "Current-run artifact does not contain raw bearer or JWT material",
+            note=note,
+        )
+    return status_item("pass", "Current-run artifact does not contain raw bearer or JWT material")
+
+
 def auth_json_item(root: Path, summary: Any, key: str, raw_ok: bool, raw_note: str) -> dict[str, str]:
     summary_status, summary_note = summary_check_status(summary, key)
     file_path = find_file(root, AUTH_JSON_NAME)
@@ -224,6 +250,7 @@ def verify(root: Path) -> dict[str, Any]:
         "two_man_race": auth_json_item(root, summary, "two_man_race", *auth_checks["two_man_race"]),
         "sse_reconnect_soak": sse_item(root, summary),
         "current_run_only": artifact_scope_item(root, summary),
+        "raw_secret_scan": secret_leak_item(root),
     }
     overall = "pass" if all(item["status"] == "pass" for item in criteria.values()) else "fail"
     return {
