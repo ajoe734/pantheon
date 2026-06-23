@@ -290,17 +290,29 @@ function echartOptionFor(kind: ChartSpecKind, spec: ChartSpecV1, rows: ChartData
     };
   }
 
+  // scatter — supports the A3 grammar `size` encoding channel for bubble charts
+  const sizeField = firstField(spec, ["size"], undefined);
+  const maxSizeValue = sizeField
+    ? Math.max(...rows.map((row) => numberFrom(valueFrom(row, sizeField))), 1)
+    : 1;
   return {
     xAxis: { type: "value" },
     yAxis: { type: "value" },
-    tooltip: {},
+    tooltip: { trigger: "item" },
     series: [
       {
         type: "scatter",
-        data: rows.map((row) => [numberFrom(valueFrom(row, xField)), numberFrom(valueFrom(row, yField))]),
+        symbolSize: sizeField
+          ? (d: number[]) => Math.max(8, (d[2] / maxSizeValue) * 40)
+          : 8,
+        data: rows.map((row) => {
+          const base: number[] = [numberFrom(valueFrom(row, xField)), numberFrom(valueFrom(row, yField))];
+          if (sizeField) base.push(numberFrom(valueFrom(row, sizeField)));
+          return base;
+        }),
       },
     ],
-  };
+  } as EChartsOption;
 }
 
 function EChartsRenderer({ rows, spec, height }: { rows: ChartDataRow[]; spec: ChartSpecV1; height: number }) {
