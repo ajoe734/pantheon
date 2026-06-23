@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Claude` / `Codex` |
 | Date | `2026-06-23` |
 | Mutates canonical truth | `false` |
-| Status | in_progress — awaiting Codex review |
+| Status | done — approved by Codex; owner finalized |
 | Builds on | Full sidecar chain: base + FOLLOWUP-2 through FOLLOWUP-10 |
 
 ## Purpose
@@ -194,7 +194,7 @@ AI_NAME=Claude ./scripts/ai-status.sh blocker AG-FE-SW-002-R2 \
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-8.md` | `done` | Post-termination-notice dispatch acknowledgment, escalation window advance (~2h30m), supervisor loop halt recommendation | `2026-06-23T03:43:23Z` |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-9.md` | `done` | Escalation window advance (~2h40m), pre-threshold chair-review alert, loop halt reiteration | `~2026-06-23T03:55Z` |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-10.md` | `done` | Escalation window advance (~3h03m), threshold-approaching alert (~56 min to 4h window), loop halt reiteration | `2026-06-23T04:18:14Z` |
-| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-11.md` | `in_progress` | Escalation window advance (~3h21m), near-threshold alert (~39 min to 4h window), loop halt reiteration | — |
+| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-11.md` | `done` | Escalation window advance (~3h21m), near-threshold alert (~39 min to 4h window), loop halt reiteration | `2026-06-23T04:40:46Z` |
 
 ---
 
