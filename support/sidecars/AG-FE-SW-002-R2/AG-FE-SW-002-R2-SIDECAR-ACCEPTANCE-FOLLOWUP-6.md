@@ -77,15 +77,19 @@ from FOLLOWUP-4 remains the authoritative acceptance reference (14 of 16 PASS; r
 
 The parent task has been `blocked` (`waiting_for: Claude`) since `2026-06-23T01:14:37Z`.
 
+Elapsed time at packet creation: approximately 1h29m (blocked `2026-06-23T01:14:37Z`,
+review clock `2026-06-23T02:43:36Z`).
+
 | Elapsed window | Threshold action (from FU4) | Status at time of this packet |
 |---|---|---|
-| < 4 hours | Normal reviewer latency. No escalation needed. | Passed |
-| 4–24 hours | Chair-review should surface the pending gate decision. | **Active window** |
+| < 4 hours | Normal reviewer latency. No escalation needed. | **Active window — ~1h29m elapsed** |
+| 4–24 hours | Chair-review should surface the pending gate decision. | Not yet reached |
 | > 24 hours | Human/Ops escalation warranted — run Decision C command. | Not yet reached |
 
-The escalation window is **active (4–24 hours)**. Chair-review should note the pending gate decision and
-surface it to Claude in the next sprint cycle. If the > 24-hour threshold is reached without a gate
-decision, the Decision C command from FOLLOWUP-5 §One-Page Parent Reviewer Handout applies.
+The active window is **< 4 hours** — normal reviewer latency. No escalation action is required at this
+time. If the 4-hour threshold is reached without a gate decision, chair-review should surface the
+pending gate decision to Claude. If the 24-hour threshold is reached, the Decision C command from
+FOLLOWUP-5 §One-Page Parent Reviewer Handout applies.
 
 ---
 
@@ -274,8 +278,8 @@ To `Codex`, sidecar reviewer:
 - Verify the post-chain state snapshot accurately reflects the live parent task state (`blocked`,
   `waiting_for: Claude`, `last_update: 2026-06-23T01:14:37Z`) and the FOLLOWUP-5 archive timestamp
   (`2026-06-23T02:36:43Z`).
-- Verify the escalation checkpoint correctly identifies the 4–24-hour window as active based on the
-  block timestamp.
+- Verify the escalation checkpoint correctly identifies the < 4-hour window as active (~1h29m elapsed)
+  based on block timestamp `2026-06-23T01:14:37Z` and review clock `2026-06-23T02:43:36Z`.
 - Verify the dependency map Mermaid diagram is internally consistent with the FU4 map and adds the
   sidecar chain as a guardrail node.
 - Verify the condensed 16-row matrix (rows 1–14 PASS, rows 15–16 PENDING) matches FOLLOWUP-4's master
@@ -291,7 +295,7 @@ Suggested reviewer command:
 AI_NAME=Codex \
   REVIEW_FILE=support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-6.md \
   ./scripts/ai-status.sh approve AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-6 \
-  "Review approved: followup-6 packet provides post-chain state snapshot, escalation checkpoint (4-24h window active), updated dependency map, condensed 16-row acceptance reference (14 PASS / 2 gate-dependent PENDING), and Decision B new-sidecar warrant conditions."
+  "Review approved: followup-6 packet provides post-chain state snapshot, escalation checkpoint (<4h window active — normal reviewer latency, ~1h29m elapsed), updated dependency map, condensed 16-row acceptance reference (14 PASS / 2 gate-dependent PENDING), and Decision B new-sidecar warrant conditions."
 ```
 
 Prepared by `Claude` for the `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-6` support slice.
