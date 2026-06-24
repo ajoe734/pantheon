@@ -220,6 +220,46 @@ def test_verifier_rejects_jwt_shaped_material_without_echoing_secret(tmp_path: P
     assert leaked not in item["note"]
 
 
+def test_verifier_rejects_sensitive_json_key_without_echoing_secret(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    leaked = "opaque-live-token-abc123456789"
+    (artifact_dir / "sensitive-key.json").write_text(
+        json.dumps({"auth": {"token": leaked}}),
+        encoding="utf-8",
+    )
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["overall"] == "fail"
+    item = payload["criteria"]["raw_secret_scan"]
+    assert item["status"] == "fail"
+    assert "sensitive-key.json:json_key:$.auth.token" in item["note"]
+    assert leaked not in item["note"]
+
+
+def test_verifier_accepts_redacted_sensitive_json_keys(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    (artifact_dir / "redacted-sensitive.json").write_text(
+        json.dumps(
+            {
+                "authorization": "[REDACTED]",
+                "access_token": "<redacted>",
+                "client_secret": "***",
+                "api_key": "sha256_12:abcdef123456",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["criteria"]["raw_secret_scan"]["status"] == "pass"
+
+
 def test_verifier_rejects_historical_audit_paths_even_when_checks_pass(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifact"
     write_passing_artifact(artifact_dir)
