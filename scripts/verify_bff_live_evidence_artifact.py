@@ -16,6 +16,10 @@ SSE_JSON_NAME = "BFF-CONSOL-011-sse-replay-smoke.json"
 PREFLIGHT_JSON_NAME = "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
 SUMMARY_JSON_NAME = "release-gate-summary.json"
 FORBIDDEN_AUDIT_DIR_NAMES = {"historical", "archive", "archives", "baseline"}
+CURRENT_RUN_OUTPUT_SCOPE = ".lovable/audits/current-run"
+ALLOWED_LIVE_EVIDENCE_ENVIRONMENTS = {"dev", "staging-live"}
+ALLOWED_DEV_REFS = {"dev", "refs/heads/dev"}
+GIT_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z", re.IGNORECASE)
 SECRET_LEAK_PATTERNS = (
     ("raw_bearer", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
@@ -150,6 +154,29 @@ def preflight_item(root: Path) -> dict[str, str]:
     payload = read_json(file_path)
     if not isinstance(payload, dict):
         return status_item("fail", "Strict preflight is parseable", evidence=rel(file_path, root), note="invalid JSON")
+    provenance_failures: list[str] = []
+    environment = str(payload.get("github_environment") or "")
+    ref_name = str(payload.get("ref") or "")
+    sha = str(payload.get("sha") or "")
+    if payload.get("task_id") != "BFF-LIVE-EVIDENCE-PREFLIGHT":
+        provenance_failures.append("task_id")
+    if payload.get("strict_live_evidence_preflight") is not True:
+        provenance_failures.append("strict_live_evidence_preflight")
+    if payload.get("output_scope") != CURRENT_RUN_OUTPUT_SCOPE:
+        provenance_failures.append("output_scope")
+    if environment not in ALLOWED_LIVE_EVIDENCE_ENVIRONMENTS:
+        provenance_failures.append("github_environment")
+    if ref_name not in ALLOWED_DEV_REFS:
+        provenance_failures.append("ref")
+    if not GIT_SHA_RE.fullmatch(sha):
+        provenance_failures.append("sha")
+    if provenance_failures:
+        return status_item(
+            "fail",
+            "Strict preflight provenance is valid",
+            evidence=rel(file_path, root),
+            note="provenance:" + ",".join(provenance_failures),
+        )
     if payload.get("secret_values_written") is not False:
         return status_item(
             "fail",
@@ -160,7 +187,6 @@ def preflight_item(root: Path) -> dict[str, str]:
     missing = payload.get("missing") if isinstance(payload.get("missing"), list) else []
     invalid = payload.get("invalid") if isinstance(payload.get("invalid"), list) else []
     if missing or invalid:
-        environment = str(payload.get("github_environment") or "unknown")
         missing_text = ",".join(str(item) for item in missing)
         invalid_text = ",".join(str(item.get("name") or item) for item in invalid)
         parts = [f"environment:{environment}"]
