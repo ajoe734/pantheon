@@ -90,17 +90,110 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
     ]
 
 
+def strict_rbac_auth_source() -> dict[str, object]:
+    labels = ["viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    cases: dict[str, object] = {"anonymous": {"kind": "anonymous"}}
+    cases.update({label: {"kind": "provided_bearer", "sha256_12": f"rbac-{label}-hash"} for label in labels})
+    return {
+        "kind": "rbac_matrix",
+        "cases": cases,
+        "provided_bearer_count": len(labels),
+        "distinct_provided_bearer_count": len(labels),
+        "distinct_provided_bearers": True,
+        "duplicate_bearer_label_groups": [],
+    }
+
+
+def strict_rbac_matrix_entries() -> list[dict[str, object]]:
+    labels = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"]
+    read_paths = {
+        "bff-strategies": "/bff/strategies",
+        "bff-ranking-formulas": "/bff/ranking-formulas",
+        "bff-agora-signals": "/bff/agora/signals",
+    }
+    write_paths = {
+        "strategy": "/bff/strategies",
+        "ranking-formula": "/bff/ranking-formulas",
+        "agora-note": "/bff/agora/notes",
+        "intervention-claim": "/bff/v5/interventions/int-live-rbac-matrix/claim",
+    }
+    read_allowed = {"viewer", "operator", "reviewer", "approver", "admin"}
+    write_allowed = {"operator", "reviewer", "approver", "admin"}
+    items: list[dict[str, object]] = []
+    for label in labels:
+        for resource, path in read_paths.items():
+            denied = label not in read_allowed
+            item: dict[str, object] = {
+                "family": f"rbac-read-{label}-{resource}",
+                "method": "GET",
+                "path": path,
+                "ok": True,
+                "error_envelope": denied,
+                "rbac_label": label,
+                "rbac_operation": "read",
+                "rbac_resource": resource,
+                "auth_case_kind": "anonymous" if label == "anonymous" else "provided_bearer",
+            }
+            if denied:
+                item["error_code"] = "FORBIDDEN"
+            if label != "anonymous":
+                item["request_bearer_sha256_12"] = f"rbac-{label}-hash"
+            items.append(item)
+    for label in labels:
+        for resource, path in write_paths.items():
+            denied = label not in write_allowed
+            marker_hash = f"marker-{label}-{resource}"
+            item = {
+                "family": f"rbac-write-{label}-{resource}",
+                "method": "POST",
+                "path": path,
+                "ok": True,
+                "error_envelope": denied,
+                "request_marker_sha256_12": marker_hash,
+                "rbac_label": label,
+                "rbac_operation": "write",
+                "rbac_resource": resource,
+                "auth_case_kind": "anonymous" if label == "anonymous" else "provided_bearer",
+            }
+            if label != "anonymous":
+                item["request_bearer_sha256_12"] = f"rbac-{label}-hash"
+            if denied:
+                item["error_code"] = "FORBIDDEN"
+                item["side_effect_check"] = {
+                    "kind": "authorization_rejected_before_persistence",
+                    "ok": True,
+                    "error_code": "FORBIDDEN",
+                    "target_marker_sha256_12": marker_hash,
+                }
+            else:
+                item["side_effect_check"] = {
+                    "kind": "rbac_dry_run_write_meta",
+                    "ok": True,
+                    "dryRun": True,
+                    "durable": False,
+                    "liveCapitalSideEffects": False,
+                    "target_marker_sha256_12": marker_hash,
+                }
+            items.append(item)
+    return items
+
+
 def write_strict_auth_json(artifact_dir: Path) -> None:
     (artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
         json.dumps(
             {
                 "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer"},
+                "rbac_auth_source": strict_rbac_auth_source(),
+                "include_writes": True,
                 "include_rbac_matrix": True,
                 "include_dry_run": True,
                 "include_approval_race": True,
                 "include_two_man_race": True,
                 "summary": {
                     "rbac_matrix_probes": 56,
+                    "rbac_write_probes": 32,
+                    "rbac_write_side_effect_proofs": 32,
                     "dry_run_probes": 7,
                     "approval_race_probes": 1,
                     "approval_race_bounded": True,
@@ -108,7 +201,7 @@ def write_strict_auth_json(artifact_dir: Path) -> None:
                     "two_man_race_operator_scoped": True,
                     "live_capital_side_effects": False,
                 },
-                "rbac_matrix": [{"ok": True} for _ in range(56)],
+                "rbac_matrix": strict_rbac_matrix_entries(),
                 "dry_run": dry_run_side_effect_entries(),
                 "approval_race": {"ok": True, "bounded": True},
                 "two_man_race": {"ok": True, "operator_scoped": True},
@@ -228,6 +321,62 @@ def test_verifier_accepts_complete_strict_live_artifact(tmp_path: Path) -> None:
     assert payload["criteria"]["sse_reconnect_soak"]["status"] == "pass"
     assert payload["criteria"]["current_run_only"]["status"] == "pass"
     assert payload["criteria"]["raw_secret_scan"]["status"] == "pass"
+
+
+
+def test_verifier_rejects_rbac_matrix_without_detail_links_even_when_summary_passes(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    auth["rbac_matrix"][0].pop("rbac_label")
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["rbac_matrix"]
+    assert item["status"] == "fail"
+    assert "detailLinks:55/56" in item["note"]
+
+
+
+def test_verifier_rejects_rbac_matrix_without_distinct_provided_bearers(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    source = auth["rbac_auth_source"]
+    source["distinct_provided_bearers"] = False
+    source["distinct_provided_bearer_count"] = 6
+    source["duplicate_bearer_label_groups"] = [["viewer", "operator"]]
+    source["cases"]["operator"]["sha256_12"] = source["cases"]["viewer"]["sha256_12"]
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["rbac_matrix"]
+    assert item["status"] == "fail"
+    assert "distinctBearers:6/7" in item["note"]
+
+
+
+def test_verifier_rejects_rbac_write_without_side_effect_proof(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    write_item = next(item for item in auth["rbac_matrix"] if item["family"] == "rbac-write-operator-strategy")
+    write_item.pop("side_effect_check")
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["rbac_matrix"]
+    assert item["status"] == "fail"
+    assert "writeSideEffectProofs:31/32" in item["note"]
 
 
 def test_verifier_rejects_dry_run_missing_side_effect_detail_even_when_summary_passes(tmp_path: Path) -> None:

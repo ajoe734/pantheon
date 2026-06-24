@@ -55,6 +55,13 @@ CHECK_LABELS = {
     "sse_reconnect_soak": "Authenticated: strict SSE soak observes heartbeat and no duplicate replay.",
     "current_run_only": "Evidence written to `.lovable/audits/current-run`.",
 }
+RBAC_LABELS = ("anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
+RBAC_PROVIDED_LABELS = tuple(label for label in RBAC_LABELS if label != "anonymous")
+RBAC_READ_RESOURCES = ("bff-strategies", "bff-ranking-formulas", "bff-agora-signals")
+RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-note", "intervention-claim")
+RBAC_READ_ALLOWED = {"viewer", "operator", "reviewer", "approver", "admin"}
+RBAC_WRITE_ALLOWED = {"operator", "reviewer", "approver", "admin"}
+RBAC_DENIED_ERROR_CODES = {"AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"}
 
 
 def read_json(path: Path) -> Any:
@@ -315,6 +322,148 @@ def auth_json_item(root: Path, summary: Any, key: str, raw_ok: bool, raw_note: s
     return status_item("pass", CHECK_LABELS[key], evidence=evidence, note=raw_note or summary_note)
 
 
+def rbac_expected_keys() -> set[tuple[str, str, str]]:
+    return {
+        *( (label, "read", resource) for label in RBAC_LABELS for resource in RBAC_READ_RESOURCES ),
+        *( (label, "write", resource) for label in RBAC_LABELS for resource in RBAC_WRITE_RESOURCES ),
+    }
+
+
+def rbac_source_hashes(payload: dict[str, Any]) -> tuple[dict[str, str], bool, str]:
+    source = payload.get("rbac_auth_source") if isinstance(payload.get("rbac_auth_source"), dict) else {}
+    cases = source.get("cases") if isinstance(source.get("cases"), dict) else {}
+    hashes: dict[str, str] = {}
+    for label in RBAC_PROVIDED_LABELS:
+        case = cases.get(label) if isinstance(cases.get(label), dict) else {}
+        digest = str(case.get("sha256_12") or "")
+        if case.get("kind") == "provided_bearer" and digest:
+            hashes[label] = digest
+    duplicate_groups = source.get("duplicate_bearer_label_groups")
+    distinct_count = len(set(hashes.values()))
+    distinct_ok = (
+        source.get("kind") == "rbac_matrix"
+        and source.get("distinct_provided_bearers") is True
+        and int(source.get("provided_bearer_count") or 0) == len(RBAC_PROVIDED_LABELS)
+        and int(source.get("distinct_provided_bearer_count") or 0) == len(RBAC_PROVIDED_LABELS)
+        and isinstance(duplicate_groups, list)
+        and not duplicate_groups
+        and len(hashes) == len(RBAC_PROVIDED_LABELS)
+        and distinct_count == len(RBAC_PROVIDED_LABELS)
+    )
+    cases_note = f"providedCases:{len(hashes)}/{len(RBAC_PROVIDED_LABELS)} distinctBearers:{distinct_count}/{len(RBAC_PROVIDED_LABELS)}"
+    return hashes, distinct_ok, cases_note
+
+
+def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: dict[str, Any]) -> tuple[bool, str]:
+    expected_keys = rbac_expected_keys()
+    source_hashes, source_ok, source_note = rbac_source_hashes(payload)
+    actual_keys: set[tuple[str, str, str]] = set()
+    ok_count = 0
+    detail_links = 0
+    bearer_links = 0
+    write_items = 0
+    write_side_effect_proofs = 0
+    write_marker_links = 0
+    read_denials = 0
+    write_denials = 0
+    failures: list[str] = []
+
+    for index, item in enumerate(rbac_matrix):
+        if not isinstance(item, dict):
+            failures.append(f"{index}:not-object")
+            continue
+        if item.get("ok") is True:
+            ok_count += 1
+        label = str(item.get("rbac_label") or "")
+        operation = str(item.get("rbac_operation") or "")
+        resource = str(item.get("rbac_resource") or "")
+        family = str(item.get("family") or "")
+        key = (label, operation, resource)
+        if key in expected_keys:
+            actual_keys.add(key)
+        if key in expected_keys and family == f"rbac-{operation}-{label}-{resource}":
+            detail_links += 1
+        else:
+            failures.append(f"{index}:detail-link")
+
+        if label == "anonymous":
+            if item.get("auth_case_kind") != "anonymous" or item.get("request_bearer_sha256_12"):
+                failures.append(f"{index}:anonymous-auth-link")
+        elif label in source_hashes:
+            if item.get("auth_case_kind") == "provided_bearer" and item.get("request_bearer_sha256_12") == source_hashes[label]:
+                bearer_links += 1
+            else:
+                failures.append(f"{index}:bearer-link")
+
+        error_code = str(item.get("error_code") or "")
+        if operation == "read" and label not in RBAC_READ_ALLOWED:
+            if item.get("error_envelope") is True and error_code in RBAC_DENIED_ERROR_CODES:
+                read_denials += 1
+            else:
+                failures.append(f"{index}:read-denial-envelope")
+        if operation != "write":
+            continue
+
+        write_items += 1
+        check = item.get("side_effect_check") if isinstance(item.get("side_effect_check"), dict) else {}
+        marker_hash = str(item.get("request_marker_sha256_12") or "")
+        if check.get("ok") is True:
+            if label in RBAC_WRITE_ALLOWED:
+                proof_ok = (
+                    check.get("kind") == "rbac_dry_run_write_meta"
+                    and check.get("dryRun") is True
+                    and check.get("durable") is False
+                    and check.get("liveCapitalSideEffects") is False
+                    and item.get("error_envelope") is not True
+                )
+            else:
+                denied_code = str(check.get("error_code") or item.get("error_code") or "")
+                proof_ok = (
+                    check.get("kind") == "authorization_rejected_before_persistence"
+                    and item.get("error_envelope") is True
+                    and denied_code in RBAC_DENIED_ERROR_CODES
+                )
+                if proof_ok:
+                    write_denials += 1
+            if proof_ok:
+                write_side_effect_proofs += 1
+        if marker_hash and check.get("target_marker_sha256_12") == marker_hash:
+            write_marker_links += 1
+        else:
+            failures.append(f"{index}:write-marker-link")
+
+    matrix_coverage = len(actual_keys)
+    expected_non_anonymous = len(RBAC_PROVIDED_LABELS) * (len(RBAC_READ_RESOURCES) + len(RBAC_WRITE_RESOURCES))
+    expected_read_denials = (len(RBAC_LABELS) - len(RBAC_READ_ALLOWED)) * len(RBAC_READ_RESOURCES)
+    expected_write_denials = (len(RBAC_LABELS) - len(RBAC_WRITE_ALLOWED)) * len(RBAC_WRITE_RESOURCES)
+    expected_write_items = len(RBAC_LABELS) * len(RBAC_WRITE_RESOURCES)
+    detail_ok = (
+        len(rbac_matrix) == len(expected_keys)
+        and safe_int(summary.get("rbac_matrix_probes") or len(rbac_matrix)) >= len(expected_keys)
+        and ok_count == len(expected_keys)
+        and matrix_coverage == len(expected_keys)
+        and detail_links == len(expected_keys)
+        and source_ok
+        and bearer_links == expected_non_anonymous
+        and read_denials == expected_read_denials
+        and write_items == expected_write_items
+        and write_side_effect_proofs == expected_write_items
+        and write_marker_links == expected_write_items
+        and write_denials == expected_write_denials
+        and not failures
+    )
+    failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
+    note = (
+        f"rbac:{ok_count}/{len(expected_keys)} matrixCoverage:{matrix_coverage}/{len(expected_keys)} "
+        f"detailLinks:{detail_links}/{len(expected_keys)} {source_note} "
+        f"bearerLinks:{bearer_links}/{expected_non_anonymous} readDenials:{read_denials}/{expected_read_denials} "
+        f"writeSideEffectProofs:{write_side_effect_proofs}/{expected_write_items} "
+        f"writeMarkerLinks:{write_marker_links}/{expected_write_items} writeDenials:{write_denials}/{expected_write_denials}"
+        f"{failure_note}"
+    )
+    return detail_ok, note
+
+
 def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
     file_path = find_file(root, AUTH_JSON_NAME)
     payload = read_json(file_path) if file_path else None
@@ -337,19 +486,18 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
     dry_run = payload.get("dry_run") if isinstance(payload.get("dry_run"), list) else []
     approval_race = payload.get("approval_race") if isinstance(payload.get("approval_race"), dict) else {}
     two_man_race = payload.get("two_man_race") if isinstance(payload.get("two_man_race"), dict) else {}
-    rbac_count = int(summary.get("rbac_matrix_probes") or len(rbac_matrix))
     dry_run_count = int(summary.get("dry_run_probes") or len(dry_run))
     approval_count = int(summary.get("approval_race_probes") or int(bool(approval_race)))
     two_man_count = int(summary.get("two_man_race_probes") or int(bool(two_man_race)))
-    rbac_all_ok = bool(rbac_matrix) and all(item.get("ok") is True for item in rbac_matrix)
+    rbac_detail_ok, rbac_detail_note = rbac_detail_check(payload, rbac_matrix, summary)
     dry_run_detail_ok, dry_run_detail_note = dry_run_detail_check(dry_run)
     approval_ok = approval_race.get("ok") is True and approval_race.get("bounded") is True
     two_man_ok = two_man_race.get("ok") is True and two_man_race.get("operator_scoped") is True
     base = strict and includes
     return payload, {
         "rbac_matrix": (
-            base and rbac_count >= 56 and rbac_all_ok,
-            f"strict:{strict} includes:{includes} rbac:{rbac_count}/56 allOk:{rbac_all_ok}",
+            base and rbac_detail_ok,
+            f"strict:{strict} includes:{includes} {rbac_detail_note}",
         ),
         "dry_run_no_side_effects": (
             base and dry_run_count >= 7 and dry_run_detail_ok and summary.get("live_capital_side_effects") is False,
