@@ -1343,6 +1343,9 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "live-evidence:" in text
     assert "github.event_name == 'workflow_dispatch' && inputs.mode == 'live-evidence'" in text
     assert "github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence'" in text
+    assert "format('live-evidence-{0}', inputs.environment)" in text
+    assert "|| 'stage0'" in text
+    assert "cancel-in-progress: true" in text
     assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
     assert "PANTHEON_LIVE_EVIDENCE_ENVIRONMENT: ${{ inputs.environment }}" in text
     assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in text

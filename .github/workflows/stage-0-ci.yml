@@ -47,7 +47,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: pantheon-stage0-${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    pantheon-stage0-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'live-evidence' && format('live-evidence-{0}', inputs.environment) || 'stage0' }}
   cancel-in-progress: true
 
 jobs:
