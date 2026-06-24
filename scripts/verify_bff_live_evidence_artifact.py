@@ -366,6 +366,98 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
     }
 
 
+def safe_float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def sse_attempts_have_lineage(attempts: list[Any]) -> bool:
+    if not attempts:
+        return False
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            return False
+        lineage = attempt.get("lineage_checks")
+        if not isinstance(lineage, dict) or not lineage:
+            return False
+        if any(value is not True for value in lineage.values()):
+            return False
+        expected = str(attempt.get("expected_replayed_event_id") or "")
+        observed = str(attempt.get("observed_replayed_event_id") or "")
+        cursor = str(attempt.get("cursor_event_id") or "")
+        if not cursor or not expected or observed != expected:
+            return False
+        if attempt.get("ok") is not True or attempt.get("replayed_expected_event") is not True:
+            return False
+    return True
+
+
+def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
+    soak = payload.get("soak") if isinstance(payload.get("soak"), dict) else {}
+    bearer_soak = soak.get("bearer_polyfill") if isinstance(soak.get("bearer_polyfill"), dict) else {}
+    blocks = bearer_soak.get("blocks") if isinstance(bearer_soak.get("blocks"), dict) else {}
+    reconnect = payload.get("reconnect_sequence") if isinstance(payload.get("reconnect_sequence"), dict) else {}
+    bearer_reconnect = reconnect.get("bearer_polyfill") if isinstance(reconnect.get("bearer_polyfill"), dict) else {}
+    attempts = as_list(bearer_reconnect.get("attempts"))
+    expected_ids = [str(item) for item in as_list(bearer_reconnect.get("expected_event_ids")) if item]
+    observed_ids = [str(item) for item in as_list(bearer_reconnect.get("observed_event_ids")) if item]
+    soak_duplicates = as_list(blocks.get("duplicate_event_ids"))
+    reconnect_duplicates = as_list(bearer_reconnect.get("duplicate_event_ids"))
+    soak_missing = as_list(bearer_soak.get("missing_expected_event_ids"))
+    reconnect_missing = as_list(bearer_reconnect.get("missing_expected_event_ids"))
+
+    strict = payload.get("strict_live_evidence") is True
+    seconds = safe_float(soak.get("seconds"))
+    min_heartbeats = max(1, safe_int(soak.get("min_heartbeats") or bearer_soak.get("min_heartbeats")))
+    heartbeat_count = safe_int(blocks.get("heartbeat_count"))
+    attempt_count = safe_int(bearer_reconnect.get("attempt_count") or len(attempts))
+    attempt_details_ok = attempt_count >= 5 and len(attempts) >= 5
+    attempt_lineage_ok = sse_attempts_have_lineage(attempts)
+    observed_sequence_ok = len(observed_ids) >= 5 and observed_ids == expected_ids
+    cursors_advanced = bearer_reconnect.get("cursors_advanced") is True
+    duplicates = len(soak_duplicates) + len(reconnect_duplicates)
+    missing_replay = len(soak_missing) + len(reconnect_missing)
+    bearer_soak_ok = bearer_soak.get("ok") is True
+    bearer_reconnect_ok = bearer_reconnect.get("ok") is True
+
+    detail_ok = (
+        strict
+        and seconds >= 75
+        and bearer_soak_ok
+        and heartbeat_count >= min_heartbeats
+        and duplicates == 0
+        and missing_replay == 0
+        and bearer_reconnect_ok
+        and attempt_count >= 5
+        and attempt_details_ok
+        and attempt_lineage_ok
+        and observed_sequence_ok
+        and cursors_advanced
+    )
+    note = (
+        f"strict:{strict} soak:{seconds:g}/75 heartbeat:{heartbeat_count}/{min_heartbeats} "
+        f"reconnect:{attempt_count}/5 attemptDetails:{attempt_details_ok} "
+        f"attemptLineage:{attempt_lineage_ok} observed:{len(observed_ids)}/5 "
+        f"observedSequence:{observed_sequence_ok} duplicates:{duplicates} "
+        f"missingReplay:{missing_replay} cursorsAdvanced:{cursors_advanced} "
+        f"soakOk:{bearer_soak_ok} reconnectOk:{bearer_reconnect_ok}"
+    )
+    return detail_ok, note
+
+
 def sse_item(root: Path, summary: Any) -> dict[str, str]:
     summary_status, summary_note = summary_check_status(summary, "sse_reconnect_soak")
     file_path = find_file(root, SSE_JSON_NAME)
@@ -373,14 +465,7 @@ def sse_item(root: Path, summary: Any) -> dict[str, str]:
     payload = read_json(file_path) if file_path else None
     if not isinstance(payload, dict):
         return status_item(summary_status, CHECK_LABELS["sse_reconnect_soak"], evidence=evidence, note=summary_note or "SSE JSON missing")
-    soak = payload.get("soak") if isinstance(payload.get("soak"), dict) else {}
-    reconnect = payload.get("reconnect_sequence") if isinstance(payload.get("reconnect_sequence"), dict) else {}
-    bearer = reconnect.get("bearer_polyfill") if isinstance(reconnect.get("bearer_polyfill"), dict) else {}
-    strict = payload.get("strict_live_evidence") is True
-    seconds = float(soak.get("seconds") or 0)
-    attempts = int(bearer.get("attempt_count") or len(bearer.get("attempts") or []))
-    raw_ok = strict and seconds >= 75 and bearer.get("ok") is True and attempts >= 5
-    raw_note = f"strict:{strict} soak:{seconds:g}/75 reconnect:{attempts}/5 bearerOk:{bearer.get('ok') is True}"
+    raw_ok, raw_note = sse_detail_check(payload)
     if summary_status != "pass":
         return status_item(summary_status, CHECK_LABELS["sse_reconnect_soak"], evidence=evidence, note=summary_note or raw_note)
     if not raw_ok:
