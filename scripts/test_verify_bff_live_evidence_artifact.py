@@ -41,6 +41,55 @@ def write_summary(artifact_dir: Path, *, status: str = "pass") -> None:
     )
 
 
+def dry_run_side_effect_entries() -> list[dict[str, object]]:
+    def meta(kind: str) -> dict[str, object]:
+        return {
+            "kind": kind,
+            "ok": True,
+            "dryRun": True,
+            "durable": False,
+            "liveCapitalSideEffects": False,
+        }
+
+    def readback(family: str, digest: str) -> dict[str, object]:
+        return {
+            "family": f"{family}-readback-not-persisted",
+            "ok": True,
+            "error_envelope": True,
+            "error_code": "RESOURCE_NOT_FOUND",
+            "side_effect_check": {
+                "kind": "readback_not_persisted",
+                "ok": True,
+                "target_family": family,
+                "target_id_sha256_12": digest,
+                "error_code": "RESOURCE_NOT_FOUND",
+            },
+        }
+
+    def validation(family: str) -> dict[str, object]:
+        return {
+            "family": family,
+            "ok": True,
+            "error_envelope": True,
+            "error_code": "VALIDATION_FAILED",
+            "side_effect_check": {
+                "kind": "validation_rejected_before_persistence",
+                "ok": True,
+                "error_code": "VALIDATION_FAILED",
+            },
+        }
+
+    return [
+        {"family": "dry-run-strategy-create", "ok": True, "error_envelope": False, "side_effect_check": meta("dry_run_preview_meta")},
+        readback("dry-run-strategy-create", "abc123abc123"),
+        {"family": "dry-run-ranking-formula-create", "ok": True, "error_envelope": False, "side_effect_check": meta("dry_run_preview_meta")},
+        readback("dry-run-ranking-formula-create", "def456def456"),
+        {"family": "dry-run-v5-intervention-claim", "ok": True, "error_envelope": False, "side_effect_check": meta("dry_run_command_meta")},
+        validation("dry-run-invalid-strategy"),
+        validation("dry-run-invalid-ranking-formula"),
+    ]
+
+
 def write_strict_auth_json(artifact_dir: Path) -> None:
     (artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
         json.dumps(
@@ -60,7 +109,7 @@ def write_strict_auth_json(artifact_dir: Path) -> None:
                     "live_capital_side_effects": False,
                 },
                 "rbac_matrix": [{"ok": True} for _ in range(56)],
-                "dry_run": [{"ok": True} for _ in range(7)],
+                "dry_run": dry_run_side_effect_entries(),
                 "approval_race": {"ok": True, "bounded": True},
                 "two_man_race": {"ok": True, "operator_scoped": True},
             }
@@ -116,6 +165,43 @@ def test_verifier_accepts_complete_strict_live_artifact(tmp_path: Path) -> None:
     assert payload["criteria"]["sse_reconnect_soak"]["status"] == "pass"
     assert payload["criteria"]["current_run_only"]["status"] == "pass"
     assert payload["criteria"]["raw_secret_scan"]["status"] == "pass"
+
+
+def test_verifier_rejects_dry_run_missing_side_effect_detail_even_when_summary_passes(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    auth["dry_run"][0].pop("side_effect_check")
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["dry_run_no_side_effects"]
+    assert item["status"] == "fail"
+    assert "side-effect-check-missing" in item["note"]
+
+
+def test_verifier_rejects_dry_run_validation_without_error_envelope(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    invalid = next(
+        item
+        for item in auth["dry_run"]
+        if item["side_effect_check"]["kind"] == "validation_rejected_before_persistence"
+    )
+    invalid["error_envelope"] = False
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["dry_run_no_side_effects"]
+    assert item["status"] == "fail"
+    assert "validation-error-envelope" in item["note"]
 
 
 def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:

@@ -215,6 +215,69 @@ def secret_leak_item(root: Path) -> dict[str, str]:
     return status_item("pass", "Current-run artifact does not contain raw secret material")
 
 
+def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
+    expected_kind_counts = {
+        "dry_run_preview_meta": 2,
+        "readback_not_persisted": 2,
+        "dry_run_command_meta": 1,
+        "validation_rejected_before_persistence": 2,
+    }
+    meta_kinds = {"dry_run_preview_meta", "dry_run_command_meta"}
+    not_found_codes = {"RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND"}
+    kind_counts = {kind: 0 for kind in expected_kind_counts}
+    failures: list[str] = []
+
+    for index, item in enumerate(dry_run):
+        if not isinstance(item, dict):
+            failures.append(f"{index}:not-object")
+            continue
+        if item.get("ok") is not True:
+            failures.append(f"{index}:result-ok")
+        check = item.get("side_effect_check")
+        if not isinstance(check, dict):
+            failures.append(f"{index}:side-effect-check-missing")
+            continue
+        if check.get("ok") is not True:
+            failures.append(f"{index}:side-effect-ok")
+        kind = str(check.get("kind") or "")
+        if kind in kind_counts:
+            kind_counts[kind] += 1
+        else:
+            failures.append(f"{index}:unexpected-kind:{kind or 'missing'}")
+            continue
+
+        if kind in meta_kinds:
+            if check.get("dryRun") is not True:
+                failures.append(f"{index}:dryRun")
+            if check.get("durable") is not False:
+                failures.append(f"{index}:durable")
+            if check.get("liveCapitalSideEffects") is not False:
+                failures.append(f"{index}:liveCapitalSideEffects")
+        elif kind == "readback_not_persisted":
+            error_code = str(check.get("error_code") or item.get("error_code") or "")
+            if item.get("error_envelope") is not True:
+                failures.append(f"{index}:readback-error-envelope")
+            if error_code not in not_found_codes:
+                failures.append(f"{index}:readback-error-code")
+            if "target_id" in check:
+                failures.append(f"{index}:target-id-leak")
+            if not check.get("target_id_sha256_12"):
+                failures.append(f"{index}:target-id-hash")
+        elif kind == "validation_rejected_before_persistence":
+            error_code = str(check.get("error_code") or item.get("error_code") or "")
+            if item.get("error_envelope") is not True:
+                failures.append(f"{index}:validation-error-envelope")
+            if error_code != "VALIDATION_FAILED":
+                failures.append(f"{index}:validation-error-code")
+
+    kind_note = ",".join(f"{kind}:{kind_counts[kind]}/{expected}" for kind, expected in expected_kind_counts.items())
+    count_ok = len(dry_run) == 7
+    kinds_ok = all(kind_counts[kind] == expected for kind, expected in expected_kind_counts.items())
+    detail_ok = count_ok and kinds_ok and not failures
+    failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
+    return detail_ok, f"dryRunDetails:{len(dry_run)}/7 kinds:{kind_note}{failure_note}"
+
+
 def auth_json_item(root: Path, summary: Any, key: str, raw_ok: bool, raw_note: str) -> dict[str, str]:
     summary_status, summary_note = summary_check_status(summary, key)
     file_path = find_file(root, AUTH_JSON_NAME)
@@ -253,7 +316,7 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
     approval_count = int(summary.get("approval_race_probes") or int(bool(approval_race)))
     two_man_count = int(summary.get("two_man_race_probes") or int(bool(two_man_race)))
     rbac_all_ok = bool(rbac_matrix) and all(item.get("ok") is True for item in rbac_matrix)
-    dry_run_all_ok = bool(dry_run) and all(item.get("ok") is True for item in dry_run)
+    dry_run_detail_ok, dry_run_detail_note = dry_run_detail_check(dry_run)
     approval_ok = approval_race.get("ok") is True and approval_race.get("bounded") is True
     two_man_ok = two_man_race.get("ok") is True and two_man_race.get("operator_scoped") is True
     base = strict and includes
@@ -263,8 +326,8 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
             f"strict:{strict} includes:{includes} rbac:{rbac_count}/56 allOk:{rbac_all_ok}",
         ),
         "dry_run_no_side_effects": (
-            base and dry_run_count >= 7 and dry_run_all_ok and summary.get("live_capital_side_effects") is False,
-            f"strict:{strict} includes:{includes} dryRun:{dry_run_count}/7 allOk:{dry_run_all_ok} sideEffects:{summary.get('live_capital_side_effects')}",
+            base and dry_run_count >= 7 and dry_run_detail_ok and summary.get("live_capital_side_effects") is False,
+            f"strict:{strict} includes:{includes} dryRun:{dry_run_count}/7 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
         ),
         "approval_race": (
             base and approval_count == 1 and summary.get("approval_race_bounded") is True and approval_ok,
