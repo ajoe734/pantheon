@@ -136,10 +136,14 @@ def write_passing_artifact(artifact_dir: Path) -> None:
     (artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
         json.dumps(
             {
+                "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
                 "strict_live_evidence_preflight": True,
                 "github_environment": "dev",
                 "missing": [],
                 "invalid": [],
+                "output_scope": ".lovable/audits/current-run",
+                "ref": "refs/heads/dev",
+                "sha": "a" * 40,
                 "secret_values_written": False,
             }
         ),
@@ -210,10 +214,14 @@ def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:
     (artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
         json.dumps(
             {
+                "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
                 "strict_live_evidence_preflight": True,
                 "github_environment": "dev",
                 "missing": ["PANTHEON_BFF_SMOKE_BEARER_TOKEN", "PANTHEON_BFF_RBAC_TOKENS_JSON"],
                 "invalid": [],
+                "output_scope": ".lovable/audits/current-run",
+                "ref": "refs/heads/dev",
+                "sha": "b" * 40,
                 "secret_values_written": False,
             }
         ),
@@ -235,10 +243,14 @@ def test_verifier_fails_when_preflight_secret_safety_flag_is_missing(tmp_path: P
     (artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
         json.dumps(
             {
+                "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
                 "strict_live_evidence_preflight": True,
                 "github_environment": "dev",
                 "missing": [],
                 "invalid": [],
+                "output_scope": ".lovable/audits/current-run",
+                "ref": "refs/heads/dev",
+                "sha": "c" * 40,
             }
         ),
         encoding="utf-8",
@@ -268,6 +280,43 @@ def test_verifier_fails_when_preflight_reports_secret_values_written(tmp_path: P
     assert payload["overall"] == "fail"
     assert payload["criteria"]["preflight_ready"]["status"] == "fail"
     assert "secret_values_written must be false" in payload["criteria"]["preflight_ready"]["note"]
+
+
+def test_verifier_rejects_master_preflight_provenance_even_when_checks_pass(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["ref"] = "refs/heads/master"
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["overall"] == "fail"
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "provenance:ref"
+
+
+def test_verifier_rejects_missing_preflight_provenance_even_when_checks_pass(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight.pop("task_id")
+    preflight["strict_live_evidence_preflight"] = False
+    preflight["output_scope"] = ".lovable/audits/historical"
+    preflight["github_environment"] = "production"
+    preflight["sha"] = "not-a-sha"
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "provenance:task_id,strict_live_evidence_preflight,output_scope,github_environment,sha"
 
 
 def test_verifier_rejects_raw_bearer_material_without_echoing_secret(tmp_path: Path) -> None:
