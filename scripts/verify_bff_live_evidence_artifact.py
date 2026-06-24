@@ -20,6 +20,28 @@ SECRET_LEAK_PATTERNS = (
     ("raw_bearer", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
 )
+SENSITIVE_SECRET_KEYS = {
+    "authorization",
+    "authorization_header",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "bearer_token",
+    "token",
+    "secret",
+    "api_key",
+    "client_secret",
+    "password",
+}
+SAFE_SECRET_VALUES = {"", "[redacted]", "<redacted>", "redacted", "***", "****"}
+SAFE_SECRET_VALUE_PREFIXES = (
+    "sha256:",
+    "sha256_",
+    "hash:",
+    "fingerprint:",
+    "redacted:",
+    "masked:",
+)
 
 CHECK_LABELS = {
     "rbac_matrix": "Authenticated: strict bearer RBAC matrix evidence passed.",
@@ -49,6 +71,41 @@ def rel(path: Path, root: Path) -> str:
 
 def status_item(status: str, label: str, *, evidence: str = "", note: str = "") -> dict[str, str]:
     return {"status": status, "label": label, "evidence": evidence, "note": note}
+
+
+def is_safe_secret_value(value: str) -> bool:
+    text = value.strip()
+    lowered = text.lower()
+    if not text:
+        return True
+    if lowered in SAFE_SECRET_VALUES:
+        return True
+    if lowered.startswith(SAFE_SECRET_VALUE_PREFIXES):
+        return True
+    return bool(re.fullmatch(r"\*{3,}", text))
+
+
+def is_unsafe_sensitive_value(value: str) -> bool:
+    return len(value.strip()) >= 8 and not is_safe_secret_value(value)
+
+
+def json_sensitive_key_findings(payload: Any, source: str, trail: str = "$") -> list[tuple[str, str]]:
+    findings: list[tuple[str, str]] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            key_text = str(key)
+            next_trail = f"{trail}.{key_text}"
+            if (
+                key_text.lower() in SENSITIVE_SECRET_KEYS
+                and isinstance(value, str)
+                and is_unsafe_sensitive_value(value)
+            ):
+                findings.append((source, f"json_key:{next_trail}"))
+            findings.extend(json_sensitive_key_findings(value, source, next_trail))
+    elif isinstance(payload, list):
+        for index, value in enumerate(payload):
+            findings.extend(json_sensitive_key_findings(value, source, f"{trail}[{index}]"))
+    return findings
 
 
 def list_files(root: Path) -> list[Path]:
@@ -135,22 +192,27 @@ def artifact_scope_item(root: Path, summary: Any) -> dict[str, str]:
 def secret_leak_item(root: Path) -> dict[str, str]:
     findings: list[tuple[str, str]] = []
     for path in list_files(root):
+        source = rel(path, root)
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for name, pattern in SECRET_LEAK_PATTERNS:
             if pattern.search(text):
-                findings.append((rel(path, root), name))
+                findings.append((source, name))
                 break
+        if path.suffix.lower() == ".json":
+            payload = read_json(path)
+            if payload is not None:
+                findings.extend(json_sensitive_key_findings(payload, source))
     if findings:
         note = "possible raw secret material: " + ",".join(f"{path}:{name}" for path, name in findings[:5])
         return status_item(
             "fail",
-            "Current-run artifact does not contain raw bearer or JWT material",
+            "Current-run artifact does not contain raw secret material",
             note=note,
         )
-    return status_item("pass", "Current-run artifact does not contain raw bearer or JWT material")
+    return status_item("pass", "Current-run artifact does not contain raw secret material")
 
 
 def auth_json_item(root: Path, summary: Any, key: str, raw_ok: bool, raw_note: str) -> dict[str, str]:
