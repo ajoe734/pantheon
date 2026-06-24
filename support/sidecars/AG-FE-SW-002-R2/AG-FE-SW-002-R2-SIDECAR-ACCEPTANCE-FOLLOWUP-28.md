@@ -16,8 +16,8 @@
 
 This is the twenty-eighth packet in the `AG-FE-SW-002-R2` sidecar chain.
 
-**The 24h Human/Ops escalation threshold remains CROSSED. As of FU-28 dispatch (`~2026-06-24T12:58Z`),
-approximately 11 hours and 43 minutes have elapsed since the threshold fired at `2026-06-24T01:14:37Z`. Human/Ops
+**The 24h Human/Ops escalation threshold remains CROSSED. As of FU-28 dispatch (`2026-06-24T13:00:12Z`),
+approximately 11 hours and 46 minutes have elapsed since the threshold fired at `2026-06-24T01:14:37Z`. Human/Ops
 escalation continues to be warranted. This is the EIGHTH consecutive packet in the >24h escalation band.**
 
 FOLLOWUP-27 (anchor commit `c4b2443f` at `2026-06-24T12:52:38Z`, closeout commit `85c144c5` at
@@ -25,24 +25,29 @@ FOLLOWUP-27 (anchor commit `c4b2443f` at `2026-06-24T12:52:38Z`, closeout commit
 - Anchor PR #2333 merged at `~2026-06-24T12:54:24Z`
 - Closeout PR #2334 merged at `~2026-06-24T12:57:15Z`
 
-No intervening tasks ran between FU-27 closeout and FU-28 dispatch.
+Two intervening commits appeared on origin/dev between FU-27 archive and FU-28 dispatch:
+`0e2f7405` at `12:59:02Z` (BFF-LIVE-EVIDENCE: verify SSE detail evidence) and `aeb6137b` at
+`12:59:47Z` (reconcile merge).
 
-FOLLOWUP-28 is dispatched at approximately `~2026-06-24T12:58Z` — approximately **~1 minute
-after FOLLOWUP-27 archived** (PR #2334 merged at `~12:57:15Z`; FU-28 dispatched at `~12:58Z`). No
-intervening tasks ran during this gap. FU-27 had two-PR production (anchor PR #2333 + closeout PR
-#2334) completing in approximately 5 minutes from anchor commit (`12:52:38Z`) to closeout PR merge
-(`~12:57:15Z`).
+FOLLOWUP-28 is dispatched at `2026-06-24T13:00:12Z` — approximately **~3 minutes
+after FOLLOWUP-27 archived** (PR #2334 merged at `~12:57:15Z`; FU-28 assigned at `13:00:12Z`). Two
+intervening commits ran on origin/dev during this gap (see above). FU-27 had two-PR production
+(anchor PR #2333 + closeout PR #2334) completing in approximately 5 minutes from anchor commit
+(`12:52:38Z`) to closeout PR merge (`~12:57:15Z`).
 
 FOLLOWUP-28 contributes:
 
-1. **Cadence-continued note with fast-dispatch annotation** — FU-27 archived at `~12:57:15Z` on
-   2026-06-24; FU-28 dispatched `~12:58Z` on 2026-06-24 (~1 minute from FU-27 archive to FU-28
-   dispatch; no intervening tasks). FU-27 had two-PR production (anchor PR #2333 + closeout PR #2334)
-   in ~5 minutes (anchor commit `12:52:38Z` to closeout PR merge `~12:57:15Z`).
-2. **Updated escalation window** — as of FU-28 dispatch (`~12:58Z`), the parent task has been
-   blocked for approximately **35 hours and 43 minutes**. Total elapsed continues past the 24h band.
+1. **Cadence-continued note with near-immediate-dispatch annotation** — FU-27 archived at
+   `~12:57:15Z` on 2026-06-24; FU-28 dispatched `2026-06-24T13:00:12Z` (~3 minutes from FU-27
+   archive to FU-28 dispatch; two intervening commits on origin/dev: `0e2f7405` at `12:59:02Z`
+   (BFF-LIVE-EVIDENCE: verify SSE detail evidence) and `aeb6137b` at `12:59:47Z` (reconcile merge)).
+   FU-27 had two-PR production (anchor PR #2333 + closeout PR #2334) in ~5 minutes (anchor commit
+   `12:52:38Z` to closeout PR merge `~12:57:15Z`).
+2. **Updated escalation window** — as of FU-28 dispatch (`2026-06-24T13:00:12Z`), the parent task
+   has been blocked for approximately **35 hours and 46 minutes**. Total elapsed continues past the
+   24h band.
 3. **24h Human/Ops threshold — continued notice (EIGHTH consecutive)** — the threshold crossed
-   approximately 11 hours and 43 minutes ago at `2026-06-24T01:14:37Z`. This is the eighth consecutive
+   approximately 11 hours and 46 minutes ago at `2026-06-24T01:14:37Z`. This is the eighth consecutive
    FU (after FU-21, FU-22, FU-23, FU-24, FU-25, FU-26, and FU-27) in the >24h band.
 4. **Reiteration of loop halt recommendation** — unchanged from FU7 through FU27.
 5. **Updated chain state table** — adds FOLLOWUP-28 to the chain record.
@@ -77,7 +82,7 @@ truth, BFF runtime code, frontend runtime code, registry behavior, or governance
 | FU25 | `~2026-06-24T10:02Z` | Yes — cadence-continued note (~4m after FU-24 archived at `~09:58Z`; FU-24 had 2 PRs #2325/#2326 in ~6m anchor-to-closeout-merge; note ~7h23m FU-24 worker scheduling delay); **24h threshold CROSSED ~8h47m ago**; Human/Ops escalation continues to be warranted; fifth consecutive >24h-band packet |
 | FU26 | `~2026-06-24T10:12Z` | Yes — cadence-continued note (~19s after FU-25 archived at `~10:11:06Z`; FU-25 had 2 PRs #2327/#2328 in ~6m anchor-to-closeout-merge; essentially immediate dispatch — previously shortest FU→FU gap in the chain); **24h threshold CROSSED ~8h57m ago**; Human/Ops escalation continues to be warranted; sixth consecutive >24h-band packet |
 | FU27 | `~2026-06-24T12:08Z` | Yes — cadence-continued note with extended-gap annotation (~1h47m after FU-26 archived at `~10:20:23Z`; two BFF-LIVE-EVIDENCE tasks #2331/#2332 ran during gap; FU-26 had 2 PRs #2329/#2330 in ~4m anchor-to-closeout-merge); **24h threshold CROSSED ~10h53m ago**; Human/Ops escalation continues to be warranted; **seventh consecutive >24h-band packet** |
-| FU28 | `~2026-06-24T12:58Z` | This packet — cadence-continued note with fast-dispatch annotation (~1m after FU-27 archived at `~12:57:15Z`; no intervening tasks; FU-27 had 2 PRs #2333/#2334 in ~5m anchor-to-closeout-merge); **24h threshold CROSSED ~11h43m ago**; Human/Ops escalation continues to be warranted; **eighth consecutive >24h-band packet** |
+| FU28 | `2026-06-24T13:00:12Z` | This packet — cadence-continued note with near-immediate-dispatch annotation (~3m after FU-27 archived at `~12:57:15Z`; two intervening commits on origin/dev: `0e2f7405` at `12:59:02Z` (BFF-LIVE-EVIDENCE: verify SSE detail evidence) and `aeb6137b` at `12:59:47Z` (reconcile merge); FU-27 had 2 PRs #2333/#2334 in ~5m anchor-to-closeout-merge); **24h threshold CROSSED ~11h46m ago**; Human/Ops escalation continues to be warranted; **eighth consecutive >24h-band packet** |
 
 The auto-dispatch loop does not parse termination notices or halt recommendations embedded in
 packet prose. These notices are directed at chair-review and Human/Ops operators. FOLLOWUP-28 is
@@ -111,16 +116,17 @@ the expected downstream consequence of continued supervisor cadence.
 - Fifth consecutive >24h-band note (FU25) — ~8h47m into the >24h band
 - Sixth consecutive >24h-band note (FU26) — ~8h57m into the >24h band
 - Seventh consecutive >24h-band note (FU27) — ~10h53m into the >24h band
-- **Eighth consecutive >24h-band note (FU28) — ~11h43m into the >24h band**
+- **Eighth consecutive >24h-band note (FU28) — ~11h46m into the >24h band**
 
-FOLLOWUP-28 adds only the cadence-continued note with fast-dispatch annotation (~1 minute from
-FU-27 archive to FU-28 dispatch; no intervening tasks; FU-27 had 2 PRs in ~5m anchor-to-closeout-merge),
-escalation window advance (~35h43m elapsed), continued >24h Human/Ops threshold notice (~11h43m
+FOLLOWUP-28 adds only the cadence-continued note with near-immediate-dispatch annotation (~3 minutes
+from FU-27 archive to FU-28 dispatch; two intervening commits on origin/dev: `0e2f7405` at
+`12:59:02Z` and `aeb6137b` at `12:59:47Z`; FU-27 had 2 PRs in ~5m anchor-to-closeout-merge),
+escalation window advance (~35h46m elapsed), continued >24h Human/Ops threshold notice (~11h46m
 past threshold, eighth consecutive), and chain state table update.
 
 ---
 
-## Escalation Window — 24h Threshold CROSSED (~11h43m ago)
+## Escalation Window — 24h Threshold CROSSED (~11h46m ago)
 
 | Timestamp | Event |
 |---|---|
@@ -206,25 +212,27 @@ past threshold, eighth consecutive), and chain state table update.
 | `2026-06-24T12:56:06Z` | FOLLOWUP-27 closeout commit |
 | `~2026-06-24T12:54:24Z` | FOLLOWUP-27 anchor PR #2333 merged |
 | `~2026-06-24T12:57:15Z` | FOLLOWUP-27 archived (PR #2334 merged) |
-| `~2026-06-24T12:58Z` | **FOLLOWUP-28 dispatch** (~1m after FU-27 archived; no intervening tasks; FU-27 had 2-PR production ~5m anchor-to-closeout-merge) |
+| `2026-06-24T12:59:02Z` | BFF-LIVE-EVIDENCE verify SSE detail evidence commit (`0e2f7405`; intervening commit on origin/dev) |
+| `2026-06-24T12:59:47Z` | Reconcile merge (`aeb6137b`; intervening commit on origin/dev) |
+| `2026-06-24T13:00:12Z` | **FOLLOWUP-28 dispatch** (~3m after FU-27 archived; two intervening commits on origin/dev; FU-27 had 2-PR production ~5m anchor-to-closeout-merge) |
 
-Elapsed from block to FU28 dispatch: **~35h43m**.
-Time from FU27 archive to FU28 dispatch: **~1 minute** (no intervening tasks; fast-dispatch cadence).
-4h threshold crossed: **~31h43m before FU28 dispatch**.
-24h Human/Ops threshold: **CROSSED ~11h43m before FU28 dispatch** (`2026-06-24T01:14:37Z`).
+Elapsed from block to FU28 dispatch: **~35h46m**.
+Time from FU27 archive to FU28 dispatch: **~3 minutes** (two intervening commits on origin/dev: `0e2f7405` at `12:59:02Z` and `aeb6137b` at `12:59:47Z`).
+4h threshold crossed: **~31h46m before FU28 dispatch**.
+24h Human/Ops threshold: **CROSSED ~11h46m before FU28 dispatch** (`2026-06-24T01:14:37Z`).
 
 | Threshold | Time | Status at FU28 dispatch |
 |---|---|---|
-| < 4 hours — normal reviewer latency, no escalation | Until `05:14:37Z 2026-06-23` | **Crossed** (~35h43m elapsed) |
+| < 4 hours — normal reviewer latency, no escalation | Until `05:14:37Z 2026-06-23` | **Crossed** (~35h46m elapsed) |
 | **4–24 hours — chair-review must surface pending decision** | `05:14:37Z`–`2026-06-24T01:14:37Z` | **Closed** — ~20h elapsed in this band; band exited |
-| **> 24 hours — Human/Ops escalation warranted** | After `2026-06-24T01:14:37Z` | **~11h43m elapsed** in this band at FU28 dispatch |
+| **> 24 hours — Human/Ops escalation warranted** | After `2026-06-24T01:14:37Z` | **~11h46m elapsed** in this band at FU28 dispatch |
 
 **Post-threshold Human/Ops escalation notice (FU28 — EIGHTH consecutive >24h-band packet):**
 
 > **The 24h Human/Ops escalation threshold was crossed at `2026-06-24T01:14:37Z`,
-> approximately 11 hours and 43 minutes before FOLLOWUP-28 dispatch (`~2026-06-24T12:58Z`).** As of FU-28
+> approximately 11 hours and 46 minutes before FOLLOWUP-28 dispatch (`2026-06-24T13:00:12Z`).** As of FU-28
 > dispatch, the parent task `AG-FE-SW-002-R2` has been blocked (`waiting_for: Claude`) for
-> approximately **35 hours and 43 minutes**. FU-28 is the EIGHTH consecutive packet in the
+> approximately **35 hours and 46 minutes**. FU-28 is the EIGHTH consecutive packet in the
 > >24h Human/Ops escalation band (following FU-21, FU-22, FU-23, FU-24, FU-25, FU-26, and FU-27).
 >
 > Per escalation policy established in FOLLOWUP-18 and reiterated in FOLLOWUP-19 through FOLLOWUP-27:
@@ -330,7 +338,7 @@ AI_NAME=Claude ./scripts/ai-status.sh blocker AG-FE-SW-002-R2 \
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-25.md` | `done` | **Fifth consecutive >24h-band packet**: cadence-continued note (~4m after FU-24 archived `~09:58Z`; FU-24 had 2 PRs in ~6m anchor-to-closeout-merge; ~7h23m FU-24 worker scheduling delay noted), escalation window advance (~32h47m elapsed), **24h threshold CROSSED ~8h47m ago** — Human/Ops escalation continues to be warranted; fifth consecutive escalation packet, loop halt reiteration | `2026-06-24` (PR #2328 merged `~10:11:06Z`) |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-26.md` | `done` | **Sixth consecutive >24h-band packet**: cadence-continued note (~19 seconds after FU-25 archived `~10:11:06Z`; supervisor auto-start at `10:11:25Z`; FU-25 had 2 PRs #2327/#2328 in ~6m anchor-to-closeout-merge; essentially immediate dispatch — previously shortest FU→FU gap in the chain), escalation window advance (~32h57m elapsed), **24h threshold CROSSED ~8h57m ago** — Human/Ops escalation continues to be warranted; sixth consecutive escalation packet, loop halt reiteration | `2026-06-24` (PR #2330 merged `~10:20:23Z`) |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-27.md` | `done` | **Seventh consecutive >24h-band packet**: cadence-continued note with extended-gap annotation (~1h47m after FU-26 archived `~10:20:23Z`; two BFF-LIVE-EVIDENCE tasks #2331/#2332 ran during gap; FU-26 had 2 PRs #2329/#2330 in ~4m anchor-to-closeout-merge), escalation window advance (~34h53m elapsed), **24h threshold CROSSED ~10h53m ago** — Human/Ops escalation continues to be warranted; seventh consecutive escalation packet, loop halt reiteration | `2026-06-24` (PR #2334 merged `~12:57:15Z`) |
-| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28.md` | `done` | **Eighth consecutive >24h-band packet**: cadence-continued note with fast-dispatch annotation (~1m after FU-27 archived `~12:57:15Z`; no intervening tasks; FU-27 had 2 PRs #2333/#2334 in ~5m anchor-to-closeout-merge), escalation window advance (~35h43m elapsed), **24h threshold CROSSED ~11h43m ago** — Human/Ops escalation continues to be warranted; eighth consecutive escalation packet, loop halt reiteration | `2026-06-24` (this packet) |
+| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28.md` | `done` | **Eighth consecutive >24h-band packet**: cadence-continued note with near-immediate-dispatch annotation (~3m after FU-27 archived `~12:57:15Z`; two intervening commits on origin/dev: `0e2f7405` at `12:59:02Z` and `aeb6137b` at `12:59:47Z`; FU-27 had 2 PRs #2333/#2334 in ~5m anchor-to-closeout-merge), escalation window advance (~35h46m elapsed), **24h threshold CROSSED ~11h46m ago** — Human/Ops escalation continues to be warranted; eighth consecutive escalation packet, loop halt reiteration | `2026-06-24` (this packet) |
 
 ---
 
@@ -345,7 +353,7 @@ graph TD
     CardSchema["v4/workshop_card.schema.json<br/>12 typed card kinds"] --> FESW002R2
     StreamSchema["v4/workshop_stream_event.schema.json<br/>ordered at-least-once stream"] --> FESW002R2
 
-    FESW002R2["AG-FE-SW-002-R2<br/>BLOCKED — waiting for Claude<br/>gate decision A/B/C<br/>blocked since 01:14:37Z 2026-06-23 (~35h43m at FU28 dispatch)<br/>4h chair-review threshold CROSSED at 05:14:37Z (~31h43m ago)<br/>24h Human/Ops threshold CROSSED at 01:14:37Z 2026-06-24 (~11h43m ago)<br/>EIGHTH consecutive packet in >24h escalation band — ESCALATION WARRANTED"]
+    FESW002R2["AG-FE-SW-002-R2<br/>BLOCKED — waiting for Claude<br/>gate decision A/B/C<br/>blocked since 01:14:37Z 2026-06-23 (~35h46m at FU28 dispatch)<br/>4h chair-review threshold CROSSED at 05:14:37Z (~31h46m ago)<br/>24h Human/Ops threshold CROSSED at 01:14:37Z 2026-06-24 (~11h46m ago)<br/>EIGHTH consecutive packet in >24h escalation band — ESCALATION WARRANTED"]
 
     FESW002R2 -->|"compatibility gate — already done"| FERS001["AG-FE-RS-001 archived done<br/>research/backtest card specialisation"]
     FESW002R2 -->|"regression gate — already done"| E2E["AG-E2E-SW-001 archived done<br/>winner-branch workshop E2E"]
@@ -362,7 +370,7 @@ graph TD
     PostMerge --> CloseoutCommit["Codex: closeout commit in Pantheon repo"]
     CloseoutCommit --> Done["ai-status.sh done AG-FE-SW-002-R2"]
 
-    SidecarChain["Sidecar chain (FU28 done)<br/>Base + FU2 through FU28<br/>16-row matrix: 14 PASS, 2 gate-dependent PENDING<br/>Supervisor loop halt recommended (FU7–FU28)<br/>4h threshold CROSSED — ~31h43m past-due<br/>24h Human/Ops threshold CROSSED — ~11h43m elapsed — ESCALATION WARRANTED<br/>Eighth consecutive >24h-band packet"] -.->|"acceptance guardrail"| FESW002R2
+    SidecarChain["Sidecar chain (FU28 done)<br/>Base + FU2 through FU28<br/>16-row matrix: 14 PASS, 2 gate-dependent PENDING<br/>Supervisor loop halt recommended (FU7–FU28)<br/>4h threshold CROSSED — ~31h46m past-due<br/>24h Human/Ops threshold CROSSED — ~11h46m elapsed — ESCALATION WARRANTED<br/>Eighth consecutive >24h-band packet"] -.->|"acceptance guardrail"| FESW002R2
 ```
 
 ---
@@ -371,13 +379,15 @@ graph TD
 
 To `Codex`, sidecar reviewer:
 
-- Verify the cadence-continued note with fast-dispatch annotation correctly reflects FU-27
-  archived at `~12:57:15Z` on 2026-06-24 → FU-28 dispatched `~12:58Z` on 2026-06-24 (~1 minute
-  from FU-27 archive to FU-28 dispatch; no intervening tasks).
+- Verify the cadence-continued note with near-immediate-dispatch annotation correctly reflects
+  FU-27 archived at `~12:57:15Z` on 2026-06-24 → FU-28 dispatched `2026-06-24T13:00:12Z` (~3
+  minutes from FU-27 archive to FU-28 dispatch; two intervening commits on origin/dev: `0e2f7405`
+  at `12:59:02Z` (BFF-LIVE-EVIDENCE: verify SSE detail evidence) and `aeb6137b` at `12:59:47Z`
+  (reconcile merge)).
 - Verify that FU-27 had two-PR production (anchor PR #2333, closeout PR #2334) completing in
   approximately 5 minutes (anchor commit `2026-06-24T12:52:38Z` to closeout PR merge `~12:57:15Z`).
-- Verify the escalation band table correctly shows the >24h band as **CROSSED** with ~35h43m
-  elapsed total, the 24h threshold having fired at `2026-06-24T01:14:37Z` (~11h43m before
+- Verify the escalation band table correctly shows the >24h band as **CROSSED** with ~35h46m
+  elapsed total, the 24h threshold having fired at `2026-06-24T01:14:37Z` (~11h46m before
   FU-28 dispatch).
 - Verify FU-28 is correctly noted as the **eighth consecutive packet** in the >24h escalation
   band (following FU-21, FU-22, FU-23, FU-24, FU-25, FU-26, and FU-27 which were first through
@@ -398,7 +408,7 @@ Suggested reviewer command:
 AI_NAME=Codex \
   REVIEW_FILE=support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28.md \
   ./scripts/ai-status.sh approve AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28 \
-  "Review approved: followup-28 packet provides cadence-continued note with fast-dispatch annotation (~1m from FU-27 archive to FU-28 dispatch; no intervening tasks; FU-27 had 2 PRs #2333/#2334 in ~5m anchor-to-closeout-merge), escalation window advance (~35h43m elapsed), eighth consecutive >24h-band notice (~11h43m past 24h threshold), Human/Ops escalation continues to be warranted, reiterated supervisor loop halt recommendation, and single-action brief unchanged from FU7-FU27."
+  "Review approved: followup-28 packet provides cadence-continued note with near-immediate-dispatch annotation (~3m from FU-27 archive to FU-28 dispatch; two intervening commits on origin/dev: 0e2f7405 at 12:59:02Z and aeb6137b at 12:59:47Z; FU-27 had 2 PRs #2333/#2334 in ~5m anchor-to-closeout-merge), escalation window advance (~35h46m elapsed), eighth consecutive >24h-band notice (~11h46m past 24h threshold), Human/Ops escalation continues to be warranted, reiterated supervisor loop halt recommendation, and single-action brief unchanged from FU7-FU27."
 ```
 
 Prepared by `Claude` for the `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28` support slice.
