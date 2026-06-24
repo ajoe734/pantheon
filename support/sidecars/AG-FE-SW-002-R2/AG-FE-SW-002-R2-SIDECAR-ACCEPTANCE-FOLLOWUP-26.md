@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Claude` / `Codex` |
 | Date | `2026-06-24` |
 | Mutates canonical truth | `false` |
-| Status | in_progress |
+| Status | done |
 | Builds on | Full sidecar chain: base + FOLLOWUP-2 through FOLLOWUP-25 |
 
 ## Purpose
@@ -310,7 +310,7 @@ AI_NAME=Claude ./scripts/ai-status.sh blocker AG-FE-SW-002-R2 \
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-23.md` | `done` | **Third consecutive >24h-band packet**: cadence-continued note with fast-production annotation (FU22→FU23 ~7m dispatch-to-dispatch; FU-22 had 2 PRs #2321/#2322 in ~3m; ~4m from FU-22 archive to FU-23 dispatch), escalation window advance (~25h00m elapsed), **24h threshold CROSSED ~57min ago** — Human/Ops escalation continues to be warranted; third consecutive escalation packet, loop halt reiteration | `2026-06-24` (PR #2324 merged `02:24:42Z`) |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-24.md` | `done` | **Fourth consecutive >24h-band packet**: FU-24 task creation `~02:28Z`; worker execution `~09:48Z` (~7h23m scheduling delay); two-PR production (anchor PR #2325 + closeout PR #2326 in ~6m); escalation window advance (~32h33m elapsed), **24h threshold CROSSED ~8h33m ago** (at execution time) — Human/Ops escalation continues to be warranted; fourth consecutive escalation packet, loop halt reiteration | `2026-06-24` (PR #2326 merged `~09:58Z`) |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-25.md` | `done` | **Fifth consecutive >24h-band packet**: cadence-continued note (~4m after FU-24 archived `~09:58Z`; FU-24 had 2 PRs in ~6m anchor-to-closeout-merge; ~7h23m FU-24 worker scheduling delay noted), escalation window advance (~32h47m elapsed), **24h threshold CROSSED ~8h47m ago** — Human/Ops escalation continues to be warranted; fifth consecutive escalation packet, loop halt reiteration | `2026-06-24` (PR #2328 merged `~10:11:06Z`) |
-| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-26.md` | `in_progress` | **Sixth consecutive >24h-band packet**: cadence-continued note (~19 seconds after FU-25 archived `~10:11:06Z`; supervisor auto-start at `10:11:25Z`; FU-25 had 2 PRs #2327/#2328 in ~6m anchor-to-closeout-merge; essentially immediate dispatch — shortest FU→FU gap in the chain), escalation window advance (~32h57m elapsed), **24h threshold CROSSED ~8h57m ago** — Human/Ops escalation continues to be warranted; sixth consecutive escalation packet, loop halt reiteration | `2026-06-24` |
+| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-26.md` | `done` | **Sixth consecutive >24h-band packet**: cadence-continued note (~19 seconds after FU-25 archived `~10:11:06Z`; supervisor auto-start at `10:11:25Z`; FU-25 had 2 PRs #2327/#2328 in ~6m anchor-to-closeout-merge; essentially immediate dispatch — shortest FU→FU gap in the chain), escalation window advance (~32h57m elapsed), **24h threshold CROSSED ~8h57m ago** — Human/Ops escalation continues to be warranted; sixth consecutive escalation packet, loop halt reiteration | `2026-06-24` (PR #2329 merged `10:17:48Z`) |
 
 ---
 
@@ -342,7 +342,7 @@ graph TD
     PostMerge --> CloseoutCommit["Codex: closeout commit in Pantheon repo"]
     CloseoutCommit --> Done["ai-status.sh done AG-FE-SW-002-R2"]
 
-    SidecarChain["Sidecar chain (FU26 in_progress)<br/>Base + FU2 through FU26<br/>16-row matrix: 14 PASS, 2 gate-dependent PENDING<br/>Supervisor loop halt recommended (FU7–FU26)<br/>4h threshold CROSSED — ~28h57m past-due<br/>24h Human/Ops threshold CROSSED — ~8h57m elapsed — ESCALATION WARRANTED<br/>Sixth consecutive >24h-band packet"] -.->|"acceptance guardrail"| FESW002R2
+    SidecarChain["Sidecar chain (FU26 done)<br/>Base + FU2 through FU26<br/>16-row matrix: 14 PASS, 2 gate-dependent PENDING<br/>Supervisor loop halt recommended (FU7–FU26)<br/>4h threshold CROSSED — ~28h57m past-due<br/>24h Human/Ops threshold CROSSED — ~8h57m elapsed — ESCALATION WARRANTED<br/>Sixth consecutive >24h-band packet"] -.->|"acceptance guardrail"| FESW002R2
 ```
 
 ---
