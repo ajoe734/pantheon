@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Claude` / `Codex` |
 | Date | `2026-06-24` |
 | Mutates canonical truth | `false` |
-| Status | in_progress |
+| Status | done |
 | Builds on | Full sidecar chain: base + FOLLOWUP-2 through FOLLOWUP-23 |
 
 ## Purpose
@@ -293,7 +293,7 @@ AI_NAME=Claude ./scripts/ai-status.sh blocker AG-FE-SW-002-R2 \
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-21.md` | `done` | Cadence-continued note with extended-gap annotation (FU20→FU21 ~9h31m; two BFF-LIVE-EVIDENCE tasks #2316/#2317 ran during gap), escalation window advance (~24h13m elapsed), **24h Human/Ops threshold CROSSED** (~14 min ago at `2026-06-24T01:14:37Z`), Human/Ops escalation warranted, loop halt reiteration | `2026-06-24` (PR #2320 merged `01:59:10Z`) |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-22.md` | `done` | **Second consecutive >24h-band packet**: cadence-continued note with multi-step-production annotation (FU21→FU22 ~37m dispatch-to-dispatch; FU-21 had 3 PRs #2318/#2319/#2320; ~6m from FU-21 archive to FU-22 dispatch), escalation window advance (~24h50m elapsed), **24h threshold CROSSED ~50min ago** — Human/Ops escalation continues to be warranted, loop halt reiteration | `2026-06-24` (PR #2322 merged `02:07:55Z`) |
 | `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-23.md` | `done` | **Third consecutive >24h-band packet**: cadence-continued note with fast-production annotation (FU22→FU23 ~7m dispatch-to-dispatch; FU-22 had 2 PRs #2321/#2322 in ~3m; ~4m from FU-22 archive to FU-23 dispatch), escalation window advance (~25h00m elapsed), **24h threshold CROSSED ~57min ago** — Human/Ops escalation continues to be warranted; third consecutive escalation packet, loop halt reiteration | `2026-06-24` (PR #2324 merged `02:24:42Z`) |
-| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-24.md` | `in_progress` | **Fourth consecutive >24h-band packet**: cadence-continued note with multi-step-production annotation (FU23→FU24 ~16m dispatch-to-dispatch; FU-23 had 2 PRs #2323/#2324 in ~12m dispatch-to-archive; ~4m from FU-23 archive to FU-24 dispatch), escalation window advance (~25h13m elapsed), **24h threshold CROSSED ~73min ago** — Human/Ops escalation continues to be warranted; fourth consecutive escalation packet, loop halt reiteration | `2026-06-24` (PR closeout pending) |
+| `AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-24.md` | `done` | **Fourth consecutive >24h-band packet**: cadence-continued note with multi-step-production annotation (FU23→FU24 ~16m dispatch-to-dispatch; FU-23 had 2 PRs #2323/#2324 in ~12m dispatch-to-archive; ~4m from FU-23 archive to FU-24 dispatch), escalation window advance (~25h13m elapsed), **24h threshold CROSSED ~73min ago** — Human/Ops escalation continues to be warranted; fourth consecutive escalation packet, loop halt reiteration | `2026-06-24` (anchor PR #2325 merged; closeout PR pending) |
 
 ---
 
