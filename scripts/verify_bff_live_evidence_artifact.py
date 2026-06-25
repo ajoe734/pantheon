@@ -62,6 +62,18 @@ RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-note", "interventi
 RBAC_READ_ALLOWED = {"viewer", "operator", "reviewer", "approver", "admin"}
 RBAC_WRITE_ALLOWED = {"operator", "reviewer", "approver", "admin"}
 RBAC_DENIED_ERROR_CODES = {"AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"}
+APPROVAL_RACE_ACCEPTED_STATUSES = {200, 201, 202}
+APPROVAL_RACE_SAFE_ERROR_CODES = {
+    "RESOURCE_NOT_FOUND",
+    "OBJECT_NOT_FOUND",
+    "NOT_FOUND",
+    "STATE_CONFLICT",
+    "VERSION_CONFLICT",
+    "CONFLICT",
+    "VALIDATION_FAILED",
+    "PRECONDITION_NOT_MET",
+    "APPROVAL_ALREADY_DECIDED",
+}
 
 
 def read_json(path: Path) -> Any:
@@ -464,6 +476,240 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     return detail_ok, note
 
 
+def race_token_hashes(race: dict[str, Any]) -> tuple[dict[str, str], bool, str]:
+    source = race.get("token_source") if isinstance(race.get("token_source"), dict) else {}
+    hashes: dict[str, str] = {}
+    for actor in ("a", "b"):
+        digest = str(source.get(f"token_{actor}_sha256_12") or "")
+        if digest:
+            hashes[actor] = digest
+    distinct_count = len(set(hashes.values()))
+    source_kind = str(source.get("kind") or "")
+    source_ok = (
+        source_kind == "provided_bearer_pair"
+        and len(hashes) == 2
+        and distinct_count == 2
+    )
+    return hashes, source_ok, f"tokenSource:{source_kind or 'missing'} distinctTokens:{distinct_count}/2"
+
+
+def extracted_value(result: dict[str, Any], path: tuple[str, ...]) -> Any:
+    extracted = result.get("extracted")
+    if not isinstance(extracted, dict):
+        return None
+    return extracted.get(".".join(path))
+
+
+def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
+    source_hashes, source_ok, source_note = race_token_hashes(race)
+    results = as_list(race.get("results"))
+    target_hash = str(race.get("target_id_sha256_12") or "")
+    path_text = str(race.get("path") or "")
+    family_ok = race.get("family") == "approval-race"
+    method_ok = race.get("method") == "POST"
+    path_ok = path_text.startswith("/bff/approvals/") and path_text.endswith("/decide")
+    actor_labels: set[str] = set()
+    idempotency_hashes: list[str] = []
+    target_links = 0
+    bearer_links = 0
+    accepted_count = 0
+    safe_error_count = 0
+    transport_failures = 0
+    failures: list[str] = []
+
+    for index, item in enumerate(results):
+        if not isinstance(item, dict):
+            failures.append(f"{index}:not-object")
+            continue
+        actor = str(item.get("actor_label") or "")
+        if actor in {"a", "b"}:
+            actor_labels.add(actor)
+        else:
+            failures.append(f"{index}:actor")
+        if actor and item.get("family") != f"approval-race-{actor}":
+            failures.append(f"{index}:family")
+        if item.get("method") != "POST" or str(item.get("path") or "") != path_text:
+            failures.append(f"{index}:request-link")
+        if target_hash and item.get("target_id_sha256_12") == target_hash:
+            target_links += 1
+        else:
+            failures.append(f"{index}:target-link")
+        if actor in source_hashes and item.get("request_bearer_sha256_12") == source_hashes[actor]:
+            bearer_links += 1
+        else:
+            failures.append(f"{index}:bearer-link")
+        idempotency_hash = str(item.get("request_idempotency_key_sha256_12") or "")
+        if idempotency_hash:
+            idempotency_hashes.append(idempotency_hash)
+        else:
+            failures.append(f"{index}:idempotency-hash")
+
+        status = safe_int(item.get("status"))
+        if status == 0:
+            transport_failures += 1
+        result_ok = item.get("ok") is True
+        error_code = str(item.get("error_code") or "")
+        if status in APPROVAL_RACE_ACCEPTED_STATUSES and result_ok and item.get("error_envelope") is not True:
+            accepted_count += 1
+        elif (
+            status >= 400
+            and result_ok
+            and item.get("error_envelope") is True
+            and error_code in APPROVAL_RACE_SAFE_ERROR_CODES
+        ):
+            safe_error_count += 1
+        else:
+            failures.append(f"{index}:winner-loser-shape")
+
+    idempotency_distinct = len(idempotency_hashes) == 2 and len(set(idempotency_hashes)) == 2
+    top_counts_ok = (
+        safe_int(race.get("accepted_count")) == accepted_count == 1
+        and safe_int(race.get("safe_error_count")) == safe_error_count == 1
+    )
+    detail_ok = (
+        race.get("ok") is True
+        and race.get("bounded") is True
+        and family_ok
+        and method_ok
+        and path_ok
+        and bool(target_hash)
+        and source_ok
+        and len(results) == 2
+        and actor_labels == {"a", "b"}
+        and target_links == 2
+        and bearer_links == 2
+        and accepted_count == 1
+        and safe_error_count == 1
+        and transport_failures == 0
+        and race.get("duplicate_winners") is False
+        and idempotency_distinct
+        and top_counts_ok
+        and not failures
+    )
+    failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
+    note = (
+        f"approvalResults:{len(results)}/2 actors:{len(actor_labels)}/2 targetLinks:{target_links}/2 "
+        f"bearerLinks:{bearer_links}/2 accepted:{accepted_count}/1 safeErrors:{safe_error_count}/1 "
+        f"transportFailures:{transport_failures}/0 duplicateWinners:{race.get('duplicate_winners')} "
+        f"idempotencyDistinct:{idempotency_distinct} topCounts:{top_counts_ok} "
+        f"family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
+    )
+    return detail_ok, note
+
+
+def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
+    source_hashes, source_ok, source_note = race_token_hashes(race)
+    results = as_list(race.get("results"))
+    target_hash = str(race.get("target_id_sha256_12") or "")
+    path_text = str(race.get("path") or "")
+    family_ok = race.get("family") == "two-man-race"
+    method_ok = race.get("method") == "POST"
+    path_ok = path_text.startswith("/bff/v5/interventions/") and path_text.endswith("/two-man-sign")
+    actor_labels: set[str] = set()
+    idempotency_hashes: list[str] = []
+    signature_hashes: set[str] = set()
+    command_ids: list[str] = []
+    target_links = 0
+    bearer_links = 0
+    accepted_count = 0
+    replayed_count = 0
+    replay_proofs = 0
+    transport_failures = 0
+    failures: list[str] = []
+
+    for index, item in enumerate(results):
+        if not isinstance(item, dict):
+            failures.append(f"{index}:not-object")
+            continue
+        actor = str(item.get("actor_label") or "")
+        if actor in {"a", "b"}:
+            actor_labels.add(actor)
+        else:
+            failures.append(f"{index}:actor")
+        if item.get("family") != "two-man-race" or item.get("method") != "POST" or str(item.get("path") or "") != path_text:
+            failures.append(f"{index}:request-link")
+        if target_hash and item.get("target_id_sha256_12") == target_hash:
+            target_links += 1
+        else:
+            failures.append(f"{index}:target-link")
+        if actor in source_hashes and item.get("request_bearer_sha256_12") == source_hashes[actor]:
+            bearer_links += 1
+        else:
+            failures.append(f"{index}:bearer-link")
+        idempotency_hash = str(item.get("request_idempotency_key_sha256_12") or "")
+        if idempotency_hash:
+            idempotency_hashes.append(idempotency_hash)
+        else:
+            failures.append(f"{index}:idempotency-hash")
+        signature_hash = str(item.get("request_signature_id_sha256_12") or "")
+        if signature_hash:
+            signature_hashes.add(signature_hash)
+        else:
+            failures.append(f"{index}:signature-hash")
+
+        status = safe_int(item.get("status"))
+        if status == 0:
+            transport_failures += 1
+        if status in APPROVAL_RACE_ACCEPTED_STATUSES and item.get("ok") is True and item.get("error_envelope") is not True:
+            accepted_count += 1
+        else:
+            failures.append(f"{index}:accepted-shape")
+        replayed = extracted_value(item, ("meta", "idempotency", "replayed"))
+        if replayed is False:
+            replay_proofs += 1
+        elif replayed is True:
+            replayed_count += 1
+        else:
+            failures.append(f"{index}:replay-proof")
+        command_id = extracted_value(item, ("data", "command_id")) or extracted_value(item, ("data", "commandId"))
+        if command_id:
+            command_ids.append(str(command_id))
+        else:
+            failures.append(f"{index}:command-id")
+
+    shared_idempotency = len(idempotency_hashes) == 2 and len(set(idempotency_hashes)) == 1
+    distinct_signatures = len(signature_hashes) == 2
+    distinct_commands = len(command_ids) == 2 and len(set(command_ids)) == 2
+    top_counts_ok = (
+        safe_int(race.get("accepted_count")) == accepted_count == 2
+        and safe_int(race.get("replayed_count")) == replayed_count == 0
+        and safe_int(race.get("command_id_count")) == len(set(command_ids)) == 2
+        and race.get("distinct_command_ids") is True
+    )
+    detail_ok = (
+        race.get("ok") is True
+        and race.get("operator_scoped") is True
+        and family_ok
+        and method_ok
+        and path_ok
+        and bool(target_hash)
+        and source_ok
+        and len(results) == 2
+        and actor_labels == {"a", "b"}
+        and target_links == 2
+        and bearer_links == 2
+        and accepted_count == 2
+        and replayed_count == 0
+        and replay_proofs == 2
+        and transport_failures == 0
+        and shared_idempotency
+        and distinct_signatures
+        and distinct_commands
+        and top_counts_ok
+        and not failures
+    )
+    failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
+    note = (
+        f"twoManResults:{len(results)}/2 actors:{len(actor_labels)}/2 targetLinks:{target_links}/2 "
+        f"bearerLinks:{bearer_links}/2 accepted:{accepted_count}/2 replayed:{replayed_count}/0 "
+        f"replayProofs:{replay_proofs}/2 sharedIdempotency:{shared_idempotency} "
+        f"distinctSignatures:{len(signature_hashes)}/2 distinctCommands:{len(set(command_ids))}/2 "
+        f"transportFailures:{transport_failures}/0 topCounts:{top_counts_ok} "
+        f"family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
+    )
+    return detail_ok, note
+
+
 def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
     file_path = find_file(root, AUTH_JSON_NAME)
     payload = read_json(file_path) if file_path else None
@@ -491,8 +737,8 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
     two_man_count = int(summary.get("two_man_race_probes") or int(bool(two_man_race)))
     rbac_detail_ok, rbac_detail_note = rbac_detail_check(payload, rbac_matrix, summary)
     dry_run_detail_ok, dry_run_detail_note = dry_run_detail_check(dry_run)
-    approval_ok = approval_race.get("ok") is True and approval_race.get("bounded") is True
-    two_man_ok = two_man_race.get("ok") is True and two_man_race.get("operator_scoped") is True
+    approval_detail_ok, approval_detail_note = approval_race_detail_check(approval_race)
+    two_man_detail_ok, two_man_detail_note = two_man_race_detail_check(two_man_race)
     base = strict and includes
     return payload, {
         "rbac_matrix": (
@@ -504,12 +750,12 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
             f"strict:{strict} includes:{includes} dryRun:{dry_run_count}/7 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
         ),
         "approval_race": (
-            base and approval_count == 1 and summary.get("approval_race_bounded") is True and approval_ok,
-            f"strict:{strict} includes:{includes} approvalRace:{approval_count}/1 bounded:{summary.get('approval_race_bounded') is True} detailOk:{approval_ok}",
+            base and approval_count == 1 and summary.get("approval_race_bounded") is True and approval_detail_ok,
+            f"strict:{strict} includes:{includes} approvalRace:{approval_count}/1 bounded:{summary.get('approval_race_bounded') is True} {approval_detail_note}",
         ),
         "two_man_race": (
-            base and two_man_count == 1 and summary.get("two_man_race_operator_scoped") is True and two_man_ok,
-            f"strict:{strict} includes:{includes} twoManRace:{two_man_count}/1 operatorScoped:{summary.get('two_man_race_operator_scoped') is True} detailOk:{two_man_ok}",
+            base and two_man_count == 1 and summary.get("two_man_race_operator_scoped") is True and two_man_detail_ok,
+            f"strict:{strict} includes:{includes} twoManRace:{two_man_count}/1 operatorScoped:{summary.get('two_man_race_operator_scoped') is True} {two_man_detail_note}",
         ),
     }
 

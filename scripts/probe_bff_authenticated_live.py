@@ -605,11 +605,13 @@ def request_json(
         headers["X-MFA-Token"] = "000000"
     headers.update(dict(probe.extra_headers))
     body_bytes = None
+    idempotency_key = ""
     if probe.body is not None:
         headers["Content-Type"] = "application/json"
         body_bytes = json.dumps(probe.body).encode("utf-8")
     if probe.method in {"POST", "PUT", "PATCH", "DELETE"}:
-        headers["Idempotency-Key"] = f"{idempotency_prefix}-{probe.family}"
+        idempotency_key = f"{idempotency_prefix}-{probe.family}"
+        headers["Idempotency-Key"] = idempotency_key
     req = urllib.request.Request(url, data=body_bytes, headers=headers, method=probe.method)
 
     started = time.time()
@@ -686,6 +688,8 @@ def request_json(
         "error_code": error_code or None,
         "error_envelope": is_error_envelope(parsed),
     }
+    if idempotency_key:
+        result["request_idempotency_key_sha256_12"] = sha256_12(idempotency_key)
     if extracted:
         result["extracted"] = extracted
     if probe.family == "management-ai-multiturn" and isinstance(parsed, dict):
@@ -785,6 +789,8 @@ def build_approval_race_results(
             timeout=timeout,
             idempotency_prefix=f"{idempotency_prefix}-race-{actor_label}",
         )
+        result["actor_label"] = actor_label
+        result["request_bearer_sha256_12"] = sha256_12(bearer)
         results[index] = result
 
     threads = [
@@ -893,6 +899,7 @@ def build_two_man_race_results(
         result["actor_label"] = actor_label
         result["target_id_sha256_12"] = target_hash
         result["request_signature_id_sha256_12"] = sha256_12(signature_id)
+        result["request_bearer_sha256_12"] = sha256_12(bearer)
         results[index] = result
 
     threads = [
