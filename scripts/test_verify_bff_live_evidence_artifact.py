@@ -178,6 +178,116 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
     return items
 
 
+def strict_approval_race_entry() -> dict[str, object]:
+    race_path = "/bff/approvals/approval-live-race/decide"
+    target_hash = "approvaltarget"
+    return {
+        "family": "approval-race",
+        "method": "POST",
+        "path": race_path,
+        "status": "202/409",
+        "target_id_sha256_12": target_hash,
+        "duration_ms": 42,
+        "ok": True,
+        "bounded": True,
+        "accepted_count": 1,
+        "safe_error_count": 1,
+        "duplicate_winners": False,
+        "token_source": {
+            "kind": "provided_bearer_pair",
+            "token_a_sha256_12": "race-token-a",
+            "token_b_sha256_12": "race-token-b",
+        },
+        "results": [
+            {
+                "family": "approval-race-a",
+                "method": "POST",
+                "path": race_path,
+                "status": 202,
+                "ok": True,
+                "error_envelope": False,
+                "actor_label": "a",
+                "target_id_sha256_12": target_hash,
+                "request_bearer_sha256_12": "race-token-a",
+                "request_idempotency_key_sha256_12": "approval-idem-a",
+            },
+            {
+                "family": "approval-race-b",
+                "method": "POST",
+                "path": race_path,
+                "status": 409,
+                "ok": True,
+                "error_envelope": True,
+                "error_code": "STATE_CONFLICT",
+                "actor_label": "b",
+                "target_id_sha256_12": target_hash,
+                "request_bearer_sha256_12": "race-token-b",
+                "request_idempotency_key_sha256_12": "approval-idem-b",
+            },
+        ],
+    }
+
+
+def strict_two_man_race_entry() -> dict[str, object]:
+    race_path = "/bff/v5/interventions/intervention-live-race/two-man-sign"
+    target_hash = "twomantarget1"
+    return {
+        "family": "two-man-race",
+        "method": "POST",
+        "path": race_path,
+        "status": "202/202",
+        "target_id_sha256_12": target_hash,
+        "duration_ms": 37,
+        "ok": True,
+        "operator_scoped": True,
+        "accepted_count": 2,
+        "replayed_count": 0,
+        "distinct_command_ids": True,
+        "command_id_count": 2,
+        "token_source": {
+            "kind": "provided_bearer_pair",
+            "token_a_sha256_12": "race-token-a",
+            "token_b_sha256_12": "race-token-b",
+        },
+        "results": [
+            {
+                "family": "two-man-race",
+                "method": "POST",
+                "path": race_path,
+                "status": 202,
+                "ok": True,
+                "error_envelope": False,
+                "actor_label": "a",
+                "target_id_sha256_12": target_hash,
+                "request_bearer_sha256_12": "race-token-a",
+                "request_idempotency_key_sha256_12": "two-man-shared-idem",
+                "request_signature_id_sha256_12": "two-man-sig-a",
+                "extracted": {
+                    "meta.idempotency.replayed": False,
+                    "data.command_id": "command-a",
+                },
+            },
+            {
+                "family": "two-man-race",
+                "method": "POST",
+                "path": race_path,
+                "status": 202,
+                "ok": True,
+                "error_envelope": False,
+                "actor_label": "b",
+                "target_id_sha256_12": target_hash,
+                "request_bearer_sha256_12": "race-token-b",
+                "request_idempotency_key_sha256_12": "two-man-shared-idem",
+                "request_signature_id_sha256_12": "two-man-sig-b",
+                "extracted": {
+                    "meta.idempotency.replayed": False,
+                    "data.command_id": "command-b",
+                },
+            },
+        ],
+    }
+
+
 def write_strict_auth_json(artifact_dir: Path) -> None:
     (artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json").write_text(
         json.dumps(
@@ -203,8 +313,8 @@ def write_strict_auth_json(artifact_dir: Path) -> None:
                 },
                 "rbac_matrix": strict_rbac_matrix_entries(),
                 "dry_run": dry_run_side_effect_entries(),
-                "approval_race": {"ok": True, "bounded": True},
-                "two_man_race": {"ok": True, "operator_scoped": True},
+                "approval_race": strict_approval_race_entry(),
+                "two_man_race": strict_two_man_race_entry(),
             }
         ),
         encoding="utf-8",
@@ -377,6 +487,55 @@ def test_verifier_rejects_rbac_write_without_side_effect_proof(tmp_path: Path) -
     item = payload["criteria"]["rbac_matrix"]
     assert item["status"] == "fail"
     assert "writeSideEffectProofs:31/32" in item["note"]
+
+
+def test_verifier_rejects_approval_race_without_detail_results_even_when_summary_passes(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    auth["approval_race"] = {"ok": True, "bounded": True}
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["approval_race"]
+    assert item["status"] == "fail"
+    assert "approvalResults:0/2" in item["note"]
+
+
+def test_verifier_rejects_approval_race_without_distinct_provided_bearers(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    auth["approval_race"]["token_source"]["token_b_sha256_12"] = "race-token-a"
+    auth["approval_race"]["results"][1]["request_bearer_sha256_12"] = "race-token-a"
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["approval_race"]
+    assert item["status"] == "fail"
+    assert "distinctTokens:1/2" in item["note"]
+
+
+def test_verifier_rejects_two_man_race_with_idempotency_replay(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    auth["two_man_race"]["results"][1]["extracted"]["meta.idempotency.replayed"] = True
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["two_man_race"]
+    assert item["status"] == "fail"
+    assert "replayed:1/0" in item["note"]
 
 
 def test_verifier_rejects_dry_run_missing_side_effect_detail_even_when_summary_passes(tmp_path: Path) -> None:
