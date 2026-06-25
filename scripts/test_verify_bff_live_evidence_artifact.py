@@ -336,6 +336,12 @@ def strict_sse_reconnect_bearer(attempt_count: int = 5) -> dict[str, object]:
                 "expected_replayed_event_id": expected_event_id,
                 "observed_replayed_event_id": expected_event_id,
                 "replayed_expected_event": True,
+                "request_headers": {
+                    "Authorization": "present",
+                    "Cookie": "absent",
+                    "Last-Event-ID": cursor_event_id,
+                    "Accept": "text/event-stream",
+                },
                 "lineage_checks": {
                     "last_event_id_sent": True,
                     "response_channel_ok": True,
@@ -367,6 +373,7 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
         json.dumps(
             {
                 "strict_live_evidence": True,
+                "auth_source": {"kind": "provided_bearer", "token_sha256_12": "abcdef123456"},
                 "strict_live_evidence_requirements": {
                     "min_soak_seconds": 75,
                     "min_heartbeats": 1,
@@ -379,6 +386,11 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
                     "min_heartbeats": 1,
                     "bearer_polyfill": {
                         "ok": True,
+                        "request_headers": {
+                            "Authorization": "present",
+                            "Cookie": "absent",
+                            "Accept": "text/event-stream",
+                        },
                         "missing_expected_event_ids": [],
                         "blocks": {
                             "heartbeat_count": 2,
@@ -775,6 +787,40 @@ def test_verifier_rejects_historical_audit_paths_even_when_checks_pass(tmp_path:
     assert payload["overall"] == "fail"
     assert payload["criteria"]["current_run_only"]["status"] == "fail"
     assert "historical/old-audit.json" in payload["criteria"]["current_run_only"]["note"]
+
+
+def test_verifier_rejects_sse_without_provided_bearer_auth_source(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    sse["auth_source"] = {"kind": "minted_hs256_jwt", "secret_sha256_12": "abcdef123456"}
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "authSource:minted_hs256_jwt" in item["note"]
+    assert "tokenHash:False" in item["note"]
+
+
+def test_verifier_rejects_sse_reconnect_attempt_without_bearer_authorization(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    attempt = sse["reconnect_sequence"]["bearer_polyfill"]["attempts"][0]
+    attempt["request_headers"]["Authorization"] = "absent"
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "bearerAttemptAuth:4/5" in item["note"]
 
 
 def test_verifier_rejects_short_sse_reconnect_even_when_summary_claims_pass(tmp_path: Path) -> None:
