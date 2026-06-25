@@ -778,6 +778,22 @@ def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def sse_auth_source_check(payload: dict[str, Any]) -> tuple[bool, str, bool]:
+    source = payload.get("auth_source") if isinstance(payload.get("auth_source"), dict) else {}
+    kind = str(source.get("kind") or "")
+    token_hash = str(source.get("token_sha256_12") or "")
+    token_hash_ok = bool(re.fullmatch(r"[0-9a-f]{12}", token_hash, re.IGNORECASE))
+    ok = kind == "provided_bearer" and token_hash_ok
+    return ok, f"authSource:{kind or 'missing'} tokenHash:{token_hash_ok}", token_hash_ok
+
+
+def sse_request_used_bearer_auth(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    headers = item.get("request_headers") if isinstance(item.get("request_headers"), dict) else {}
+    return headers.get("Authorization") == "present" and headers.get("Cookie") == "absent"
+
+
 def sse_attempts_have_lineage(attempts: list[Any]) -> bool:
     if not attempts:
         return False
@@ -826,26 +842,34 @@ def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
     missing_replay = len(soak_missing) + len(reconnect_missing)
     bearer_soak_ok = bearer_soak.get("ok") is True
     bearer_reconnect_ok = bearer_reconnect.get("ok") is True
+    auth_source_ok, auth_source_note, _token_hash_ok = sse_auth_source_check(payload)
+    soak_bearer_auth_ok = sse_request_used_bearer_auth(bearer_soak)
+    bearer_attempt_auth_count = sum(1 for attempt in attempts if sse_request_used_bearer_auth(attempt))
+    bearer_attempt_auth_ok = attempt_count >= 5 and bearer_attempt_auth_count >= 5
 
     detail_ok = (
         strict
+        and auth_source_ok
         and seconds >= 75
         and bearer_soak_ok
+        and soak_bearer_auth_ok
         and heartbeat_count >= min_heartbeats
         and duplicates == 0
         and missing_replay == 0
         and bearer_reconnect_ok
         and attempt_count >= 5
         and attempt_details_ok
+        and bearer_attempt_auth_ok
         and attempt_lineage_ok
         and observed_sequence_ok
         and cursors_advanced
     )
     note = (
-        f"strict:{strict} soak:{seconds:g}/75 heartbeat:{heartbeat_count}/{min_heartbeats} "
+        f"strict:{strict} {auth_source_note} soak:{seconds:g}/75 "
+        f"soakBearerAuth:{soak_bearer_auth_ok} heartbeat:{heartbeat_count}/{min_heartbeats} "
         f"reconnect:{attempt_count}/5 attemptDetails:{attempt_details_ok} "
-        f"attemptLineage:{attempt_lineage_ok} observed:{len(observed_ids)}/5 "
-        f"observedSequence:{observed_sequence_ok} duplicates:{duplicates} "
+        f"bearerAttemptAuth:{bearer_attempt_auth_count}/5 attemptLineage:{attempt_lineage_ok} "
+        f"observed:{len(observed_ids)}/5 observedSequence:{observed_sequence_ok} duplicates:{duplicates} "
         f"missingReplay:{missing_replay} cursorsAdvanced:{cursors_advanced} "
         f"soakOk:{bearer_soak_ok} reconnectOk:{bearer_reconnect_ok}"
     )
