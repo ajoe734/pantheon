@@ -9,6 +9,7 @@ x-pantheon-compose-contract:
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -34,6 +35,7 @@ services:
 
   minio:
     image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-pantheon}
@@ -69,6 +71,7 @@ services:
 
   nats:
     image: nats:2.11-alpine
+    restart: unless-stopped
     command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
     volumes:
       - nats-data:/data/jetstream
@@ -84,6 +87,7 @@ services:
 
   signal-store:
     image: redis:7-alpine
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -94,6 +98,7 @@ services:
     build:
       context: .
       dockerfile: services/consultation/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8096"
       CONSULTATION_DATA_DIR: /data/consultation
@@ -128,6 +133,7 @@ services:
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8097"
       SOURCE_INGEST_DATA_DIR: /data/source-ingest
@@ -185,6 +191,7 @@ services:
     build:
       context: .
       dockerfile: services/search/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8098"
       SEARCH_DATA_DIR: /data/search
@@ -244,6 +251,7 @@ services:
     build:
       context: .
       dockerfile: services/training-session/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8099"
       TRAINING_SESSION_DATA_DIR: /data/training-session
@@ -277,6 +285,7 @@ services:
     build:
       context: .
       dockerfile: services/policy-learning/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8100"
       POLICY_LEARNING_DATA_DIR: /data/policy-learning
@@ -311,6 +320,7 @@ services:
     build:
       context: .
       dockerfile: services/research/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8101"
       RESEARCH_ORCHESTRATOR_DATA_DIR: /data/research-orchestrator
@@ -351,9 +361,22 @@ services:
 
   openclaw-gateway:
     profiles: ["openclaw"]
-    image: ghcr.io/openclaw/openclaw:2026.4.7
+    # Pantheon-derived image: governed upstream openclaw 2026.6.8 + Claude Code
+    # CLI baked in, so OpenClaw's claude-cli runtime can serve anthropic/* models
+    # for multi-model persona routing. Upstream pin governed (see
+    # OSS_INTEGRATION_CHECKLIST.md / integrations/openclaw/governance.md).
+    build:
+      context: .
+      dockerfile: integrations/openclaw/gateway/Dockerfile
+      args:
+        ANTHROPIC_CLAUDE_CODE_NPM_VERSION: "2.1.178"
+    image: pantheon-openclaw-gateway:2026.6.8
+    restart: unless-stopped
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+      # Persist Claude CLI login on the openclaw-data volume so the one-time
+      # `claude auth login` survives container recreate (subscription OAuth, no key).
+      CLAUDE_CONFIG_DIR: ${OPENCLAW_CLAUDE_CONFIG_DIR:-/home/node/.openclaw/claude-cli}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
@@ -398,6 +421,7 @@ services:
     build:
       context: .
       dockerfile: services/openclaw-gateway-adapter/Dockerfile
+    restart: unless-stopped
     cap_add:
       - SYS_ADMIN
     security_opt:
@@ -406,6 +430,24 @@ services:
     environment:
       PORT: "8104"
       OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
+      # Token + agent for the `openclaw` assistant provider's WS-RPC agent turn
+      # (assistant_openclaw_provider shells out to `openclaw agent --url ... --token ...`).
+      # Must match the gateway service's OPENCLAW_GATEWAY_TOKEN. Without this the
+      # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+      OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
+      # Per-turn budget for `openclaw agent` (used as the CLI --timeout AND the
+      # subprocess timeout). A real agent turn (gpt-5.5 + medium thinking + the
+      # full management context pack) runs ~60-90s+, so the default 90 was too
+      # tight. Must stay BELOW the BFF's PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS
+      # (180) so the adapter returns its own result before the BFF gives up.
+      OPENCLAW_ASSISTANT_TIMEOUT_SECONDS: ${OPENCLAW_ASSISTANT_TIMEOUT_SECONDS:-170}
+      # The `openclaw agent` client refuses plaintext ws:// to a non-loopback
+      # address (the gateway resolves to a docker-bridge IP). The adapter↔gateway
+      # hop stays inside the single-host docker network (never routed off-box), so
+      # the upstream-sanctioned break-glass for trusted private networks applies.
+      # Revisit if the gateway is ever exposed off-host (then use wss://).
+      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-1}
       OPENCLAW_UPSTREAM_TIMEOUT: ${OPENCLAW_UPSTREAM_TIMEOUT:-3}
       OPENCLAW_UPSTREAM_RETRIES: ${OPENCLAW_UPSTREAM_RETRIES:-1}
       OPENCLAW_PRODUCTION_BROKER_ENABLED: "false"
@@ -434,6 +476,11 @@ services:
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro
       - ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:rw
+      # Persist the adapter's OpenClaw device identity + pairing approval so the
+      # one-time `openclaw devices approve` survives container recreate (the CLI
+      # connects to the gateway as a paired device; a fresh state dir re-pairs).
+      # See docs/runbooks/openclaw-adapter-device-pairing.md.
+      - openclaw-adapter-data:/root/.openclaw
     ports:
       - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
     healthcheck:
@@ -451,6 +498,9 @@ services:
     build:
       context: .
       dockerfile: services/broker/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
     environment:
       PORT: "8102"
       BROKER_PAPER_ENABLED: "false"
@@ -470,6 +520,9 @@ services:
     build:
       context: .
       dockerfile: services/runtime-manager/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
     environment:
       PORT: "8081"
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
@@ -503,6 +556,7 @@ services:
     build:
       context: .
       dockerfile: services/governance/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8082"
       GOVERNANCE_DATA_DIR: /data/governance
@@ -540,6 +594,9 @@ services:
     build:
       context: .
       dockerfile: services/telemetry/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
     environment:
       PORT: "8083"
       TELEMETRY_STORAGE_DIR: /data/telemetry
@@ -569,6 +626,7 @@ services:
     build:
       context: .
       dockerfile: services/incidents/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8090"
       INCIDENTS_DATA_DIR: /data/incidents
@@ -609,6 +667,7 @@ services:
     build:
       context: .
       dockerfile: services/postmortems/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8091"
       POSTMORTEMS_DATA_DIR: /data/incidents
@@ -647,8 +706,44 @@ services:
     build:
       context: .
       dockerfile: services/control-plane/bff/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
     environment:
       BFF_DATA_DIR: /data/bff
+      PANTHEON_BFF_STRATEGY_SPEC_STORE: ${PANTHEON_BFF_STRATEGY_SPEC_STORE:-/data/bff/strategy_specs.json}
+      PANTHEON_BFF_RESEARCH_ARTIFACT_STORE: ${PANTHEON_BFF_RESEARCH_ARTIFACT_STORE:-/data/bff/research_artifacts.json}
+      PANTHEON_BFF_SKILLS_STORE: ${PANTHEON_BFF_SKILLS_STORE:-/data/bff/skills.json}
+      PANTHEON_BFF_TOOLS_STORE: ${PANTHEON_BFF_TOOLS_STORE:-/data/bff/tools.json}
+      PANTHEON_BFF_MCP_SERVERS_STORE: ${PANTHEON_BFF_MCP_SERVERS_STORE:-/data/bff/mcp_servers.json}
+      PANTHEON_BFF_MCP_TOOLS_STORE: ${PANTHEON_BFF_MCP_TOOLS_STORE:-/data/bff/mcp_tools.json}
+      PANTHEON_BFF_OODA_PACKET_STORE: ${PANTHEON_BFF_OODA_PACKET_STORE:-/data/bff/ooda_packets.json}
+      PANTHEON_BFF_INCIDENT_STORE: ${PANTHEON_BFF_INCIDENT_STORE:-/data/incidents/incidents.json}
+      PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
+      PANTHEON_BFF_APPROVAL_DECISION_STORE: ${PANTHEON_BFF_APPROVAL_DECISION_STORE:-/data/governance/approval_decisions.json}
+      PANTHEON_BFF_ROUTE_POLICY_STORE: ${PANTHEON_BFF_ROUTE_POLICY_STORE:-/data/bff/route_policies.json}
+      PANTHEON_BFF_WORKFLOW_TEMPLATE_STORE: ${PANTHEON_BFF_WORKFLOW_TEMPLATE_STORE:-/data/bff/workflow_templates.json}
+      PANTHEON_BFF_HOOK_REGISTRY_STORE: ${PANTHEON_BFF_HOOK_REGISTRY_STORE:-/data/bff/hook_registry.json}
+      PANTHEON_BFF_JOB_STORE: ${PANTHEON_BFF_JOB_STORE:-/data/bff/jobs.json}
+      PANTHEON_BFF_RANKING_STORE: ${PANTHEON_BFF_RANKING_STORE:-/data/bff/rankings.json}
+      PANTHEON_BFF_RANKING_FORMULA_STORE: ${PANTHEON_BFF_RANKING_FORMULA_STORE:-/data/bff/ranking_formulas.json}
+      PANTHEON_BFF_RESEARCH_TICKET_STORE: ${PANTHEON_BFF_RESEARCH_TICKET_STORE:-/data/bff/research_tickets.json}
+      PANTHEON_BFF_RESEARCH_ANALYSIS_STORE: ${PANTHEON_BFF_RESEARCH_ANALYSIS_STORE:-/data/bff/research_analyses.json}
+      PANTHEON_BFF_RESEARCH_NOTES_STORE: ${PANTHEON_BFF_RESEARCH_NOTES_STORE:-/data/bff/research_notes.json}
+      PANTHEON_BFF_EVIDENCE_REF_STORE: ${PANTHEON_BFF_EVIDENCE_REF_STORE:-/data/bff/evidence_refs.json}
+      PANTHEON_BFF_INSIGHT_CARD_STORE: ${PANTHEON_BFF_INSIGHT_CARD_STORE:-/data/bff/insight_cards.json}
+      PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE: ${PANTHEON_BFF_INSTITUTIONAL_MEMORY_STORE:-/data/bff/institutional_memory_entries.json}
+      PANTHEON_BFF_EVOLUTION_PROGRAM_STORE: ${PANTHEON_BFF_EVOLUTION_PROGRAM_STORE:-/data/bff/evolution/evolution_programs.json}
+      PANTHEON_BFF_DECISION_JOURNAL_STORE: ${PANTHEON_BFF_DECISION_JOURNAL_STORE:-/data/bff/decision_journal_entries.json}
+      PANTHEON_BFF_AGORA_SIGNAL_STORE: ${PANTHEON_BFF_AGORA_SIGNAL_STORE:-/data/bff/agora_signals.json}
+      PANTHEON_BFF_AGORA_SESSION_STORE: ${PANTHEON_BFF_AGORA_SESSION_STORE:-/data/bff/agora_sessions.json}
+      PANTHEON_BFF_AGORA_HANDOFF_STORE: ${PANTHEON_BFF_AGORA_HANDOFF_STORE:-/data/bff/agora_handoffs.json}
+      PANTHEON_BFF_AGORA_TRAINING_EXAMPLE_STORE: ${PANTHEON_BFF_AGORA_TRAINING_EXAMPLE_STORE:-/data/bff/agora_training_examples.json}
+      PANTHEON_BFF_AGORA_SKILL_COACHING_SESSION_STORE: ${PANTHEON_BFF_AGORA_SKILL_COACHING_SESSION_STORE:-/data/bff/agora_skill_coaching_sessions.json}
+      PANTHEON_BFF_AGORA_PERSONA_LAB_RUN_STORE: ${PANTHEON_BFF_AGORA_PERSONA_LAB_RUN_STORE:-/data/bff/agora_persona_lab_runs.json}
+      PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE:-/data/bff/agora_evaluation_suites.json}
+      PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE:-/data/bff/agora_evaluation_runs.json}
+      PANTHEON_BFF_POSTMORTEM_STORE: ${PANTHEON_BFF_POSTMORTEM_STORE:-/data/bff/postmortems.json}
       PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
       BFF_READ_SURFACE_STATE: fresh
       PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
@@ -657,6 +752,7 @@ services:
       PANTHEON_BFF_PERSONA_SESSION_STORE: /data/bff/persona_sessions.json
       PANTHEON_BFF_PAPER_LIVE_DRIFT_STORE: /data/bff/paper_live_drift_reports.json
       PANTHEON_BFF_V5_INTERVENTION_STORE: /data/bff/v5_interventions.json
+      PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/loop_runs.json
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
@@ -671,9 +767,13 @@ services:
       PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH: ${PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH:-/data/bff/management-ai-attachments}
       PANTHEON_MGMT_AI_ATTACH_BUCKET: ${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}
       PANTHEON_MANAGEMENT_AI_AUDIT_PATH: ${PANTHEON_MANAGEMENT_AI_AUDIT_PATH:-/data/bff/management-ai-audit.jsonl}
-      PANTHEON_ASSISTANT_PROVIDER: ${PANTHEON_ASSISTANT_PROVIDER:-codex_cli}
-      PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS: ${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-75.0}
-      PANTHEON_ASSISTANT_KERNEL_ENABLED: ${PANTHEON_ASSISTANT_KERNEL_ENABLED:-false}
+      PANTHEON_ASSISTANT_PROVIDER: ${PANTHEON_ASSISTANT_PROVIDER:-openclaw}
+      # BFF→adapter HTTP budget. Raised 75→180: a real openclaw agent turn runs
+      # ~60-90s+ (gpt-5.5 + thinking + full context pack); at 75 the BFF gave up
+      # before the turn finished and served the deterministic fallback ("OpenClaw
+      # adapter request failed"). Kept ABOVE the adapter's per-turn budget (170).
+      PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS: ${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-180.0}
+      PANTHEON_ASSISTANT_KERNEL_ENABLED: ${PANTHEON_ASSISTANT_KERNEL_ENABLED:-true}
       PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH: ${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}
       PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS: ${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}
       # Dev tier defaults to strict JWT auth. CI/dev browser clients can exchange
@@ -688,7 +788,7 @@ services:
       # PANTHEON_BFF_AUTH_STUB=false and PANTHEON_BFF_AUTH_MODE=strict.
       PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}
       PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-permissive}
-      PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-}
+      PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}
       PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
@@ -710,6 +810,10 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      # Wire approval read path directly to the real approval producer.
+      # BFF will try http://promotion:8089/api/v1/approvals before the governance
+      # service URL when PANTHEON_BFF_APPROVAL_DECISION_STORE is not set/empty.
+      PANTHEON_PROMOTION_API_URL: http://promotion:8089
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_CAPITAL_API_URL: http://capital:8092
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
@@ -724,6 +828,7 @@ services:
       PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
       PANTHEON_RESEARCH_ORCHESTRATOR_API_URL: http://research-orchestrator-svc:8101
       PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
+      PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
@@ -747,6 +852,8 @@ services:
       research-orchestrator-svc:
         condition: service_healthy
       research-worker-gateway-svc:
+        condition: service_healthy
+      memory:
         condition: service_healthy
       openclaw-gateway-adapter:
         condition: service_healthy
@@ -781,10 +888,32 @@ services:
       retries: 10
       start_period: 5s
 
+  loop-run-projector-scheduler:
+    profiles: ["loop-run-projector"]
+    build:
+      context: .
+      dockerfile: services/control-plane/bff/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    command: ["python", "scripts/loop_run_projector_scheduler.py"]
+    environment:
+      BFF_BASE: http://operator-bff:8001
+      BFF_TOKEN: ${BFF_TOKEN:-op-dev:admin:mfa}
+      BFF_INSECURE: "0"
+      PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/loop_runs.json
+      LOOP_RUN_PROJECTOR_INTERVAL_SECONDS: ${LOOP_RUN_PROJECTOR_INTERVAL_SECONDS:-300}
+      LOOP_RUN_PROJECTOR_MAX_TICKS: ${LOOP_RUN_PROJECTOR_MAX_TICKS:-0}
+    volumes:
+      - bff-data:/data/bff
+    depends_on:
+      operator-bff:
+        condition: service_healthy
+
   persona:
     build:
       context: .
       dockerfile: services/control-plane/persona/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8002"
       PANTHEON_BFF_URL: http://operator-bff:8001
@@ -813,6 +942,7 @@ services:
     build:
       context: services/control-plane/router
       dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8001"
       PERSONA_URL: http://persona:8002
@@ -836,6 +966,7 @@ services:
     build:
       context: .
       dockerfile: services/channels/web/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8000"
       ROUTER_URL: http://router:8001
@@ -856,6 +987,7 @@ services:
     build:
       context: .
       dockerfile: services/evaluation/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8084"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -882,6 +1014,7 @@ services:
     build:
       context: .
       dockerfile: services/control-plane/feedback/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8085"
       TRADER_FEEDBACK_STORE_PATH: /data/feedback/trader_feedback_events.jsonl
@@ -900,6 +1033,7 @@ services:
     build:
       context: .
       dockerfile: services/memory/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8086"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -907,11 +1041,14 @@ services:
       # Dev rollback defaults to JSON; staging/prod select postgres via env.
       PANTHEON_MEMORY_STORE_BACKEND: ${PANTHEON_MEMORY_STORE_BACKEND:-json}
       PANTHEON_MEMORY_STORE_DSN: ${PANTHEON_MEMORY_STORE_DSN:-}
+      PANTHEON_MEMORY_DATA_DIR: /data/memory
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
+    volumes:
+      - memory-data:/data/memory
     depends_on:
       postgres:
         condition: service_healthy
@@ -932,6 +1069,7 @@ services:
     build:
       context: .
       dockerfile: services/registry/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8087"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -960,6 +1098,7 @@ services:
     build:
       context: .
       dockerfile: services/optimizer-svc/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8088"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -986,6 +1125,7 @@ services:
     build:
       context: .
       dockerfile: services/promotion/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8089"
       PROMOTION_DATA_DIR: /data/promotion
@@ -1016,6 +1156,7 @@ services:
     build:
       context: .
       dockerfile: services/capital/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8092"
       CAPITAL_DATA_DIR: /data/capital
@@ -1048,6 +1189,7 @@ services:
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8095"
       DEPLOYMENT_DATA_DIR: /data/governance
@@ -1070,6 +1212,7 @@ services:
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
@@ -1091,10 +1234,26 @@ services:
       retries: 10
       start_period: 5s
 
+  evolution-daily-sweep-scheduler:
+    profiles: ["evolution-daily-sweep-scheduler"]
+    build:
+      context: .
+      dockerfile: services/evolution/Dockerfile
+    command: ["python", "-m", "services.evolution.scheduler_worker"]
+    environment:
+      EVOLUTION_API_URL: http://evolution:8093
+      EVOLUTION_SCHEDULER_INTERVAL_SECONDS: ${EVOLUTION_SCHEDULER_INTERVAL_SECONDS:-86400}
+      EVOLUTION_SCHEDULER_MAX_TICKS: ${EVOLUTION_SCHEDULER_MAX_TICKS:-0}
+      EVOLUTION_SWEEP_MAX_INCIDENTS: ${EVOLUTION_SWEEP_MAX_INCIDENTS:-}
+    depends_on:
+      evolution:
+        condition: service_healthy
+
   lineage-read:
     build:
       context: .
       dockerfile: services/lineage-read/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8094"
       LINEAGE_DATA_DIR: /data/lineage
@@ -1110,10 +1269,12 @@ services:
       start_period: 5s
 
   paper-fleet-reconciler:
-    profiles: ["paper-fleet"]
     build:
       context: .
       dockerfile: services/execution/runtime-manager/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
     command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
     environment:
       PORT: "8011"
@@ -1144,6 +1305,7 @@ services:
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8102"
       RECONCILIATION_DRIFT_DATA_DIR: /data/reconciliation-drift
@@ -1184,10 +1346,28 @@ services:
       retries: 10
       start_period: 5s
 
+  reconciliation-drift-consumer:
+    profiles: ["reconciliation-drift-consumer"]
+    build:
+      context: .
+      dockerfile: services/reconciliation-drift/Dockerfile
+    command: ["python", "services/reconciliation-drift/consumer.py"]
+    environment:
+      RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
+      RECONCILIATION_DRIFT_CONSUMER_INPUT: /fixtures/reconciliation-drift
+      RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS:-60}
+      RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS: ${RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS:-0}
+    volumes:
+      - ./services/reconciliation-drift/fixtures:/fixtures/reconciliation-drift:ro
+    depends_on:
+      reconciliation-drift-svc:
+        condition: service_healthy
+
   research-worker-gateway-svc:
     build:
       context: .
       dockerfile: services/research-worker-gateway/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8103"
       RESEARCH_WORKER_GATEWAY_DATA_DIR: /data/research-worker-gateway
@@ -1221,6 +1401,41 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+
+  pantheon-paper-runtime:
+    build:
+      context: .
+      dockerfile: services/execution/lean_runtime/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
+    environment:
+      PORT: "8010"
+      PANTHEON_RUNTIME_ROLE: pantheon-paper-execution-runtime
+      PANTHEON_RUNTIME_MODE: paper
+      PANTHEON_RUNTIME_ID: ${PANTHEON_PAPER_RUNTIME_ID:-rt-devloop-l0-001}
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      SIGNAL_STORE_URL: redis://signal-store:6379
+      PANTHEON_SIGNAL_QUEUE_KEY: ${PANTHEON_PAPER_SIGNAL_QUEUE_KEY:-pantheon:signals:pending}
+      PANTHEON_STRATEGY_ID: ${PANTHEON_PAPER_STRATEGY_ID:-strategy-devloop-l0-001}
+      PANTHEON_PAPER_SYNTHETIC_MARKET_DATA: ${PANTHEON_PAPER_SYNTHETIC_MARKET_DATA:-true}
+    depends_on:
+      signal-store:
+        condition: service_healthy
+      runtime-manager:
+        condition: service_healthy
+      telemetry:
+        condition: service_healthy
+    ports:
+      - "${PAPER_RUNTIME_PORT:-18010}:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/readyz', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   smoke-stack:
     profiles: ["smoke"]
@@ -1492,8 +1707,10 @@ volumes:
   governance-data:
   incident-data:
   minio-data:
+  memory-data:
   nats-data:
   openclaw-data:
+  openclaw-adapter-data:
   policy-learning-data:
   postgres-data:
   promotion-data:

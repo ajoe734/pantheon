@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T22:41:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-FE-RS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 3",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized: sidecar BFF/frontend handoff packet for AG-FE-RS-001 merged into dev (PR #2151, merge commit a5fc30a7). Artifact: support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF.md — all plan/run BFF routes confirmed implemented, card binding guide for E7/E8/E9 delivered, ConsultResultCard and VersionCompareCard correctly flagged as blocked. No canonical truth or runtime files changed.",
+    "last_update": "2026-06-21T22:41:10Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-RS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only BFF/frontend handoff packet approved: 確認 AG-BE-RS-001/AG-BE-RS-002 已 done、所有 research plan/run routes 已實作、card binding 對齊 E7/E8/E9 card contract、ConsultResultCard 正確標示為 blocked（Agora BFF 501 stub）、VersionCompareCard 正確標示為 blocked on gap A、不修改 canonical truth 或 runtime 檔案、working tree clean（僅 task brief untracked）。"
+    ],
+    "review_file": "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T22:41:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-rs-001-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "c430efea9933d8837dfbd91ba88a5005b0ee8a0b",
+      "commit_subject": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF: final closeout sync",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verified": "not run; task brief update only"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a5fc30a723fdd2326231f9fa9001dc419e94cc1e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF/frontend handoff packet complete. All research plan/run BFF routes confirmed done (AG-BE-RS-001 done, AG-BE-RS-002 done). Packet covers: research.ts client signatures, ResearchPlanCard/ResearchRunCard/BacktestResultCard field bindings (E7/E8/E9), operator journeys A-H, no-order guardrails, acceptance checks. ConsultResultCard blocked (Agora BFF 501 stub); VersionCompareCard blocked (design gap A). Committed to support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF.md on branch task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF at commit d40b207e.",
+      "status": "done",
+      "created_at": "2026-06-21T21:54:30Z",
+      "resolved_at": "2026-06-21T22:00:02Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only AG-FE-RS-001 BFF/frontend handoff packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T22:00:02Z",
+      "resolved_at": "2026-06-21T22:41:13Z"
+    }
+  ],
+  "blockers": []
+}

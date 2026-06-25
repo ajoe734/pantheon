@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+  "archived_at": "2026-06-20T23:39:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only BFF/frontend handoff packet merged via PR #1926 at ccff7df1df4dec221de5eacf9264a5d16cbd0448; GitHub checks green; parent AG-BE-ID-003 remains blocked on servant session type-contract decision.",
+    "last_update": "2026-06-20T23:39:08Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "批准 sidecar handoff packet：scope 保持 support-only，packet commit 只新增 support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md；未變更 BFF/OpenAPI/Agora manifest/frontend mirror/runtime 路徑；parent AG-BE-ID-003 的 servant session type-contract blocker 仍保留給 owner/reviewer 決策。驗證：git diff --check -- support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md；git show --name-status --oneline --no-renames HEAD；git diff --name-only d11a6fc98dc4c10678c17c26fdaba68394dfedd6..HEAD -- services/control-plane/openapi services/control-plane/bff services/control-plane/specs/agora docs/contracts/agora execute-plans/src/lib/bff-v1/agora；gh pr view 1926 --json state,statusCheckRollup,mergeCommit,url。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T23:39:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-8",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "git_clean_required": false,
+      "commit": "ccff7df1df4dec221de5eacf9264a5d16cbd0448",
+      "commit_subject": "Merge pull request #1926 from ajoe734/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8": "add packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ccff7df1df4dec221de5eacf9264a5d16cbd0448",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Followup-8 BFF/frontend handoff packet is ready for review at support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md. PR #1926 is open with auto-merge enabled at https://github.com/ajoe734/pantheon/pull/1926. It confirms no BFF/OpenAPI/Agora support-path delta after followup-7 dev base d11a6fc, parent AG-BE-ID-003 remains blocked on the servant session type-contract decision, and frontend/operator gates stay conservative. Verification: git diff --check -- support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md.",
+      "status": "done",
+      "created_at": "2026-06-20T23:34:20Z",
+      "resolved_at": "2026-06-20T23:36:53Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved by Codex2. Support-only packet boundary is acceptable; PR #1926 is merged at ccff7df1df4dec221de5eacf9264a5d16cbd0448 with green checks. Owner Codex must perform closeout finalization before done.",
+      "status": "done",
+      "created_at": "2026-06-20T23:36:53Z",
+      "resolved_at": "2026-06-20T23:39:09Z"
+    }
+  ],
+  "blockers": []
+}

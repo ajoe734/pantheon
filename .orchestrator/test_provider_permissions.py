@@ -581,7 +581,10 @@ EOF
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir) / "codex2"
             home.mkdir()
-            (home / "auth.json").write_text('{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}', encoding="utf-8")
+            (home / "auth.json").write_text(
+                '{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}',
+                encoding="utf-8",
+            )
             config = {
                 "providers": {
                     "codex2": {
@@ -607,6 +610,136 @@ EOF
         env = run_command.call_args.kwargs["env"]
         self.assertEqual(env["CODEX_HOME"], str(home))
         self.assertNotIn("CODEX_SESSION_ID", env)
+
+    def test_codex_auth_ready_false_on_revoked_refresh_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "codex2"
+            home.mkdir()
+            (home / "auth.json").write_text('{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}', encoding="utf-8")
+            config = {"providers": {"codex2": {"codex": {"codex_home": str(home)}}}}
+            revoked = subprocess.CompletedProcess(
+                ["codex"],
+                1,
+                "",
+                "error refreshing token: refresh-token-revoked",
+            )
+            with (
+                mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value=None),
+                mock.patch.object(provider_permissions, "run_command", side_effect=[revoked, revoked]),
+            ):
+                self.assertFalse(
+                    provider_permissions.codex_auth_ready(
+                        "codex2",
+                        {},
+                        config=config,
+                        binary="/usr/bin/codex",
+                    )
+                )
+                probe = provider_permissions._codex_auth_probe(
+                    config,
+                    "codex2",
+                    "/usr/bin/codex",
+                    force=True,
+                )
+
+        self.assertFalse(probe["ready"])
+        self.assertEqual(probe["status"], "refresh_token_revoked")
+
+    def test_codex_probe_ready_rejects_login_status_output(self) -> None:
+        ready, error, status = provider_permissions._codex_probe_ready(
+            0,
+            "Logged in as codex@example.test",
+            "",
+        )
+
+        self.assertFalse(ready)
+        self.assertEqual(status, "unexpected_output")
+        self.assertIsNotNone(error)
+
+    def test_provider_capabilities_marks_codex_revoked_token_auth_down(self) -> None:
+        config = {
+            "paths": {
+                "status_file": ".orchestrator/ai-status.json",
+                "activity_log": "ai-activity-log.jsonl",
+                "current_work": "current-work.md",
+                "dashboard": "dashboard-bundle.json",
+                "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+            },
+            "agents": {},
+            "providers": {
+                "codex": {"delivery_mode": "codex", "codex": {"cli": "codex"}},
+                "codex2": {"delivery_mode": "codex", "codex": {"cli": "codex"}},
+                "claude": {},
+                "gemini": {},
+                "copilot": {},
+            },
+        }
+
+        def fake_codex_probe(config: dict, provider_id: str, binary: str | None, **kwargs: object) -> dict:
+            self.assertTrue(kwargs.get("force"))
+            return {
+                "provider": provider_id,
+                "kind": "codex",
+                "ready": provider_id != "codex2",
+                "method": "codex_exec_oauth",
+                "status": "ready" if provider_id != "codex2" else "refresh_token_revoked",
+                "error": None if provider_id != "codex2" else "refresh-token-revoked",
+                "checked_at": "2026-06-14T15:00:00Z",
+                "last_auth_probe_at": "2026-06-14T15:00:00Z",
+                "source": "live",
+            }
+
+        with (
+            mock.patch.object(provider_permissions, "_code_cli_info", return_value={}),
+            mock.patch.object(provider_permissions, "_workspace_settings", return_value={}),
+            mock.patch.object(provider_permissions, "_find_extension", return_value=(None, None)),
+            mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {}}),
+            mock.patch.object(provider_permissions, "_gemini_settings", return_value={}),
+            mock.patch.object(provider_permissions, "_gemini_auth_ready", return_value=False),
+            mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
+            mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
+            mock.patch.object(
+                provider_permissions,
+                "desired_workspace_settings",
+                return_value={
+                    "claudeCode.initialPermissionMode": "acceptEdits",
+                    "claudeCode.allowDangerouslySkipPermissions": False,
+                    "geminicodeassist.agentYoloMode": False,
+                    "github.copilot.chat.backgroundAgent.enabled": False,
+                    "github.copilot.chat.cloudAgent.enabled": False,
+                    "github.copilot.chat.claudeAgent.enabled": False,
+                },
+            ),
+            mock.patch.object(
+                provider_permissions,
+                "desired_claude_local_settings",
+                return_value={"permissions": {"defaultMode": "acceptEdits"}},
+            ),
+            mock.patch.object(
+                provider_permissions,
+                "desired_gemini_settings",
+                return_value={
+                    "general": {"defaultApprovalMode": "auto_edit"},
+                    "security": {
+                        "enablePermanentToolApproval": True,
+                        "autoAddToPolicyByDefault": True,
+                        "disableYoloMode": False,
+                    },
+                },
+            ),
+            mock.patch.object(
+                provider_permissions,
+                "command_exists",
+                side_effect=lambda cmd: "/usr/bin/codex" if cmd == "codex" else None,
+            ),
+            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
+            mock.patch.object(provider_permissions, "_codex_auth_probe", side_effect=fake_codex_probe),
+        ):
+            report = provider_permissions.provider_capabilities(config)
+
+        self.assertFalse(report["providers"]["codex2"]["auth_ready"])
+        self.assertFalse(report["providers"]["codex2"]["local_cli_worker_supported"])
+        self.assertFalse(report["providers"]["codex2"]["supports_auto_approve"])
 
     def test_provider_capabilities_include_custom_antigravity_provider(self) -> None:
         config = {

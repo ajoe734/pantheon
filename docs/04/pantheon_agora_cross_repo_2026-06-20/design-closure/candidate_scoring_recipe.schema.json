@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/schemas/agora/candidate_scoring_recipe.v1.json",
+  "title": "CandidateScoringRecipe",
+  "type": "object",
+  "required": ["recipe_id", "strategy_family", "version", "positive_components", "penalty_components", "score_bands", "status"],
+  "properties": {
+    "recipe_id": {"type": "string", "minLength": 1},
+    "strategy_family": {"type": "string", "minLength": 1},
+    "strategy_id": {"type": ["string", "null"]},
+    "strategy_version_id": {"type": ["string", "null"]},
+    "version": {"type": "integer", "minimum": 1},
+    "positive_components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/component"}
+    },
+    "penalty_components": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/component"}
+    },
+    "confidence_policy": {
+      "type": "object",
+      "required": ["multiplier_floor", "multiplier_weight"],
+      "properties": {
+        "multiplier_floor": {"type": "number", "minimum": 0, "maximum": 1},
+        "multiplier_weight": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": false
+    },
+    "score_bands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "min_inclusive", "max_inclusive"],
+        "properties": {
+          "name": {"type": "string"},
+          "min_inclusive": {"type": "number", "minimum": 0, "maximum": 100},
+          "max_inclusive": {"type": "number", "minimum": 0, "maximum": 100}
+        },
+        "additionalProperties": false
+      }
+    },
+    "critical_gates": {"type": "array", "items": {"type": "object"}},
+    "status": {"enum": ["draft", "active", "archived", "superseded"]},
+    "created_at": {"type": "string"},
+    "created_by": {"type": "string"}
+  },
+  "$defs": {
+    "component": {
+      "type": "object",
+      "required": ["component_id", "label", "category", "weight", "direction", "transform", "missing_policy"],
+      "properties": {
+        "component_id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "category": {"enum": ["alpha", "confidence", "liquidity", "risk", "execution", "data_quality", "custom"]},
+        "weight": {"type": "number", "minimum": 0, "maximum": 0.5},
+        "direction": {"enum": ["higher_better", "lower_better"]},
+        "transform": {"enum": ["min_max", "robust_zscore", "percentile_rank", "binary", "logistic", "piecewise_linear", "inverse_percentile"]},
+        "transform_params": {"type": "object"},
+        "missing_policy": {"enum": ["reject_candidate", "score_zero", "impute_median", "mark_needs_research", "cap_final_score", "not_applicable"]},
+        "max_contribution": {"type": "number", "minimum": 0, "maximum": 100},
+        "required_evidence_types": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

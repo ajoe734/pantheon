@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DB-004-SIDECAR-REVIEW",
+  "archived_at": "2026-06-20T18:44:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-DB-004-SIDECAR-REVIEW",
+    "title": "Prepare AG-FE-DB-004 review packet and evidence summary",
+    "summary_zh": "平行支援 AG-FE-DB-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-DB-001",
+      "AG-BE-DB-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-DB-004/AG-FE-DB-004-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: PR #1876 merged into dev at 0b530aa5375811378e01964c89b76571b0553332; closeout packet commit 0964b42e8bf3c42f6e6d780107c23080a0ac2846 published; validation: git diff --check support packet, status show confirmed review_approved, GitHub Commit trailers/Runtime mirror guard/Smoke acceptance passed.",
+    "last_update": "2026-06-20T18:44:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-DB-004",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過，所有 review gate 獨立驗證確認",
+      "schema jq 驗證：has previous_version、無 previousVersionId",
+      "rg 確認：source/schema 無 camelCase alias、dashboard 元件無 raw fetch()",
+      "親自讀取 DashboardProposalPreview.tsx / DashboardChangeLog.tsx：accept 與 rollback envelope 正確，conflict display 顯示四個欄位，changelog 為純讀取無刪改",
+      "commit 5a8728a3 與 PR merge 515214cc 確認存在，trailers 正確",
+      "6 個測試案例確認（各檔 3 個）",
+      "4 項 caveat 均 non-blocking，由 parent owner 於 closeout 清理",
+      "由 Claude2 代 Codex 完成 review（Codex quota_terminal）"
+    ],
+    "review_file": "support/sidecars/AG-FE-DB-004/AG-FE-DB-004-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T18:44:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-db-004-sidecar-review",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-DB-004-SIDECAR-REVIEW",
+      "git_clean_required": false,
+      "commit": "0b530aa5375811378e01964c89b76571b0553332",
+      "commit_subject": "Merge pull request #1876 from ajoe734/task/AG-FE-DB-004-SIDECAR-REVIEW",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-DB-004-SIDECAR-REVIEW": "finalize packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-DB-004-SIDECAR-REVIEW",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0b530aa5375811378e01964c89b76571b0553332",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-DB-004-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review packet ready at support/sidecars/AG-FE-DB-004/AG-FE-DB-004-SIDECAR-REVIEW.md and merged via PR #1865 (merge dc9170b566b5cc3a3fe3f18aa26f626a868a4904; task commit e195b927e8cac9ec6d9ed4442ad143b96ca24331). Validation passed: npm dashboard tests 6/6, generated Agora types check, schema bundle verify, previousVersion guard, dashboard fetch guard, and diff check. Caveats recorded: parent review_file path is absent on dev; checked components are presentational/action-envelope surfaces, not live route wiring.",
+      "status": "done",
+      "created_at": "2026-06-20T17:38:36Z",
+      "resolved_at": "2026-06-20T18:20:27Z"
+    },
+    {
+      "task_id": "AG-FE-DB-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex to Claude2: Codex quota_terminal since 2026-06-20T17:39:10Z (hint_blocked_until 2026-06-21T10:27:00Z), blocking review of a task whose PR is already merged (dc9170b). Reassigning to Claude2 allows the review stage to complete; finalization by owner Codex2 awaits quota reset.",
+      "status": "done",
+      "created_at": "2026-06-20T18:20:27Z",
+      "resolved_at": "2026-06-20T18:29:14Z"
+    },
+    {
+      "task_id": "AG-FE-DB-004-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved (Claude2 standing in for Codex per chair reassignment, independently verified): packet accurately summarizes parent PR #1862 / commit 5a8728a3 evidence; schema jq check confirms previous_version, no previousVersionId; rg confirms no raw fetch in components and no camelCase alias; source review confirms correct accept envelope (recipe_id, If-Match, Idempotency-Key, expected_version, note), rollback envelope (expected_version, target_version, reason, If-Match, Idempotency-Key), conflict display (4 fields), changelog read-only; rollback historical-version guard verified in code; 6 tests confirmed; 4 non-blocking caveats noted for parent owner at closeout.",
+      "status": "done",
+      "created_at": "2026-06-20T18:29:14Z",
+      "resolved_at": "2026-06-20T18:44:50Z"
+    }
+  ],
+  "blockers": []
+}

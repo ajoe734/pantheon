@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13",
+  "archived_at": "2026-06-21T02:30:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13",
+    "title": "Prepare AG-XR-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-XR-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-XR / Phase 0",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-001A"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only follow-up 13 after PR #1946 merged into dev at 13f864d5946b4fd2ccdff328a4e0fd359c100cfc; parent AG-XR-003 remains blocked on execute-plans PR #63 and manifest freshness.",
+    "last_update": "2026-06-21T02:30:43Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only packet approved; no canonical truth, manifest, runtime, registry, governance, deployment workflow, frontend source, generated types, broker, or capital-facing files changed.",
+      "Parent AG-XR-003 remains blocked on execute-plans PR #63, manifest freshness, stale pytest expectation, and parent owner/reviewer disposition."
+    ],
+    "review_file": "support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T02:30:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-003-sidecar-acceptance-followup-13",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13",
+      "git_clean_required": false,
+      "commit": "0cb1b76973f1dc09e960eb7f759a0257a999cee8",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "13f864d5946b4fd2ccdff328a4e0fd359c100cfc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-21T02:14:12Z",
+      "resolved_at": "2026-06-21T02:14:41Z"
+    },
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Follow-up 13 support packet is committed in ee29c4ac and PR #1946 is open with auto-merge enabled. Packet path: support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13.md. Parent AG-XR-003 remains blocked: execute-plans PR #63 is still open/unstable; local verify fails on generated-types hash mismatch; deployment-gate fails closed as expected; pytest has the same stale assertion; contract:drift passes.",
+      "status": "done",
+      "created_at": "2026-06-21T02:19:06Z",
+      "resolved_at": "2026-06-21T02:23:35Z"
+    },
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-13",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved for support-only sidecar closeout. Owner should refresh/push PR #1946 and leave parent AG-XR-003 blocked until PR #63 and manifest freshness are resolved.",
+      "status": "done",
+      "created_at": "2026-06-21T02:23:35Z",
+      "resolved_at": "2026-06-21T02:30:44Z"
+    }
+  ],
+  "blockers": []
+}

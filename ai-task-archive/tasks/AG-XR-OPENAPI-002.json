@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-OPENAPI-002",
+  "archived_at": "2026-06-21T04:52:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-OPENAPI-002",
+    "title": "Additive Agora v1.2 OpenAPI / capability / schema bundle",
+    "summary_zh": "依 sw001-deep-closure §4.4 + §6 把 PRIV/REF/DB 的 v3 schema 整合成 additive v1.2 bundle:agora_v1_2.openapi.yaml(workshops create/message 採 **server-side** private_content_ref、browser 不得提交 ref、owner vs management projection §4.2/§4.3、4 狀態 filter + status_group(active=>open+in_review)、§9 error)、capability_manifest_v1_2.json、bundle_index.v1_2.json(extends 並 hash v1_1 的精確 bytes)。**必須明示 v1.2 取代 v1.1 的 `active` 生命週期 filter 措辭(authority order),frozen v1/v1.1 檔案與 hash 不可動。** 【有疑問一定要 STOP 開 blocker,不要自己亂做】動工前先讀完權威設計docs/04/pantheon_agora_cross_repo_2026-06-20/sw001-deep-closure/AG-BE-SW-001_deep_design_closure_2026-06-21.md(該文件為準)+ contract-closure/ + 既有 frozen bundle。鐵律:不可改動或重雜湊 frozen v1(specs/agora/bundle_index.json、openapi/agora_v1.openapi.yaml)與 v1.1(bundle_index.v1_1.json、openapi/agora_v1_1.openapi.yaml);一律 additive 到 specs/agora/v3/ 與 agora_v1_2.openapi.yaml / bundle_index.v1_2.json(後者必須 extends 並 hash v1_1 的精確 bytes)。raw 私有內容永不進 log/audit/trace/error/DB 明文。加密/金鑰/保留/狀態/映射語意一律照設計稿,不臆測、不自創 schema/route/enum/capability。",
+    "phase": "EPIC AGORA-SW / Deep-Closure",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DES-SW-PRIV-001",
+      "AG-DES-SW-REF-001",
+      "AG-DES-SW-DB-001"
+    ],
+    "artifacts": [
+      "services/control-plane/openapi/agora_v1_2.openapi.yaml",
+      "services/control-plane/specs/agora/v3/capability_manifest_v1_2.json",
+      "services/control-plane/specs/agora/bundle_index.v1_2.json"
+    ],
+    "acceptance": [
+      "v1.2 bundle 驗證;frozen v1/v1.1 + 其 bundle_index sha256 不變;bundle_index.v1_2 extends+hash v1_1;v1.2 明示取代 active filter;workshops create 不收 client private_content_ref;management projection 無 raw content;【驗收】frozen v1/v1.1 檔案與其 bundle_index sha256 不變;新增物逐欄位對齊 sw001-deep-closure;遇疑問先 blocker 不自行實作"
+    ],
+    "next": "Closed after PR #1985 merged to dev (merge commit 5c67f2855f0daf11655e9bec06bbfa78cddc43aa); implementation PR #1983 delivered v1.2 bundle, closeout evidence committed as 0766e51d; verified 5/5 bundle tests, bundle verifier, v1.1 hash, and frozen v1/v1.1 diff guard.",
+    "last_update": "2026-06-21T04:52:59Z",
+    "auto_created_by": "dispatch_agora_sw001_predecessors_2026-06-21",
+    "review_notes_zh": [
+      "審查通過",
+      "v1.2 bundle 完整實作 sw001 deep-closure §4/§6/§9，5/5 測試通過，frozen v1/v1.1 未動，bundle hash 核實"
+    ],
+    "review_file": ".orchestrator/task-reviews/ag_xr_openapi_002_review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T04:52:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-openapi-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-OPENAPI-002",
+      "git_clean_required": false,
+      "commit": "0766e51d0eff8f3078889badac163c555acd67d0",
+      "commit_subject": "AG-XR-OPENAPI-002: add closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped brief and reviewer approval evidence for the additive Agora v1.2 bundle closeout.",
+        "Not changing": "contract bundle implementation, frozen v1/v1.1 artifacts, BFF implementation, persistence migrations, or generated types.",
+        "Composes with": "PR #1983 merged deliverable dffa0ee5 and the owner done transition for AG-XR-OPENAPI-002.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-XR-OPENAPI-002",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest scripts/test_agora_v1_2_bundle.py -v; python3 scripts/agora_schema_bundle.py --verify; sha256sum services/control-plane/specs/agora/bundle_index.v1_1.json; git diff --exit-code HEAD^ HEAD -- frozen v1/v1.1 artifacts"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-OPENAPI-002",
+      "ahead": 0,
+      "behind": 6,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5c67f2855f0daf11655e9bec06bbfa78cddc43aa",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-OPENAPI-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-21T04:31:26Z",
+      "resolved_at": "2026-06-21T04:31:38Z"
+    },
+    {
+      "task_id": "AG-XR-OPENAPI-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Additive Agora v1.2 bundle merged in PR #1983 (merge dffa0ee5a0f310e20ab423749441ec7e032fdbdb, task commit f7e0b2b990524ff1e677f0ffcf5dd38ccd96a66b). Please review v1.2 OpenAPI/capability/bundle against sw001 deep-closure; local validation and GitHub checks passed.",
+      "status": "done",
+      "created_at": "2026-06-21T04:39:41Z",
+      "resolved_at": "2026-06-21T04:43:23Z"
+    },
+    {
+      "task_id": "AG-XR-OPENAPI-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved — all 5 bundle tests pass, frozen v1/v1.1 immutable confirmed, hash verified, all §4/§6/§9 contract requirements met. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-21T04:43:23Z",
+      "resolved_at": "2026-06-21T04:53:01Z"
+    }
+  ],
+  "blockers": []
+}

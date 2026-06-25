@@ -1,0 +1,26 @@
+{
+  "bundle_version": "1.3",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_2.json",
+    "bundle_version": "1.2",
+    "bundle_index_sha256": "__COMPUTE_FROM_MERGED_DEV_EXACT_BYTES__"
+  },
+  "files": {
+    "specs/agora/v4/capability_manifest_v1_3.json": "88bc4268a438b04c455428dcd49ba5918f62728bcbca5e58c1682352295d1401",
+    "specs/agora/v4/governed_intent_handoff.schema.json": "d16723d9de8c469905859e62d9904561ce96c51ebce9992cd8927a35e79092db",
+    "specs/agora/v4/research_plan_execution.schema.json": "cc97bc9e119473c4ae9d2656f9629843645e73d09ab7ba2fa46bbd190c1cbe4c",
+    "specs/agora/v4/research_run_projection.schema.json": "cafd98509779818f62d4972693e50a6c749153293528de651f213713e0b1ed97",
+    "specs/agora/v4/strategy_readiness.schema.json": "5ab691bb8c5fa866355092d44f2a6a197eb3c77c1dff814e7fa5e65cb2fbb816",
+    "specs/agora/v4/trading_decision_event.schema.json": "fe6c8eb40900eda247b30c00ea3eb4a7fe9ec2edc65643e7850722a2adf2b3ea",
+    "specs/agora/v4/trading_room_aggregate.schema.json": "c10babb6f20f4155d8f5be76b438d520e13716d6bb01f4612431b29e45027874",
+    "specs/agora/v4/version_compare.schema.json": "732829b704f8c24fca36e1a0c2e9b14dbe714de19b460cfe5bf56f7133cdcba2",
+    "specs/agora/v4/version_patch_proposal.schema.json": "5d7b4ca34becee0c5e6d2f2d8a741859f26afe68fbe36e843d870257c3e8da8c",
+    "specs/agora/v4/workshop_card.schema.json": "3ddfb1de1ec4afd41b2b6fe9fe3c6dabd34b2892a497ca92f54f1bb2cda4d4b2",
+    "specs/agora/v4/workshop_stream_event.schema.json": "37c21e77aae56a0d5031bbc56d16e86541b5b79422b54821a0503772c307e4de"
+  },
+  "openapi": {
+    "path": "services/control-plane/openapi/agora_v1_3.openapi.yaml",
+    "sha256": "__COMPUTE_AFTER_OPENAPI_MERGE__"
+  },
+  "note": "Template only. Generate canonical hashes from merged repo bytes."
+}

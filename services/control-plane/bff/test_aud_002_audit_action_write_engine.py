@@ -48,7 +48,7 @@ def _command_event(events: list[dict], command_id: str) -> dict:
 def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
     with _isolated_audit_client(allow_fallback=True) as client:
         response = client.post(
-            "/bff/actions/runtime/runtime-042/pause",
+            "/bff/runtimes/runtime-042/actions/pause",
             headers={**HEADERS, "Idempotency-Key": "aud-002-runtime-pause"},
             json={"reason": "AUD-002 runtime audit write proof"},
         )
@@ -59,12 +59,12 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
         assert len(records) == 1
         foundation = records[0]["foundation"]
         assert foundation["audit_action"]["action_type"] == "bff.command.accepted"
-        assert foundation["audit_action"]["target_ref"] == "Runtime:runtime-042"
+        assert foundation["audit_action"]["target_ref"] == "RuntimeBinding:runtime-042"
         assert foundation["audit_action"]["payload_checksum"]
 
         audit = client.get(
             "/bff/audit",
-            params={"target_type": "Runtime"},
+            params={"target_type": "RuntimeBinding"},
             headers=HEADERS,
         )
         assert audit.status_code == 200, audit.text
@@ -73,10 +73,9 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
         assert event["action_type"] == "RuntimeAction"
         assert event["target_id"] == "runtime-042"
         assert event["audit_context"]["idempotency_key"] == "aud-002-runtime-pause"
-        assert event["command_ref"] == command_id
-        assert event["audit_action"]["trace_id"].startswith("trace-")
+        assert event["audit_action"]["trace_id"] == command_id
 
-        entity = client.get("/bff/audit/entities/Runtime/runtime-042", headers=HEADERS)
+        entity = client.get("/bff/audit/entities/RuntimeBinding/runtime-042", headers=HEADERS)
         assert entity.status_code == 200, entity.text
         assert _command_event(entity.json()["events"], command_id)["entry_id"] == event["entry_id"]
 

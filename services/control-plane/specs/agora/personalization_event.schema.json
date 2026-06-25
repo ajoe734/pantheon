@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/personalization_event/v1",
+  "title": "PersonalizationEvent",
+  "description": "User personalization preference or layout event in the Agora. Drives adaptive UI, persona routing, and operator memory writeback.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "event_id",
+    "operator_id",
+    "event_type",
+    "occurred_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique personalization event identifier."
+    },
+    "operator_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator who triggered this personalization event."
+    },
+    "persona_id": {
+      "type": "string",
+      "description": "Persona context if the event is persona-specific."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Agora session during which this event occurred."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "dashboard_recipe_changed",
+        "widget_added",
+        "widget_removed",
+        "widget_reordered",
+        "persona_preference_set",
+        "watchlist_updated",
+        "alert_threshold_set",
+        "display_mode_changed",
+        "memory_endorsed",
+        "memory_quarantined",
+        "insight_acted_on",
+        "notification_preference_set"
+      ],
+      "description": "Category of personalization event."
+    },
+    "target": {
+      "type": "object",
+      "description": "What was personalised.",
+      "properties": {
+        "target_type": {
+          "type": "string",
+          "enum": [
+            "dashboard_recipe",
+            "widget",
+            "persona",
+            "watchlist",
+            "alert",
+            "memory_entry",
+            "insight",
+            "notification_rule"
+          ]
+        },
+        "target_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "before_state": {
+      "type": "object",
+      "description": "State before the change (for undo support).",
+      "additionalProperties": true
+    },
+    "after_state": {
+      "type": "object",
+      "description": "State after the change.",
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "string",
+      "enum": ["operator_action", "persona_suggestion", "system_default"],
+      "description": "What triggered this personalization event."
+    },
+    "memory_writeback_eligible": {
+      "type": "boolean",
+      "description": "Whether this event may trigger an operator memory writeback.",
+      "default": false
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

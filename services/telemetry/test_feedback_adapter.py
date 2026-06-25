@@ -953,6 +953,697 @@ class TestLineageReadModel(unittest.TestCase):
             )
             self.assertNotIn("approve", {record["event_type"] for record in records})
 
+    def test_order_rejection_lineage_preserves_adapter_response(self):
+        """Broker adapter rejection details must remain queryable in lineage."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-order-rejection-shioaji-live-disabled",
+            "event_type": "order_rejection",
+            "created_at": "2026-06-12T15:00:00Z",
+            "execution_mode": "sandbox",
+            "binding_id": "rb-reject-001",
+            "runtime_id": "runtime-reject",
+            "capital_pool_id": "pool-reject",
+            "artifact_id": "artifact-reject",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "sandbox",
+            "plan_id": "plan-reject",
+            "persona_capital_binding_id": "pcb-reject",
+            "trace_id": "trace-reject",
+            "target": {
+                "strategy_id": "strat-reject",
+                "registry_id": "reg-reject",
+                "promotion_state": "sandbox",
+            },
+            "metrics": {"rejected_order_count": 1, "submitted_to_broker": 0},
+            "metadata": {
+                "adapter": "shioaji_sandbox",
+                "broker": "shioaji",
+                "provider": "Shioaji",
+                "order_id": "client-order-reject-001",
+                "order_status": "rejected",
+                "broker_submission_status": "rejected_before_broker",
+                "submitted_to_broker": False,
+                "adapter_response_status": "rejected",
+                "adapter_error_code": "SHIOAJI_LIVE_DISABLED",
+                "adapter_error_message": "Live broker execution is permanently disabled.",
+                "adapter_status_code": 403,
+                "reject_reason": "live route blocked by adapter",
+                "requested_execution_mode": "live",
+                "blocked_execution_mode": "live",
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "sandbox",
+                "production_live_enabled": False,
+                "capital_binding_enabled": False,
+                "human_gate_required": True,
+                "proof_boundary": "management_sandbox_facade; not canary/live/capital proof",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-reject", "sandbox")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-reject-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["adapter_error_code"], "SHIOAJI_LIVE_DISABLED")
+        self.assertEqual(order_context["adapter_status_code"], 403)
+        self.assertEqual(order_context["broker_submission_status"], "rejected_before_broker")
+        self.assertFalse(order_context["submitted_to_broker"])
+        self.assertFalse(order_context["production_live_enabled"])
+        self.assertTrue(order_context["human_gate_required"])
+
+    def test_order_partial_fill_lineage_preserves_fill_metrics(self):
+        """Partial-fill quantities in metrics must be promoted into order lineage."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-order-partial-paper",
+            "event_type": "order_partially_filled",
+            "created_at": "2026-06-12T15:30:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-partial-001",
+            "runtime_id": "runtime-partial",
+            "capital_pool_id": "pool-partial",
+            "artifact_id": "artifact-partial",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-partial",
+            "persona_capital_binding_id": "pcb-partial",
+            "trace_id": "trace-partial",
+            "target": {
+                "strategy_id": "strat-partial",
+                "registry_id": "reg-partial",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "requested_quantity": 50.0,
+                "fill_quantity": 20.0,
+                "fill_price": 31.25,
+                "remaining_quantity": 30.0,
+                "partial_fill_ratio": 0.4,
+                "fill_rate": 0.4,
+                "avg_slippage_bps": 0.0,
+            },
+            "metadata": {
+                "adapter": "openclaw_paper_broker",
+                "broker": "paper_broker",
+                "order_id": "paper-order-partial-001",
+                "order_status": "partially_filled",
+                "fill_status": "partially_filled",
+                "submitted_to_broker": True,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "paper",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-partial", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-partial-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["order_status"], "partially_filled")
+        self.assertEqual(order_context["fill_status"], "partially_filled")
+        self.assertEqual(order_context["fill_quantity"], 20.0)
+        self.assertEqual(order_context["remaining_quantity"], 30.0)
+        self.assertEqual(order_context["partial_fill_ratio"], 0.4)
+        self.assertEqual(order_context["fill_rate"], 0.4)
+
+    def test_pnl_snapshot_lineage_preserves_runtime_performance_metrics(self):
+        """Runtime PnL snapshots must keep processed/fill/open-position counters."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-pnl-runtime-performance",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-06-12T15:40:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-pnl-001",
+            "runtime_id": "runtime-pnl",
+            "capital_pool_id": "pool-pnl",
+            "artifact_id": "artifact-pnl",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-pnl",
+            "persona_capital_binding_id": "pcb-pnl",
+            "trace_id": "trace-pnl",
+            "target": {
+                "strategy_id": "strat-pnl",
+                "registry_id": "reg-pnl",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "pnl": 0.0,
+                "processed_signal_count": 1,
+                "execution_event_count": 1,
+                "fill_event_count": 1,
+                "fill_rate": 1.0,
+                "open_position_count": 1,
+                "open_bracket_order_count": 0,
+                "avg_slippage_bps": 0.0,
+            },
+            "metadata": {
+                "runtime_package": "paper_execution_runtime",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-pnl", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-pnl-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["processed_signal_count"], 1)
+        self.assertEqual(order_context["execution_event_count"], 1)
+        self.assertEqual(order_context["fill_event_count"], 1)
+        self.assertEqual(order_context["fill_rate"], 1.0)
+        self.assertEqual(order_context["open_position_count"], 1)
+        self.assertEqual(order_context["open_bracket_order_count"], 0)
+        self.assertEqual(order_context["pnl"], 0.0)
+
+    def test_bracket_order_lineage_preserves_child_order_submission(self):
+        """Submitted bracket child order details must remain queryable after recovery."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-bracket-submitted-paper",
+            "event_type": "bracket_order_logged",
+            "created_at": "2026-06-12T15:42:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-bracket-001",
+            "runtime_id": "runtime-bracket",
+            "capital_pool_id": "pool-bracket",
+            "artifact_id": "artifact-bracket",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-bracket",
+            "persona_capital_binding_id": "pcb-bracket",
+            "trace_id": "trace-bracket",
+            "target": {
+                "strategy_id": "strat-bracket",
+                "registry_id": "reg-bracket",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "action": "bracket_submitted_to_broker",
+                "submitted_to_broker": True,
+            },
+            "metadata": {
+                "signal_id": "quant-breakout-msft-bracket-040",
+                "alpha_source": "pure_quant_breakout_model",
+                "stop_loss_pct": 0.03,
+                "take_profit_pct": 0.06,
+                "entry_price": 300.0,
+                "entry_quantity": 5.0,
+                "legs": [
+                    {
+                        "leg_type": "stop_loss",
+                        "order_type": "STOP_MARKET",
+                        "quantity": -5.0,
+                        "stop_price": 291.0,
+                    },
+                    {
+                        "leg_type": "take_profit",
+                        "order_type": "LIMIT",
+                        "quantity": -5.0,
+                        "limit_price": 318.0,
+                    },
+                ],
+                "submission": {
+                    "bracket_order_id": "bracket-msft-040",
+                    "leg_count": 2,
+                    "legs": [
+                        {
+                            "bracket_order_id": "bracket-msft-040",
+                            "leg_id": "bracket-msft-040-1",
+                            "leg_type": "stop_loss",
+                            "order_type": "STOP_MARKET",
+                            "quantity": -5.0,
+                            "stop_price": 291.0,
+                            "status": "open",
+                        },
+                        {
+                            "bracket_order_id": "bracket-msft-040",
+                            "leg_id": "bracket-msft-040-2",
+                            "leg_type": "take_profit",
+                            "order_type": "LIMIT",
+                            "quantity": -5.0,
+                            "limit_price": 318.0,
+                            "status": "open",
+                        },
+                    ],
+                },
+                "guard_stage": "paper",
+                "guard_reason": "paper/sim bracket execution guard passed",
+                "broker_submission_status": "submitted_to_broker",
+                "submitted_to_broker": True,
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-bracket", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-bracket-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["bracket_order_id"], "bracket-msft-040")
+        self.assertEqual(order_context["bracket_leg_count"], 2)
+        self.assertEqual(order_context["stop_loss_pct"], 0.03)
+        self.assertEqual(order_context["take_profit_pct"], 0.06)
+        self.assertEqual(order_context["entry_price"], 300.0)
+        self.assertEqual(order_context["entry_quantity"], 5.0)
+        self.assertEqual(order_context["guard_stage"], "paper")
+        self.assertTrue(order_context["submitted_to_broker"])
+        self.assertEqual(order_context["submitted_legs"][0]["leg_id"], "bracket-msft-040-1")
+        self.assertEqual(order_context["submitted_legs"][1]["limit_price"], 318.0)
+
+    def test_bracket_logged_only_lineage_preserves_non_entry_reason(self):
+        """Logged-only bracket feedback must keep the exact non-entry reason."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-bracket-close-logged-only",
+            "event_type": "bracket_order_logged",
+            "created_at": "2026-06-12T15:43:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-bracket-close-001",
+            "runtime_id": "runtime-bracket-close",
+            "capital_pool_id": "pool-bracket-close",
+            "artifact_id": "artifact-bracket-close",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-bracket-close",
+            "persona_capital_binding_id": "pcb-bracket-close",
+            "trace_id": "trace-bracket-close",
+            "target": {
+                "strategy_id": "strat-bracket-close",
+                "registry_id": "reg-bracket-close",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "action": "bracket_logged_only",
+                "submitted_to_broker": False,
+            },
+            "metadata": {
+                "signal_id": "quant-close-risk-043",
+                "alpha_source": "pure_quant_close_with_risk",
+                "stop_loss_pct": 0.02,
+                "take_profit_pct": 0.05,
+                "guard_stage": "paper",
+                "guard_reason": "paper/sim bracket execution guard passed",
+                "reason": "not_entry_signal",
+                "broker_submission_status": "logged_only",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-bracket-close", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-bracket-close-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["broker_submission_status"], "logged_only")
+        self.assertFalse(order_context["submitted_to_broker"])
+        self.assertEqual(order_context["guard_stage"], "paper")
+        self.assertEqual(order_context["guard_reason"], "paper/sim bracket execution guard passed")
+        self.assertEqual(order_context["reason"], "not_entry_signal")
+
+    def test_order_cancel_lineage_preserves_cancel_ack(self):
+        """Cancel acknowledgements must keep reason, actor, and unfilled quantity."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-order-cancel-paper",
+            "event_type": "order_canceled",
+            "created_at": "2026-06-12T15:45:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-cancel-001",
+            "runtime_id": "runtime-cancel",
+            "capital_pool_id": "pool-cancel",
+            "artifact_id": "artifact-cancel",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-cancel",
+            "persona_capital_binding_id": "pcb-cancel",
+            "trace_id": "trace-cancel",
+            "target": {
+                "strategy_id": "strat-cancel",
+                "registry_id": "reg-cancel",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "requested_quantity": 12.0,
+                "unfilled_quantity": 12.0,
+                "cancelled_quantity": 12.0,
+                "cancel_latency_ms": 42.0,
+                "fill_rate": 0.0,
+            },
+            "metadata": {
+                "adapter": "openclaw_paper_broker",
+                "broker": "paper_broker",
+                "order_id": "paper-order-cancel-001",
+                "order_status": "canceled",
+                "cancel_status": "acknowledged",
+                "cancel_reason": "price_guard_invalidated",
+                "cancel_requested_by": "operator-risk",
+                "cancel_request_id": "cancel-request-001",
+                "submitted_to_broker": True,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "paper",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-cancel", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-cancel-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["cancel_status"], "acknowledged")
+        self.assertEqual(order_context["cancel_reason"], "price_guard_invalidated")
+        self.assertEqual(order_context["cancel_requested_by"], "operator-risk")
+        self.assertEqual(order_context["unfilled_quantity"], 12.0)
+        self.assertEqual(order_context["cancelled_quantity"], 12.0)
+        self.assertEqual(order_context["cancel_latency_ms"], 42.0)
+
+    def test_validate_only_venue_order_lineage_preserves_adapter_contract(self):
+        """Venue-specific validate-only order context should be queryable."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-kraken-validate-only",
+            "event_type": "order_accepted",
+            "created_at": "2026-06-12T16:00:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-kraken-001",
+            "runtime_id": "runtime-kraken",
+            "capital_pool_id": "pool-kraken",
+            "artifact_id": "artifact-kraken",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-kraken",
+            "persona_capital_binding_id": "pcb-kraken",
+            "trace_id": "trace-kraken",
+            "target": {
+                "strategy_id": "strat-kraken",
+                "registry_id": "reg-kraken",
+                "promotion_state": "paper",
+            },
+            "metrics": {"requested_quantity": 0.75, "fill_rate": 0.0, "total_trades": 0},
+            "metadata": {
+                "adapter": "kraken_execution_boundary",
+                "broker": "kraken",
+                "provider": "Kraken",
+                "client_order_id": "client-kraken-001",
+                "venue": "KRAKEN",
+                "pair": "ETH/USDT",
+                "base_asset": "ETH",
+                "quote_asset": "USDT",
+                "order_type": "limit",
+                "side": "buy",
+                "price": 3500.5,
+                "volume": "0.75",
+                "validate_only": True,
+                "validation_status": "accepted",
+                "order_status": "accepted",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "paper",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-kraken", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-kraken-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["venue"], "KRAKEN")
+        self.assertEqual(order_context["pair"], "ETH/USDT")
+        self.assertEqual(order_context["base_asset"], "ETH")
+        self.assertEqual(order_context["quote_asset"], "USDT")
+        self.assertTrue(order_context["validate_only"])
+        self.assertEqual(order_context["validation_status"], "accepted")
+        self.assertFalse(order_context["submitted_to_broker"])
+
+    def test_ibkr_validate_order_lineage_preserves_contract_fields(self):
+        """IBKR validate-only orders must keep contract and routing fields."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-ibkr-validate-only",
+            "event_type": "order_accepted",
+            "created_at": "2026-06-12T16:15:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-ibkr-001",
+            "runtime_id": "runtime-ibkr",
+            "capital_pool_id": "pool-ibkr",
+            "artifact_id": "artifact-ibkr",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-ibkr",
+            "persona_capital_binding_id": "pcb-ibkr",
+            "trace_id": "trace-ibkr",
+            "target": {
+                "strategy_id": "strat-ibkr",
+                "registry_id": "reg-ibkr",
+                "promotion_state": "paper",
+            },
+            "metrics": {"requested_quantity": 5.0, "fill_rate": 0.0, "total_trades": 0},
+            "metadata": {
+                "adapter": "ibkr_execution_boundary",
+                "broker": "ibkr",
+                "provider": "IBKR",
+                "client_order_id": "client-ibkr-001",
+                "contract_symbol": "AAPL",
+                "exchange": "SMART",
+                "primary_exchange": "NASDAQ",
+                "sec_type": "STK",
+                "currency": "USD",
+                "order_type": "LMT",
+                "side": "BUY",
+                "price": 212.4,
+                "tif": "DAY",
+                "outside_rth": False,
+                "account": "DU1234567",
+                "readonly_market_data": True,
+                "market_data_type": 3,
+                "validate_only": True,
+                "validation_status": "accepted",
+                "order_status": "accepted",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "paper",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-ibkr", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-ibkr-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["contract_symbol"], "AAPL")
+        self.assertEqual(order_context["exchange"], "SMART")
+        self.assertEqual(order_context["primary_exchange"], "NASDAQ")
+        self.assertEqual(order_context["sec_type"], "STK")
+        self.assertEqual(order_context["currency"], "USD")
+        self.assertEqual(order_context["account"], "DU1234567")
+        self.assertEqual(order_context["tif"], "DAY")
+        self.assertFalse(order_context["outside_rth"])
+        self.assertTrue(order_context["readonly_market_data"])
+
+    def test_order_rejection_lineage_preserves_sizing_math(self):
+        """Zero-share rejection context must keep requested and computed quantity."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-zero-share-rejection",
+            "event_type": "order_rejection",
+            "created_at": "2026-06-12T16:30:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-zero-001",
+            "runtime_id": "runtime-zero",
+            "capital_pool_id": "pool-zero",
+            "artifact_id": "artifact-zero",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-zero",
+            "persona_capital_binding_id": "pcb-zero",
+            "trace_id": "trace-zero",
+            "target": {
+                "strategy_id": "strat-zero",
+                "registry_id": "reg-zero",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "requested_quantity": 10.0,
+                "computed_quantity": 0.0,
+                "fill_quantity": 0.0,
+                "fill_rate": 0.0,
+            },
+            "metadata": {
+                "adapter": "lean_paper_runtime",
+                "broker": "lean_paper",
+                "order_status": "rejected",
+                "reject_reason": "cash_value_resolved_to_zero_shares",
+                "quantity_type": "CASH_VALUE",
+                "price": 800.0,
+                "market_price": 800.0,
+                "broker_submission_status": "rejected_before_broker",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+                "deployment_stage": "paper",
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-zero", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-zero-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["reject_reason"], "cash_value_resolved_to_zero_shares")
+        self.assertEqual(order_context["quantity_type"], "CASH_VALUE")
+        self.assertEqual(order_context["requested_quantity"], 10.0)
+        self.assertEqual(order_context["computed_quantity"], 0.0)
+        self.assertEqual(order_context["market_price"], 800.0)
+        self.assertEqual(order_context["fill_rate"], 0.0)
+        self.assertFalse(order_context["submitted_to_broker"])
+
+    def test_paper_order_simulated_recovery_preserves_noop_context(self):
+        """HOLD no-op decisions must recover from the feedback store with order context."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_file = Path(tmpdir) / "feedback_store.jsonl"
+            writer = FeedbackStoreAdapter(feedback_store_path=str(store_file))
+            event = {
+                "event_id": "evt-hold-noop-001",
+                "event_type": "paper_order_simulated",
+                "created_at": "2026-06-12T17:45:00Z",
+                "execution_mode": "paper",
+                "binding_id": "rb-hold-001",
+                "runtime_id": "runtime-hold",
+                "capital_pool_id": "pool-hold",
+                "artifact_id": "artifact-hold",
+                "artifact_version": "1.0.0",
+                "deployment_stage": "paper",
+                "plan_id": "plan-hold",
+                "persona_capital_binding_id": "pcb-hold",
+                "trace_id": "trace-hold",
+                "target": {
+                    "strategy_id": "strat-hold",
+                    "registry_id": "reg-hold",
+                    "promotion_state": "paper",
+                },
+                "metrics": {
+                    "noop_count": 1,
+                    "requested_quantity": 0.0,
+                    "fill_quantity": 0.0,
+                    "fill_rate": 0.0,
+                },
+                "metadata": {
+                    "signal_id": "llm-hold-msft-riskoff-020",
+                    "alpha_source": "llm_riskoff_agent",
+                    "model_id": "gpt-risk-paper",
+                    "noop_reason": "hold_signal",
+                    "decision_status": "no_order",
+                    "order_status": "not_submitted",
+                    "signal_action": "HOLD",
+                    "signal_direction": "LONG",
+                    "quantity_type": "SHARES",
+                    "price": 420.0,
+                    "broker_submission_status": "not_submitted_signal_noop",
+                    "submitted_to_broker": False,
+                    "is_real_order": False,
+                    "is_real_capital": False,
+                },
+            }
+            stored = writer.ingest_telemetry_event(event, "strat-hold", "paper")
+            recovered = FeedbackStoreAdapter(feedback_store_path=str(store_file))
+
+            events = recovered.query_telemetry(
+                strategy_id="strat-hold",
+                event_type="paper_order_simulated",
+                promotion_state="paper",
+                limit=3,
+            )
+            self.assertEqual([item["event_id"] for item in events], [stored["event_id"]])
+
+            payload = recovered.build_learn_feedback_writeback_payload(
+                events[0],
+                sponsor_persona_id="persona-hold-sponsor",
+                contributing_persona_ids=["persona-hold-ops"],
+                summary="LLM HOLD signal was processed as a no-order paper decision.",
+            )
+            evidence = payload["runtime_telemetry_evidence"][0]
+            lineage = evidence["lineage"]
+            self.assertEqual(lineage["alpha_context"]["signal_id"], "llm-hold-msft-riskoff-020")
+            self.assertEqual(lineage["alpha_context"]["alpha_source"], "llm_riskoff_agent")
+            order_context = lineage["order_context"]
+            self.assertEqual(order_context["noop_reason"], "hold_signal")
+            self.assertEqual(order_context["decision_status"], "no_order")
+            self.assertEqual(order_context["order_status"], "not_submitted")
+            self.assertEqual(order_context["signal_action"], "HOLD")
+            self.assertEqual(order_context["signal_direction"], "LONG")
+            self.assertEqual(order_context["fill_rate"], 0.0)
+            self.assertEqual(order_context["noop_count"], 1)
+            self.assertFalse(order_context["submitted_to_broker"])
+
+    def test_paper_order_simulated_exit_no_position_preserves_position_context(self):
+        """EXIT no-position no-ops must keep position context for Learn feedback."""
+        adapter = FeedbackStoreAdapter()
+        event = {
+            "event_id": "evt-exit-empty-noop-001",
+            "event_type": "paper_order_simulated",
+            "created_at": "2026-06-12T18:15:00Z",
+            "execution_mode": "paper",
+            "binding_id": "rb-exit-empty-001",
+            "runtime_id": "runtime-exit-empty",
+            "capital_pool_id": "pool-exit-empty",
+            "artifact_id": "artifact-exit-empty",
+            "artifact_version": "1.0.0",
+            "deployment_stage": "paper",
+            "plan_id": "plan-exit-empty",
+            "persona_capital_binding_id": "pcb-exit-empty",
+            "target": {
+                "strategy_id": "strat-exit-empty",
+                "registry_id": "reg-exit-empty",
+                "promotion_state": "paper",
+            },
+            "metrics": {
+                "noop_count": 1,
+                "requested_quantity": 0.0,
+                "computed_quantity": 0.0,
+                "fill_quantity": 0.0,
+                "fill_rate": 0.0,
+            },
+            "metadata": {
+                "signal_id": "quant-exit-adbe-empty-021",
+                "alpha_source": "quant_drawdown_exit",
+                "noop_reason": "exit_long_without_position",
+                "decision_status": "no_order",
+                "order_status": "not_submitted",
+                "quantity_type": "SHARES",
+                "position_quantity": 0.0,
+                "exit_direction": "LONG",
+                "price": 600.0,
+                "broker_submission_status": "not_submitted_signal_noop",
+                "submitted_to_broker": False,
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+        adapter.ingest_telemetry_event(event, "strat-exit-empty", "paper")
+
+        records = adapter.query_lineage_records("runtime_binding", "rb-exit-empty-001")
+
+        self.assertEqual(len(records), 1)
+        order_context = records[0]["order_context"]
+        self.assertEqual(order_context["noop_reason"], "exit_long_without_position")
+        self.assertEqual(order_context["computed_quantity"], 0.0)
+        self.assertEqual(order_context["position_quantity"], 0.0)
+        self.assertEqual(order_context["exit_direction"], "LONG")
+        self.assertEqual(order_context["broker_submission_status"], "not_submitted_signal_noop")
+        self.assertFalse(order_context["submitted_to_broker"])
+
     def test_query_lineage_records_normalizes_semantic_refs(self):
         """Telemetry raw fields must normalize to semantic read-model fields."""
         adapter = FeedbackStoreAdapter()

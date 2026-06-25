@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-21T21:05:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL-SIDECAR-ACCEPTANCE",
+    "title": "Prepare INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL acceptance packet and dependency map",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SID"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar acceptance packet complete: Section 9 closeout record added; PR #2144 and #2146 merged into dev; all 7 acceptance items (A1-A7) satisfied; no canonical truth modified; task ID too long for 72-char subject, subject_task_id check bypassed per escape hatch.",
+    "last_update": "2026-06-21T21:05:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Acceptance packet approved: dependency map accurate (L0-L6 chain verified against task-brief and archive), 7-item checklist correctly expands the three canonical acceptance criteria (A1 root-cause documented satisfied, A2-A3 pending PR merge, A4 no canonical truth modified satisfied, A5 reviewer approval recorded satisfied, A6-A7 post-merge checks), closeout sequence matches task-closeout-finalization.md pattern. Support artifact only; no canonical truth modified. Owner Claude may absorb into parent task closeout."
+    ],
+    "review_file": "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T21:05:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/integration-unblock-integration-unblock-integration-unblock-integration-unblock-integration-unbl-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "6362fd11fd5e88816a2affc9753a766b215ffeb8",
+      "commit_subject": "INTEGRATION-UNBL-SIDECAR-ACCEPTANCE: add closeout record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Section 9": "all 7 acceptance items (A1-A7) satisfied. PR #2144",
+        "merged into dev at 2026-06-21T20": "58:52Z. No canonical truth",
+        "LLM-Agent": "Claude",
+        "Task-ID": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude2",
+        "Verified": "gh pr view 2144 mergedAt=2026-06-21T20:58:52Z; ancestor check OK"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e803752e5759505d2638526d9f54fb4f93978516",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Acceptance packet ready for review. PR #2144 open (auto-merge enabled). Packet covers: full L0-L6 integration-unblock dependency map, 7-item acceptance checklist, current state observation 2026-06-21, closeout sequence for parent owner. Support artifact only; no canonical truth modified.",
+      "status": "done",
+      "created_at": "2026-06-21T20:51:42Z",
+      "resolved_at": "2026-06-21T20:52:54Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBL-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Sidecar acceptance packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T20:52:54Z",
+      "resolved_at": "2026-06-21T21:05:17Z"
+    }
+  ],
+  "blockers": []
+}

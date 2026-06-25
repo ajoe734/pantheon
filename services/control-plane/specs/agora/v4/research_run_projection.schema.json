@@ -1,0 +1,368 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/research_run_projection/v1",
+  "title": "ResearchRunProjection",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "run_id",
+    "plan_id",
+    "workshop_id",
+    "strategy_id",
+    "strategy_spec_registry_id",
+    "stage_id",
+    "stage_type",
+    "execution_status",
+    "outcome",
+    "progress",
+    "backend",
+    "no_order_route_proof",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "plan_id": {
+      "type": "string"
+    },
+    "workshop_id": {
+      "type": "string"
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "strategy_spec_registry_id": {
+      "type": "string"
+    },
+    "stage_id": {
+      "type": "string"
+    },
+    "stage_type": {
+      "type": "string"
+    },
+    "execution_status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "dispatching",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out"
+      ]
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "pass",
+        "fail",
+        "inconclusive"
+      ]
+    },
+    "progress": {
+      "$ref": "#/definitions/progress"
+    },
+    "backend": {
+      "type": "object",
+      "required": [
+        "requested",
+        "effective",
+        "mode"
+      ],
+      "properties": {
+        "requested": {
+          "type": "string"
+        },
+        "effective": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "real",
+            "fixture",
+            "stub"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "activation_state": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/metric"
+      },
+      "default": []
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "finding_id",
+          "severity",
+          "summary"
+        ],
+        "properties": {
+          "finding_id": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "watch",
+              "warning",
+              "high",
+              "critical"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/evidence_ref"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocking_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/evidence_ref"
+      }
+    },
+    "lineage_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "failure": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "failed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "data_cutoff": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "no_order_route_proof": {
+      "type": "string",
+      "enum": [
+        "research_only_not_direct_action"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "definitions": {
+    "progress": {
+      "type": "object",
+      "required": [
+        "phase",
+        "percent",
+        "updated_at"
+      ],
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "completed_units": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_units": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metric": {
+      "type": "object",
+      "required": [
+        "category",
+        "name",
+        "value",
+        "gate_result"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "performance",
+            "risk",
+            "cost",
+            "capacity",
+            "robustness",
+            "calibration",
+            "data_quality"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "higher_better",
+            "lower_better",
+            "target_range"
+          ]
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "gate_result": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "not_applicable",
+            "not_evaluated"
+          ]
+        },
+        "baseline": {
+          "type": "number"
+        },
+        "delta": {
+          "type": "number"
+        },
+        "ci_lower": {
+          "type": "number"
+        },
+        "ci_upper": {
+          "type": "number"
+        },
+        "source_ref": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_ref": {
+      "type": "object",
+      "required": [
+        "ref_type",
+        "ref_id"
+      ],
+      "properties": {
+        "ref_type": {
+          "type": "string",
+          "enum": [
+            "evidence_bundle",
+            "evidence_item",
+            "source_record",
+            "citation",
+            "experiment_artifact",
+            "registry_entry",
+            "consult_memo",
+            "research_run",
+            "telemetry_snapshot",
+            "market_context"
+          ]
+        },
+        "ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "data_cutoff": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

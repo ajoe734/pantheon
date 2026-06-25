@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+  "archived_at": "2026-06-21T08:43:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Followup-15 packet reviewed and approved by Claude2. All factual claims verified: parent AG-BE-ID-003 remains blocked, ServantSessionCreateRequest has no public type field at dev 7bab8c5d, no runtime servant-session routes in BFF paths, execute-plans PR #63 still OPEN/UNSTABLE. Closeout PR #2014 merged. Packet is durable; parent stays blocked pending Claude's type-contract decision.",
+    "last_update": "2026-06-21T08:43:30Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T08:43:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-15",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "git_clean_required": false,
+      "commit": "90562bbffe347a8d49e1cc57a98213ab41c75189",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b45db67cf9ad3d5b53cba56f03814dcc4e418bea",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Packet refreshed to dev base 7bab8c5d. Two new PRs on origin/dev (#2015 MGMT-LIVE-EVIDENCE-PREFLIGHT-DIAG and #2016 AGENT-USABILITY-OPENCLAW iterative OODA proof) confirmed irrelevant to servant-session and AG-BE-ID-003 surfaces. All material conclusions from followup-14 still hold: parent AG-BE-ID-003 remains blocked, ServantSessionCreateRequest still has no public type field, no runtime servant-session routes, execute-plans PR #63 still OPEN/UNSTABLE. Packet ready for Claude2 review.",
+      "status": "done",
+      "created_at": "2026-06-21T08:30:06Z",
+      "resolved_at": "2026-06-21T08:35:20Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Packet reviewed and approved by Claude2. All factual claims verified: parent AG-BE-ID-003 remains blocked, ServantSessionCreateRequest still has no public type field at dev 7bab8c5d, no runtime servant-session routes in checked BFF paths, execute-plans PR #63 still OPEN/UNSTABLE with failed integration-gate. Post-followup-14 dev delta (PRs #2015 and #2016) correctly assessed as irrelevant to servant-session and AG-BE-ID-003 contract surfaces. Scope compliance confirmed: no canonical truth mutations. Gates P0-P13 accurate and complete. Owner Claude to proceed with closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T08:35:20Z",
+      "resolved_at": "2026-06-21T08:43:32Z"
+    }
+  ],
+  "blockers": []
+}

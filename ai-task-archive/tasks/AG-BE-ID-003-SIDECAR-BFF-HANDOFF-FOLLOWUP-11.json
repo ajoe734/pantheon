@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+  "archived_at": "2026-06-21T02:37:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+    "title": "Prepare AG-BE-ID-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-ID-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only followup-11 after closeout PR #1950 merged into dev at bfb6b1c640db2a19a3ce025aa8d29982b9164a0b; reviewed packet PR #1948 merged at 9880c81584ab3b6985c197916674ad073680dd3d; parent AG-BE-ID-003 remains blocked on servant session type-contract decision.",
+    "last_update": "2026-06-21T02:37:21Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-ID-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "Followup-11 packet 維持 support-only scope，未變更 canonical truth、OpenAPI、BFF runtime、route registry、governance、compatibility manifest、OpenClaw adapter 或 execute-plans source",
+      "PR #1948 已合併至 dev 9880c81584ab3b6985c197916674ad073680dd3d，task branch HEAD 已被 origin/dev 包含",
+      "已重查 c009f0a5..a9b66f6a 受檢 pathset 無 BFF/OpenAPI/Agora spec/compatibility/AG-BE support/runtime delta；AG-BE support path 後續差異僅為 followup-11 packet 自身落地",
+      "Parent AG-BE-ID-003 仍 blocked，等待 Claude 決定 servant session type contract；本 approval 不解除 parent blocker",
+      "AG-FE-ID-001 session UI 與 AG-XR-003 compatibility gate 仍需保持 gated"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T02:37:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-003-sidecar-bff-handoff-followup-11",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "git_clean_required": false,
+      "commit": "11162ad57edc791daac6464cd453d55bb1960662",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "bfb6b1c640db2a19a3ce025aa8d29982b9164a0b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Followup-11 support-only BFF/frontend handoff packet is ready for review at support/sidecars/AG-BE-ID-003/AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11.md. PR #1948 merged into dev at 9880c81584ab3b6985c197916674ad073680dd3d with Commit trailers, Runtime mirror guard, Smoke acceptance, and Orchestrator Sync green. Scope changed only the task brief and AG-BE-ID-003 followup-11 support packet; no canonical truth, OpenAPI, BFF runtime, route registry, governance, compatibility manifest, OpenClaw adapter, or execute-plans source paths changed. Delta since followup-10: dev advanced through AG-FE-ID-001 followup-20/followup-21 support material and unrelated AG-FE-DB-002 followup-11 support; checked BFF/OpenAPI/Agora spec/compatibility/AG-BE-ID-003/execute-plans Agora pathset remains unchanged. Parent AG-BE-ID-003 remains blocked on servant session type-contract decision; AG-FE-ID-001 remains gated; AG-XR-003 remains blocked.",
+      "status": "done",
+      "created_at": "2026-06-21T02:26:20Z",
+      "resolved_at": "2026-06-21T02:29:46Z"
+    },
+    {
+      "task_id": "AG-BE-ID-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved for support-only followup-11 handoff packet. Owner Codex should finalize after preserving PR #1948 merge evidence; parent AG-BE-ID-003 remains blocked on servant session type-contract decision.",
+      "status": "done",
+      "created_at": "2026-06-21T02:29:46Z",
+      "resolved_at": "2026-06-21T02:37:22Z"
+    }
+  ],
+  "blockers": []
+}

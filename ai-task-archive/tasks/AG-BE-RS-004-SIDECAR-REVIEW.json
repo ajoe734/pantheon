@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-RS-004-SIDECAR-REVIEW",
+  "archived_at": "2026-06-21T16:06:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-RS-004-SIDECAR-REVIEW",
+    "title": "Prepare AG-BE-RS-004 review packet and evidence summary",
+    "summary_zh": "平行支援 AG-BE-RS-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "EPIC AGORA-RS / Phase 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-RS-004/AG-BE-RS-004-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only sidecar after reviewer approval; PR #2104 merged to dev at 0621f614 with task commit c7b46571, visible GitHub checks green, focused validation recorded in support packet.",
+    "last_update": "2026-06-21T16:06:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-RS-004",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "PR #2096 已合併，merge commit 9cb0158f 確認，5 檔案 1336 行正確",
+      "28 tests passed + Step 7 11 tests passed 本機重跑確認",
+      "Section 3.3 guardrail 邏輯全數存在（行號有約 7-9 行偏移，不影響正確性）",
+      "支援文件邊界確認：無 canonical truth 修改"
+    ],
+    "review_file": "support/sidecars/AG-BE-RS-004/AG-BE-RS-004-SIDECAR-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T16:06:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-rs-004-sidecar-review",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-RS-004-SIDECAR-REVIEW",
+      "git_clean_required": false,
+      "commit": "c7b465710c4bf33c049cc7f77ea4e50fc8f44748",
+      "commit_subject": "AG-BE-RS-004-SIDECAR-REVIEW: add review packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars/AG-BE-RS-004 review_packet evidence summary for AG-BE-RS-004.",
+        "Not changing": "L1 canonical truth, parent implementation, OpenAPI/schema truth, runtime registry, BFF routing, governance behavior, or parent task lifecycle.",
+        "Composes with": "AG-BE-RS-004 parent PR #2096 merged to dev and Claude review of this sidecar packet.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-BE-RS-004-SIDECAR-REVIEW",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m pytest integrations/openclaw/skills/agora/result_synthesis/test_skill.py -v; python3 -m pytest services/control-plane/tests/agora/test_winner_branch_e2e_v13.py::TestStep7ResultsAndPatchProposal -v; git diff --cached --check via private index"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-RS-004-SIDECAR-REVIEW",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0621f614978d75f866690e2f9d4c69dc285a8967",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-RS-004-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review packet merged in PR #2104 (merge commit 0621f614978d75f866690e2f9d4c69dc285a8967); ready for Claude review. Focused validation: result_synthesis pytest 28 passed; v1.3 Step 7 patch proposal pytest 11 passed.",
+      "status": "done",
+      "created_at": "2026-06-21T16:01:07Z",
+      "resolved_at": "2026-06-21T16:03:18Z"
+    },
+    {
+      "task_id": "AG-BE-RS-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review packet approved; PR #2096 merge commit/file surface/checks verified; 28+11 focused tests re-confirmed locally; all guardrails present in skill.py; support-only boundary holds.",
+      "status": "done",
+      "created_at": "2026-06-21T16:03:18Z",
+      "resolved_at": "2026-06-21T16:06:09Z"
+    }
+  ],
+  "blockers": []
+}

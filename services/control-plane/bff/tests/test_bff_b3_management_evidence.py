@@ -162,4 +162,4 @@ def test_management_evidence_requires_read_authentication() -> None:
         response = client.get("/bff/management/evidence")
 
         assert response.status_code == 401, response.text
-        assert response.json()["detail"]["error"]["code"] == "INVALID_TOKEN"
+        assert response.json()["error"]["code"] == "AUTH_REQUIRED"

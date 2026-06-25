@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T22:28:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED BFF and frontend handoff packet",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: sidecar BFF handoff packet finalized. Updated validation status in_progress → review_approved per CI-RED lesson learned; task brief synced. Closeout commit 4f5bdf34; PR #2154 merged dev 2026-06-21T22:27:59Z, all CI checks SUCCESS.",
+    "last_update": "2026-06-21T22:28:14Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "BFF handoff packet for CI-red unblock context approved: summarises CI-red root cause (stale in_progress status in FOLLOWUP-4 validation section), fix (commit a009e917, PR #2147 merged all checks SUCCESS), PR #2153 integration merge; carries forward key FOLLOWUP-4 findings (SSE channel catalog gap, router injection gap, Q3/Q5/Q6/Q7 resolutions, GovernedIntentHandoff type supplement); documents CI-red lesson learned for future packet authors; confirms post-fix BFF state (trading_room router placeholder, tradingRoom.ts absent, AG-BE-TR-001 todo, AG-BE-CP-001 blocked) — all as support material without modifying canonical truth."
+    ],
+    "review_file": "support/sidecars/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T22:28:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/integration-unblock-ag-be-tr-001-sidecar-bff-handoff-followup-4-ci-red-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "d51b0eb096e0ad4ff627e6509309c5536960fbfe",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f977290ecb5e716d966910d45eb1cc819dd68d55",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF handoff packet complete: CI-red root cause summary, post-fix state, FOLLOWUP-4 key findings carry-forward, lesson learned. Ready for Claude review.",
+      "status": "done",
+      "created_at": "2026-06-21T22:12:19Z",
+      "resolved_at": "2026-06-21T22:15:01Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-CI-RED-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF handoff packet for CI-red unblock context approved for AG-BE-TR-001 owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T22:15:01Z",
+      "resolved_at": "2026-06-21T22:28:15Z"
+    }
+  ],
+  "blockers": []
+}

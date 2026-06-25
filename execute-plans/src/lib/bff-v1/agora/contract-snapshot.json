@@ -1,0 +1,37 @@
+{
+  "capability_count": 9,
+  "contract_name": "pantheon-agora-v1",
+  "contract_version": "1.1",
+  "extends": {
+    "bundle_index_sha256": "286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b",
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.json",
+    "bundle_version": "1.0",
+    "frozen_by": "AG-XR-001"
+  },
+  "files": {
+    "openapi/agora_v1.openapi.yaml": "4da5ea91923e40c13a9118ee4f784a5d6627e6cb91e4d4712d8fac244912118f",
+    "specs/agora/agora_user_scope.schema.json": "ae660aa7719ded37ca8b41bfc6ac287d1eae0bb85a8389b08d069c528a934dee",
+    "specs/agora/candidate_pool.schema.json": "679077c2f567502883f0b7735332645df30cccd6752a978379c5eeecd058e3b9",
+    "specs/agora/capability_manifest.json": "5988cac6d8ca38fc0c51922086c1cc2564b1bb31b2b36ee276e6d363249e9e3e",
+    "specs/agora/dashboard_recipe.schema.json": "5b9c33653eb8c85b001b5f6f6a802e83e58276a25f6c00e0a030a7094c78a8f6",
+    "specs/agora/personalization_event.schema.json": "df7991d19943650a61d58a065182fe4bda20f967b4098a36f36b1ab4b33bcb21",
+    "specs/agora/research_plan.schema.json": "55010d81198a4eef6934cde9392e19d79d014bf3f7ef6d31901b37627bd040d4",
+    "specs/agora/research_run_summary.schema.json": "669530ad2aed09133e84344aec7768e375c9cc505728b136d76041366184328b",
+    "specs/agora/servant_profile.schema.json": "71b114fa03fe0d54f72c785855760482d5c1ea5500a039a7c0593c490d58f930",
+    "specs/agora/shadow_decision.schema.json": "1414c77ddebb5102b81a10fb57db32520c607daba76cb3736f7eb20eb751b0b2",
+    "specs/agora/strategy_completeness.schema.json": "13a8c0e28a6434b93b221a4d33f8022f87ee6ca4df99627728800117474ce2fa",
+    "specs/agora/strategy_workshop.schema.json": "d8d1662790f35d61fdaff0580ca488011dd90f4b4007d78e9fb77a5065396aec",
+    "specs/agora/trading_event.schema.json": "14bd9e788c855c30a1803a767e66a38efc6f7505bfddf59d3095499d113f02f4",
+    "specs/agora/trading_intent.schema.json": "588a0508e6b00206be1361e6337b440b7710df0075d6272adb4e85040be4f7ad",
+    "specs/agora/v2/capability_manifest_v1_1.json": "6a729d1284ca8f88058a4c301dc67a4c17fd76097190bf020310f4f2cab3db41",
+    "specs/agora/v2/chart_spec_v1.schema.json": "0bcd0fa5fc21d7c021d54803780e310cfd9234b3ea15c044fa0b5cdfffed0967",
+    "specs/agora/v2/compatibility_manifest.schema.json": "84c3607195484d09710708c08e7c29821b75d83199376cd5374a2ce0c3ca7827",
+    "specs/agora/v2/dashboard_recipe_v2.schema.json": "34c7e0fab793ec79776e9ddd5cca98683cacc6b8bba328e02a8c4c5eba45c13a",
+    "specs/agora/v2/widget_spec_v2.schema.json": "d360a17a9762d69e6a5e2c87921117bb85ee34d972fd8034f8904df6facb993f",
+    "specs/agora/widget_spec.schema.json": "0749275943dc155afa08dbb8736c336d613daf18b99b42f6c10aec15d2eabedb"
+  },
+  "frozen_by": "AG-XR-001",
+  "operation_count": 96,
+  "schema_count": 17,
+  "source_bundle": "services/control-plane/specs/agora/bundle_index.v1_1.json"
+}

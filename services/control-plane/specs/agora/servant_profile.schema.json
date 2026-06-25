@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/servant_profile/v1",
+  "title": "ServantProfile",
+  "description": "User-private Agora servant persona profile backed by the existing Persona Registry. This profile grants no runtime binding, broker, or capital authority.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "persona_id",
+    "display_name",
+    "status",
+    "tenant_id",
+    "agora_user_id",
+    "persona_class",
+    "owner_scope",
+    "visibility_scope",
+    "memory_scope",
+    "capability_summary",
+    "policy"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable persona registry ID."
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name shown in Agora UI."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "suspended", "paper_only", "shadow_only", "retired"],
+      "description": "Current operational status of the persona."
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant owner of this user-private servant profile."
+    },
+    "agora_user_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Agora user that owns this servant persona profile."
+    },
+    "persona_class": {
+      "type": "string",
+      "enum": ["agora_servant"],
+      "description": "Phase-1 metadata stored on the existing Persona Registry record."
+    },
+    "owner_scope": {
+      "type": "string",
+      "enum": ["user_private"]
+    },
+    "visibility_scope": {
+      "type": "string",
+      "enum": ["private", "redacted_management"]
+    },
+    "memory_scope": {
+      "type": "string",
+      "enum": ["private_user"]
+    },
+    "capability_summary": {
+      "type": "object",
+      "description": "High-level capability flags visible to operators.",
+      "required": ["can_ask", "can_research", "can_workshop"],
+      "properties": {
+        "can_ask": {
+          "type": "boolean",
+          "description": "Persona accepts ask-persona queries."
+        },
+        "can_research": {
+          "type": "boolean",
+          "description": "Persona can emit research plans."
+        },
+        "can_workshop": {
+          "type": "boolean",
+          "description": "Persona participates in strategy workshops."
+        },
+        "can_shadow": {
+          "type": "boolean",
+          "description": "Persona emits shadow decisions."
+        },
+        "asset_classes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Asset classes this persona covers.",
+          "default": []
+        },
+        "strategy_families": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Strategy families this persona specialises in.",
+          "default": []
+        },
+        "allowed_agora_capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/agora_capability" },
+          "description": "Agora-only capabilities exposed by this profile.",
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": { "$ref": "#/definitions/agora_servant_policy" },
+    "description": {
+      "type": "string",
+      "description": "Optional operator-facing description of the persona's role."
+    },
+    "avatar_ref": {
+      "type": "string",
+      "description": "Optional UI avatar asset reference."
+    },
+    "last_active_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last time the persona processed a request."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "agora_capability": {
+      "type": "string",
+      "enum": [
+        "agora.identity.v1",
+        "agora.session.v1",
+        "agora.workshop.v1",
+        "agora.research.v1",
+        "agora.trading.v1",
+        "agora.dashboard.v1",
+        "agora.personalization.v1"
+      ]
+    },
+    "agora_servant_policy": {
+      "type": "object",
+      "required": [
+        "persona_class",
+        "owner_scope",
+        "visibility_scope",
+        "memory_scope",
+        "persona_registry_backed",
+        "execution_authority",
+        "prohibited_authority"
+      ],
+      "properties": {
+        "persona_class": { "type": "string", "enum": ["agora_servant"] },
+        "owner_scope": { "type": "string", "enum": ["user_private"] },
+        "visibility_scope": { "type": "string", "enum": ["private", "redacted_management"] },
+        "memory_scope": { "type": "string", "enum": ["private_user"] },
+        "persona_registry_backed": { "type": "boolean", "const": true },
+        "execution_authority": { "type": "string", "enum": ["none"] },
+        "prohibited_authority": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["runtime_binding", "broker_order", "capital_binding"]
+          },
+          "minItems": 3,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

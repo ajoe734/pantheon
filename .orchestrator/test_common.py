@@ -95,6 +95,27 @@ class FailureSummaryTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota")
         self.assertEqual(result["summary"], "Codex usage limit reached")
 
+    def test_summarize_failure_reason_treats_codex_revoked_token_as_auth(self) -> None:
+        for reason in (
+            "ERROR: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.",
+            'Failed to refresh token: 401 Unauthorized: {"error": {"code": "refresh_token_invalidated"}}',
+            '{"error": {"message": "Your authentication token has been invalidated.", "code": "token_invalidated", "status": 401}}',
+            "codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 401 Unauthorized",
+        ):
+            with self.subTest(reason=reason):
+                result = common.summarize_failure_reason(reason, "Codex2")
+                self.assertEqual(result["kind"], "auth")
+                self.assertEqual(result["summary"], "Authentication failure")
+
+    def test_summarize_failure_reason_does_not_treat_bare_401_narrative_as_auth(self) -> None:
+        # A chair narrative that merely mentions a 401 must not be misclassified.
+        result = common.summarize_failure_reason(
+            "The chair noted the BFF returned a 401 for the unauthenticated probe, which is expected.",
+            "Claude",
+        )
+
+        self.assertNotEqual(result["kind"], "auth")
+
 
 class GithubCliEnvTests(unittest.TestCase):
     def test_preserve_github_cli_auth_env_keeps_source_config_when_home_changes(self) -> None:

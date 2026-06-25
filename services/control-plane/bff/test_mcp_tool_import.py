@@ -114,7 +114,7 @@ def test_import_tools_replays_same_idempotency_key_and_conflicts_on_changed_payl
     assert second.json()["data"]["importId"] == first.json()["data"]["importId"]
     assert second.json()["data"]["replayed"] is True
     assert conflict.status_code == 409, conflict.text
-    assert conflict.json()["detail"]["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
 
 
 def test_import_and_tool_actions_reject_body_key_and_missing_action_idempotency() -> None:
@@ -126,7 +126,7 @@ def test_import_and_tool_actions_reject_body_key_and_missing_action_idempotency(
         json=body_with_key,
     )
     assert import_response.status_code == 400, import_response.text
-    assert import_response.json()["detail"]["error"]["details"]["precondition_failed"] == "body_idempotency_key"
+    assert import_response.json()["error"]["details"]["precondition_failed"] == "body_idempotency_key"
 
     body_with_unknown_field = {**_import_body(), "standaloneToolCreate": True}
     unknown_field = client.post(
@@ -135,7 +135,7 @@ def test_import_and_tool_actions_reject_body_key_and_missing_action_idempotency(
         json=body_with_unknown_field,
     )
     assert unknown_field.status_code == 422, unknown_field.text
-    assert unknown_field.json()["detail"]["error"]["details"]["precondition_failed"] == "payload_shape"
+    assert unknown_field.json()["error"]["details"]["precondition_failed"] == "payload_shape"
 
     imported = client.post(
         "/bff/v1/mcp/servers/server-alpha/import-tools",
@@ -150,7 +150,7 @@ def test_import_and_tool_actions_reject_body_key_and_missing_action_idempotency(
         json={"reason": "Probe action admission", "scope": {"executionContext": "research"}},
     )
     assert missing_key.status_code == 400, missing_key.text
-    assert missing_key.json()["detail"]["error"]["details"]["precondition_failed"] == "idempotency_key"
+    assert missing_key.json()["error"]["details"]["precondition_failed"] == "idempotency_key"
 
 
 def test_import_rejects_implicit_standalone_create_and_route_is_absent() -> None:
@@ -226,7 +226,7 @@ def test_tool_action_rejects_missing_tool_viewer_role_and_live_lean_direct_grant
         json={"reason": "Missing import", "scope": {"executionContext": "research"}},
     )
     assert missing.status_code == 404, missing.text
-    assert missing.json()["detail"]["error"]["code"] == "OBJECT_NOT_FOUND"
+    assert missing.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
     viewer = client.post(
         "/bff/v1/mcp/servers/server-alpha/import-tools",
@@ -250,6 +250,6 @@ def test_tool_action_rejects_missing_tool_viewer_role_and_live_lean_direct_grant
         json={"reason": "Try live grant", "scope": {"executionContext": "live"}},
     )
     assert denied.status_code == 409, denied.text
-    detail = denied.json()["detail"]
-    assert detail["error"]["code"] == "PRECONDITION_NOT_MET"
+    detail = denied.json()
+    assert detail["error"]["code"] == "PRECONDITION_FAILED"
     assert detail["error"]["details"]["precondition_failed"] == "lean_direct_live"

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+  "archived_at": "2026-06-22T02:06:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+    "title": "Prepare AG-BE-TR-001 BFF and frontend handoff packet followup 7",
+    "summary_zh": "平行支援 AG-BE-TR-001，補齊 BFF/frontend handoff followup-7，不改 canonical truth。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #2177 merged into dev at 4627f3938ba1d4ba41780ea0b79c17b6bc24e3ec; support-only followup-7 packet is ready for AG-BE-TR-001 parent owner absorption; Branch CI Gate checks passed.",
+    "last_update": "2026-06-22T02:06:19Z",
+    "task_class": "sidecar_support",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-TR-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "owned_ready_dispatch",
+    "review_notes_zh": [
+      "Followup-7 BFF/frontend handoff packet approved: documents browser/CORS blocker for OpenAPI-required If-Match and ETag flow; clarifies runtime _bff_error/ErrorCode allowlist gap versus packet-specific TRADING_* subcodes; identifies missing write-role injection for Trading Room mutation routes; identifies missing ReadSurfaceStore datasets/methods and CommandType/ObjectType entries for Trading Room events/intents/handoffs; corrects SSE replay window to 500 events and adds trading_room resync-route guidance; calls out native EventSource auth limitation. Support-only material; no canonical truth, OpenAPI, schema, runtime, registry/governance, or frontend code changed."
+    ],
+    "review_file": "support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T02:06:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-tr-001-sidecar-bff-handoff-followup-7",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "git_clean_required": false,
+      "commit": "18810fdb51a4a271eb3d19c158ce86077e392cef",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4627f3938ba1d4ba41780ea0b79c17b6bc24e3ec",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Followup-7 support packet committed in bedbe35a and PR #2177 opened with auto-merge enabled: https://github.com/ajoe734/pantheon/pull/2177. Please review support-only handoff content for CORS If-Match/ETag, ErrorCode, write-role, read-store/command model, and SSE replay/resync findings.",
+      "status": "done",
+      "created_at": "2026-06-22T01:58:40Z",
+      "resolved_at": "2026-06-22T02:00:26Z"
+    },
+    {
+      "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Support-only AG-BE-TR-001 BFF/frontend handoff followup-7 approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T02:00:26Z",
+      "resolved_at": "2026-06-22T02:06:20Z"
+    }
+  ],
+  "blockers": []
+}

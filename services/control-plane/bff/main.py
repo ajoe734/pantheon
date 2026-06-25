@@ -15,7 +15,7 @@ from collections import deque
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
 
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
@@ -34,6 +34,12 @@ if _REPO_ROOT not in sys.path:
 _PERSONA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "persona"))
 if _PERSONA_SERVICE_DIR not in sys.path:
     sys.path.insert(0, _PERSONA_SERVICE_DIR)
+_CRON_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cron"))
+if _CRON_SERVICE_DIR not in sys.path:
+    sys.path.append(_CRON_SERVICE_DIR)
+_OODA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ooda"))
+if _OODA_SERVICE_DIR not in sys.path:
+    sys.path.append(_OODA_SERVICE_DIR)
 
 from services.foundation import (  # noqa: E402
     ActorRef,
@@ -176,6 +182,19 @@ _DEFAULT_LOVABLE_CORS_ORIGINS = [
     # BFF-B1-001: execute-plans Lovable project (UUID 140c41d5) published preview.
     "https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
 ]
+# Loopback origins for the FE-BFF integration gate and local dev: CI builds the
+# execute-plans frontend and serves it on 127.0.0.1:4173 (vite preview) / 5173
+# (vite dev), then opens a cross-origin browser EventSource against this BFF.
+# These origins are never in the deploy-time PANTHEON_BFF_CORS_ORIGINS allowlist,
+# so without them the browser blocks the SSE handshake (readyState=0) even though
+# the SSE endpoint itself is healthy. Appended only in non-production-strict mode,
+# so production/staging-live preflight is unaffected.
+_DEV_LOOPBACK_CORS_ORIGINS = [
+    "http://127.0.0.1:4173",
+    "http://localhost:4173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+]
 _DEV_LOVABLE_CORS_ORIGINS = {
     # Self-hosted dev FE origin is dev-only: production-strict mode must filter it.
     "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
@@ -262,6 +281,11 @@ def _cors_origins_from_env() -> List[str]:
             for origin in origins
             if origin not in _DEV_LOVABLE_CORS_ORIGINS and origin != "*"
         ]
+    else:
+        # Non-strict (dev/test) tiers always accept the loopback origins the
+        # FE-BFF integration gate and local vite servers use, regardless of the
+        # deploy-time PANTHEON_BFF_CORS_ORIGINS override.
+        origins = origins + _DEV_LOOPBACK_CORS_ORIGINS
     return _dedupe_origins(origins)
 
 
@@ -272,6 +296,47 @@ def _cors_origin_allowed(origin: str) -> bool:
     if not _is_production_strict_mode():
         return bool(_LOVABLE_PREVIEW_ORIGIN_PATTERN.match(normalized))
     return False
+
+
+# Baseline security response headers for the operator BFF. Chosen to be safe for
+# a JSON API consumed cross-origin by the operator FE and for SSE streams:
+# - nosniff: block MIME-type sniffing
+# - frame DENY: the API must never be framed (clickjacking defense)
+# - no-referrer: never leak operator URLs (which can carry ids) to third parties
+# Deliberately omitted: CSP (no HTML served here), Cross-Origin-Resource-Policy
+# (would block the cross-origin FE), and HSTS (owned by the TLS edge / Caddy).
+_SECURITY_RESPONSE_HEADERS = (
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+)
+
+
+class _SecurityHeadersMiddleware:
+    """Pure-ASGI middleware that appends baseline security headers.
+
+    Implemented at the ASGI layer (not BaseHTTPMiddleware) so it does not buffer
+    or break StreamingResponse / SSE endpoints.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def _send(message: Any) -> None:
+            if message.get("type") == "http.response.start":
+                headers = message.setdefault("headers", [])
+                present = {name.lower() for name, _ in headers}
+                for name, value in _SECURITY_RESPONSE_HEADERS:
+                    if name not in present:
+                        headers.append((name, value))
+            await send(message)
+
+        await self.app(scope, receive, _send)
 
 
 def _build_bff_app() -> FastAPI:
@@ -290,6 +355,9 @@ def _build_bff_app() -> FastAPI:
         if preview_regex:
             middleware_kwargs["allow_origin_regex"] = preview_regex
         built_app.add_middleware(_PantheonCORSMiddleware, **middleware_kwargs)
+    # Added after CORS so it is the outermost layer: it appends security headers
+    # to the final response without disturbing the CORS headers.
+    built_app.add_middleware(_SecurityHeadersMiddleware)
     return built_app
 
 
@@ -319,6 +387,7 @@ _CORS_EXPOSE_HEADERS = [
 ]
 app = _build_bff_app()
 _OPENAPI_HTTP_CONTEXT: ContextVar[bool] = ContextVar("openapi_http_context", default=False)
+_REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
 
 
 def _schema_with_legacy_action_path_for_http(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -371,6 +440,78 @@ async def _openapi_http_schema_context(request: Request, call_next):
     finally:
         if token is not None:
             _OPENAPI_HTTP_CONTEXT.reset(token)
+
+
+@app.middleware("http")
+async def _request_dry_run_context(request: Request, call_next):
+    token = _REQUEST_DRY_RUN_CONTEXT.set(_truthy_header(request.headers.get("X-Dry-Run")))
+    try:
+        return await call_next(request)
+    finally:
+        _REQUEST_DRY_RUN_CONTEXT.reset(token)
+
+
+def _explicit_token_capabilities(identity: OperatorIdentity) -> List[str]:
+    claims = getattr(identity, "claims", {}) or {}
+    if not isinstance(claims, dict):
+        return []
+    raw = (
+        claims.get("capabilities")
+        or claims.get("capability")
+        or claims.get("scp")
+        or claims.get("scope")
+        or []
+    )
+    if isinstance(raw, str):
+        values = re.split(r"[\s,]+", raw)
+    elif isinstance(raw, (list, tuple, set)):
+        values = list(raw)
+    else:
+        values = []
+    deduped: List[str] = []
+    seen = set()
+    for value in values:
+        clean = str(value or "").strip()
+        if clean and clean not in seen:
+            deduped.append(clean)
+            seen.add(clean)
+    return deduped
+
+
+def _is_agora_only_token(identity: OperatorIdentity) -> bool:
+    capabilities = _explicit_token_capabilities(identity)
+    return bool(capabilities) and all(capability.startswith("agora.") for capability in capabilities)
+
+
+@app.middleware("http")
+async def _management_rejects_agora_scope(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or not (path == "/bff/management" or path.startswith("/bff/management/")):
+        return await call_next(request)
+
+    authorization = request.headers.get("authorization")
+    if not authorization:
+        return await call_next(request)
+    try:
+        identity = _extract_identity(authorization)
+    except HTTPException:
+        return await call_next(request)
+
+    if not _is_agora_only_token(identity):
+        return await call_next(request)
+
+    correlation_id = _error_response_correlation_id(request)
+    return _pack_d_error_response(
+        status_code=403,
+        code=ErrorCode.FORBIDDEN,
+        message="Agora-scoped token cannot access Management routes",
+        correlation_id=correlation_id,
+        details={
+            "reason": "AGORA_SCOPE_VIOLATION",
+            "precondition_failed": "agora_scope",
+            "route": path,
+        },
+    )
 
 # --------------------------------------------------------------------------- #
 # Storage
@@ -987,6 +1128,33 @@ def _stub_identity_capabilities(token_capabilities: List[str]) -> List[str]:
     )
 
 
+def _with_structured_identity_capabilities(identity: OperatorIdentity) -> OperatorIdentity:
+    if identity.token_kind != "structured":
+        return identity
+    claims = dict(identity.claims or {})
+    raw_capabilities = claims.get("capabilities") or claims.get("capability") or []
+    if isinstance(raw_capabilities, str):
+        token_capabilities = _split_claim_string(raw_capabilities)
+    elif isinstance(raw_capabilities, list):
+        token_capabilities = [str(cap) for cap in raw_capabilities]
+    else:
+        token_capabilities = []
+    capabilities = _stub_identity_capabilities(token_capabilities)
+    if not capabilities:
+        return identity
+    claims["capabilities"] = capabilities
+    try:
+        return identity.model_copy(update={"claims": claims})
+    except AttributeError:
+        return OperatorIdentity(
+            operator_id=identity.operator_id,
+            roles=identity.roles,
+            mfa_verified=identity.mfa_verified,
+            claims=claims,
+            token_kind=identity.token_kind,
+        )
+
+
 def _extract_identity_jwt(
     authorization: Optional[str],
     mfa_token: Optional[str] = None,
@@ -1068,13 +1236,14 @@ def _extract_identity_jwt(
             reason="AUTH_JWT_SUBJECT_MISSING",
             suggestion="Re-authenticate with a valid JWT bearer token",
         )
-    return OperatorIdentity(
+    identity = OperatorIdentity(
         operator_id=ctx.actor_id,
         roles=sorted(ctx.roles),
         mfa_verified=ctx.mfa_verified,
         claims=dict(ctx.claims),
         token_kind=ctx.token_kind,
     )
+    return _with_structured_identity_capabilities(identity)
 
 
 def _bff_error(
@@ -4766,7 +4935,7 @@ _VALIDATORS = {
 # Read surface helpers
 # --------------------------------------------------------------------------- #
 
-_READ_ROLES = {"operator", "approver", "admin", "reviewer"}
+_READ_ROLES = {"viewer", "operator", "approver", "admin", "reviewer"}
 _WRITE_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 
@@ -4775,10 +4944,10 @@ def _require_read_role(identity: OperatorIdentity) -> None:
         raise _bff_error(
             403,
             ErrorCode.FORBIDDEN,
-            "Read access requires operator-level role",
+            "Read access requires viewer-level role",
             "Operator does not hold the required role",
             precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, admin, or reviewer role",
+            suggestion="Escalate to a user with viewer, operator, approver, admin, or reviewer role",
         )
 
 
@@ -4819,7 +4988,11 @@ _ROLE_CAPABILITY_MAP = {
         "job.read",
         "audit.read",
     ],
-    "viewer": [],
+    "viewer": [
+        "metric.read",
+        "strategy.view",
+        "persona.view",
+    ],
 }
 
 
@@ -5082,6 +5255,21 @@ def _epoch_to_iso(value: Any) -> Optional[str]:
         clean = str(value or "").strip()
         return clean or None
     return datetime.fromtimestamp(epoch, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_rfc3339(value: Any) -> Optional[datetime]:
+    """Best-effort RFC3339/ISO-8601 parse; None on empty or unparseable input.
+
+    Mirrors read_store._parse_rfc3339 so callers in this module resolve a defined
+    symbol. Returning None (rather than raising) keeps malformed optional time
+    filters from surfacing as 500s — an unparseable bound is simply not applied.
+    """
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 
 
 def _sem_session_id(identity: OperatorIdentity) -> str:
@@ -6099,6 +6287,10 @@ def _project_runtime_state_telemetry_summary(summary: Optional[Dict[str, Any]]) 
         "projection_source",
         "projection_updated_at",
         "staleness",
+        "executed_trade_count",
+        "position_count",
+        "positions",
+        "last_fill",
     ):
         if key in summary:
             projected[key] = summary.get(key)
@@ -6327,6 +6519,11 @@ def _project_operator_runtime_state_row(binding: Dict[str, Any]) -> Dict[str, An
             else None
         ),
         "telemetry_summary": telemetry_summary,
+        "executed_trade_count": (telemetry_summary or {}).get("executed_trade_count"),
+        "total_trades": ((telemetry_summary or {}).get("metrics") or {}).get("total_trades"),
+        "position_count": (telemetry_summary or {}).get("position_count"),
+        "positions": (telemetry_summary or {}).get("positions"),
+        "last_fill": (telemetry_summary or {}).get("last_fill"),
         "paper_runtime_monitoring": monitoring_session,
         "row_health": _derive_runtime_state_row_health(
             binding=binding,
@@ -12371,7 +12568,7 @@ async def create_trainer_session(
 
 @app.get("/api/v1/trainer/sessions")
 async def list_trainer_sessions(
-    persona_id: str,
+    persona_id: Optional[str] = None,
     status: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
@@ -12379,6 +12576,18 @@ async def list_trainer_sessions(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+
+    # Enforce fail-closed ordering: authenticate before validating the required
+    # persona_id query param, so an unauthenticated caller gets 401 (not 422) and
+    # cannot probe endpoint existence/shape. Path-param siblings already do this.
+    if not persona_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Request validation failed",
+            "persona_id is required",
+            precondition_failed="persona_id",
+        )
 
     persona = read_store.get_persona(persona_id)
     if not persona:
@@ -13345,7 +13554,7 @@ async def create_deployment_plan_v1(
     correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
     response.headers["X-Correlation-Id"] = correlation_id
     request_id = str(x_request_id or "").strip() or None
-    dry_run = _truthy_header(x_dry_run)
+    dry_run = _request_dry_run_requested(x_dry_run)
     request_hash = _stable_json_hash(
         {"route": "POST /api/v1/deployment-plans", "payload": payload}
     )
@@ -17889,6 +18098,26 @@ async def list_incidents(
     }
 
 
+# NOTE: This static SSE route MUST be registered before the parameterized
+# "/api/v1/incidents/{incident_id}" route below. FastAPI/Starlette match in
+# registration order, so a later "stream" route would otherwise be shadowed by
+# {incident_id} (incident_id="stream" -> 404 "Incident not found").
+@app.get("/api/v1/incidents/stream")
+async def stream_incident_events(
+    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """IN-SSE: Server-Sent Events stream for active incident events.
+
+    Supports reconnection via ``?last_event_id=`` to replay missed events.
+    BFF_API_CONTRACT.md §11.2
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    return _handle_sse_stream("incident", _incident_events, _incident_subscribers, last_event_id)
+
+
 @app.get("/api/v1/incidents/{incident_id}")
 async def get_incident(incident_id: str, authorization: Optional[str] = Header(default=None)):
     """IN-02: Incident Detail."""
@@ -18735,15 +18964,37 @@ async def list_telemetry(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    events = read_store.list_telemetry_events(
+    snapshot_at = utc_now()
+    source, events = read_store.list_telemetry_events_with_source(
         pool_id=pool_id, artifact_id=artifact_id, time_range=time_range,
     )
+    has_surface_data = source != "missing"
+    surface = _dataset_surface_status(
+        "telemetry_events",
+        snapshot_at=snapshot_at,
+        source=source,
+        has_data=has_surface_data,
+        missing_message="Telemetry events are unavailable.",
+    )
+    if source == "telemetry_summary_fallback":
+        surface["status"] = "degraded"
+        surface["note"] = (
+            "Telemetry event store is empty; served synthesized telemetry summary fallback."
+        )
+        surface["staleness"] = {
+            "served_from": "telemetry_summary_fallback",
+            "last_known_at": snapshot_at,
+        }
+
     return {
         "data": events,
-        "meta": {
-            "total": len(events),
-            "staleness": _meta_staleness(),
-        },
+        "meta": _read_surface_meta(
+            "telemetry_events",
+            "telemetry",
+            snapshot_at=snapshot_at,
+            total=len(events),
+            surface=surface,
+        ),
     }
 
 
@@ -19237,6 +19488,19 @@ def _command_response_durable_meta(idempotency_key: str, *, replayed: bool) -> D
     }
 
 
+def _command_response_dry_run_meta(idempotency_key: str) -> Dict[str, Any]:
+    return {
+        "dryRun": True,
+        "durable": False,
+        "liveCapitalSideEffects": False,
+        "idempotency": {
+            "key": idempotency_key,
+            "idempotencyKey": idempotency_key,
+            "replayed": False,
+        },
+    }
+
+
 def _submit_final_command_admission(
     *,
     background_tasks: BackgroundTasks,
@@ -19336,8 +19600,19 @@ def _submit_final_command_admission(
         raise _foundation_bff_error(error, foundation_context=foundation_context)
 
     staleness_warning = _check_read_surface_state()
+    if _request_dry_run_requested():
+        command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+        return _project_final_command_response(
+            command_id=command_envelope.command_id,
+            command=cmd.command,
+            accepted_at=utc_now(),
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=staleness_warning,
+            meta=_command_response_dry_run_meta(resolved_key),
+            deprecation=response_deprecation,
+        )
 
-    command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+    command_envelope = foundation_context["command_envelope"]
     idempotency_record: IdempotencyRecord = foundation_context["idempotency_record"]
     idempotency_record = idempotency_record.with_status(
         "succeeded",
@@ -19470,6 +19745,17 @@ async def patch_agora_journal_entry(
     patch = _validate_journal_merge_patch_payload(payload, identity)
 
     correlation_id = str(x_correlation_id or x_trace_id or "").strip() or None
+    existing_entry = next(
+        (
+            entry
+            for entry in read_store.list_decision_journal_entries()
+            if str(entry.get("id") or "") == entry_id
+        ),
+        None,
+    )
+    if existing_entry is not None and not _agora_private_record_visible(existing_entry, identity):
+        _raise_agora_cross_user_forbidden(resource="decision_journal_entry", resource_id=entry_id)
+
     request_hash = _stable_json_hash(
         {
             "route": "PATCH /bff/agora/journal/{id}",
@@ -19570,6 +19856,44 @@ def _truthy_header(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _request_dry_run_requested(explicit_header: Optional[str] = None) -> bool:
+    return _truthy_header(explicit_header) or bool(_REQUEST_DRY_RUN_CONTEXT.get())
+
+
+def _dry_run_success_response(
+    data: Dict[str, Any],
+    *,
+    status_code: int = 200,
+    snapshot_at: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    evidence_kind: Optional[str] = None,
+    extra_meta: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> JSONResponse:
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at or utc_now(),
+        "dryRun": True,
+        "durable": False,
+        "liveCapitalSideEffects": False,
+    }
+    if idempotency_key:
+        meta["idempotency"] = {
+            "key": idempotency_key,
+            "idempotencyKey": idempotency_key,
+            "replayed": False,
+        }
+    if evidence_kind:
+        meta["evidenceKind"] = evidence_kind
+        meta["evidence_kind"] = evidence_kind
+    if extra_meta:
+        meta.update(extra_meta)
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder({"data": data, "meta": meta}),
+        headers=headers,
+    )
+
+
 def _require_agora_signal_write_role(identity: OperatorIdentity) -> None:
     if not _AGORA_SIGNAL_WRITE_ROLES.intersection(identity.roles):
         raise _bff_error(
@@ -19626,6 +19950,45 @@ def _agora_list_response(
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": _read_surface_meta(dataset, surface_key, snapshot_at=snapshot_at, total=total),
     }
+
+
+def _agora_private_record_owner(record: Dict[str, Any]) -> str:
+    for key in ("createdBy", "created_by", "user_id", "userId", "owner_id", "ownerId", "operator_id", "operatorId"):
+        clean = str(record.get(key) or "").strip()
+        if clean:
+            return clean
+    owner_ref = record.get("owner_ref") if isinstance(record.get("owner_ref"), dict) else {}
+    return str(owner_ref.get("user_id") or owner_ref.get("owner_id") or "").strip()
+
+
+def _agora_private_record_visible(record: Dict[str, Any], identity: OperatorIdentity) -> bool:
+    visibility = str(record.get("visibility") or "private").strip().lower()
+    owner = _agora_private_record_owner(record)
+    if visibility != "private" or not owner:
+        return True
+    return owner == identity.operator_id
+
+
+def _agora_filter_private_records(
+    records: List[Dict[str, Any]],
+    identity: OperatorIdentity,
+) -> List[Dict[str, Any]]:
+    return [
+        record
+        for record in records
+        if isinstance(record, dict) and _agora_private_record_visible(record, identity)
+    ]
+
+
+def _raise_agora_cross_user_forbidden(*, resource: str, resource_id: str) -> None:
+    raise _bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Agora resource is outside the current user scope",
+        "CROSS_USER_ACCESS_FORBIDDEN",
+        precondition_failed="agora_user_scope",
+        details_extra={"resource": resource, "resource_id": resource_id},
+    )
 
 
 def _agora_record_id(record: Dict[str, Any], fields: List[str]) -> str:
@@ -19997,6 +20360,17 @@ def _agora_action_command(
         "action_id": action_id,
         "payload": payload,
     })
+    if _request_dry_run_requested():
+        return _agora_response_payload(
+            _project_final_command_response(
+                command_id=f"dryrun-cmd-{uuid.uuid4().hex[:12]}",
+                command=command_type,
+                accepted_at=utc_now(),
+                status=CommandStatus.SUBMITTED,
+                staleness_warning=_check_read_surface_state(),
+                meta=_command_response_dry_run_meta(resolved_key),
+            )
+        )
     cached = _agora_core_idempotency_check(resolved_key, request_hash)
     if cached is not None:
         return cached
@@ -20243,16 +20617,15 @@ async def bff_create_agora_feedback(
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     feedback_payload = _agora_bulk_feedback_payload(payload)
-    dry_run = str(x_dry_run or "").strip().lower() in {"1", "true", "yes"}
+    dry_run = _request_dry_run_requested(x_dry_run)
     request_hash = _stable_json_hash({
         "route": "POST /bff/agora/feedback",
         "payload": feedback_payload,
-        "dry_run": dry_run,
     })
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        cached_status = 200 if (cached.get("meta") or {}).get("dryRun") else 201
-        return JSONResponse(status_code=cached_status, content=jsonable_encoder(cached))
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return JSONResponse(status_code=201, content=jsonable_encoder(cached))
 
     signal_id = feedback_payload["signal_id"]
     snapshot_at = utc_now()
@@ -20341,7 +20714,8 @@ async def bff_create_agora_feedback(
         },
     }
     result["meta"]["correlationId"] = str(x_correlation_id or "").strip() or str(uuid.uuid4())
-    _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    if not dry_run:
+        _AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return JSONResponse(status_code=200 if dry_run else 201, content=jsonable_encoder(result))
 
 
@@ -20355,7 +20729,7 @@ async def bff_agora_signal_feedback(
 ):
     """BFF: record trader feedback for an Agora signal."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     feedback_payload = _agora_signal_feedback_payload(payload)
@@ -20364,9 +20738,42 @@ async def bff_agora_signal_feedback(
         "signalId": signalId,
         "payload": feedback_payload,
     })
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
+    if dry_run:
+        signal = read_store.get_agora_signal(signalId)
+        if signal is None:
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Agora signal not found",
+                f"Agora signal {signalId} does not exist",
+                precondition_failed="signal_id",
+            )
+        snapshot_at = utc_now()
+        feedback_id = f"agfb-dryrun-{uuid.uuid4().hex[:8]}"
+        return _dry_run_success_response(
+            {
+                "status": "completed",
+                "signal": {**signal, "reviewStatus": feedback_payload["decision"], "latestFeedbackId": feedback_id},
+                "feedback": {
+                    "id": feedback_id,
+                    "feedbackId": feedback_id,
+                    "signalId": signalId,
+                    "decision": feedback_payload["decision"],
+                    "confidence": feedback_payload["confidence"],
+                    "reason": feedback_payload["reason"],
+                    "actorId": identity.operator_id,
+                    "createdAt": snapshot_at,
+                },
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.signal.feedback",
+        )
     feedback = read_store.record_agora_signal_feedback(
         signalId,
         decision=feedback_payload["decision"],
@@ -20467,16 +20874,36 @@ async def bff_create_agora_session(
 ):
     """BFF: create an Agora ask/session record."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/sessions", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"agora-sess-{uuid.uuid4().hex[:10]}")
     title = str(payload.get("title") or "Untitled Agora session").strip()
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": session_id,
+                "sessionId": session_id,
+                "title": title,
+                "mode": payload.get("mode") or payload.get("sessionType") or "quick_ask",
+                "status": payload.get("status") or "active",
+                "participants": json.loads(json.dumps(payload.get("participants") or [])),
+                "messages": json.loads(json.dumps(payload.get("messages") or [])),
+                "createdBy": identity.operator_id,
+                "createdAt": snapshot_at,
+                "updatedAt": snapshot_at,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.session.create",
+        )
     result = {
         "data": read_store.create_agora_session(
             session_id=session_id,
@@ -20551,7 +20978,7 @@ async def bff_create_agora_session_message(
 ):
     """BFF: append a message to an Agora session."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     content = _agora_required_text(payload, "content", "body", "message")
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
@@ -20560,11 +20987,36 @@ async def bff_create_agora_session_message(
         "sessionId": sessionId,
         "payload": payload,
     })
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     message_id = str(payload.get("id") or payload.get("messageId") or f"agora-msg-{uuid.uuid4().hex[:10]}")
+    if dry_run:
+        if not read_store.get_agora_session(sessionId):
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Agora session not found",
+                f"Agora session {sessionId} does not exist",
+                precondition_failed="session_id",
+            )
+        return _dry_run_success_response(
+            {
+                "id": message_id,
+                "sessionId": sessionId,
+                "sender": payload.get("sender") or {"type": "operator", "id": identity.operator_id},
+                "role": payload.get("role") or "user",
+                "content": content,
+                "language": payload.get("language") or "zh-TW",
+                "createdAt": snapshot_at,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.session_message.create",
+        )
     message = read_store.append_agora_session_message(
         sessionId,
         message_id=message_id,
@@ -20777,16 +21229,34 @@ async def bff_create_agora_note(
 ):
     """BFF: create an Agora notebook/research note."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     body = _agora_required_text(payload, "body", "content")
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/notes", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     note_id = str(payload.get("id") or payload.get("note_id") or f"note-agora-{uuid.uuid4().hex[:10]}")
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": note_id,
+                "note_id": note_id,
+                "title": str(payload.get("title") or "").strip() or None,
+                "body": body,
+                "tags": list(payload.get("tags") or []),
+                "created_at": snapshot_at,
+                "updated_at": snapshot_at,
+                "created_by": identity.operator_id,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.note.create",
+        )
     result = {
         "data": read_store.create_agora_note(
             note_id=note_id,
@@ -20813,10 +21283,11 @@ async def bff_agora_journal(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
+    items = _agora_filter_private_records(read_store.list_decision_journal_entries(), identity)
     return _agora_list_response(
         dataset="decision_journal_entries",
         surface_key="agora_journal_list",
-        items=read_store.list_decision_journal_entries(),
+        items=items,
         page_token=page_token,
         page_size=page_size,
         snapshot_at=snapshot_at,
@@ -20837,9 +21308,11 @@ async def bff_create_agora_journal_entry(
     title = _agora_required_text(payload, "title")
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/journal", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     body = str(payload.get("body") or "").strip()
     if not body:
         body_parts = [
@@ -20860,6 +21333,27 @@ async def bff_create_agora_journal_entry(
             "Journal visibility is not allowed",
             f"Role set cannot create a {visibility} journal entry",
             precondition_failed="journal.visibility",
+        )
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": entry_id,
+                "title": title,
+                "body": body,
+                "tags": _agora_string_list(payload.get("tags")),
+                "linkedStrategyIds": _agora_string_list(payload.get("linkedStrategyIds") or payload.get("linked_strategy_ids")),
+                "linkedPersonaIds": _agora_string_list(payload.get("linkedPersonaIds") or payload.get("linked_persona_ids")),
+                "visibility": visibility,
+                "createdAt": snapshot_at,
+                "updatedAt": snapshot_at,
+                "version": 1,
+                "createdBy": identity.operator_id,
+                "canonicalWriteAuthority": "agora_journal_service",
+                "persistenceMode": "dry_run_preview",
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.journal.create",
         )
     entry = read_store.create_decision_journal_entry(
         entry_id=entry_id,
@@ -20914,16 +21408,34 @@ async def bff_create_agora_insight(
 ):
     """BFF: create an Agora insight card."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     summary = _agora_required_text(payload, "summary", "title")
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/insights", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     insight_id = str(payload.get("id") or payload.get("insight_id") or f"ins-agora-{uuid.uuid4().hex[:10]}")
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": insight_id,
+                "insight_id": insight_id,
+                "summary": summary,
+                "scope": payload.get("scope") or "global",
+                "status": payload.get("status") or "classified",
+                "tags": list(payload.get("tags") or []),
+                "created_at": snapshot_at,
+                "updated_at": snapshot_at,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.insight.create",
+        )
     result = {
         "data": read_store.create_agora_insight(
             insight_id=insight_id,
@@ -21055,15 +21567,32 @@ async def bff_create_agora_training_example(
 ):
     """BFF: create an Agora training example."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/agora/training-examples", "payload": payload})
-    cached = _agora_core_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     example_id = str(payload.get("id") or payload.get("trainingExampleId") or f"trn-agora-{uuid.uuid4().hex[:10]}")
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": example_id,
+                "trainingExampleId": example_id,
+                "input": json.loads(json.dumps(payload.get("input") or {})),
+                "expected": json.loads(json.dumps(payload.get("expected") or {})),
+                "labels": list(payload.get("labels") or []),
+                "createdBy": identity.operator_id,
+                "createdAt": snapshot_at,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="agora.training_example.create",
+        )
     result = {
         "data": read_store.create_agora_training_example(
             example_id=example_id,
@@ -21823,7 +22352,8 @@ async def list_bff_approvals(
         items = []
     pending = [
         item for item in items
-        if str(item.get("decision_state") or "").lower() in {"pending", "in_review"}
+        if str(item.get("decision_state") or "").lower()
+        in {"pending", "in_review", "proposed", "under_review", "reviewed"}
     ]
     return {
         "items": pending,
@@ -21978,13 +22508,15 @@ async def bff_create_capital_pool(
 ):
     """BFF: create capital pool — Idempotency-Key required."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/capital-pools", "payload": payload})
-    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
@@ -21994,6 +22526,23 @@ async def bff_create_capital_pool(
         )
     snapshot_at = utc_now()
     pool_id = f"pool-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+    if dry_run:
+        return _dry_run_success_response(
+            {
+                "id": pool_id,
+                "pool_id": pool_id,
+                "name": name,
+                "status": "draft",
+                "risk_policy_ref": payload.get("risk_policy_ref"),
+                "params": payload.get("params") or {},
+                "created_at": snapshot_at,
+                "updated_at": snapshot_at,
+                "created_by": identity.operator_id,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="capital_pool.create",
+        )
     result = read_store.create_capital_pool(
         pool_id=pool_id,
         name=name,
@@ -22072,7 +22621,7 @@ async def bff_patch_capital_pool(
 ):
     """BFF: patch capital pool — Idempotency-Key required."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash(
@@ -22354,13 +22903,15 @@ async def bff_create_rebalance(
 ):
     """BFF: create rebalance command — Idempotency-Key required; produces command/audit metadata."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/rebalances", "payload": payload})
-    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     capital_pool_id = str(payload.get("capital_pool_id") or "").strip()
     if not capital_pool_id:
         raise _bff_error(
@@ -22371,6 +22922,18 @@ async def bff_create_rebalance(
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
+    if dry_run:
+        result = _project_final_command_response(
+            command_id=f"dryrun-cmd-{uuid.uuid4().hex[:12]}",
+            command=CommandType.REBALANCE_ACTION,
+            accepted_at=submitted_at,
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=staleness_warning,
+            meta=_command_response_dry_run_meta(resolved_key),
+        )
+        combined = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
+        combined["rebalance_id"] = f"dryrun-rb-{uuid.uuid4().hex[:8]}"
+        return JSONResponse(status_code=200, content=jsonable_encoder(combined))
     target = TargetObject(type=ObjectType.REBALANCE, id=capital_pool_id)
     audit_record = {
         "operator_id": identity.operator_id,
@@ -23627,6 +24190,11 @@ def _project_persona_dto(
         "governanceRequired": bool(metadata.get("governance_required", True)),
         "recommendedGovernanceAction": metadata.get("recommended_governance_action"),
         "riskFlags": list(metadata.get("risk_flags") or []),
+        # Real persona identity + trading-character traits (drive the OpenClaw SOUL
+        # and let the FE display/edit them).
+        "mandate": raw.get("mandate") or "",
+        "strategyFamily": raw.get("strategy_family") or "",
+        "traits": metadata.get("traits") if isinstance(metadata.get("traits"), dict) else {},
     }
     for source_key, dto_key in (
         ("data_source_status", "dataSourceStatus"),
@@ -32847,22 +33415,6 @@ def _mgmt_nl_filter_tenant_records(
     ]
 
 
-def _mgmt_nl_filter_tenant_records_strict(
-    records: List[Dict[str, Any]],
-    tenant_id: Optional[str],
-) -> List[Dict[str, Any]]:
-    clean_tenant = str(tenant_id or "").strip()
-    if not clean_tenant:
-        return [record for record in records if isinstance(record, dict)]
-    return [
-        record
-        for record in records
-        if isinstance(record, dict)
-        and _mgmt_nl_record_tenant_ids(record)
-        and _mgmt_nl_record_matches_tenant(record, clean_tenant)
-    ]
-
-
 def _mgmt_nl_add_entity(
     entities: Set[Tuple[str, str]],
     entity_type: str,
@@ -33029,8 +33581,8 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
 
     if use_all or focus == "portfolio":
         try:
-            pools = _mgmt_nl_filter_tenant_records_strict(list(read_store.list_capital_pools() or []), tenant_id)
-            runtime_bindings = _mgmt_nl_filter_tenant_records_strict(list(read_store.list_runtime_bindings() or []), tenant_id)
+            pools = _mgmt_nl_filter_tenant_records(list(read_store.list_capital_pools() or []), tenant_id)
+            runtime_bindings = _mgmt_nl_filter_tenant_records(list(read_store.list_runtime_bindings() or []), tenant_id)
             _mgmt_nl_add_record_entities(evidence_entities, pools, "capital_pool", "pool_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             evidence_source_types.update({"capital_pool", "runtime", "runtime_binding", "telemetry"})
@@ -33175,7 +33727,7 @@ def _mgmt_nl_provider_feature_enabled() -> bool:
 
 
 def _mgmt_nl_provider_name() -> str:
-    return (os.getenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli").strip().lower() or "codex_cli")
+    return (os.getenv("PANTHEON_ASSISTANT_PROVIDER", "openclaw").strip().lower() or "openclaw")
 
 
 _MGMT_NL_PROVIDER_REASON_MESSAGES = {
@@ -33907,7 +34459,7 @@ def _mgmt_nl_maybe_provider_answer(
             status="disabled",
             reason="feature_disabled",
         ), []
-    if provider not in {"codex", "codex_cli", "claude", "claude_cli"}:
+    if provider not in {"codex", "codex_cli", "claude", "claude_cli", "openclaw", "openclaw_agent"}:
         _management_ai_record_event(
             {
                 "event_type": "management_ai.provider.skipped",
@@ -34146,6 +34698,180 @@ def _mgmt_nl_maybe_provider_answer(
     return answer, status, actions
 
 
+_MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS = 3.0
+_MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS = 30.0
+# Strong references to in-flight provider finaliser tasks; asyncio keeps only a
+# weak reference to bare tasks, so without this they could be GC'd mid-run.
+_MGMT_NL_PROVIDER_FINALIZE_TASKS: Set["asyncio.Task[Any]"] = set()
+
+
+def _mgmt_nl_provider_inline_grace_seconds() -> float:
+    """Seconds POST /bff/management/nl/ask waits inline for the assistant provider
+    before returning 202 with the deterministic answer and finishing the provider
+    turn in the background. Override with
+    PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS."""
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS")
+    if raw is None or not str(raw).strip():
+        return _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
+    return value if value > 0 else _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
+
+
+def _mgmt_nl_stream_read_timeout_seconds() -> float:
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_STREAM_READ_TIMEOUT_SECONDS")
+    if raw is None or not str(raw).strip():
+        return _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS
+    return value if value > 0 else _MGMT_NL_STREAM_READ_TIMEOUT_DEFAULT_SECONDS
+
+
+def _mgmt_nl_sse_frame(payload: Any) -> str:
+    if payload == "[DONE]":
+        return "data: [DONE]\n\n"
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+
+def _mgmt_nl_json_response_payload(response: JSONResponse) -> Dict[str, Any]:
+    raw = getattr(response, "body", b"") or b""
+    if isinstance(raw, str):
+        raw_text = raw
+    else:
+        raw_text = raw.decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(raw_text) if raw_text else {}
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _mgmt_nl_finalize_result(
+    base_result: Dict[str, Any],
+    *,
+    answer: str,
+    provider_status: Dict[str, Any],
+    actions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Rewrite a processing nl/ask result into a completed one for the
+    idempotency record once the provider answer is available."""
+    completed_data = {
+        **base_result.get("data", {}),
+        "status": "completed",
+        "lifecycleStatus": "completed",
+        "lifecycle_status": "completed",
+        "answer": answer,
+        "providerStatus": provider_status,
+        "provider_status": provider_status,
+        "uiActions": actions,
+        "ui_actions": actions,
+        "actions": actions,
+    }
+    completed_meta = {
+        **base_result.get("meta", {}),
+        "status": "completed",
+        "lifecycleStatus": "completed",
+        "lifecycle_status": "completed",
+        "providerStatus": provider_status,
+        "provider_status": provider_status,
+    }
+    return {**base_result, "data": completed_data, "meta": completed_meta}
+
+
+async def _mgmt_nl_finalize_provider_turn(
+    *,
+    provider_task: "asyncio.Future[Any]",
+    deterministic_answer: str,
+    session_id: str,
+    message_id: str,
+    assistant_turn_id: str,
+    trace_id: str,
+    focus: str,
+    resolved_key: str,
+    request_hash: str,
+    audit_log_href: str,
+    conversation_href: str,
+    base_result: Dict[str, Any],
+) -> None:
+    """Finish a nl/ask exchange whose provider call exceeded the inline grace
+    window: await the in-flight agent run, then append the assistant turn exactly
+    once and rewrite the idempotency record from processing -> completed."""
+    try:
+        provider_answer, provider_status, actions = await provider_task
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.warning("Management NL async provider turn failed", exc_info=True)
+        provider_answer, actions = None, []
+        provider_status = _mgmt_nl_provider_status(
+            provider=_mgmt_nl_provider_name(),
+            enabled=True,
+            status="degraded",
+            reason="provider_async_failed",
+            run_id=trace_id,
+        )
+    answer = provider_answer or deterministic_answer
+    try:
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.exchange.completed",
+                "session_id": session_id,
+                "message_id": message_id,
+                "assistant_turn_id": assistant_turn_id,
+                "trace_id": trace_id,
+                "route": "POST /bff/management/nl/ask",
+                "answer": _management_ai_summary_value(answer),
+                "provider_status": provider_status,
+                "actions": actions,
+                "action_count": len(actions),
+                "async_finalized": True,
+            }
+        )
+        _management_ai_append_turn(
+            turn_id=assistant_turn_id,
+            session_id=session_id,
+            role="assistant",
+            text=answer,
+            created_at=utc_now(),
+            trace_id=trace_id,
+            provider_status=provider_status,
+            ui_actions=actions,
+        )
+        _management_nl_publish_completed_events(
+            session_id=session_id,
+            message_id=message_id,
+            assistant_turn_id=assistant_turn_id,
+            trace_id=trace_id,
+            focus=focus,
+            provider_status=provider_status,
+            action_count=len(actions),
+            audit_log_href=audit_log_href,
+            conversation_href=conversation_href,
+        )
+        _mgmt_nl_idempotency_put(
+            resolved_key,
+            request_hash=request_hash,
+            result=_mgmt_nl_finalize_result(
+                base_result,
+                answer=answer,
+                provider_status=provider_status,
+                actions=actions,
+            ),
+        )
+    except Exception:
+        log.warning("Failed to persist async-finalised Management NL turn", exc_info=True)
+
+
+def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
+    task = asyncio.create_task(_mgmt_nl_finalize_provider_turn(**kwargs))
+    _MGMT_NL_PROVIDER_FINALIZE_TASKS.add(task)
+    task.add_done_callback(_MGMT_NL_PROVIDER_FINALIZE_TASKS.discard)
+
+
 @app.post("/bff/management/nl/ask", status_code=202)
 async def bff_management_nl_ask(
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -34283,7 +35009,14 @@ async def bff_management_nl_ask(
     ]
 
     # BFF-B6-001-SEC-FIX: pass tenant scope to context collection.
-    context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
+    # _mgmt_nl_collect_context fans out to several ReadSurfaceStore.list_* calls,
+    # each a blocking urllib HTTP request to runtime-manager (timeout 2s each). On
+    # the single-worker BFF that blocks the event loop for seconds per request;
+    # run it in a worker thread so concurrent requests (and the FE-BFF gate's
+    # nl/ask burst) are not starved.
+    context_bundle = await asyncio.to_thread(
+        _mgmt_nl_collect_context, focus, now, tenant_id=caller_tenant_id
+    )
     snippets = context_bundle["snippets"]
     surfaces = context_bundle["surfaces"]
     evidence_entities = context_bundle.get("evidence_entities") or set()
@@ -34315,7 +35048,8 @@ async def bff_management_nl_ask(
     except Exception:
         nl_capabilities = None
     raw_evidence_refs = list(
-        read_store.list_evidence_refs(
+        await asyncio.to_thread(
+            read_store.list_evidence_refs,
             tenant_id=caller_tenant_id,
             linked_entities=evidence_entities,
             source_types=evidence_source_types,
@@ -34340,7 +35074,8 @@ async def bff_management_nl_ask(
     }
 
     try:
-        accepted_audit = read_store.record_agora_audit_event(
+        accepted_audit = await asyncio.to_thread(
+            read_store.record_agora_audit_event,
             {
                 "action": "management.nl.ask.accepted",
                 "targetType": "ManagementNLExchange",
@@ -34352,7 +35087,7 @@ async def bff_management_nl_ask(
                 "tenantId": caller_tenant_id,
                 "confidence": confidence,
                 "sourceSurfaces": source_keys,
-            }
+            },
         )
     except Exception:
         log.warning("Failed to record management NL happy-path audit event", exc_info=True)
@@ -34401,26 +35136,60 @@ async def bff_management_nl_ask(
     )
     openclaw_repair_metadata = _mgmt_nl_openclaw_repair_metadata(payload)
 
-    provider_answer, provider_status, actions = _mgmt_nl_maybe_provider_answer(
-        provider=_mgmt_nl_provider_name(),
-        question=question,
-        focus=focus,
-        identity=identity,
-        caller_tenant_id=caller_tenant_id,
-        session_id=session_id,
-        message_id=message_id,
-        trace_id=trace_id,
-        context_pack=context_pack,
-        audit_id=audit_ref.get("auditId"),
-        allowed_action_kinds=allowed_action_kinds,
-        current_user_attachments=current_user_attachments,
-        openclaw_repair_metadata=openclaw_repair_metadata,
-    )
-    answer = provider_answer or deterministic_answer
-
+    # _mgmt_nl_maybe_provider_answer issues a synchronous, blocking HTTP call to
+    # the OpenClaw adapter (OpenClawOpsClient.invoke_assistant_provider), which
+    # drives the Claude/Codex CLI agent and can take 30s+. The BFF runs a single
+    # uvicorn worker, so calling it inline would block the event loop and freeze
+    # every other request (reads, writes, SSE) for the whole agent turn. Offload
+    # it to a worker thread so the event loop stays free to serve concurrently.
     assistant_turn_id = f"{message_id}-assistant"
     audit_log_href = _management_ai_audit_href(session_id=session_id, trace_id=trace_id)
     conversation_href = _management_ai_conversation_href(session_id)
+
+    # The assistant-provider call (OpenClawOpsClient.invoke_assistant_provider via
+    # _mgmt_nl_maybe_provider_answer) is a synchronous, blocking HTTP call that
+    # drives a CLI agent and routinely takes 30s+. Run it in a worker thread and
+    # wait only up to a short inline grace window. If it finishes in time we answer
+    # synchronously as before; otherwise we return 202 immediately with the
+    # deterministic answer and providerStatus=processing, and a background task
+    # finalises the assistant turn + idempotency record once the agent completes.
+    # asyncio.wait (unlike wait_for) does NOT cancel on timeout, so the in-flight
+    # agent run is preserved and handed to the finaliser.
+    provider_task = asyncio.create_task(
+        asyncio.to_thread(
+            _mgmt_nl_maybe_provider_answer,
+            provider=_mgmt_nl_provider_name(),
+            question=question,
+            focus=focus,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            session_id=session_id,
+            message_id=message_id,
+            trace_id=trace_id,
+            context_pack=context_pack,
+            audit_id=audit_ref.get("auditId"),
+            allowed_action_kinds=allowed_action_kinds,
+            current_user_attachments=current_user_attachments,
+            openclaw_repair_metadata=openclaw_repair_metadata,
+        )
+    )
+    done, _ = await asyncio.wait(
+        {provider_task}, timeout=_mgmt_nl_provider_inline_grace_seconds()
+    )
+    provider_pending = provider_task not in done
+    if provider_pending:
+        provider_answer, actions = None, []
+        provider_status = _mgmt_nl_provider_status(
+            provider=_mgmt_nl_provider_name(),
+            enabled=True,
+            status="processing",
+            reason="provider_async_pending",
+            run_id=trace_id,
+        )
+    else:
+        # Preserve the previous inline-await exception behaviour.
+        provider_answer, provider_status, actions = provider_task.result()
+    answer = provider_answer or deterministic_answer
 
     _publish_event(
         _sse_buffers["ask"],
@@ -34429,7 +35198,7 @@ async def bff_management_nl_ask(
         {"session_id": session_id, "message_id": message_id, "trace_id": trace_id, "focus": focus},
     )
 
-    exchange_status = "completed"
+    exchange_status = "processing" if provider_pending else "completed"
     result = {
         "status": "accepted",
         "data": {
@@ -34528,16 +35297,17 @@ async def bff_management_nl_ask(
             "fallback": provider_status.get("fallback"),
         }
     )
-    _management_ai_append_turn(
-        turn_id=assistant_turn_id,
-        session_id=session_id,
-        role="assistant",
-        text=answer,
-        created_at=utc_now(),
-        trace_id=trace_id,
-        provider_status=provider_status,
-        ui_actions=actions,
-    )
+    if not provider_pending:
+        _management_ai_append_turn(
+            turn_id=assistant_turn_id,
+            session_id=session_id,
+            role="assistant",
+            text=answer,
+            created_at=utc_now(),
+            trace_id=trace_id,
+            provider_status=provider_status,
+            ui_actions=actions,
+        )
     _management_nl_publish_completed_events(
         session_id=session_id,
         message_id=message_id,
@@ -34550,8 +35320,229 @@ async def bff_management_nl_ask(
         conversation_href=conversation_href,
     )
     _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
+    if provider_pending:
+        # The assistant turn was intentionally NOT persisted above: the store's
+        # append_turn is not an upsert, so writing a placeholder here would leave
+        # a duplicate turn once the real answer lands. The finaliser appends it
+        # exactly once with the real provider answer and rewrites the idempotency
+        # record from processing -> completed.
+        _mgmt_nl_schedule_provider_finalize(
+            provider_task=provider_task,
+            deterministic_answer=deterministic_answer,
+            session_id=session_id,
+            message_id=message_id,
+            assistant_turn_id=assistant_turn_id,
+            trace_id=trace_id,
+            focus=focus,
+            resolved_key=resolved_key,
+            request_hash=request_hash,
+            audit_log_href=audit_log_href,
+            conversation_href=conversation_href,
+            base_result=result,
+        )
     return JSONResponse(status_code=202, content=result)
 
+
+@app.post("/bff/management/nl/ask/stream")
+def bff_management_nl_ask_stream(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+):
+    """SSE-streaming variant of /bff/management/nl/ask."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+
+    question = _agora_required_text(payload, "question")
+    _mgmt_nl_validate_question_size(question)
+    control_command = _mgmt_nl_parse_control_command(question)
+
+    risk = None if control_command is not None else _mgmt_nl_high_risk_classify(question)
+    if risk is not None:
+        raise _bff_error(
+            403,
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            "NL query matches high-risk action pattern and was refused by policy",
+            "This endpoint is read-only and cannot execute management mutations.",
+            precondition_failed="high_risk_nl_policy",
+            suggestion=risk["safe_alternatives"],
+            details_extra={"refused": True, "matched_category": risk["matched_category"]},
+        )
+
+    caller_tenant_id = _mgmt_nl_caller_tenant(
+        identity, requested_tenant=_first_nonblank(x_tenant_id, x_pantheon_tenant)
+    )
+    operator_context = _mgmt_nl_trim_text(payload.get("context"), max_len=4000)
+    focus = _mgmt_nl_normalize_focus(payload.get("focus"))
+    now = utc_now()
+    session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
+    trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
+    message_id = f"mnl-{uuid.uuid4().hex[:12]}"
+    ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
+
+    if control_command is not None:
+        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask/stream", "payload": payload})
+        control_response = _mgmt_nl_handle_control_command(
+            control_command=control_command,
+            payload=payload,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            focus=focus,
+            ui_snapshot=ui_snapshot,
+            resolved_key=resolved_key,
+            request_hash=request_hash,
+            session_id=session_id,
+            message_id=message_id,
+            trace_id=trace_id,
+            now=now,
+        )
+        control_payload = _mgmt_nl_json_response_payload(control_response)
+        control_data = control_payload.get("data") if isinstance(control_payload.get("data"), dict) else {}
+        answer = str((control_data or {}).get("answer") or "")
+        provider_status = (control_data or {}).get("providerStatus") or (control_data or {}).get("provider_status") or {}
+        audit_log = (control_data or {}).get("auditLog") or (control_data or {}).get("audit_log") or None
+        conversation = (control_data or {}).get("conversation") or None
+        ui_actions = (control_data or {}).get("uiActions") or (control_data or {}).get("ui_actions") or []
+        command_kind = (control_data or {}).get("controlCommand") or (control_data or {}).get("control_command")
+
+        def control_event_stream() -> Iterator[str]:
+            yield _mgmt_nl_sse_frame(
+                {
+                    "type": "meta",
+                    "sessionId": (control_data or {}).get("sessionId") or session_id,
+                    "session_id": (control_data or {}).get("session_id") or session_id,
+                    "traceId": (control_data or {}).get("traceId") or trace_id,
+                    "trace_id": (control_data or {}).get("trace_id") or trace_id,
+                    "messageId": (control_data or {}).get("message_id") or message_id,
+                    "controlCommand": command_kind,
+                    "control_command": command_kind,
+                }
+            )
+            if answer:
+                yield _mgmt_nl_sse_frame({"type": "delta", "text": answer})
+            yield _mgmt_nl_sse_frame(
+                {
+                    "type": "done",
+                    "text": answer,
+                    "providerStatus": provider_status,
+                    "provider_status": provider_status,
+                    "auditLog": audit_log,
+                    "audit_log": audit_log,
+                    "conversation": conversation,
+                    "uiActions": ui_actions,
+                    "ui_actions": ui_actions,
+                    "controlCommand": command_kind,
+                    "control_command": command_kind,
+                }
+            )
+            yield _mgmt_nl_sse_frame("[DONE]")
+
+        return StreamingResponse(
+            control_event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
+
+    control_mode = _assistant_control_mode_for_identity(identity, management_session_id=session_id, touch=True)
+    conversation_context = _management_ai_server_conversation_context(
+        session_id=session_id,
+        client_hint=_mgmt_nl_normalize_conversation_context(payload.get("conversation")),
+    )
+    context_bundle = _mgmt_nl_collect_context(focus, now, tenant_id=caller_tenant_id)
+    snippets = context_bundle["snippets"]
+    surfaces = context_bundle["surfaces"]
+    confidence = _mgmt_nl_surface_confidence(surfaces)
+    context_pack = _mgmt_nl_build_context_pack(
+        session_id=session_id,
+        question=question,
+        focus=focus,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        snippets=snippets,
+        surfaces=surfaces,
+        source_keys=list(snippets.keys()),
+        confidence=confidence,
+        evidence_entities=context_bundle.get("evidence_entities") or set(),
+        evidence_source_types=context_bundle.get("evidence_source_types") or set(),
+        operator_context=operator_context,
+        conversation_context=conversation_context,
+        ui_snapshot=ui_snapshot,
+        control_mode=control_mode,
+    )
+    prompt = _mgmt_nl_provider_prompt(question=question, focus=focus, context_pack=context_pack)
+    provider_mode = _mgmt_nl_provider_mode_from_context(context_pack)
+
+    _management_ai_ensure_session(
+        session_id=session_id, identity=identity, tenant_id=caller_tenant_id, now=now, title=question
+    )
+    _management_ai_append_turn(
+        turn_id=message_id, session_id=session_id, role="user", text=question, created_at=now, trace_id=trace_id
+    )
+
+    def event_stream() -> Iterator[str]:
+        yield _mgmt_nl_sse_frame(
+            {
+                "type": "meta", "sessionId": session_id, "session_id": session_id,
+                "traceId": trace_id, "trace_id": trace_id, "messageId": message_id,
+            }
+        )
+        chunks: List[str] = []
+        had_error = False
+        try:
+            for evt in OpenClawOpsClient().stream_assistant_provider(
+                mode=provider_mode,
+                prompt=prompt,
+                context_pack=context_pack,
+                operator_id=identity.operator_id,
+                trace_id=trace_id,
+                session_user=session_id,
+                read_timeout_seconds=_mgmt_nl_stream_read_timeout_seconds(),
+            ):
+                if evt.get("type") == "delta":
+                    chunks.append(str(evt.get("text") or ""))
+                elif evt.get("type") == "error":
+                    had_error = True
+                yield _mgmt_nl_sse_frame(evt)
+        except OpenClawOpsClientError as exc:
+            had_error = True
+            yield _mgmt_nl_sse_frame(
+                {"type": "error", "error_code": exc.error_code, "message": exc.message}
+            )
+        except Exception as exc:  # noqa: BLE001
+            had_error = True
+            yield _mgmt_nl_sse_frame(
+                {"type": "error", "error_code": "BFF_STREAM_ERROR", "message": str(exc)[:200]}
+            )
+        answer = "".join(chunks).strip()
+        if answer and not had_error:
+            provider_status = {
+                "provider": "openclaw",
+                "used": True,
+                "status": "completed",
+                "transport": "responses_http",
+            }
+            _management_ai_append_turn(
+                turn_id=f"{message_id}-assistant",
+                session_id=session_id,
+                role="assistant",
+                text=answer,
+                created_at=utc_now(),
+                trace_id=trace_id,
+                provider_status=provider_status,
+            )
+            yield _mgmt_nl_sse_frame({"type": "done", "text": answer, "providerStatus": provider_status})
+        yield _mgmt_nl_sse_frame("[DONE]")
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 
 @app.get("/bff/management/ai/audit")
 async def bff_management_ai_audit(
@@ -34957,13 +35948,15 @@ async def bff_create_strategy(
 ):
     """BFF: create strategy stub (execute-plans compatibility)."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/strategies", "payload": payload})
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
@@ -34989,6 +35982,13 @@ async def bff_create_strategy(
         "availableActions": ["edit", "submit", "retire"],
         "labelKey": f"strategy.{strategy_id}",
     }
+    if dry_run:
+        return _dry_run_success_response(
+            overlay,
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="strategy.create",
+        )
     _STRATEGY_BFF_OVERLAY[strategy_id] = overlay
     result = {
         "data": overlay,
@@ -35037,7 +36037,7 @@ async def bff_patch_strategy(
 ):
     """BFF: patch strategy overlay fields."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash(
@@ -35120,16 +36120,18 @@ async def bff_create_strategy_spec(
 ):
     """BFF: create new spec version stub for a strategy."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     _ensure_strategy_exists(strategy_id)
     request_hash = _stable_json_hash(
         {"route": "POST /bff/strategies/{id}/specs", "id": strategy_id, "payload": payload}
     )
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     snapshot_at = utc_now()
     spec_version_id = f"spec-{strategy_id}-{uuid.uuid4().hex[:8]}"
     result = {
@@ -35144,6 +36146,13 @@ async def bff_create_strategy_spec(
         },
         "meta": {"snapshot_at": snapshot_at},
     }
+    if dry_run:
+        return _dry_run_success_response(
+            result["data"],
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="strategy_spec.create",
+        )
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
 
@@ -35735,6 +36744,37 @@ async def bff_strategy_dry_run(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Persona OODA loop wiring helpers
+# ---------------------------------------------------------------------------
+
+def _try_register_persona_cron(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Register WORKFLOW_CATALOG as recurring OpenClaw cron jobs for *persona_id*.
+
+    Best-effort: returns a summary dict on success, None on any error so that
+    persona creation is never blocked by gateway unavailability.
+    """
+    try:
+        from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
+        registrar = PersonaCronRegistrar()
+        result = registrar.register_for_persona(persona_id)
+        return result.to_dict()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _try_bootstrap_persona_ooda_packet(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Create and persist the initial open OODA loop packet for *persona_id*.
+
+    Best-effort: returns the packet dict on success, None on any error.
+    """
+    try:
+        from persona_ooda_bootstrap import bootstrap_persona_ooda_packet  # type: ignore[import]
+        return bootstrap_persona_ooda_packet(persona_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ---------------- /bff/personas routes ----------------
 
 @app.get("/bff/personas")
@@ -35783,13 +36823,15 @@ async def bff_create_persona(
 ):
     """BFF: create persona stub (execute-plans compatibility)."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/personas", "payload": payload})
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
@@ -35805,22 +36847,56 @@ async def bff_create_persona(
     lifecycle_state = _normalize_lifecycle_state(
         payload.get("state") or payload.get("lifecycleStatus") or "draft"
     )
-    persona_record = read_store.create_persona(
-        persona_id=persona_id,
-        name=name,
-        actor_id=owner,
-        created_at=snapshot_at,
-        archetype=archetype,
-        lifecycle_state=lifecycle_state,
-        risk_level=risk,
-        metadata={
-            "description": payload.get("description"),
-            "memo": payload.get("memo"),
-            "initial_mode": payload.get("initialMode"),
-            "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
-            "success_rate": float(payload.get("successRate") or 0.0),
-        },
-    )
+    # Real persona identity + trading-character traits — these flow to the
+    # persona's OpenClaw agent SOUL (integrations/openclaw/persona_agent_sync).
+    mandate = str(payload.get("mandate") or "").strip() or None
+    strategy_family = str(payload.get("strategy_family") or payload.get("strategyFamily") or "").strip() or None
+    raw_traits = payload.get("traits")
+    traits = {
+        k: raw_traits[k]
+        for k in ("instruments", "risk_appetite", "decision_style", "time_horizon", "hard_rules", "persona_voice")
+        if isinstance(raw_traits, dict) and raw_traits.get(k) not in (None, "")
+    } or None
+    persona_metadata = {
+        "description": payload.get("description"),
+        "memo": payload.get("memo"),
+        "initial_mode": payload.get("initialMode"),
+        "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
+        "success_rate": float(payload.get("successRate") or 0.0),
+    }
+    if dry_run:
+        persona_record = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
+            "lifecycle_state": lifecycle_state,
+            "created_at": snapshot_at,
+            "updated_at": snapshot_at,
+            "created_by": owner,
+            "metadata": {
+                **persona_metadata,
+                "owner": owner,
+                "archetype": archetype,
+                "risk_level": risk,
+                **({"traits": traits} if traits else {}),
+            },
+        }
+    else:
+        persona_record = read_store.create_persona(
+            persona_id=persona_id,
+            name=name,
+            actor_id=owner,
+            created_at=snapshot_at,
+            archetype=archetype,
+            lifecycle_state=lifecycle_state,
+            risk_level=risk,
+            mandate=mandate,
+            strategy_family=strategy_family,
+            traits=traits,
+            metadata=persona_metadata,
+        )
     overlay = _project_persona_dto(
         persona_record,
         overlay={
@@ -35829,10 +36905,30 @@ async def bff_create_persona(
         },
         routed_strategies=0,
     )
+    if dry_run:
+        return _dry_run_success_response(
+            overlay,
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="persona.create",
+        )
     _PERSONA_BFF_OVERLAY[persona_id] = overlay
+
+    # Wire persona OODA loop: register recurring cron jobs + open OODA packet.
+    cron_registration = _try_register_persona_cron(persona_id)
+    ooda_packet = _try_bootstrap_persona_ooda_packet(persona_id)
+
+    ooda_meta: Dict[str, Any] = {}
+    if ooda_packet:
+        ooda_meta["ooda_packet_id"] = ooda_packet.get("packet_id")
+        ooda_meta["ooda_loop_status"] = ooda_packet.get("status")
+    if cron_registration:
+        ooda_meta["cron_registration_mode"] = cron_registration.get("mode")
+        ooda_meta["cron_registered_count"] = len(cron_registration.get("registered") or [])
+
     result = {
         "data": overlay,
-        "meta": {"snapshot_at": snapshot_at},
+        "meta": {"snapshot_at": snapshot_at, **ooda_meta},
     }
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
@@ -35877,7 +36973,7 @@ async def bff_patch_persona(
 ):
     """BFF: patch persona fields through the BFF read store."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash(
@@ -41245,22 +42341,8 @@ async def stream_runtime_events(
     return _handle_sse_stream("runtime", _runtime_events, _runtime_subscribers, last_event_id)
 
 
-@app.get("/api/v1/incidents/stream")
-async def stream_incident_events(
-    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """IN-SSE: Server-Sent Events stream for active incident events.
-
-    Supports reconnection via ``?last_event_id=`` to replay missed events.
-    BFF_API_CONTRACT.md §11.2
-    """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    return _handle_sse_stream("incident", _incident_events, _incident_subscribers, last_event_id)
-
-
+# IN-SSE: "/api/v1/incidents/stream" is defined earlier (just above the
+# parameterized "/api/v1/incidents/{incident_id}" route) so it is not shadowed.
 @app.get("/api/v1/kill-switch/updates")
 async def stream_kill_switch_events(
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
@@ -42171,18 +43253,30 @@ def _merge_registry_records(
 
 
 def _tool_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_tools()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("tools")
 
 
 def _skill_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_skills()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("skills")
 
 
 def _mcp_server_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_mcp_servers()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("mcp_servers")
 
 
 def _mcp_tool_fixture_records() -> List[Dict[str, Any]]:
+    store_records = read_store.list_mcp_tools()
+    if store_records:
+        return store_records
     return _read_store_fixture_records("mcp_tools")
 
 
@@ -42783,13 +43877,15 @@ async def bff_create_skill(
 ):
     """BFF: create skill record (Part 06 compatibility surface)."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/skills", "payload": payload})
-    cached = _skills_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _skills_bff_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return cached
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
@@ -42812,6 +43908,13 @@ async def bff_create_skill(
         "updated_at": snapshot_at,
         "created_by": identity.operator_id,
     }
+    if dry_run:
+        return _dry_run_success_response(
+            result,
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="skill.create",
+        )
     _SKILL_REGISTRY[skill_id] = result
     _SKILLS_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
@@ -42844,7 +43947,7 @@ async def bff_patch_skill(
 ):
     """BFF: patch skill record (Part 06 compatibility surface)."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     clean_id = str(skill_id or "").strip()
     if not clean_id:
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "skill_id is required", "skill_id path parameter must be a non-empty string", precondition_failed="skill_id")
@@ -43144,6 +44247,18 @@ def _gov_bff_action_command(
     request_hash = _stable_json_hash(
         {"entity_type": entity_type.value, "entity_id": entity_id, "action_id": action_id, "payload": payload}
     )
+    if _request_dry_run_requested():
+        submitted_at = utc_now()
+        command_id = f"dryrun-cmd-{uuid.uuid4().hex[:12]}"
+        result = _project_final_command_response(
+            command_id=command_id,
+            command=command_type,
+            accepted_at=submitted_at,
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=_check_read_surface_state(),
+            meta=_command_response_dry_run_meta(resolved_key),
+        )
+        return result.model_dump(mode="json")
     existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
     if existing is not None:
         if existing.get("request_hash") != request_hash:
@@ -43569,18 +44684,20 @@ async def bff_create_runtime(
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/runtimes", "payload": payload})
-    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is not None:
-        if existing.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        return existing["result"]
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
+        if existing is not None:
+            if existing.get("request_hash") != request_hash:
+                raise _bff_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency key already used with a different payload",
+                    f"Key {resolved_key!r} is bound to a different request hash",
+                    precondition_failed="idempotency_conflict",
+                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                )
+            return existing["result"]
 
     fields = {
         field: _runtime_create_required_string(payload, field)
@@ -43601,23 +44718,44 @@ async def bff_create_runtime(
     snapshot_at = utc_now()
     client_runtime_id = str(payload.get("runtime_id") or payload.get("id") or "").strip()
     runtime_id = client_runtime_id or f"runtime-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-    record = read_store.create_runtime_binding(
-        runtime_id=runtime_id,
-        name=fields["name"],
-        persona_id=fields["persona_id"],
-        binding_id=fields["binding_id"],
-        deployment_plan_id=fields["deployment_plan_id"],
-        runtime_kind=runtime_kind,
-        actor_id=identity.operator_id,
-        created_at=snapshot_at,
-        params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
-    )
+    record = {
+        "id": runtime_id,
+        "runtime_id": runtime_id,
+        "name": fields["name"],
+        "state": "stopped",
+        "status": "stopped",
+        "persona_id": fields["persona_id"],
+        "binding_id": fields["binding_id"],
+        "deployment_plan_id": fields["deployment_plan_id"],
+        "runtime_kind": runtime_kind,
+        "created_at": snapshot_at,
+    }
+    if not dry_run:
+        record = read_store.create_runtime_binding(
+            runtime_id=runtime_id,
+            name=fields["name"],
+            persona_id=fields["persona_id"],
+            binding_id=fields["binding_id"],
+            deployment_plan_id=fields["deployment_plan_id"],
+            runtime_kind=runtime_kind,
+            actor_id=identity.operator_id,
+            created_at=snapshot_at,
+            params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+        )
     data = _project_runtime_create_response(record)
     surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {"runtimes": surface}
     meta["evidenceKind"] = "runtime.create"
     meta["evidence_kind"] = "runtime.create"
+    if dry_run:
+        return _dry_run_success_response(
+            data,
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="runtime.create",
+            extra_meta={"surfaces": {"runtimes": surface}},
+        )
     event_payload = {
         "runtime_id": data["id"],
         "binding_id": data["binding_id"],
@@ -44235,8 +45373,8 @@ async def bff_list_audit_events(
     snapshot_at = utc_now()
     action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
 
-    from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
-    to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
+    from_dt = _parse_rfc3339(from_ts) if from_ts else None
+    to_dt = _parse_rfc3339(to_ts) if to_ts else None
 
     events = _list_governance_audit_events(
         actor=actor,
@@ -44301,8 +45439,8 @@ async def bff_audit_export(
 
     snapshot_at = utc_now()
     action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
-    from_dt = _parse_rfc3339_header(from_ts) if from_ts else None
-    to_dt = _parse_rfc3339_header(to_ts) if to_ts else None
+    from_dt = _parse_rfc3339(from_ts) if from_ts else None
+    to_dt = _parse_rfc3339(to_ts) if to_ts else None
 
     events = _list_governance_audit_events(
         actor=actor,
@@ -44692,14 +45830,9 @@ def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> O
         return "bff_overlay"
     if read_store.dataset_source("research_experiments") != "missing":
         return None
-    has_records = False
     for record in records:
         if str(record.get("experiment_id") or record.get("id") or "") == "exp-mgmt-qlib-006":
             return "composed_market_persona_defaults"
-        if str(record.get("experiment_id") or record.get("id") or "").strip():
-            has_records = True
-    if has_records:
-        return "bff_local"
     return None
 
 
@@ -44707,12 +45840,15 @@ def _get_bff_job(job_id: str) -> Optional[Dict[str, Any]]:
     overlay = _GOV_BFF_JOB_OVERLAY.get(job_id)
     if overlay is not None:
         return dict(overlay)
+    projected = read_store.get_job_bff(job_id)
+    if projected is not None:
+        return projected
     return _find_record_by_id(_read_store_fixture_records("jobs"), job_id, ("job_id", "id"))
 
 
 def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
     jobs = _merge_registry_records(
-        _read_store_fixture_records("jobs"),
+        read_store.list_jobs_bff(),
         [dict(record) for record in _GOV_BFF_JOB_OVERLAY.values()],
         ("job_id", "id"),
     )
@@ -45014,7 +46150,7 @@ async def bff_list_experiments_compat(
     items = _list_bff_experiments(status=status)
     source = _research_experiments_surface_source(items)
     surface = _dataset_surface_status("research_experiments", snapshot_at=snapshot_at, source=source)
-    if surface.get("status") == "unavailable" and not items and not _GOV_BFF_EXPERIMENT_OVERLAY:
+    if surface.get("status") == "unavailable" and not _GOV_BFF_EXPERIMENT_OVERLAY:
         items = []
         next_page_token = None
     else:
@@ -45303,16 +46439,23 @@ async def bff_list_jobs(
         snapshot_at=snapshot_at,
         has_data=bool(jobs) or None,
     )
+    total = len(jobs)
     if surface.get("status") == "unavailable" and not jobs:
+        page_items: List[Dict[str, Any]] = []
         next_page_token = None
     else:
-        jobs, next_page_token = _page_slice(jobs, page_token, page_size)
+        page_items, next_page_token = _page_slice(jobs, page_token, page_size)
 
     meta = _snapshot_meta(snapshot_at)
     meta["surfaces"] = {"jobs": surface}
     return {
-        "items": jobs,
-        "page_info": {"next_page_token": next_page_token},
+        "data": page_items,
+        "items": page_items,
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "returned": len(page_items),
+        },
         "meta": meta,
     }
 
@@ -45769,6 +46912,50 @@ def _sem_command_payload_from_record(
     }
 
 
+def _sem_command_dry_run_payload(
+    *,
+    command_type: CommandType,
+    target_type: ObjectType,
+    target_id: str,
+    payload: Dict[str, Any],
+    identity: OperatorIdentity,
+    idempotency_key: str,
+) -> Dict[str, Any]:
+    submitted_at = utc_now()
+    command_id = f"dryrun-cmd-{uuid.uuid4().hex[:12]}"
+    receipts = _command_dual_write_receipts(
+        command_id=command_id,
+        command=command_type.value,
+        status=ActionCommandStatus.ACCEPTED.value,
+        accepted_at=submitted_at,
+    )
+    receipt = dict(receipts["command_receipt"])
+    receipt["id"] = command_id
+    return {
+        "status": "accepted",
+        "data": {
+            "status": "accepted",
+            "command": command_type.value,
+            "commandId": command_id,
+            "command_id": command_id,
+            "target": {"type": target_type.value, "id": target_id},
+            "params": json.loads(json.dumps(payload)),
+            "submitted_by": identity.operator_id,
+            "receipt_id": command_id,
+            "receipt": receipt,
+            "receipt_dual_write": receipts,
+            "action_receipt": receipts["action_receipt"],
+            "actionReceipt": receipts["action_receipt"],
+            "command_receipt": receipts["command_receipt"],
+            "commandReceipt": receipts["command_receipt"],
+        },
+        "meta": {
+            "snapshot_at": submitted_at,
+            **_command_response_dry_run_meta(idempotency_key),
+        },
+    }
+
+
 def _scoped_idempotency_cache_key(idempotency_key: str, operator_id: str) -> str:
     return f"{operator_id}\x00{idempotency_key}"
 
@@ -45800,6 +46987,18 @@ def _sem_command_response(
         hash_body["target_id"] = target_id
     request_hash = _stable_json_hash(hash_body)
     cache_key = _scoped_idempotency_cache_key(clean_key, identity.operator_id)
+    if _request_dry_run_requested():
+        return JSONResponse(
+            status_code=200,
+            content=_sem_command_dry_run_payload(
+                command_type=command_type,
+                target_type=target_type,
+                target_id=target_id,
+                payload=payload,
+                identity=identity,
+                idempotency_key=clean_key,
+            ),
+        )
     existing = _FINAL_CONTRACT_IDEMPOTENCY.get(cache_key)
     if existing:
         if existing.get("request_hash") != request_hash:
@@ -45867,6 +47066,7 @@ def _sem_command_response(
         payload,
         {
             "actor": identity.operator_id,
+            "operator_id": identity.operator_id,
             "reason": reason,
             "live_capital_side_effects": False,
             "receipt_dual_write": receipt_dual_write,
@@ -46024,7 +47224,7 @@ async def sem_create_deployment_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     client_provided_id = payload.get("deployment_id") or payload.get("deploymentId") or payload.get("id")
     deployment_id = str(client_provided_id or f"deployment-{uuid.uuid4().hex[:8]}")
     return _sem_command_response(
@@ -46049,7 +47249,7 @@ async def sem_patch_deployment_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     return _sem_command_response(
         command_type=CommandType.DEPLOYMENT_PATCH,
         target_type=ObjectType.DEPLOYMENT,
@@ -46070,7 +47270,7 @@ async def sem_patch_rebalance_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     return _sem_command_response(
         command_type=CommandType.REBALANCE_PATCH,
         target_type=ObjectType.REBALANCE,
@@ -46090,7 +47290,7 @@ async def sem_audit_export_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     return _sem_command_response(
         command_type=CommandType.AUDIT_EXPORT,
         target_type=ObjectType.AUDIT_EXPORT,
@@ -46484,7 +47684,7 @@ async def sem_v5_intervention_command(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     return _sem_command_response(
         command_type=CommandType.V5_INTERVENTION_ACTION,
         target_type=ObjectType.SENTINEL_INTERVENTION,
@@ -48109,6 +49309,10 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
     if ooda_src in (None, "missing") and packets:
         ooda_src = "composed_market_persona_defaults"
     surface_status = "ok" if ooda_src not in (None, "missing") else "unavailable"
+    # Propagate an unavailable backing source into the per-stage cards so the
+    # card body cannot report all-green while meta.status says "unavailable".
+    # A present-but-empty source (0 packets) stays "ok" with active_count 0.
+    stage_status = surface_status
 
     return {
         "enabled": True,
@@ -48121,7 +49325,7 @@ def _build_ooda_control_room_status_card(snapshot_at: str) -> Dict[str, Any]:
             stage: {
                 "label": label,
                 "description": desc,
-                "status": "ok",
+                "status": stage_status,
                 "active_count": stage_counts[stage],
                 "detail_link": f"/bff/ooda/packets?stage={stage}",
             }
@@ -48540,7 +49744,7 @@ async def bff_persona_league_detail(
     if not entry:
         raise _bff_error(
             404,
-            ErrorCode.OBJECT_NOT_FOUND,
+            ErrorCode.RESOURCE_NOT_FOUND,
             "Persona league entry not found",
             f"Persona league entry {persona_id} does not exist",
         )
@@ -48555,6 +49759,7 @@ async def bff_persona_league_detail(
 
 
 @app.get("/bff/management/fleet")
+@app.get("/bff/management/persona-fleet")
 async def bff_management_fleet(
     state: Optional[str] = None,
     health: Optional[str] = None,
@@ -48568,6 +49773,7 @@ async def bff_management_fleet(
     pools = read_store.list_capital_pools(include_market_persona_defaults=True)
     runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
     league = read_store.list_persona_league(include_market_persona_defaults=True)
+    health_filter = health
     health_items = _build_persona_health_items(
         snapshot_at,
         include_market_persona_defaults=True,
@@ -48576,16 +49782,28 @@ async def bff_management_fleet(
         requested_states = {token.strip().lower() for token in state.split(",") if token.strip()}
         health_items = [
             item for item in health_items
-            if str(item.get("state") or "").strip().lower() in requested_states
+            if str(item.get("state") or item.get("status") or "").strip().lower() in requested_states
         ]
-    if health:
-        requested_health = {token.strip().lower() for token in health.split(",") if token.strip()}
+    if health_filter:
+        requested_health = {token.strip().lower() for token in health_filter.split(",") if token.strip()}
         health_items = [
             item for item in health_items
             if str(item.get("health") or item.get("status") or "").strip().lower() in requested_health
         ]
-    total_health = len(health_items)
+    total_personas = len(health_items)
     page_items, next_page_token = _page_slice(health_items, page_token, page_size)
+    summary = {
+        "total_personas": total_personas,
+        "returned_personas": len(page_items),
+        "critical_personas": len([item for item in health_items if item.get("health") == "critical"]),
+        "degraded_personas": len([item for item in health_items if item.get("health") == "degraded"]),
+        "healthy_personas": len([item for item in health_items if item.get("health") == "healthy"]),
+    }
+    page_info = {
+        "next_page_token": next_page_token,
+        "total": total_personas,
+        "page_size": page_size,
+    }
     pending_human_gate = [
         item
         for item in league
@@ -48611,23 +49829,21 @@ async def bff_management_fleet(
                 "live_capital_side_effects": False,
                 "human_gate_required_for_capital_changes": True,
             },
+            "summary": summary,
+            "page_info": page_info,
         },
         "items": page_items,
-        "summary": {
-            "total_personas": total_health,
-            "returned_personas": len(page_items),
-            "critical_personas": len([item for item in health_items if item.get("health") == "critical"]),
-            "degraded_personas": len([item for item in health_items if item.get("health") == "degraded"]),
-            "healthy_personas": len([item for item in health_items if item.get("health") == "healthy"]),
-        },
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total_health,
-            "page_size": page_size,
-        },
+        "summary": summary,
+        "page_info": page_info,
         "meta": {
             "snapshot_at": snapshot_at,
             "surfaces": {
+                "persona_fleet": _composed_dataset_surface_status(
+                    "persona_fleet",
+                    page_items,
+                    snapshot_at=snapshot_at,
+                    source="bff_composed",
+                ),
                 "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
                 "persona_league": _composed_dataset_surface_status(
                     "persona_league",
@@ -49047,15 +50263,17 @@ async def bff_create_ranking_formula_facade(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    """BFF B2.3: create a ranking formula through the canonical hyphenated route."""
+    """BFF B2.3: create a ranking formula in the read surface store."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash({"route": "POST /bff/ranking-formulas", "payload": payload})
-    cached = _capital_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
+    dry_run = _request_dry_run_requested()
+    if not dry_run:
+        cached = _capital_bff_idempotency_check(resolved_key, request_hash)
+        if cached is not None:
+            return JSONResponse(status_code=201, content=jsonable_encoder(cached))
     name = str(payload.get("name") or "").strip()
     if not name:
         raise _bff_error(
@@ -49065,14 +50283,41 @@ async def bff_create_ranking_formula_facade(
             "Ranking formula name must be a non-empty string",
             precondition_failed="name",
         )
-    result = read_store.create_ranking_formula(
+    description = str(payload.get("description") or "").strip()
+    snapshot_at = utc_now()
+    if dry_run:
+        preview_id = str(payload.get("id") or payload.get("formula_id") or f"rf-dryrun-{uuid.uuid4().hex[:8]}")
+        return _dry_run_success_response(
+            {
+                "id": preview_id,
+                "formula_id": preview_id,
+                "name": name,
+                "description": description,
+                "status": str(payload.get("status") or "active"),
+                "params": payload.get("params") or {},
+                "created_by": identity.operator_id,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="ranking_formula.create.preview",
+        )
+    record = read_store.create_ranking_formula(
         name=name,
-        description=str(payload.get("description") or "").strip(),
+        description=description,
         actor_id=identity.operator_id,
+        created_at=snapshot_at,
         params=payload.get("params"),
     )
+    result = {
+        "data": record,
+        "meta": _read_surface_meta(
+            "ranking_formulas",
+            "ranking_formula_detail",
+            snapshot_at=snapshot_at,
+        ),
+    }
     _CAPITAL_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
+    return JSONResponse(status_code=201, content=jsonable_encoder(result))
 
 
 # ============================================================================
@@ -49281,7 +50526,7 @@ async def sem_final_id_named_read_alias(
 @app.patch("/bff/ranking-formulas/{id}")
 @app.patch("/bff/research-experiments/{id}")
 async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
 
 
@@ -49636,7 +50881,7 @@ async def bff_approvals_batch_decide(
 @app.post("/bff/incidents/{id}/rollback-deployment", status_code=202)
 @app.post("/bff/incidents/{id}/start-mitigation", status_code=202)
 async def sem_final_generic_id_command_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": utc_now()}})
 
 
@@ -49644,9 +50889,17 @@ async def sem_final_generic_id_command_alias(id: str, payload: Dict[str, Any] = 
 @app.post("/bff/ranking-formulas", status_code=201)
 @app.post("/bff/research-experiments", status_code=201)
 async def sem_final_generic_create_alias(payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     status = 202 if "decision" in payload else 201
-    return JSONResponse(status_code=status, content={"data": {"id": str(payload.get("id") or uuid.uuid4().hex[:12]), **payload}, "meta": {"snapshot_at": utc_now()}})
+    snapshot_at = utc_now()
+    data = {"id": str(payload.get("id") or uuid.uuid4().hex[:12]), **payload}
+    if _request_dry_run_requested():
+        return _dry_run_success_response(
+            data,
+            snapshot_at=snapshot_at,
+            evidence_kind="generic_create.preview",
+        )
+    return JSONResponse(status_code=status, content={"data": data, "meta": {"snapshot_at": snapshot_at}})
 
 
 @app.get("/bff/agora/alerts/triage")
@@ -49657,13 +50910,13 @@ async def sem_agora_alerts_triage_alias(authorization: Optional[str] = Header(de
 
 @app.post("/bff/agora/signals/{id}/feedback", status_code=202)
 async def sem_agora_signal_feedback_id_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "signalId": id, **payload}, "meta": {"snapshot_at": utc_now()}})
 
 
 @app.patch("/bff/agora/journal/{id}")
 async def sem_agora_journal_id_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_read_role(_extract_identity(authorization))
+    _require_operator_role(_extract_identity(authorization))
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
 
 
@@ -50351,6 +51604,22 @@ def _assistant_provider_reauth_status(
         raise _openclaw_client_error(exc) from exc
 
 
+def _include_governance_subrules_routes() -> None:
+    from console_gap.permissions import create_permissions_router
+    from console_gap.memory_governance import create_memory_governance_router
+    from console_gap.consult_rules import create_consult_rules_router
+    from console_gap.route_policies import create_route_policies_router
+    _get_store = lambda: read_store
+    _kw = dict(get_read_store=_get_store, extract_identity=_extract_identity, require_read_role=_require_read_role)
+    app.include_router(create_permissions_router(**_kw))
+    app.include_router(create_memory_governance_router(**_kw))
+    app.include_router(create_consult_rules_router(**_kw))
+    app.include_router(create_route_policies_router(**_kw))
+
+
+_include_governance_subrules_routes()
+
+
 def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
     from assistant.control_mode import ControlModeStore
@@ -50387,7 +51656,88 @@ def _include_assistant_routes() -> None:
     )
 
 
+from console_gap.workflows_hooks import create_workflows_hooks_router
+
+app.include_router(
+    create_workflows_hooks_router(
+        read_store_provider=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_now=utc_now,
+    )
+)
+
 _include_assistant_routes()
+
+# BFFGAP-DATASOURCES: data-source registry endpoint via isolated module
+from console_gap.datasources import create_datasources_router  # noqa: E402
+app.include_router(
+    create_datasources_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_meta=_snapshot_meta,
+        utc_now=utc_now,
+    )
+)
+
+
+def _include_knowledge_routes() -> None:
+    from console_gap.knowledge import create_knowledge_router
+
+    app.include_router(
+        create_knowledge_router(
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            read_store_getter=lambda: read_store,
+            utc_now=utc_now,
+            dataset_surface_status=_dataset_surface_status,
+        )
+    )
+
+
+_include_knowledge_routes()
+
+
+# BFFGAP-LINEAGE: lineage graph endpoint via isolated module
+from console_gap.lineage import create_lineage_router  # noqa: E402
+app.include_router(
+    create_lineage_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_meta=_snapshot_meta,
+        utc_now=utc_now,
+    )
+)
+
+from console_gap.alpha_factory import create_alpha_factory_router as _create_alpha_factory_router  # noqa: E402
+app.include_router(_create_alpha_factory_router(
+    get_read_store=lambda: read_store,
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    utc_now=utc_now,
+))
+
+
+def _ensure_agora_servant_openclaw_agent(persona: Dict[str, Any]) -> Dict[str, Any]:
+    from integrations.openclaw.adapter.agora_servant import ensure_agora_servant_agent
+
+    return ensure_agora_servant_agent(persona)
+
+
+# AG-BE-000: Agora BFF package router (must stay last to avoid route conflicts)
+from agora.router import create_agora_router as _create_agora_router  # noqa: E402
+app.include_router(
+    _create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        get_read_store=lambda: read_store,
+        sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
+    )
+)
 
 
 if __name__ == "__main__":

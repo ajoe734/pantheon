@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-OPENAPI-004",
+  "archived_at": "2026-06-21T13:30:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-OPENAPI-004",
+    "title": "Additive Agora v1.3 OpenAPI / capability / schema bundle (+ hashes)",
+    "summary_zh": "依 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/08_openapi_v1_3_delta.yaml + INDEX 把 6 個 AG-DES-* 的 v4 schema 整合成 additive v1.3 bundle:services/control-plane/openapi/agora_v1_3.openapi.yaml(納入 08 全部 26 條 patch-proposals/version-comparisons/readiness/cards/research-plans/research-runs/trading-room/decision-events/trading-intents 路由與 typed response)、services/control-plane/specs/agora/v4/capability_manifest_v1_3.json、services/control-plane/specs/agora/bundle_index.v1_3.json(extends 並 hash v1.2 精確 bytes,含全部 v4 schema+manifest+openapi 的 sha256,**merge 後生成、不可從 design pack template 照抄**)。frozen v1/v1.1/v1.2 不可動。前端 generated types 之後由 type-gen follow-up 從 v1.3 產出。 【有疑問一定要 STOP 開 blocker】動工前讀完權威設計 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/ (MASTER_SD_RESPONSE.md + 對應 0X 文件 + schemas/*.json + 08 OpenAPI delta)。鐵律:不可改動或重雜湊 frozen v1/v1.1/v1.2(bundle_index.json/.v1_1/.v1_2、agora_v1*.openapi.yaml);一律 additive 到 services/control-plane/specs/agora/v4/ 與 agora_v1_3.openapi.yaml / bundle_index.v1_3.json(後者 extends 並 hash v1.2 精確 bytes)。schema 內容以 docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/schemas/ 同名檔為準逐欄落地,不自創欄位/route/enum;Agora 永不下單/綁資金/寫 RuntimeBinding(governed handoff 只建 request)。遇任何不確定先 blocker。",
+    "phase": "EPIC AGORA-V13 / Round2",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-DES-VERS-001",
+      "AG-DES-RS-001",
+      "AG-DES-SSE-001",
+      "AG-DES-TR-001",
+      "AG-DES-CARD-001",
+      "AG-DES-E2E-001"
+    ],
+    "artifacts": [
+      "services/control-plane/openapi/agora_v1_3.openapi.yaml",
+      "services/control-plane/specs/agora/v4/capability_manifest_v1_3.json",
+      "services/control-plane/specs/agora/bundle_index.v1_3.json"
+    ],
+    "acceptance": [
+      "agora_v1_3.openapi.yaml 含 08 全部路由與 typed response;capability_manifest_v1_3 到位;bundle_index.v1_3 extends+hash v1.2 與全部 v4 物件;frozen v1/v1.1/v1.2 sha256 不變;【驗收】frozen v1/v1.1/v1.2 + 其 bundle_index sha256 全不變;新增物逐欄對齊 design-closure-round2;遇疑問先 blocker 不自行實作"
+    ],
+    "next": "Closeout complete: PR #2072 merged into dev. Deliverables verified — agora_v1_3.openapi.yaml (29/29 routes), capability_manifest_v1_3.json, bundle_index.v1_3.json (extends v1.2, full SHA256 chain v1→v1.3 intact). Frozen v1/v1.1/v1.2 untouched. no_order_route_proof enum enforced. workshop_card typed discriminated-union (approved improvement). Task complete.",
+    "last_update": "2026-06-21T13:30:08Z",
+    "auto_created_by": "dispatch_agora_v13_round2_2026-06-21",
+    "review_notes_zh": [
+      "審查通過—全部 29 路由、11 個 v4 schema SHA256、hash chain v1→v1.3 均逐一驗證",
+      "workshop_card 採 typed discriminated-union 實作（優於設計樣板的 additionalProperties:true），已在 bundle_index note 記錄—接受改動",
+      "frozen v1/v1.1/v1.2 檔案未被動到",
+      "no_order_route_proof 鎖定 enum 值，Agora 不下單/不綁資金—policy 符合"
+    ],
+    "review_file": ".orchestrator/reviews/ag_xr_openapi_004_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T13:30:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-openapi-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-OPENAPI-004",
+      "git_clean_required": false,
+      "commit": "a2be54dfc95d95a81630e778d709e15d9bb3888b",
+      "commit_subject": "AG-XR-OPENAPI-004: closeout — update task brief to review_approved",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Task": "AG-XR-OPENAPI-004 — Additive Agora v1.3 OpenAPI / capability / schema bundle",
+        "Owned layer": "task brief status update (review_approved → finalization record)",
+        "Not changing": "any v4 schema, OpenAPI YAML, or bundle_index files (already committed)",
+        "Composes with": "commit e3c8182e (AG-DES-CARD-001 delivered the actual v1.3 artifacts)",
+        "- agora_v1_3.openapi.yaml": "29 routes confirmed (listWorkshopPatchProposals...listTradingIntents)",
+        "- v4 schemas": "11 present (capability_manifest_v1_3.json + 10 domain schemas)",
+        "- bundle_index.v1_3.json": "extends v1.2 with SHA256 4ba5fc1a0858f3ca... ✓ match",
+        "- Frozen v1/v1.1/v1.2 OpenAPI": "last touched by pre-task commits — unchanged ✓",
+        "- no_order_route_proof": "Agora routes are query/read/handoff-request only — no order/bind/capital paths",
+        "- Review approved by Claude": "29 routes, 11 v4 schemas, full SHA256 chain verified",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-XR-OPENAPI-004",
+        "Reviewer": "Claude",
+        "Verified": "sha256sum cross-check v1.2→v1.3 chain, route count, schema count, frozen file diff"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-OPENAPI-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "807d556998bdf7134da6c6cd3198c0c112151e64",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-OPENAPI-004",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "All v1.3 artifacts verified: 29-route agora_v1_3.openapi.yaml, 11-schema v4/ dir, capability_manifest_v1_3.json, and bundle_index.v1_3.json all committed by AG-DES-CARD-001 (declared dependency). SHA256 hash chain v1->v1.1->v1.2->v1.3 intact. All hashes in bundle_index verified against actual files. workshop_card.schema.json is a typed discriminated-union implementation rather than the design template's generic additionalProperties payload — improvement documented in bundle_index note. Frozen v1/v1.1/v1.2 are untouched. Ready for Claude to review acceptance criteria.",
+      "status": "done",
+      "created_at": "2026-06-21T13:06:11Z",
+      "resolved_at": "2026-06-21T13:11:02Z"
+    },
+    {
+      "task_id": "AG-XR-OPENAPI-004",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: 29 routes, 11 v4 schemas, full SHA256 chain verified; frozen files untouched; no_order_route_proof enforced. Returned to Claude2 for finalization.",
+      "status": "done",
+      "created_at": "2026-06-21T13:11:02Z",
+      "resolved_at": "2026-06-21T13:13:43Z"
+    }
+  ],
+  "blockers": []
+}

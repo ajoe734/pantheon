@@ -130,6 +130,7 @@ DEFER_BASH_PATTERNS = [
 DENY_BASH_PATTERNS = [
     re.compile(r"^git reset --hard"),
     re.compile(r"^git checkout --(\s|$)"),
+    re.compile(r"^git clean(\s|$)"),
     re.compile(r"^git push(?:\s|$).*?(?:--force(?:-with-lease)?|-f|--mirror|--delete|--all|--tags|--prune|--atomic)(?:\s|$)"),
     re.compile(r"^sudo(\s|$)"),
     re.compile(r"^rm -rf /\*?$"),

@@ -89,7 +89,7 @@ def test_dev_catalog_snapshot_fallback_is_explicitly_degraded(monkeypatch) -> No
 
         assert response.status_code == 200
         payload = response.json()
-        assert "plan-F-042" in [plan["plan_id"] for plan in payload["data"]]
+        assert [plan["plan_id"] for plan in payload["data"]] == ["plan-F-042"]
         surface = payload["meta"]["surfaces"]["deployment_plan_list"]
         assert surface["status"] == "degraded"
         assert surface["source"] == "local_snapshot"

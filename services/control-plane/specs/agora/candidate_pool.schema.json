@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/candidate_pool/v1",
+  "title": "CandidatePool",
+  "description": "Set of strategy candidate artifacts ready for review, surfaced in the Agora. Read-only projection of registry candidates filtered for the operator's scope.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "pool_id",
+    "operator_id",
+    "candidates",
+    "snapshot_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "pool_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this candidate pool snapshot."
+    },
+    "operator_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator this pool was computed for."
+    },
+    "filter": {
+      "type": "object",
+      "description": "Filter applied to produce this pool.",
+      "properties": {
+        "asset_classes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "strategy_families": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "lifecycle_states": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["candidate", "review", "approved"]
+          },
+          "default": ["candidate"]
+        },
+        "persona_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Restrict to candidates produced by these personas.",
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifact_id", "strategy_ref", "lifecycle_state", "created_at"],
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Registry artifact ID."
+          },
+          "strategy_ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Strategy the artifact implements."
+          },
+          "title": { "type": "string" },
+          "lifecycle_state": {
+            "type": "string",
+            "enum": ["candidate", "review", "approved", "rejected"]
+          },
+          "producing_persona_id": { "type": "string" },
+          "sharpe_summary": { "type": "number" },
+          "run_ref": { "type": "string" },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Candidate artifacts in this pool.",
+      "default": []
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total candidates in the pool (may exceed page size)."
+    },
+    "snapshot_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this pool snapshot was computed."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

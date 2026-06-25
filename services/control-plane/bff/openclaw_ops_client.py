@@ -244,8 +244,27 @@ class OpenClawOpsClient:
         headers: Dict[str, str] = {"X-Operator-Id": operator_id}
         if trace_id:
             headers["X-Trace-Id"] = trace_id
-        if normalized in {"codex", "codex_cli"}:
+        if normalized in {"openclaw", "openclaw_agent"}:
             body: Dict[str, Any] = {
+                "mode": mode,
+                "prompt": prompt,
+                "context_pack": context_pack,
+                "metadata": metadata or {},
+            }
+            if messages is not None:
+                body["messages"] = messages
+            if attachments is not None:
+                body["attachments"] = attachments
+            return self._request(
+                "POST",
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                body=body,
+                headers=headers,
+                expected_status={200},
+                timeout_seconds=self._assistant_timeout_seconds(),
+            )
+        if normalized in {"codex", "codex_cli"}:
+            body = {
                 "mode": mode,
                 "prompt": prompt,
                 "context_pack": context_pack,
@@ -285,6 +304,94 @@ class OpenClawOpsClient:
             error_code="ASSISTANT_PROVIDER_NOT_SUPPORTED",
             payload={"provider": provider},
         )
+
+    def stream_assistant_provider(
+        self,
+        *,
+        mode: str,
+        prompt: str,
+        context_pack: Dict[str, Any],
+        operator_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
+        session_user: Optional[str] = None,
+        read_timeout_seconds: Optional[float] = None,
+    ):
+        """Stream the OpenClaw assistant provider via the adapter SSE endpoint.
+
+        Yields the adapter's normalized event dicts:
+            {"type":"delta","text":...}
+            {"type":"done","text":...,"elapsed_ms":N,"transport":"responses_http"}
+            {"type":"error","error_code":...,"message":...}
+        Raises OpenClawOpsClientError if the adapter URL is unset or the stream
+        cannot be opened (the caller turns that into a degraded SSE event).
+        """
+        if not self._base_url:
+            raise OpenClawOpsClientError(
+                "OpenClaw gateway adapter URL is not configured.",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_URL_NOT_CONFIGURED",
+            )
+        md = dict(metadata or {})
+        if session_user:
+            md.setdefault("session_user", session_user)
+        body = {"mode": mode, "prompt": prompt, "context_pack": context_pack, "metadata": md}
+        headers = {
+            "X-Operator-Id": operator_id,
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        request = urllib.request.Request(
+            f"{self._base_url}/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            timeout = self._assistant_timeout_seconds()
+            if read_timeout_seconds is not None:
+                timeout = min(timeout, max(float(read_timeout_seconds), 0.1))
+            response = urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace") if exc.fp is not None else ""
+            payload = _safe_json(raw)
+            raise OpenClawOpsClientError(
+                str(payload.get("message") or f"OpenClaw adapter stream returned HTTP {exc.code}."),
+                status_code=exc.code,
+                error_code=str(payload.get("error_code") or "OPENCLAW_ADAPTER_STREAM_HTTP_ERROR"),
+                payload=payload,
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise OpenClawOpsClientError(
+                f"OpenClaw adapter stream is unreachable: {exc}",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_STREAM_UNREACHABLE",
+            ) from exc
+        try:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                payload_str = line[len("data:"):].strip()
+                if payload_str == "[DONE]":
+                    break
+                try:
+                    yield json.loads(payload_str)
+                except (ValueError, TypeError):
+                    continue
+        except OSError as exc:
+            raise OpenClawOpsClientError(
+                f"OpenClaw adapter stream read failed: {exc}",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_STREAM_READ_FAILED",
+            ) from exc
+        finally:
+            try:
+                response.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def prepare_assistant_repair_worktree(
         self,
@@ -375,6 +482,22 @@ class OpenClawOpsClient:
                 "X-Idempotency-Key": idempotency_key,
             },
             expected_status={200, 201},
+        )
+
+    def get_session(
+        self,
+        *,
+        session_id: str,
+        operator_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        headers: Dict[str, str] = {}
+        if operator_id:
+            headers["X-Operator-Id"] = operator_id
+        return self._request(
+            "GET",
+            f"/api/openclaw-adapter/lifecycle/sessions/{urllib.parse.quote(session_id, safe='')}",
+            headers=headers,
+            expected_status={200},
         )
 
     def cancel_session(

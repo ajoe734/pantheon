@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-22T00:14:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S BFF and frontend handoff packet",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-SIDECAR-BFF-HANDOFF"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: sidecar BFF/frontend handoff packet in PR #2169 MERGED 2026-06-21T23:57:08Z into dev; PR #2166 (parent unblock) MERGED 2026-06-21T23:58:45Z; task deliverable durable in dev; BFF query gap guidance (Q5-Q8) forwarded to Codex; no canonical truth modified; all acceptance criteria met.",
+    "last_update": "2026-06-22T00:14:35Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only BFF/frontend handoff approved: original ci-red for INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-SIDECAR-BFF-HANDOFF is resolved; PR #2160 MERGED into dev 2026-06-21T23:06:24Z with all CI SUCCESS (confirmed); CI push-event range false-positive fixed in PR #2162 (merged 2026-06-21T23:30:15Z, confirmed); parent unblock PR #2166 now MERGED with all CI SUCCESS (was flaky/OPEN at packet creation, state improved); sidecar PR #2169 OPEN all CI SUCCESS awaiting auto-merge; downstream BFF guidance (Q5-Q8: CommandType/ObjectType enum gaps, ReadSurfaceStore trading_intents gap, Management-plane push gap, test skeleton correction, D10 error-code mapping) correctly forwarded to Codex as AG-BE-TR-002 owner without changing BFF runtime or canonical truth; packet scope clean."
+    ],
+    "review_file": "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T00:14:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/integration-unblock-integration-unblock-ag-be-tr-002-sidecar-bff-handoff-followup-4-missing-pr-s-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "44e75bbe6f50602d83bd7cd981ac9012dfd67002",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "91b5869fe6872f062be98c9b7f5c0a16745aec78",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF handoff packet created at support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF.md (commit acab409d). Documents ci-red resolution: PR #2160 MERGED all CI SUCCESS; CI push-event fix in PR #2162; parent unblock PR #2166 open with flaky Commit-trailers (not genuine violation). Cumulative BFF guidance (Q5-Q8) forwarded to Codex. PR #2169 open with auto-merge. Ready for Claude2 review.",
+      "status": "done",
+      "created_at": "2026-06-21T23:57:44Z",
+      "resolved_at": "2026-06-22T00:03:22Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-MISSING-PR-S-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only ci-red BFF/frontend handoff packet approved for parent unblock owner.",
+      "status": "done",
+      "created_at": "2026-06-22T00:03:22Z",
+      "resolved_at": "2026-06-22T00:14:36Z"
+    }
+  ],
+  "blockers": []
+}

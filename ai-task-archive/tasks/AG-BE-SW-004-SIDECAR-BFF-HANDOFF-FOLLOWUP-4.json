@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-06-21T11:43:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare AG-BE-SW-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-SW-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-SW / Phase 2",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-SW-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-SW-004/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend disposition packet finalized and merged via PR #2051 (merge 63276b00c17f11448ae15ac3937eff0e5e84acde; closeout commit ebd68caea0ef188c043104f95fcbb0e78a2a0eb4). Validation rerun: ai-status show task/parent, json.tool schemas, trailing whitespace scan, git diff --check.",
+    "last_update": "2026-06-21T11:43:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-SW-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Follow-up 4 stays support-only and confirms the AG-BE-SW-004 full aggregate workshop stream remains blocked by missing typed event contract truth. It gives a concise parent decision memo and BFF/frontend handoff delta without changing canonical truth or runtime files."
+    ],
+    "review_file": "support/sidecars/AG-BE-SW-004/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T11:43:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-sw-004-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "ebd68caea0ef188c043104f95fcbb0e78a2a0eb4",
+      "commit_subject": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4: finalize packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars/AG-BE-SW-004 handoff packet closeout metadata.",
+        "Not changing": "L1/L2 canonical truth, OpenAPI/schema files, BFF runtime, registry/governance implementation, execute-plans frontend, or parent AG-BE-SW-004 blocker state.",
+        "Composes with": "parent AG-BE-SW-004 disposition; reviewer Codex may keep parent blocked or narrow acceptance to event-row SSE.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+        "Reviewer": "Codex",
+        "Verified": "AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4; AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-SW-004; python3 -m json.tool services/control-plane/specs/agora/v3/workshop_event.schema.json; python3 -m json.tool services/control-plane/specs/agora/strategy_completeness.schema.json; rg -n \"[ \\\\t]+$\" support/sidecars/AG-BE-SW-004/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md; git diff --check -- support/sidecars/AG-BE-SW-004/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 4,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "63276b00c17f11448ae15ac3937eff0e5e84acde",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-21T11:24:34Z",
+      "resolved_at": "2026-06-21T11:24:43Z"
+    },
+    {
+      "task_id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Handoff packet ready for review. Artifact: support/sidecars/AG-BE-SW-004/AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md. Support-only memo confirms the full AG-BE-SW-004 aggregate workshop stream remains blocked by missing typed event contract truth, and gives parent/BFF/frontend disposition guidance for either continued block or explicit event-row SSE narrowing. No canonical truth, runtime, schema, OpenAPI, registry/governance, or frontend files changed. PR #2048 opened from commit 87dc3a49; focused validation passed as recorded in the artifact.",
+      "status": "done",
+      "created_at": "2026-06-21T11:29:20Z",
+      "resolved_at": "2026-06-21T11:36:45Z"
+    },
+    {
+      "task_id": "AG-BE-SW-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only BFF/frontend disposition packet approved; parent AG-BE-SW-004 can remain blocked pending typed aggregate stream design or be explicitly narrowed to event-row SSE replay.",
+      "status": "done",
+      "created_at": "2026-06-21T11:36:45Z",
+      "resolved_at": "2026-06-21T11:43:19Z"
+    }
+  ],
+  "blockers": []
+}

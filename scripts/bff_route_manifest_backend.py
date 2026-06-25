@@ -117,6 +117,16 @@ FAMILY_RULES: list[tuple[str, str]] = [
     ("/bff/ranking", "capital-ranking-rebalance"),
     ("/bff/rebalances", "capital-ranking-rebalance"),
     ("/bff/rankings", "capital-ranking-rebalance"),
+    # ── automation registry ─────────────────────────────────────────────────
+    ("/bff/workflows", "automation-registry"),
+    ("/bff/hooks", "automation-registry"),
+    # ── governance sub-rules ────────────────────────────────────────────────
+    ("/bff/management/permissions", "governance-sub-rules"),
+    ("/bff/management/memory-governance", "governance-sub-rules"),
+    ("/bff/management/consult-rules", "governance-sub-rules"),
+    ("/bff/route-policies", "governance-sub-rules"),
+    # ── management console registry ────────────────────────────────────────
+    ("/bff/management/data-sources", "management-console"),
     # ── SSE compatibility (must precede /bff/events) ─────────────────────────
     ("/bff/events/stream", "sse-compatibility"),
     ("/bff/sse", "sse-compatibility"),
@@ -192,33 +202,12 @@ def route_key(method: str, path: str) -> str:
     return f"{method.upper()} {normalize_path(path)}"
 
 
-def _join_route_paths(prefix: str, path: str) -> str:
-    clean_prefix = str(prefix or "").strip().rstrip("/")
-    clean_path = str(path or "").strip()
-    if not clean_prefix:
-        return clean_path
-    if not clean_path or clean_path == "/":
-        return clean_prefix or "/"
-    return f"{clean_prefix}/{clean_path.lstrip('/')}"
-
-
-def _iter_registered_routes(container: object, prefix: str = ""):
-    """Yield concrete routes from both eager and lazy FastAPI router tables."""
-    for route in getattr(container, "routes", []):
-        original_router = getattr(route, "original_router", None)
-        if original_router is not None:
-            include_context = getattr(route, "include_context", None)
-            nested_prefix = _join_route_paths(prefix, getattr(include_context, "prefix", ""))
-            yield from _iter_registered_routes(original_router, nested_prefix)
-            continue
-        yield route, _join_route_paths(prefix, str(getattr(route, "path", "") or ""))
-
-
 def app_route_index(app: object) -> list[dict]:
     """Walk the FastAPI route table and return structured route entries."""
     entries: list[dict] = []
     seen: set[str] = set()
-    for route, path in _iter_registered_routes(app):
+    for route in getattr(app, "routes", []):
+        path = str(getattr(route, "path", "") or "")
         methods = getattr(route, "methods", set()) or set()
         for method in sorted(methods):
             method = str(method).upper()

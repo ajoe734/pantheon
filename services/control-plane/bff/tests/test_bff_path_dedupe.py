@@ -25,7 +25,7 @@ def _assert_deprecated(response, replacement: str) -> None:
     assert response.headers["Deprecation"] == "true"
     assert response.headers["X-Pantheon-Replacement-Route"] == replacement
     body = response.json()
-    assert body["detail"]["error"]["details"]["replacement"] == replacement
+    assert body["error"]["details"]["replacement"] == replacement
     assert body["meta"]["deprecation"]["replacement"] == replacement
 
 

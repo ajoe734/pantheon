@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -38,6 +39,11 @@ class Probe:
     body: dict[str, Any] | None = None
     expect_status: set[int] = field(default_factory=lambda: {200})
     required_paths: tuple[tuple[str, ...], ...] = ()
+    required_values: tuple[tuple[tuple[str, ...], Any], ...] = ()
+    extract_paths: tuple[tuple[str, ...], ...] = ()
+    extra_headers: tuple[tuple[str, str], ...] = ()
+    expect_error_envelope: bool = False
+    allowed_error_codes: tuple[str, ...] = ()
     min_turn_count: int = 0
 
 
@@ -171,8 +177,92 @@ WRITE_PROBES: tuple[Probe, ...] = (
 )
 
 
+RBAC_ROLE_CASES: tuple[dict[str, Any], ...] = (
+    {"label": "anonymous", "roles": None, "can_read": False, "can_write": False},
+    {"label": "viewer", "roles": ["viewer"], "can_read": True, "can_write": False},
+    {"label": "operator", "roles": ["operator"], "can_read": True, "can_write": True},
+    {"label": "reviewer", "roles": ["reviewer"], "can_read": True, "can_write": True},
+    {"label": "approver", "roles": ["approver"], "can_read": True, "can_write": True},
+    {"label": "admin", "roles": ["admin"], "can_read": True, "can_write": True},
+    {"label": "empty", "roles": [], "can_read": False, "can_write": False},
+    {"label": "unknown", "roles": ["auditor"], "can_read": False, "can_write": False},
+)
+
+RBAC_READ_PATHS: tuple[str, ...] = (
+    "/bff/strategies",
+    "/bff/ranking-formulas",
+    "/bff/agora/signals",
+)
+
+RBAC_WRITE_PATHS: tuple[tuple[str, str, dict[str, Any]], ...] = (
+    ("strategy", "/bff/strategies", {"name": ""}),
+    ("ranking-formula", "/bff/ranking-formulas", {"name": ""}),
+    ("agora-note", "/bff/agora/notes", {"title": "", "body": "live dry-run RBAC matrix"}),
+    ("intervention-claim", "/bff/v5/interventions/int-live-rbac-matrix/claim", {"reason": ""}),
+)
+
+DENIED_ERROR_CODES = (
+    "AUTH_REQUIRED",
+    "FORBIDDEN",
+    "INSUFFICIENT_ROLE",
+    "PERMISSION_DENIED",
+)
+DRY_RUN_META_VALUES = (
+    (("meta", "dryRun"), True),
+    (("meta", "durable"), False),
+    (("meta", "liveCapitalSideEffects"), False),
+)
+DRY_RUN_META_EXTRACT_PATHS = tuple(path for path, _expected in DRY_RUN_META_VALUES)
+NOT_FOUND_ERROR_CODES = ("RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND")
+APPROVAL_RACE_ACCEPTED_STATUSES = {200, 201, 202}
+APPROVAL_RACE_SAFE_ERROR_CODES = (
+    "RESOURCE_NOT_FOUND",
+    "OBJECT_NOT_FOUND",
+    "NOT_FOUND",
+    "STATE_CONFLICT",
+    "VERSION_CONFLICT",
+    "CONFLICT",
+    "VALIDATION_FAILED",
+    "PRECONDITION_NOT_MET",
+    "APPROVAL_ALREADY_DECIDED",
+)
+
+
 def utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def sha256_12(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def role_list(value: str) -> list[str]:
+    return [role.strip() for role in value.split(",") if role.strip()]
+
+
+def mint_hs256_jwt(
+    *,
+    subject: str,
+    roles: list[str],
+    issuer: str,
+    audience: str,
+    ttl_seconds: int,
+    secret: str,
+) -> str:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    now = int(time.time())
+    payload = {
+        "sub": subject,
+        "iss": issuer,
+        "aud": audience,
+        "iat": now,
+        "exp": now + ttl_seconds,
+        "roles": roles,
+        "amr": ["pwd", "mfa"],
+        "mfa_verified": True,
+    }
+    return encode_jwt_hs256(payload, secret=secret)
 
 
 def make_token(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
@@ -180,47 +270,71 @@ def make_token(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
     if token:
         return token.removeprefix("Bearer ").strip(), {
             "kind": "provided_bearer",
-            "sha256_12": hashlib.sha256(token.encode("utf-8")).hexdigest()[:12],
+            "sha256_12": sha256_12(token),
         }
 
-    secret = os.getenv("PANTHEON_BFF_SMOKE_JWT_SECRET", "").strip()
+    secret = (
+        os.getenv("PANTHEON_BFF_SMOKE_JWT_SECRET", "").strip()
+        or os.getenv("PANTHEON_BFF_JWT_SECRET", "").strip()
+    )
     if not secret:
         raise SystemExit(
-            "Set PANTHEON_BFF_SMOKE_BEARER_TOKEN or PANTHEON_BFF_SMOKE_JWT_SECRET"
+            "Set PANTHEON_BFF_SMOKE_BEARER_TOKEN or PANTHEON_BFF_SMOKE_JWT_SECRET/PANTHEON_BFF_JWT_SECRET"
         )
 
-    from services.runtime_auth_inbound import encode_jwt_hs256
-
-    now = int(time.time())
-    payload = {
-        "sub": args.subject,
-        "iss": args.issuer,
-        "aud": args.audience,
-        "iat": now,
-        "exp": now + args.ttl_seconds,
-        "roles": args.roles.split(","),
-        "amr": ["pwd", "mfa"],
-        "mfa_verified": True,
-    }
-    encoded = encode_jwt_hs256(payload, secret=secret)
+    roles = role_list(args.roles)
+    encoded = mint_hs256_jwt(
+        subject=args.subject,
+        roles=roles,
+        issuer=args.issuer,
+        audience=args.audience,
+        ttl_seconds=args.ttl_seconds,
+        secret=secret,
+    )
     return encoded, {
         "kind": "minted_hs256_jwt",
         "subject": args.subject,
         "issuer": args.issuer,
         "audience": args.audience,
-        "roles": args.roles.split(","),
+        "roles": roles,
         "ttl_seconds": args.ttl_seconds,
-        "secret_sha256_12": hashlib.sha256(secret.encode("utf-8")).hexdigest()[:12],
+        "secret_sha256_12": sha256_12(secret),
     }
 
 
 def has_path(obj: Any, path: tuple[str, ...]) -> bool:
+    return path_value(obj, path, default=None) is not None
+
+
+_MISSING = object()
+
+
+def path_value(obj: Any, path: tuple[str, ...], *, default: Any = _MISSING) -> Any:
     cur = obj
     for part in path:
         if not isinstance(cur, dict) or part not in cur:
-            return False
+            return default
         cur = cur[part]
-    return True
+    return cur
+
+
+def error_payload(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    detail = data.get("detail")
+    if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+        return detail["error"]
+    if isinstance(data.get("error"), dict):
+        return data["error"]
+    return {}
+
+
+def error_code_from(data: Any) -> str:
+    return str(error_payload(data).get("code") or "")
+
+
+def is_error_envelope(data: Any) -> bool:
+    return bool(error_code_from(data))
 
 
 def body_summary(data: Any) -> dict[str, Any]:
@@ -244,6 +358,90 @@ def body_summary(data: Any) -> dict[str, Any]:
     return {"type": type(data).__name__}
 
 
+def _extracted_value(result: dict[str, Any], path: tuple[str, ...]) -> Any:
+    extracted = result.get("extracted")
+    if not isinstance(extracted, dict):
+        return None
+    return extracted.get(".".join(path))
+
+
+def dry_run_meta_side_effect_check(result: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    dry_run = _extracted_value(result, ("meta", "dryRun"))
+    durable = _extracted_value(result, ("meta", "durable"))
+    side_effects = _extracted_value(result, ("meta", "liveCapitalSideEffects"))
+    ok = (
+        result.get("ok") is True
+        and dry_run is True
+        and durable is False
+        and side_effects is False
+    )
+    return {
+        "kind": kind,
+        "ok": ok,
+        "dryRun": dry_run,
+        "durable": durable,
+        "liveCapitalSideEffects": side_effects,
+    }
+
+
+def readback_side_effect_check(
+    result: dict[str, Any],
+    *,
+    target_family: str,
+    target_id: str,
+) -> dict[str, Any]:
+    error_code = str(result.get("error_code") or "")
+    ok = (
+        result.get("ok") is True
+        and result.get("error_envelope") is True
+        and error_code in NOT_FOUND_ERROR_CODES
+    )
+    return {
+        "kind": "readback_not_persisted",
+        "ok": ok,
+        "target_family": target_family,
+        "target_id_sha256_12": sha256_12(str(target_id)),
+        "error_code": error_code or None,
+    }
+
+
+def invalid_dry_run_side_effect_check(result: dict[str, Any]) -> dict[str, Any]:
+    error_code = str(result.get("error_code") or "")
+    ok = (
+        result.get("ok") is True
+        and result.get("error_envelope") is True
+        and error_code == "VALIDATION_FAILED"
+    )
+    return {
+        "kind": "validation_rejected_before_persistence",
+        "ok": ok,
+        "error_code": error_code or None,
+    }
+
+
+def rbac_write_side_effect_check(
+    result: dict[str, Any],
+    *,
+    can_write: bool,
+    marker: str,
+) -> dict[str, Any]:
+    if can_write:
+        check = dry_run_meta_side_effect_check(result, kind="rbac_dry_run_write_meta")
+    else:
+        error_code = str(result.get("error_code") or "")
+        check = {
+            "kind": "authorization_rejected_before_persistence",
+            "ok": (
+                result.get("ok") is True
+                and result.get("error_envelope") is True
+                and error_code in DENIED_ERROR_CODES
+            ),
+            "error_code": error_code or None,
+        }
+    check["target_marker_sha256_12"] = sha256_12(marker)
+    return check
+
+
 def probe_path_from_href(href: str) -> str:
     parsed = urllib.parse.urlparse(str(href or ""))
     if parsed.scheme and parsed.netloc:
@@ -254,6 +452,138 @@ def probe_path_from_href(href: str) -> str:
     if query and "?" not in path:
         return f"{path}?{query}"
     return path
+
+
+def rbac_token_from_env(label: str) -> str:
+    env_name = f"PANTHEON_BFF_RBAC_{label.upper().replace('-', '_')}_TOKEN"
+    return os.getenv(env_name, "").removeprefix("Bearer ").strip()
+
+
+def rbac_tokens_from_json() -> dict[str, str]:
+    raw = os.getenv("PANTHEON_BFF_RBAC_TOKENS_JSON", "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"PANTHEON_BFF_RBAC_TOKENS_JSON is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise SystemExit("PANTHEON_BFF_RBAC_TOKENS_JSON must be an object keyed by role label")
+    tokens: dict[str, str] = {}
+    for label, value in parsed.items():
+        token = ""
+        if isinstance(value, str):
+            token = value
+        elif isinstance(value, dict):
+            token = str(value.get("token") or value.get("bearer") or "")
+        token = token.removeprefix("Bearer ").strip()
+        if token:
+            tokens[str(label)] = token
+    return tokens
+
+
+def rbac_provided_labels() -> list[str]:
+    return [str(case["label"]) for case in RBAC_ROLE_CASES if case["roles"] is not None]
+
+
+def duplicate_rbac_bearer_label_groups(tokens_by_label: dict[str, str]) -> list[list[str]]:
+    labels_by_token: dict[str, list[str]] = {}
+    for label in rbac_provided_labels():
+        token = tokens_by_label.get(label, "")
+        if token:
+            labels_by_token.setdefault(token, []).append(label)
+    return [labels for labels in labels_by_token.values() if len(labels) > 1]
+
+
+def make_rbac_tokens(args: argparse.Namespace) -> tuple[dict[str, str | None], dict[str, Any]]:
+    provided = rbac_tokens_from_json()
+    for case in RBAC_ROLE_CASES:
+        label = str(case["label"])
+        env_token = rbac_token_from_env(label)
+        if env_token:
+            provided[label] = env_token
+
+    secret = (
+        os.getenv("PANTHEON_BFF_SMOKE_JWT_SECRET", "").strip()
+        or os.getenv("PANTHEON_BFF_JWT_SECRET", "").strip()
+    )
+    tokens: dict[str, str | None] = {"anonymous": None}
+    source: dict[str, Any] = {
+        "kind": "rbac_matrix",
+        "cases": {},
+        "require_provided_tokens": args.require_provided_rbac_tokens,
+    }
+    missing: list[str] = []
+    for case in RBAC_ROLE_CASES:
+        label = str(case["label"])
+        roles = case["roles"]
+        if roles is None:
+            source["cases"][label] = {"kind": "anonymous"}
+            continue
+        token = provided.get(label)
+        if token:
+            tokens[label] = token
+            source["cases"][label] = {
+                "kind": "provided_bearer",
+                "sha256_12": sha256_12(token),
+            }
+            continue
+        if secret and not args.require_provided_rbac_tokens:
+            minted = mint_hs256_jwt(
+                subject=f"{args.subject}-{label}",
+                roles=list(roles),
+                issuer=args.issuer,
+                audience=args.audience,
+                ttl_seconds=args.ttl_seconds,
+                secret=secret,
+            )
+            tokens[label] = minted
+            source["cases"][label] = {
+                "kind": "minted_hs256_jwt",
+                "roles": list(roles),
+                "sha256_12": sha256_12(minted),
+            }
+            continue
+        missing.append(label)
+    if missing:
+        raise SystemExit(
+            "Missing RBAC bearer tokens for labels "
+            f"{', '.join(missing)}. Set PANTHEON_BFF_RBAC_TOKENS_JSON, "
+            "PANTHEON_BFF_RBAC_<LABEL>_TOKEN, or a JWT secret for dev/staging minting."
+        )
+    if args.require_provided_rbac_tokens:
+        provided_values = {
+            label: str(tokens.get(label) or "")
+            for label in rbac_provided_labels()
+            if tokens.get(label)
+        }
+        duplicate_groups = duplicate_rbac_bearer_label_groups(provided_values)
+        source["provided_bearer_count"] = len(provided_values)
+        source["distinct_provided_bearer_count"] = len(set(provided_values.values()))
+        source["distinct_provided_bearers"] = not duplicate_groups and len(provided_values) == len(rbac_provided_labels())
+        source["duplicate_bearer_label_groups"] = duplicate_groups
+        if duplicate_groups:
+            duplicate_text = "; ".join("/".join(group) for group in duplicate_groups)
+            raise SystemExit(
+                "PANTHEON_BFF_RBAC_TOKENS_JSON must provide distinct bearer tokens per RBAC label: "
+                f"{duplicate_text}"
+            )
+    if secret and not args.require_provided_rbac_tokens:
+        source["secret_sha256_12"] = sha256_12(secret)
+    return tokens, source
+
+
+def marker_payload(path: str, base: dict[str, Any], marker: str) -> dict[str, Any]:
+    payload = dict(base)
+    if path == "/bff/strategies":
+        payload["name"] = marker
+    elif path == "/bff/ranking-formulas":
+        payload["name"] = marker
+    elif path == "/bff/agora/notes":
+        payload["title"] = marker
+    elif path.endswith("/claim"):
+        payload["reason"] = marker
+    return payload
 
 
 def request_json(
@@ -273,12 +603,15 @@ def request_json(
     if token:
         headers["Authorization"] = f"Bearer {token}"
         headers["X-MFA-Token"] = "000000"
+    headers.update(dict(probe.extra_headers))
     body_bytes = None
+    idempotency_key = ""
     if probe.body is not None:
         headers["Content-Type"] = "application/json"
         body_bytes = json.dumps(probe.body).encode("utf-8")
     if probe.method in {"POST", "PUT", "PATCH", "DELETE"}:
-        headers["Idempotency-Key"] = f"{idempotency_prefix}-{probe.family}"
+        idempotency_key = f"{idempotency_prefix}-{probe.family}"
+        headers["Idempotency-Key"] = idempotency_key
     req = urllib.request.Request(url, data=body_bytes, headers=headers, method=probe.method)
 
     started = time.time()
@@ -315,13 +648,27 @@ def request_json(
         for path in probe.required_paths
         if not has_path(parsed, path)
     ]
+    for path, expected in probe.required_values:
+        actual = path_value(parsed, path)
+        if actual != expected:
+            missing_paths.append(f"{'.'.join(path)}={expected!r}")
     if probe.min_turn_count:
         turns = None
         if isinstance(parsed, dict) and isinstance(parsed.get("data"), dict):
             turns = parsed["data"].get("turns")
         if not isinstance(turns, list) or len(turns) < probe.min_turn_count:
             missing_paths.append(f"data.turns>={probe.min_turn_count}")
+    error_code = error_code_from(parsed)
+    if probe.expect_error_envelope and not error_code:
+        missing_paths.append("error.code")
+    if probe.allowed_error_codes and error_code not in set(probe.allowed_error_codes):
+        missing_paths.append(f"error.code in {sorted(probe.allowed_error_codes)}")
     ok = status in probe.expect_status and not missing_paths
+    extracted = {}
+    for path in probe.extract_paths:
+        value = path_value(parsed, path)
+        if value is not _MISSING:
+            extracted[".".join(path)] = value
     result = {
         "family": probe.family,
         "method": probe.method,
@@ -338,7 +685,13 @@ def request_json(
         },
         "body_summary": body_summary(parsed),
         "body_prefix": text[:300] if not ok else None,
+        "error_code": error_code or None,
+        "error_envelope": is_error_envelope(parsed),
     }
+    if idempotency_key:
+        result["request_idempotency_key_sha256_12"] = sha256_12(idempotency_key)
+    if extracted:
+        result["extracted"] = extracted
     if probe.family == "management-ai-multiturn" and isinstance(parsed, dict):
         data = parsed.get("data")
         if isinstance(data, dict):
@@ -348,12 +701,501 @@ def request_json(
     return result
 
 
+def approval_race_tokens(args: argparse.Namespace, primary_token: str) -> tuple[str, str, dict[str, Any]]:
+    token_a = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "").removeprefix("Bearer ").strip()
+    token_b = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "").removeprefix("Bearer ").strip()
+    if token_a and token_b:
+        return token_a, token_b, {
+            "kind": "provided_bearer_pair",
+            "token_a_sha256_12": sha256_12(token_a),
+            "token_b_sha256_12": sha256_12(token_b),
+        }
+
+    secret = (
+        os.getenv("PANTHEON_BFF_SMOKE_JWT_SECRET", "").strip()
+        or os.getenv("PANTHEON_BFF_JWT_SECRET", "").strip()
+    )
+    if secret and not args.require_provided_approval_race_tokens:
+        minted_a = mint_hs256_jwt(
+            subject=f"{args.subject}-approval-race-a",
+            roles=["approver"],
+            issuer=args.issuer,
+            audience=args.audience,
+            ttl_seconds=args.ttl_seconds,
+            secret=secret,
+        )
+        minted_b = mint_hs256_jwt(
+            subject=f"{args.subject}-approval-race-b",
+            roles=["admin"],
+            issuer=args.issuer,
+            audience=args.audience,
+            ttl_seconds=args.ttl_seconds,
+            secret=secret,
+        )
+        return minted_a, minted_b, {
+            "kind": "minted_hs256_jwt_pair",
+            "subjects": [f"{args.subject}-approval-race-a", f"{args.subject}-approval-race-b"],
+            "roles": [["approver"], ["admin"]],
+            "secret_sha256_12": sha256_12(secret),
+        }
+
+    if args.allow_single_token_approval_race:
+        return primary_token, primary_token, {
+            "kind": "single_bearer_fallback",
+            "sha256_12": sha256_12(primary_token),
+            "warning": "same bearer token used for both race requests; this is not a true multi-operator proof",
+        }
+
+    raise SystemExit(
+        "Set PANTHEON_BFF_APPROVAL_RACE_TOKEN_A and PANTHEON_BFF_APPROVAL_RACE_TOKEN_B, "
+        "or set PANTHEON_BFF_SMOKE_JWT_SECRET/PANTHEON_BFF_JWT_SECRET for dev/staging minting. "
+        "Use --allow-single-token-approval-race only for transport debugging, not final evidence."
+    )
+
+
+def build_approval_race_results(
+    *,
+    args: argparse.Namespace,
+    base_url: str,
+    token: str,
+    timeout: float,
+    idempotency_prefix: str,
+) -> dict[str, Any]:
+    target_id = args.approval_race_id.strip()
+    if not target_id:
+        raise SystemExit("--include-approval-race requires --approval-race-id for an expendable staging approval")
+
+    token_a, token_b, token_source = approval_race_tokens(args, token)
+    path = f"/bff/approvals/{urllib.parse.quote(target_id, safe='')}/decide"
+    barrier = threading.Barrier(2)
+    results: list[dict[str, Any] | None] = [None, None]
+
+    def run_one(index: int, bearer: str, actor_label: str) -> None:
+        barrier.wait(timeout=timeout)
+        result = request_json(
+            base_url=base_url,
+            probe=Probe(
+                "POST",
+                path,
+                f"approval-race-{actor_label}",
+                body={
+                    "decision": args.approval_race_decision,
+                    "memo": f"approval race probe {actor_label}",
+                },
+                expect_status=set(range(200, 600)),
+                required_paths=(),
+            ),
+            token=bearer,
+            timeout=timeout,
+            idempotency_prefix=f"{idempotency_prefix}-race-{actor_label}",
+        )
+        result["actor_label"] = actor_label
+        result["request_bearer_sha256_12"] = sha256_12(bearer)
+        results[index] = result
+
+    threads = [
+        threading.Thread(target=run_one, args=(0, token_a, "a"), daemon=True),
+        threading.Thread(target=run_one, args=(1, token_b, "b"), daemon=True),
+    ]
+    started = time.time()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=timeout + 2.0)
+    if any(thread.is_alive() for thread in threads):
+        raise RuntimeError("approval race probe threads did not finish before timeout")
+
+    race_results = [result for result in results if result is not None]
+    target_hash = sha256_12(target_id)
+    for result in race_results:
+        result["target_id_sha256_12"] = target_hash
+    accepted = [
+        result
+        for result in race_results
+        if int(result.get("status") or 0) in APPROVAL_RACE_ACCEPTED_STATUSES
+    ]
+    safe_errors = [
+        result
+        for result in race_results
+        if int(result.get("status") or 0) >= 400
+        and result.get("error_envelope")
+        and str(result.get("error_code") or "") in APPROVAL_RACE_SAFE_ERROR_CODES
+    ]
+    transport_failures = [result for result in race_results if int(result.get("status") or 0) == 0]
+    duplicate_winners = len(accepted) > 1
+    bounded = (
+        len(race_results) == 2
+        and not transport_failures
+        and not duplicate_winners
+        and len(accepted) == 1
+        and len(safe_errors) == 1
+    )
+    return {
+        "family": "approval-race",
+        "method": "POST",
+        "path": path,
+        "status": "/".join(str(result.get("status") or 0) for result in race_results),
+        "target_id": target_id,
+        "target_id_sha256_12": target_hash,
+        "duration_ms": round((time.time() - started) * 1000),
+        "ok": bounded,
+        "bounded": bounded,
+        "accepted_count": len(accepted),
+        "safe_error_count": len(safe_errors),
+        "duplicate_winners": duplicate_winners,
+        "token_source": token_source,
+        "expectation": "one accepted decision plus one safe BffErrorEnvelope loser; two safe errors are not a live race proof",
+        "results": race_results,
+    }
+
+
+def build_two_man_race_results(
+    *,
+    args: argparse.Namespace,
+    base_url: str,
+    token: str,
+    timeout: float,
+    idempotency_prefix: str,
+) -> dict[str, Any]:
+    target_id = args.two_man_race_id.strip()
+    if not target_id:
+        raise SystemExit("--include-two-man-race requires --two-man-race-id for an expendable staging intervention")
+
+    token_a, token_b, token_source = approval_race_tokens(args, token)
+    path = f"/bff/v5/interventions/{urllib.parse.quote(target_id, safe='')}/two-man-sign"
+    target_hash = sha256_12(target_id)
+    barrier = threading.Barrier(2)
+    results: list[dict[str, Any] | None] = [None, None]
+    stamp = int(time.time())
+
+    def run_one(index: int, bearer: str, actor_label: str) -> None:
+        barrier.wait(timeout=timeout)
+        signature_id = f"tms-live-{target_id}-{actor_label}-{stamp}"
+        result = request_json(
+            base_url=base_url,
+            probe=Probe(
+                "POST",
+                path,
+                "two-man-race",
+                body={
+                    "twoManSignatureId": signature_id,
+                    "command": "RemediateSentinelIntervention",
+                    "target": {"type": "SentinelIntervention", "id": target_id},
+                    "signerOperatorIds": ["live-two-man-primary", "live-two-man-secondary"],
+                    "reason": f"two-man race probe {actor_label}",
+                },
+                expect_status=set(range(200, 600)),
+                required_paths=(),
+                extract_paths=(
+                    ("data", "command_id"),
+                    ("data", "commandId"),
+                    ("meta", "idempotency", "replayed"),
+                ),
+            ),
+            token=bearer,
+            timeout=timeout,
+            idempotency_prefix=f"{idempotency_prefix}-two-man-race",
+        )
+        result["actor_label"] = actor_label
+        result["target_id_sha256_12"] = target_hash
+        result["request_signature_id_sha256_12"] = sha256_12(signature_id)
+        result["request_bearer_sha256_12"] = sha256_12(bearer)
+        results[index] = result
+
+    threads = [
+        threading.Thread(target=run_one, args=(0, token_a, "a"), daemon=True),
+        threading.Thread(target=run_one, args=(1, token_b, "b"), daemon=True),
+    ]
+    started = time.time()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=timeout + 2.0)
+    if any(thread.is_alive() for thread in threads):
+        raise RuntimeError("two-man race probe threads did not finish before timeout")
+
+    race_results = [result for result in results if result is not None]
+    accepted = [
+        result
+        for result in race_results
+        if int(result.get("status") or 0) in APPROVAL_RACE_ACCEPTED_STATUSES
+    ]
+    replayed = [
+        result
+        for result in race_results
+        if _extracted_value(result, ("meta", "idempotency", "replayed")) is True
+    ]
+    command_ids = []
+    for result in accepted:
+        command_id = (
+            _extracted_value(result, ("data", "command_id"))
+            or _extracted_value(result, ("data", "commandId"))
+        )
+        if command_id:
+            command_ids.append(str(command_id))
+    distinct_command_ids = len(set(command_ids)) == len(command_ids) == len(accepted) == 2
+    transport_failures = [result for result in race_results if int(result.get("status") or 0) == 0]
+    operator_scoped = (
+        len(race_results) == 2
+        and not transport_failures
+        and len(accepted) == 2
+        and not replayed
+        and distinct_command_ids
+    )
+    return {
+        "family": "two-man-race",
+        "method": "POST",
+        "path": path,
+        "status": "/".join(str(result.get("status") or 0) for result in race_results),
+        "target_id": target_id,
+        "target_id_sha256_12": target_hash,
+        "duration_ms": round((time.time() - started) * 1000),
+        "ok": operator_scoped,
+        "operator_scoped": operator_scoped,
+        "accepted_count": len(accepted),
+        "replayed_count": len(replayed),
+        "distinct_command_ids": distinct_command_ids,
+        "command_id_count": len(set(command_ids)),
+        "token_source": token_source,
+        "expectation": "two distinct operators share one idempotency key and both create independent two-man signatures without replay",
+        "results": race_results,
+    }
+
+
+def build_rbac_matrix_results(
+    *,
+    args: argparse.Namespace,
+    base_url: str,
+    timeout: float,
+    idempotency_prefix: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    tokens, source = make_rbac_tokens(args)
+    results: list[dict[str, Any]] = []
+    for case in RBAC_ROLE_CASES:
+        label = str(case["label"])
+        token = tokens.get(label)
+        can_read = bool(case["can_read"])
+        can_write = bool(case["can_write"])
+        deny_status = {401, 403} if label == "anonymous" else {403}
+
+        case_info = source.get("cases", {}).get(label, {})
+        auth_case_kind = str(case_info.get("kind") or "") if isinstance(case_info, dict) else ""
+        token_hash = sha256_12(token) if token else None
+
+        for path in RBAC_READ_PATHS:
+            resource = path.strip("/").replace("/", "-")
+            probe = Probe(
+                "GET",
+                path,
+                f"rbac-read-{label}-{resource}",
+                expect_status={200} if can_read else deny_status,
+                expect_error_envelope=not can_read,
+                allowed_error_codes=() if can_read else DENIED_ERROR_CODES,
+            )
+            result = request_json(
+                base_url=base_url,
+                probe=probe,
+                token=token,
+                timeout=timeout,
+                idempotency_prefix=idempotency_prefix,
+            )
+            result["rbac_label"] = label
+            result["rbac_operation"] = "read"
+            result["rbac_resource"] = resource
+            result["auth_case_kind"] = auth_case_kind
+            if token_hash:
+                result["request_bearer_sha256_12"] = token_hash
+            results.append(result)
+
+        for name, path, base_body in RBAC_WRITE_PATHS:
+            marker = f"live-rbac-{label}-{name}-{int(time.time())}"
+            marker_hash = sha256_12(marker)
+            probe = Probe(
+                "POST",
+                path,
+                f"rbac-write-{label}-{name}",
+                body=marker_payload(path, base_body, marker),
+                expect_status={200} if can_write else deny_status,
+                required_values=DRY_RUN_META_VALUES if can_write else (),
+                extra_headers=(("X-Dry-Run", "1"),),
+                expect_error_envelope=not can_write,
+                allowed_error_codes=() if can_write else DENIED_ERROR_CODES,
+            )
+            result = request_json(
+                base_url=base_url,
+                probe=probe,
+                token=token,
+                timeout=timeout,
+                idempotency_prefix=idempotency_prefix,
+            )
+            result["rbac_label"] = label
+            result["rbac_operation"] = "write"
+            result["rbac_resource"] = name
+            result["auth_case_kind"] = auth_case_kind
+            if token_hash:
+                result["request_bearer_sha256_12"] = token_hash
+            result["request_marker_sha256_12"] = marker_hash
+            result["side_effect_check"] = rbac_write_side_effect_check(
+                result,
+                can_write=can_write,
+                marker=marker,
+            )
+            results.append(result)
+    return results, source
+
+
+def build_dry_run_results(
+    *,
+    base_url: str,
+    token: str,
+    timeout: float,
+    idempotency_prefix: str,
+) -> list[dict[str, Any]]:
+    stamp = int(time.time())
+    success_specs = (
+        (
+            "dry-run-strategy-create",
+            "/bff/strategies",
+            {"name": f"live-dry-run-strategy-{stamp}"},
+            "/bff/strategies/{id}",
+        ),
+        (
+            "dry-run-ranking-formula-create",
+            "/bff/ranking-formulas",
+            {"name": f"live-dry-run-ranking-formula-{stamp}"},
+            "/bff/ranking-formulas/{id}",
+        ),
+        (
+            "dry-run-v5-intervention-claim",
+            "/bff/v5/interventions/int-live-dry-run/claim",
+            {"reason": f"live-dry-run-claim-{stamp}"},
+            "",
+        ),
+    )
+    invalid_specs = (
+        ("dry-run-invalid-strategy", "/bff/strategies", {}),
+        ("dry-run-invalid-ranking-formula", "/bff/ranking-formulas", {}),
+    )
+    results: list[dict[str, Any]] = []
+
+    for family, path, body, detail_template in success_specs:
+        result = request_json(
+            base_url=base_url,
+            probe=Probe(
+                "POST",
+                path,
+                family,
+                body=body,
+                expect_status={200},
+                required_values=DRY_RUN_META_VALUES,
+                extract_paths=DRY_RUN_META_EXTRACT_PATHS + (("data", "id"),),
+                extra_headers=(("X-Dry-Run", "1"),),
+            ),
+            token=token,
+            timeout=timeout,
+            idempotency_prefix=idempotency_prefix,
+        )
+        result["side_effect_check"] = dry_run_meta_side_effect_check(
+            result,
+            kind="dry_run_preview_meta" if detail_template else "dry_run_command_meta",
+        )
+        results.append(result)
+        created_id = (result.get("extracted") or {}).get("data.id")
+        if result.get("ok") and detail_template and created_id:
+            readback = request_json(
+                base_url=base_url,
+                probe=Probe(
+                    "GET",
+                    detail_template.format(id=urllib.parse.quote(str(created_id), safe="")),
+                    f"{family}-readback-not-persisted",
+                    expect_status={404},
+                    expect_error_envelope=True,
+                    allowed_error_codes=NOT_FOUND_ERROR_CODES,
+                ),
+                token=token,
+                timeout=timeout,
+                idempotency_prefix=idempotency_prefix,
+            )
+            readback["side_effect_check"] = readback_side_effect_check(
+                readback,
+                target_family=family,
+                target_id=str(created_id),
+            )
+            results.append(readback)
+
+    for family, path, body in invalid_specs:
+        result = request_json(
+            base_url=base_url,
+            probe=Probe(
+                "POST",
+                path,
+                family,
+                body=body,
+                expect_status={422},
+                extra_headers=(("X-Dry-Run", "1"),),
+                expect_error_envelope=True,
+                allowed_error_codes=("VALIDATION_FAILED",),
+            ),
+            token=token,
+            timeout=timeout,
+            idempotency_prefix=idempotency_prefix,
+        )
+        result["side_effect_check"] = invalid_dry_run_side_effect_check(result)
+        results.append(result)
+    return results
+
+
+def apply_strict_live_evidence(args: argparse.Namespace) -> None:
+    if not args.strict_live_evidence:
+        return
+
+    args.include_rbac_matrix = True
+    args.include_dry_run = True
+    args.include_approval_race = True
+    args.include_two_man_race = True
+    args.require_provided_rbac_tokens = True
+    args.require_provided_approval_race_tokens = True
+
+    if not os.getenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "").strip():
+        raise SystemExit(
+            "--strict-live-evidence requires PANTHEON_BFF_SMOKE_BEARER_TOKEN; "
+            "dev/staging minted JWTs are not accepted as final live bearer evidence"
+        )
+    if not args.approval_race_id.strip():
+        raise SystemExit("--strict-live-evidence requires --approval-race-id for an expendable staging approval")
+    if not args.two_man_race_id.strip():
+        raise SystemExit("--strict-live-evidence requires --two-man-race-id for an expendable staging intervention")
+    race_token_a = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "").removeprefix("Bearer ").strip()
+    race_token_b = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "").removeprefix("Bearer ").strip()
+    if not (race_token_a and race_token_b):
+        raise SystemExit(
+            "--strict-live-evidence requires PANTHEON_BFF_APPROVAL_RACE_TOKEN_A and "
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B for two distinct operators"
+        )
+    if race_token_a == race_token_b:
+        raise SystemExit(
+            "--strict-live-evidence requires PANTHEON_BFF_APPROVAL_RACE_TOKEN_A and "
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B to be distinct bearer tokens"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--output", default="")
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--include-writes", action="store_true")
+    parser.add_argument("--include-rbac-matrix", action="store_true")
+    parser.add_argument("--include-dry-run", action="store_true")
+    parser.add_argument("--include-approval-race", action="store_true")
+    parser.add_argument("--include-two-man-race", action="store_true")
+    parser.add_argument("--strict-live-evidence", action="store_true")
+    parser.add_argument("--approval-race-id", default="")
+    parser.add_argument("--two-man-race-id", default="")
+    parser.add_argument("--approval-race-decision", default="approve")
+    parser.add_argument("--require-provided-rbac-tokens", action="store_true")
+    parser.add_argument("--require-provided-approval-race-tokens", action="store_true")
+    parser.add_argument("--allow-single-token-approval-race", action="store_true")
     parser.add_argument("--subject", default="op-live-smoke")
     parser.add_argument("--roles", default="operator,admin,reviewer,approver")
     parser.add_argument("--issuer", default="pantheon-dev")
@@ -364,6 +1206,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    apply_strict_live_evidence(args)
     token, auth_source = make_token(args)
     ts = utc_now()
     idempotency_prefix = f"bff-live-smoke-{int(time.time())}"
@@ -419,16 +1262,69 @@ def main() -> int:
         )
     route_results.extend(followup_results)
 
-    all_results = [health, openapi, *route_results]
+    rbac_results: list[dict[str, Any]] = []
+    rbac_auth_source: dict[str, Any] | None = None
+    if args.include_rbac_matrix:
+        rbac_results, rbac_auth_source = build_rbac_matrix_results(
+            args=args,
+            base_url=args.base_url,
+            timeout=args.timeout,
+            idempotency_prefix=idempotency_prefix,
+        )
+
+    dry_run_results: list[dict[str, Any]] = []
+    if args.include_dry_run:
+        dry_run_results = build_dry_run_results(
+            base_url=args.base_url,
+            token=token,
+            timeout=args.timeout,
+            idempotency_prefix=idempotency_prefix,
+        )
+
+    approval_race_result: dict[str, Any] | None = None
+    if args.include_approval_race:
+        approval_race_result = build_approval_race_results(
+            args=args,
+            base_url=args.base_url,
+            token=token,
+            timeout=args.timeout,
+            idempotency_prefix=idempotency_prefix,
+        )
+
+    two_man_race_result: dict[str, Any] | None = None
+    if args.include_two_man_race:
+        two_man_race_result = build_two_man_race_results(
+            args=args,
+            base_url=args.base_url,
+            token=token,
+            timeout=args.timeout,
+            idempotency_prefix=idempotency_prefix,
+        )
+
+    all_results = [
+        health,
+        openapi,
+        *route_results,
+        *rbac_results,
+        *dry_run_results,
+        *([approval_race_result] if approval_race_result else []),
+        *([two_man_race_result] if two_man_race_result else []),
+    ]
     failed = [item for item in all_results if not item.get("ok")]
     evidence = {
         "task_id": "BFF-LUV-AUTHED-LIVE-001",
         "generated_at": ts,
         "target_url": args.base_url.rstrip("/"),
         "auth_source": auth_source,
+        "rbac_auth_source": rbac_auth_source,
         "include_writes": args.include_writes,
+        "include_rbac_matrix": args.include_rbac_matrix,
+        "include_dry_run": args.include_dry_run,
+        "include_approval_race": args.include_approval_race,
+        "include_two_man_race": args.include_two_man_race,
+        "strict_live_evidence": args.strict_live_evidence,
         "commands": [
-            "PANTHEON_BFF_SMOKE_JWT_SECRET=<redacted> scripts/probe_bff_authenticated_live.py --include-writes",
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> PANTHEON_BFF_RBAC_TOKENS_JSON=<redacted> PANTHEON_BFF_APPROVAL_RACE_TOKEN_A=<redacted> PANTHEON_BFF_APPROVAL_RACE_TOKEN_B=<redacted> scripts/probe_bff_authenticated_live.py --strict-live-evidence --include-writes --approval-race-id=<expendable-staging-approval-id> --two-man-race-id=<expendable-staging-intervention-id>",
         ],
         "summary": {
             "total": len(all_results),
@@ -436,6 +1332,20 @@ def main() -> int:
             "failed": len(failed),
             "read_probes": len(READ_PROBES),
             "write_probes": len(WRITE_PROBES) if args.include_writes else 0,
+            "rbac_matrix_probes": len(rbac_results),
+            "rbac_write_probes": len([item for item in rbac_results if str(item.get("family") or "").startswith("rbac-write-")]),
+            "rbac_write_side_effect_proofs": len([
+                item
+                for item in rbac_results
+                if str(item.get("family") or "").startswith("rbac-write-")
+                and isinstance(item.get("side_effect_check"), dict)
+                and item["side_effect_check"].get("ok") is True
+            ]),
+            "dry_run_probes": len(dry_run_results),
+            "approval_race_probes": 1 if approval_race_result else 0,
+            "approval_race_bounded": bool(approval_race_result and approval_race_result.get("bounded")),
+            "two_man_race_probes": 1 if two_man_race_result else 0,
+            "two_man_race_operator_scoped": bool(two_man_race_result and two_man_race_result.get("operator_scoped")),
             "VITE_BFF_MODE_live_allowed": len(failed) == 0,
             "VITE_BFF_REAL_WRITES_true_allowed": args.include_writes and len(failed) == 0,
             "live_capital_side_effects": False,
@@ -443,6 +1353,10 @@ def main() -> int:
         "health": health,
         "openapi": openapi,
         "routes": route_results,
+        "rbac_matrix": rbac_results,
+        "dry_run": dry_run_results,
+        "approval_race": approval_race_result,
+        "two_man_race": two_man_race_result,
         "failed_routes": [
             {
                 "family": item.get("family"),
@@ -450,6 +1364,7 @@ def main() -> int:
                 "path": item.get("path"),
                 "status": item.get("status"),
                 "missing_required_paths": item.get("missing_required_paths"),
+                "error_code": item.get("error_code"),
                 "error": item.get("error"),
                 "body_prefix": item.get("body_prefix"),
             }

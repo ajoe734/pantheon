@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/schemas/agora/candidate_monitoring_status.v1.json",
+  "title": "CandidateMonitoringStatus",
+  "description": "Monitoring watchlist entry for an approved-for-monitoring candidate. Agora surfaces monitoring state read-only; it does not place broker orders or bind capital.",
+  "type": "object",
+  "required": ["artifact_id", "pool_id", "monitoring_state", "added_at"],
+  "properties": {
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Registry artifact ID of the monitored candidate."
+    },
+    "pool_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pool snapshot the monitoring entry originated from."
+    },
+    "monitoring_state": {
+      "type": "string",
+      "enum": ["active", "paused", "graduated", "removed"],
+      "description": "Current monitoring lifecycle state."
+    },
+    "trigger_conditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["condition_type", "threshold"],
+        "properties": {
+          "condition_type": {
+            "type": "string",
+            "enum": [
+              "score_drop",
+              "data_quality_alert",
+              "catalyst_event",
+              "price_extension_breach",
+              "distribution_risk_breach",
+              "manual"
+            ]
+          },
+          "threshold": { "type": "number" },
+          "description": { "type": "string" }
+        },
+        "additionalProperties": false
+      },
+      "description": "Conditions that will generate a monitoring alert.",
+      "default": []
+    },
+    "last_score_result_id": {
+      "type": ["string", "null"],
+      "description": "Most recent CandidateScoreResult for this artifact."
+    },
+    "review_due_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Scheduled next review date."
+    },
+    "added_by": {
+      "type": "string",
+      "description": "Operator that added this candidate to monitoring."
+    },
+    "added_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-text monitoring rationale."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-DASH-001",
+  "archived_at": "2026-06-20T15:40:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-DASH-001",
+    "title": "WidgetSpec v2 / ChartSpec / DashboardRecipe v2 CRUD + concurrency",
+    "summary_zh": "依 contract-closure 04_dashboard_crud_and_concurrency.md 把 dashboard-recipe CRUD 路由補進 agora_v1_1.openapi.yaml(strategies/{id}/dashboard-recipes、/proposals、recipe accept/layout(PATCH)/rollback/feedback/versions、widgets/validate、widgets/{id}/feedback、widgets/propose-plugin),與 AG-XR-OPENAPI-001 共寫同一 yaml 但只新增 dashboard 區塊、不更動 servant/workshop 區塊以減少衝突。version 為 append-only(dashboard_recipe_identity/dashboard_recipe_version,recipe_id+version PK,rollback 產生新版本不抹歷史);ETag recipe:<id>:v<version>:<content_sha256-prefix>,state-changing 需 If-Match + Idempotency-Key + body expected_version,衝突回 409 CONCURRENT_MODIFICATION 帶 current_etag/latest_href;layout patch 僅允許 move/resize/remove/add_registered/replace_chart_spec/update_widget_query 並對 WidgetRegistry/scope/bounds 驗證;新增 agora.dashboard.v2 capability。WidgetSpec v2 / ChartSpec v1 / DashboardRecipe v2 沿用 AG-XR-001A 的 v2 schema 接上路由。 【有疑問一定要提出,不要自己亂做】動工前先讀完 contract-closure 文件(docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/ 01-07 + v2 schema + ARCHIVE_NOTES.md)與 frozen 基線(services/control-plane/specs/agora/ + openapi/agora_v1.openapi.yaml + bundle_index.json)。prose 03/04 為合約權威,agora_openapi_extension_v1_1.yaml 只是 seed(24/32 route)不可照抄當完整契約。只要遇到任何疑問、設計沒寫到、與既有 code 對不上、依賴不清或衝突,一律 STOP 開 blocker 等澄清,不可臆測、補洞、繞過。鐵律:不得改動 frozen AG-XR-001 檔案、不得讓其 bundle_index.json sha256 失效、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "phase": "EPIC AGORA-XR / Contract-Closure",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-001A"
+    ],
+    "artifacts": [
+      "services/control-plane/openapi/agora_v1_1.openapi.yaml",
+      "services/control-plane/specs/agora/v2/dashboard_recipe_v2.schema.json"
+    ],
+    "acceptance": [
+      "doc 04 的 dashboard CRUD + ETag/If-Match/Idempotency-Key/expected_version/409 並發契約全到位;版本 append-only 且 rollback 不抹歷史;layout patch op allowlist 受驗;agora.dashboard.v2 宣告;引用 v2 schema;【驗收】frozen v1 檔案與 bundle_index.json sha256 不變(agora_schema_bundle.py --verify 仍綠);新增物逐欄位對齊 contract-closure prose;遇疑問先 blocker 不自行實作"
+    ],
+    "next": "Closeout: PR #1836 merged into dev (all CI green). 11 routes from contract-closure doc 04 delivered in agora_v1_1.openapi.yaml. ETag/If-Match/Idempotency-Key/expected_version/409 concurrency semantics correct; feedback routes exempt from If-Match per contract. Frozen v1 bundle verified (agora_schema_bundle.py: 15/15 OK). agora.dashboard.v2 capability registered in capability_manifest_v1_1.json. dashboard_recipe_v2.schema.json delivered. Version append-only; rollback produces new version without erasing history.",
+    "last_update": "2026-06-20T15:40:23Z",
+    "auto_created_by": "dispatch_agora_contract_closure_2026-06-20",
+    "review_notes_zh": [
+      "審查通過 — 11條路由完整、ETag/If-Match/Idempotency-Key 語義正確、feedback 路由豁免 If-Match 符合合約、frozen bundle 驗證通過、agora.dashboard.v2 capability 已在 v1_1 manifest",
+      "後續: 200回應 body schema 為自由描述，可在 AG-XR-003 或 bundle index 補型，不阻擋本次交付"
+    ],
+    "review_file": "/tmp/ag_xr_dash_001_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T15:40:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-dash-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-DASH-001",
+      "git_clean_required": false,
+      "commit": "0ccb4f89c96c69895347f3512aa928407cd0ad6a",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-XR-DASH-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-DASH-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2831f101b4c662321bcd9c3364a3afce817f9e6c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-DASH-001",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Dashboard-recipe CRUD block ready for review. PR #1836 (task/AG-XR-DASH-001 → dev) with auto-merge enabled. Commit fa12c4b3. Deliverables: all 11 routes from contract-closure doc 04, 3 new vs seed (feedback/widget-feedback/propose-plugin), ETag+If-Match+Idempotency-Key concurrency semantics, append-only versioning, no frozen file touched. agora_schema_bundle.py --verify passes.",
+      "status": "done",
+      "created_at": "2026-06-20T15:32:29Z",
+      "resolved_at": "2026-06-20T15:35:57Z"
+    },
+    {
+      "task_id": "AG-XR-DASH-001",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all 11 routes from doc 04 implemented correctly with correct concurrency semantics, frozen bundle intact, capability registered. Returned to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-06-20T15:35:57Z",
+      "resolved_at": "2026-06-20T15:40:24Z"
+    }
+  ],
+  "blockers": []
+}

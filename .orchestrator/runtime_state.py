@@ -33,6 +33,9 @@ def default_state() -> dict[str, Any]:
         "worker_worktrees": {
             "leases": {},
         },
+        "worker_worktree_cleanup": {
+            "last_run": None,
+        },
         "approvals": {
             "last_reconciled_at": None,
         },
@@ -118,6 +121,8 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("workers", {})
     state.setdefault("worker_worktrees", {})
     state["worker_worktrees"].setdefault("leases", {})
+    state.setdefault("worker_worktree_cleanup", {})
+    state["worker_worktree_cleanup"].setdefault("last_run", None)
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
     state.setdefault("underutilization", {})

@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
@@ -141,6 +142,66 @@ def test_bff_approvals_decide_approve_returns_202_envelope() -> None:
             assert "data" in body or "command_id" in body or "status" in body
         finally:
             bff_main.read_store = original
+
+
+def test_bff_approvals_decide_concurrent_operators_do_not_share_idempotency_or_sse_events() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_read_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        original_final_idem = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        original_approval_buffer = list(bff_main._sse_buffers["approval"])
+        original_approval_subscribers = list(bff_main._sse_subscribers["approval"])
+        try:
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._sse_buffers["approval"].clear()
+            bff_main._sse_subscribers["approval"].clear()
+
+            def decide(headers: dict[str, str]) -> dict:
+                local_client = TestClient(bff_main.app, raise_server_exceptions=False)
+                response = local_client.post(
+                    f"/bff/approvals/{PENDING_APPROVAL_ID}/decide",
+                    json={"decision": "approve"},
+                    headers={**headers, "Idempotency-Key": "shared-concurrent-approval-key"},
+                )
+                assert response.status_code == 202, response.text
+                return response.json()
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                first, second = list(pool.map(decide, (APPROVER_HEADERS, ADMIN_HEADERS)))
+
+            command_ids = {
+                first["data"]["command_id"],
+                second["data"]["command_id"],
+            }
+            assert len(command_ids) == 2
+            assert first["meta"]["idempotency"]["replayed"] is False
+            assert second["meta"]["idempotency"]["replayed"] is False
+
+            commands = bff_main.command_store._get_all_commands()
+            assert [command["type"] for command in commands].count("ApproveDecision") == 2
+            assert {command["audit"]["operator_id"] for command in commands} == {
+                "op-app001",
+                "op-app001-admin",
+            }
+            assert len(bff_main._sse_buffers["approval"]) == 2
+            assert {
+                event["data"]["decided_by"]
+                for _event_id, event in bff_main._sse_buffers["approval"]
+            } == {"op-app001", "op-app001-admin"}
+        finally:
+            bff_main.read_store = original_read_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idem)
+            bff_main._sse_buffers["approval"].clear()
+            bff_main._sse_buffers["approval"].extend(original_approval_buffer)
+            bff_main._sse_subscribers["approval"].clear()
+            bff_main._sse_subscribers["approval"].extend(original_approval_subscribers)
 
 
 def test_bff_approvals_decide_empty_body_defaults_to_approve() -> None:
@@ -358,8 +419,9 @@ def test_bff_approvals_batch_decide_rejects_body_idempotency_before_commands() -
             )
 
             assert resp.status_code == 400, resp.text
-            detail = resp.json()
-            assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
+            body = resp.json()
+            error = body.get("error") or body.get("detail", {}).get("error")
+            assert error["details"]["precondition_failed"] == "body_idempotency_key"
             assert bff_main.command_store._get_all_commands() == []
         finally:
             bff_main.read_store = original_read_store

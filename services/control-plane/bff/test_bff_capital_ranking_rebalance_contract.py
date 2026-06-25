@@ -20,6 +20,16 @@ HEADERS = {"Authorization": OPERATOR_TOKEN}
 IDEM_HEADERS = {**HEADERS, "Idempotency-Key": "test-key-001"}
 
 
+def _error(resp):
+    body = resp.json()
+    if isinstance(body.get("error"), dict):
+        return body["error"]
+    detail = body.get("detail")
+    if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+        return detail["error"]
+    raise AssertionError(f"response did not contain BFF error envelope: {body}")
+
+
 def _fresh_client(td: str):
     bff_main.read_store = ReadSurfaceStore(
         os.path.join(td, "read_surfaces.json"),
@@ -270,7 +280,7 @@ def test_bff_capital_pool_detail_503_when_pool_source_unavailable(monkeypatch) -
         resp = client.get("/bff/capital-pools/pool-missing", headers=HEADERS)
 
         assert resp.status_code == 503, resp.text
-        assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+        assert _error(resp)["code"] == "DEPENDENCY_UNAVAILABLE"
 
 
 # ---------------------------------------------------------------------------
@@ -303,9 +313,30 @@ def test_bff_ranking_formula_create_returns_201() -> None:
                 headers={**HEADERS, "Idempotency-Key": "rf-create-001"},
             )
             assert resp.status_code == 201, resp.text
-            body = resp.json()
+            body = resp.json()["data"]
             assert body["name"] == "Momentum Formula"
-            assert "formula_id" in body or "id" in body
+            formula_id = body.get("formula_id") or body.get("id")
+            assert formula_id
+            detail = client.get(f"/bff/ranking-formulas/{formula_id}", headers=HEADERS)
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["data"]["name"] == "Momentum Formula"
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_ranking_formula_create_idempotency_replay() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            payload = {"name": "Replay Formula", "description": "same request replay"}
+            headers = {**HEADERS, "Idempotency-Key": "rf-replay-001"}
+            first = client.post("/bff/ranking-formulas", json=payload, headers=headers)
+            second = client.post("/bff/ranking-formulas", json=payload, headers=headers)
+            assert first.status_code == 201, first.text
+            assert second.status_code == 201, second.text
+            assert first.json()["data"]["id"] == second.json()["data"]["id"]
+            assert len(client.get("/bff/ranking-formulas", headers=HEADERS).json()["data"]) == 1
         finally:
             bff_main.read_store = original
 
@@ -330,11 +361,14 @@ def test_bff_ranking_formula_detail_404_unknown() -> None:
         original = bff_main.read_store
         try:
             client = _fresh_client(td)
+            create_resp = client.post(
+                "/bff/ranking-formulas",
+                json={"name": "Existing Formula", "description": "establishes local store"},
+                headers={**HEADERS, "Idempotency-Key": "rf-detail-seed-001"},
+            )
+            assert create_resp.status_code == 201, create_resp.text
             resp = client.get("/bff/ranking-formulas/nonexistent-formula", headers=HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["data"]["status"] == "degraded"
-            assert body["meta"]["surfaces"]["ranking_formula_detail"]["status"] == "unavailable"
+            assert resp.status_code == 404, resp.text
         finally:
             bff_main.read_store = original
 
@@ -350,7 +384,8 @@ def test_bff_ranking_formula_action_accepted() -> None:
                 headers={**HEADERS, "Idempotency-Key": "rf-action-create-001"},
             )
             assert create_resp.status_code == 201, create_resp.text
-            formula_id = create_resp.json().get("formula_id") or create_resp.json().get("id")
+            formula = create_resp.json()["data"]
+            formula_id = formula.get("formula_id") or formula.get("id")
             action_resp = client.post(
                 f"/bff/actions/ranking-formula/{formula_id}/activate",
                 json={},

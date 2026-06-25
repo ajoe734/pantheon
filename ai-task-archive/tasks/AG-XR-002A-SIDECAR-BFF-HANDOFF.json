@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-002A-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T03:02:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-002A-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-XR-002A BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-XR-002A，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-XR / Contract-Closure",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AG-XR-002A/AG-XR-002A-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: support packet review/merge evidence refreshed; PR #1959 merged into dev at 4588fe174e8305bf37ebb2ee78b9fa578a4d31ea after GitHub checks passed; no canonical/runtime/execute-plans changes in this sidecar.",
+    "last_update": "2026-06-21T03:02:26Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-002A",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Codex review: support-only packet scope is narrow and matches task acceptance; PR #1954 is merged into dev at 285a6d6002da982f029d0b8b7447f95f10efc09b with task commit 1adc0f9935ec5edf183457bd5ffddbbef6373c5b.",
+      "Reviewer reran: git diff --check; python3 scripts/agora_schema_bundle.py --verify; python3 -m pytest scripts/test_agora_compat_manifest.py -q; python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q. All passed.",
+      "No blocking issues found; owner Codex2 should perform closeout finalization and mark done."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T03:02:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-002a-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-002A-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "9bb331c17ae9593e31325822343278f082170b6b",
+      "commit_subject": "AG-XR-002A-SIDECAR-BFF-HANDOFF: refresh dev base",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task branch base refresh for closeout PR #1959.",
+        "Not changing": "support packet content, canonical truth, runtime code, OpenAPI, schema bundles, registry, governance, OpenClaw adapter, or execute-plans files.",
+        "Composes with": "closeout packet commit 0b74602a7eacd6d77c336860fd0c245eb5f18b95 and latest origin/dev before auto-merge.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-XR-002A-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-002A-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4588fe174e8305bf37ebb2ee78b9fa578a4d31ea",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-002A-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend handoff packet is ready for review. PR #1954 opened with auto-merge enabled; task commit 1adc0f9935ec5edf183457bd5ffddbbef6373c5b. Verification passed: git diff --check on packet, python3 scripts/agora_schema_bundle.py --verify, python3 -m pytest scripts/test_agora_compat_manifest.py -q (4 passed), python3 -m pytest services/control-plane/bff/tests/test_agora_router.py -q (18 passed). Scope: support/sidecars/AG-XR-002A/AG-XR-002A-SIDECAR-BFF-HANDOFF.md only; no canonical/runtime/frontend source changes.",
+      "status": "done",
+      "created_at": "2026-06-21T02:50:12Z",
+      "resolved_at": "2026-06-21T02:54:41Z"
+    },
+    {
+      "task_id": "AG-XR-002A-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved. Packet scope is support-only, PR #1954 is merged into dev at 285a6d6002da982f029d0b8b7447f95f10efc09b, and reviewer verification passed. Owner Codex2 should run closeout finalization and mark done.",
+      "status": "done",
+      "created_at": "2026-06-21T02:54:41Z",
+      "resolved_at": "2026-06-21T03:02:28Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-SW-003",
+  "archived_at": "2026-06-21T08:39:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-SW-003",
+    "title": "Completeness/next-best-question skill (A1+C1 unblocked)",
+    "summary_zh": "依 design-closure A1(next_best_question_scoring_spec+gold cases)+C1(strategy-completeness SPEC)實作 completeness/conflict/next-best-question skill;五態輸出+依 A1 權重選題,用 gold cases 當回歸基準。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "phase": "EPIC AGORA-SW / Phase 2",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-SW-001"
+    ],
+    "artifacts": [
+      "integrations/openclaw/skills/agora/strategy-completeness/",
+      "services/research/strategy_spec/completeness.py"
+    ],
+    "acceptance": [
+      "completeness 五態正確;next-question 依 A1 並過 gold cases;不重問已定義;附回歸測試;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過"
+    ],
+    "next": "Closeout complete: 26 gold+hard-rule tests pass, A1 scoring formula and C1 hard rules implemented. PR #2018 merged into dev. Artifacts: integrations/openclaw/skills/agora/strategy_completeness/ + services/research/strategy_spec/completeness.py.",
+    "last_update": "2026-06-21T08:39:15Z",
+    "auto_created_by": "agora-closure-followup-2026-06-20",
+    "review_notes_zh": [
+      "審查通過：26 gold+hard-rule tests pass，A1 scoring formula 完整，C1 hard rules 守住，無 RuntimeBinding write。Minor: _check_eligibility dead branch (non-blocking)。"
+    ],
+    "review_file": "docs/04/pantheon_agora_cross_repo_2026-06-20/review_ag_be_sw_003_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T08:39:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-sw-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-SW-003",
+      "git_clean_required": false,
+      "commit": "b4262bd7d9aad61fba1df8683d57c767d4946c64",
+      "commit_subject": "Merge origin/dev into task/AG-BE-SW-003 (dev advanced during CI)",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-SW-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "bc37f3d5a9d4c6b5bff5110e7f4ee99f58b7beab",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-SW-003",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Implementation complete. 26 tests pass (10 gold cases + hard-rule assertions). Please review: services/research/strategy_spec/completeness.py (A1 scoring logic) and integrations/openclaw/skills/agora/strategy_completeness/ (C1 skill). Verified: python3 -m pytest integrations/openclaw/skills/agora/strategy_completeness/test_skill.py (26 passed) && python3 -m pytest services/research/strategy_spec/ (25 passed, no regressions). Commit: d091b8a2.",
+      "status": "done",
+      "created_at": "2026-06-21T08:26:53Z",
+      "resolved_at": "2026-06-21T08:30:55Z"
+    },
+    {
+      "task_id": "AG-BE-SW-003",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all A1 formula weights, mandatory override priority, eligibility gates, and 10 gold cases verified; 26 tests pass with no regressions. Returning to Claude for closeout.",
+      "status": "done",
+      "created_at": "2026-06-21T08:30:55Z",
+      "resolved_at": "2026-06-21T08:39:16Z"
+    }
+  ],
+  "blockers": []
+}

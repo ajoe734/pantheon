@@ -723,6 +723,63 @@ class DetectWorkerFailureTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
 
+    def test_mark_revoked_auth_pause_is_sticky_until_probe(self) -> None:
+        from datetime import datetime, timezone
+
+        config = {
+            "provider_guardrails": {"auth_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        state: dict = {}
+        fake_now = datetime(2026, 6, 14, 15, 0, 0, tzinfo=timezone.utc)
+
+        with (
+            mock.patch.object(supervisor, "datetime") as datetime_mock,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            datetime_mock.now.return_value = fake_now
+            datetime_mock.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            supervisor.mark_provider_dispatch_paused(
+                config,
+                state,
+                "codex2",
+                "error refreshing token: refresh-token-revoked",
+                failure_kind="auth",
+                pause_kind="auth",
+            )
+
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertTrue(pause["sticky_until_auth_probe"])
+        self.assertEqual(pause["sticky_reason"], "refresh_token_revoked")
+        self.assertEqual(pause["blocked_until"], "9999-12-31T23:59:59Z")
+
+    def test_expire_provider_dispatch_pauses_keeps_revoked_auth_pause(self) -> None:
+        config = {
+            "provider_guardrails": {"auth_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "provider": "codex2",
+                        "blocked_until": "2026-04-06T12:00:00Z",
+                        "pause_kind": "auth",
+                        "reason": "error refreshing token: refresh-token-revoked",
+                    }
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.expire_provider_dispatch_pauses(config, state)
+            active = supervisor.current_provider_dispatch_pause(state, "codex2", config)
+
+        self.assertFalse(changed)
+        self.assertIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertIs(active, state["provider_guardrails"]["dispatch_pauses"]["codex2"])
+        write_activity_log.assert_not_called()
+
     def test_clear_provider_dispatch_pause_removes_group_pause(self) -> None:
         config = {
             "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
@@ -831,6 +888,66 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertNotIn("OPS-AUTH2:codex2", streaks)
         self.assertIn("OPS-QUOTA:codex2_2", streaks)
         self.assertIn("OPS-GEMINI:gemini", streaks)
+        self.assertGreaterEqual(write_activity_log.call_count, 2)
+
+    def test_sticky_revoked_auth_recovery_requires_live_probe_success(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {"codex2": {"delivery_mode": "codex", "quota_group": "codex2"}},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "pause_kind": "auth",
+                        "reason": "error refreshing token: refresh-token-revoked",
+                        "sticky_until_auth_probe": True,
+                    }
+                },
+                "task_failure_streaks": {
+                    "OPS-AUTH:codex2": {
+                        "task_id": "OPS-AUTH",
+                        "provider": "codex2",
+                        "last_failure_kind": "auth",
+                        "last_reason": "refresh-token-revoked",
+                    }
+                },
+            }
+        }
+        previous = {"providers": {"codex2": {"auth_ready": False}}}
+        cached_current = {
+            "providers": {
+                "codex2": {
+                    "auth_ready": True,
+                    "auth_probe": {"ready": True, "source": "cached", "method": "codex_exec_oauth"},
+                }
+            }
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.reconcile_provider_auth_recovery(config, state, previous, cached_current)
+
+        self.assertFalse(changed)
+        self.assertIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertIn("OPS-AUTH:codex2", state["provider_guardrails"]["task_failure_streaks"])
+        write_activity_log.assert_not_called()
+
+        live_current = {
+            "providers": {
+                "codex2": {
+                    "auth_ready": True,
+                    "auth_method": "codex_exec_oauth",
+                    "last_auth_probe_at": "2026-06-14T15:10:00Z",
+                    "auth_probe": {"ready": True, "source": "live", "method": "codex_exec_oauth"},
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.reconcile_provider_auth_recovery(config, state, previous, live_current)
+
+        self.assertTrue(changed)
+        self.assertNotIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertNotIn("OPS-AUTH:codex2", state["provider_guardrails"]["task_failure_streaks"])
         self.assertGreaterEqual(write_activity_log.call_count, 2)
 
 
@@ -3812,6 +3929,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
             stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
             stack.enter_context(mock.patch.object(supervisor, "prune_orphan_worktrees", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_chair_review_worktrees", return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "maybe_auto_commit_archive", return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
             stack.enter_context(mock.patch.object(supervisor, "log_runtime_summary"))
@@ -3885,6 +4003,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
             stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
             stack.enter_context(mock.patch.object(supervisor, "prune_orphan_worktrees", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_chair_review_worktrees", return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
             stack.enter_context(mock.patch.object(supervisor, "log_runtime_summary"))
             stack.enter_context(mock.patch.object(supervisor, "save_runtime_state"))
@@ -4775,6 +4894,92 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
         self.assertIn("sidecar_task_created", activity_types)
         self.assertIn("sidecar_wave_started", activity_types)
+
+    def test_archived_sidecar_id_gets_followup_id(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "underutilization": {
+                "below_threshold_since": "2026-04-10T00:00:00Z",
+                "last_sidecar_wave_at": None,
+                "last_sidecar_wave_reason": None,
+            },
+        }
+        parent_task = {
+            "id": "APP-001",
+            "phase": "Phase 5: Persona and Application Surfaces",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "title": "Define BFF query surfaces",
+            "summary_zh": "整理 operator console 與 workbench 的 BFF query contract。",
+            "artifacts": ["services/control-plane/bff/"],
+            "last_update": "2026-04-10T00:05:00Z",
+        }
+        base_id = "APP-001-SIDECAR-BFF-HANDOFF"
+        followup_id = f"{base_id}-FOLLOWUP-2"
+        archive_dir = self.root / "ai-task-archive" / "tasks"
+        archive_dir.mkdir(parents=True)
+        (archive_dir / f"{base_id}.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task_id": base_id,
+                    "archived_at": "2026-04-10T00:10:00Z",
+                    "terminal_status": "done",
+                    "terminal_outcome": "completed",
+                    "task": {
+                        "id": base_id,
+                        "status": "done",
+                        "task_class": "sidecar",
+                        "helper_parent": "APP-001",
+                        "helper_kind": "bff_handoff_packet",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        created_sidecar = {
+            "id": followup_id,
+            "phase": "Phase 5: Persona and Application Surfaces",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "title": "Prepare APP-001 BFF and frontend handoff packet",
+            "summary_zh": "平行支援 APP-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+            "artifacts": [f"support/sidecars/APP-001/{followup_id}.md"],
+            "task_class": "sidecar",
+            "auto_generated": True,
+            "helper_parent": "APP-001",
+            "helper_kind": "bff_handoff_packet",
+            "mutates_canonical": False,
+            "auto_created_by": "supervisor-underutilization",
+            "last_update": "2026-04-10T00:16:05Z",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[{"tasks": [parent_task]}, {"tasks": [parent_task, created_sidecar]}]),
+            mock.patch.object(supervisor, "load_sidecar_catalog", return_value=[]),
+            mock.patch.object(supervisor, "create_sidecar_task", return_value=(True, "")) as create_sidecar_task,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-10T00:16:05Z"),
+        ):
+            changed = supervisor.dispatch_underutilization_sidecars(self.config, state)
+
+        self.assertTrue(changed)
+        create_sidecar_task.assert_called_once()
+        kwargs = create_sidecar_task.call_args.kwargs
+        self.assertEqual(kwargs["sidecar_id"], followup_id)
+        self.assertEqual(kwargs["artifacts"], [f"support/sidecars/APP-001/{followup_id}.md"])
+        self.assertEqual(kwargs["helper_parent"], "APP-001")
+        self.assertEqual(kwargs["helper_kind"], "bff_handoff_packet")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], followup_id)
+        self.assertIn(followup_id, state.get("tasks", {}))
 
     def test_creates_all_assignable_sidecars_when_wave_limit_is_unset(self) -> None:
         self.config["underutilization_dispatch"]["require_recent_chair_signal"] = True
@@ -6148,6 +6353,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
                 mock.patch.object(supervisor, "pid_is_alive", return_value=False),
                 mock.patch.object(supervisor, "detect_worker_failure", side_effect=AssertionError("should not scan successful chair log")),
                 mock.patch.object(supervisor, "mark_provider_dispatch_paused") as mark_provider_dispatch_paused,
+                mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=True) as cleanup_worktrees,
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
                 changed = supervisor.poll_workers(config, state)
@@ -6156,6 +6362,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             self.assertEqual(state["workers"]["chair-run"]["status"], "completed")
             self.assertEqual(state["queue"]["events"]["evt-chair"]["status"], "completed")
             mark_provider_dispatch_paused.assert_not_called()
+            cleanup_worktrees.assert_called_once_with(config, state)
             self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
 
     def test_lower_priority_worker_is_superseded_when_finalize_backlog_exists(self) -> None:
@@ -7693,6 +7900,26 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
             )
         self.assertIsNone(reason)
 
+    def test_block_reason_blocks_auth_down_provider(self) -> None:
+        config = {
+            "agents": {"codex2": {"provider": "codex2"}},
+            "ready_dispatcher": {"worker_os_duplicate_guard": True},
+        }
+        provider_report = {"providers": {"codex2": {"auth_ready": False}}}
+        with (
+            mock.patch.object(supervisor, "agent_dispatch_paused", return_value=False),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent") as scan,
+        ):
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config,
+                {},
+                "codex2",
+                provider_report,
+            )
+
+        self.assertEqual(reason, "codex2 authentication is not ready")
+        scan.assert_not_called()
+
     def test_block_reason_allows_slotted_logical_agent_with_free_slot(self) -> None:
         config = {
             "agents": {
@@ -8363,7 +8590,7 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertTrue(result)
 
-    def test_skips_dirty_worktree(self) -> None:
+    def test_skips_dirty_worktree_when_dirty_archive_disabled(self) -> None:
         base = Path("/tmp/wt").resolve()
         record_path = str(base / "task-x")
         records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
@@ -8373,7 +8600,10 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             ("git", "branch", "--merged"): merged_proc,
             ("git", "-C", record_path, "status", "--porcelain"): dirty_status,
         }
-        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        config = {
+            "worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0},
+            "worker_worktree_cleanup": {"archive_dirty_worktrees": False},
+        }
         state: dict = {}
         with (
             mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
@@ -8388,6 +8618,93 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertFalse(result)
 
+    def test_archives_and_force_removes_dirty_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = (Path(tmpdir) / "wt").resolve()
+            wt_path = base / "task-x"
+            wt_path.mkdir(parents=True)
+            record_path = str(wt_path)
+            records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
+            merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="task/X\n", stderr="")
+            dirty_status = subprocess.CompletedProcess(args=[], returncode=0, stdout=" M foo.py\n", stderr="")
+            remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            runs = {
+                ("git", "branch", "--merged"): merged_proc,
+                ("git", "-C", record_path, "status", "--porcelain"): dirty_status,
+                ("git", "-C", "/repo", "worktree", "remove", "--force", record_path): remove_ok,
+            }
+            config = {
+                "worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0},
+                "worker_worktree_cleanup": {
+                    "archive_dirty_worktrees": True,
+                    "force_remove_archived_dirty": True,
+                },
+            }
+            state = {
+                "worker_worktrees": {
+                    "leases": {
+                        "task-x": {
+                            "path": record_path,
+                            "branch": "task/X",
+                        }
+                    }
+                }
+            }
+            with (
+                mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+                mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+                mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+                mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+                mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+                mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+                mock.patch.object(supervisor, "_archive_dirty_worktree", return_value=Path("/archive/task-x")) as archive,
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+            ):
+                result = supervisor.prune_orphan_worktrees(config, state)
+            self.assertTrue(result)
+            archive.assert_called_once()
+            self.assertNotIn("task-x", state["worker_worktrees"]["leases"])
+            self.assertEqual(state["worker_worktree_cleanup"]["last_run"]["archived"], 1)
+
+    def test_lifecycle_cleanup_removes_inactive_registered_worktree_without_merge_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = (Path(tmpdir) / "wt").resolve()
+            wt_path = base / "task-x"
+            wt_path.mkdir(parents=True)
+            record_path = str(wt_path)
+            clean_status = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            runs = {
+                ("git", "-C", record_path, "status", "--porcelain"): clean_status,
+                ("git", "-C", "/repo", "worktree", "remove", record_path): remove_ok,
+            }
+            config = {"worker_worktree_cleanup": {"enabled": True, "cleanup_inactive_leases": True}}
+            state = {
+                "worker_worktrees": {
+                    "leases": {
+                        "task-x": {
+                            "path": record_path,
+                            "branch": "task/X",
+                        }
+                    }
+                },
+                "workers": {},
+            }
+            with (
+                mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+                mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+                mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+                mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+                mock.patch.object(supervisor, "_git_worktree_records", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+            ):
+                result = supervisor.cleanup_inactive_worker_worktrees(config, state)
+            self.assertTrue(result)
+            self.assertEqual(state["worker_worktrees"]["leases"], {})
+            self.assertEqual(state["worker_worktree_cleanup"]["last_run"]["removed"], 1)
+
     def test_skips_worktree_claimed_by_active_worker(self) -> None:
         base = Path("/tmp/wt").resolve()
         record_path = str(base / "task-x")
@@ -8397,7 +8714,7 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             ("git", "branch", "--merged"): merged_proc,
         }
         config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
-        state = {"workers": {"r-1": {"workspace_path": record_path}}}
+        state = {"workers": {"r-1": {"workspace_path": record_path, "status": "running"}}}
         with (
             mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
@@ -8409,6 +8726,129 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
         ):
             result = supervisor.prune_orphan_worktrees(config, state)
+        self.assertFalse(result)
+
+
+class PruneChairReviewWorktreesTests(unittest.TestCase):
+    def _stub_subprocess_run(self, results):
+        def fake_run(cmd, *args, **kwargs):
+            cmd_tuple = tuple(str(c) for c in cmd)
+            for key, value in results.items():
+                if cmd_tuple[: len(key)] == key:
+                    return value
+            raise AssertionError(f"unexpected subprocess.run call: {cmd_tuple}")
+        return fake_run
+
+    def _fake_stat(self, mtime_by_name):
+        import types
+
+        def fake_stat(self, *args, **kwargs):
+            return types.SimpleNamespace(st_mtime=mtime_by_name.get(self.name, 0.0))
+        return fake_stat
+
+    def test_returns_false_when_disabled(self) -> None:
+        config = {"worker_worktree_housekeeping": {"enabled": False}}
+        self.assertFalse(supervisor.prune_chair_review_worktrees(config, {}))
+
+    def test_throttled_within_interval(self) -> None:
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        recent_ts = (_dt.now(_tz.utc) - _td(seconds=30)).isoformat().replace("+00:00", "Z")
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 600}}
+        state = {"chair_review_worktree_housekeeping": {"last_run_at": recent_ts}}
+        with mock.patch.object(supervisor, "worker_worktree_settings") as ws:
+            result = supervisor.prune_chair_review_worktrees(config, state)
+        self.assertFalse(result)
+        ws.assert_not_called()
+
+    def test_removes_old_chair_review_worktree(self) -> None:
+        base = Path("/tmp/wt").resolve()
+        name = "chair-review-20260620-061500-claude"
+        record_path = str(base / name)
+        records = [
+            {"worktree": record_path, "branch": "refs/heads/dev"},
+            {"worktree": "/repo", "branch": "refs/heads/main"},
+        ]
+        remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        runs = {("git", "-C", "/repo", "worktree", "remove", "--force", record_path): remove_ok}
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(supervisor, "write_activity_log") as log,
+            mock.patch.object(supervisor.time, "time", return_value=1_000_000.0),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(Path, "stat", self._fake_stat({name: 1_000_000.0 - 10_000})),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+        ):
+            result = supervisor.prune_chair_review_worktrees(config, state)
+        self.assertTrue(result)
+        log.assert_called_once()
+
+    def test_skips_recent_chair_review_worktree(self) -> None:
+        base = Path("/tmp/wt").resolve()
+        name = "chair-review-20260620-061500-claude"
+        record_path = str(base / name)
+        records = [{"worktree": record_path, "branch": "refs/heads/dev"}]
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(supervisor.time, "time", return_value=1_000_000.0),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(Path, "stat", self._fake_stat({name: 1_000_000.0 - 100})),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run({})),
+        ):
+            result = supervisor.prune_chair_review_worktrees(config, state)
+        self.assertFalse(result)
+
+    def test_skips_non_chair_review_worktree(self) -> None:
+        base = Path("/tmp/wt").resolve()
+        name = "task-x"
+        record_path = str(base / name)
+        records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(supervisor.time, "time", return_value=1_000_000.0),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(Path, "stat", self._fake_stat({name: 1_000_000.0 - 10_000})),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run({})),
+        ):
+            result = supervisor.prune_chair_review_worktrees(config, state)
+        self.assertFalse(result)
+
+    def test_skips_claimed_chair_review_worktree(self) -> None:
+        base = Path("/tmp/wt").resolve()
+        name = "chair-review-20260620-061500-claude"
+        record_path = str(base / name)
+        records = [{"worktree": record_path, "branch": "refs/heads/dev"}]
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        state = {"workers": {"r-1": {"workspace_path": record_path}}}
+        with (
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(supervisor.time, "time", return_value=1_000_000.0),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(Path, "stat", self._fake_stat({name: 1_000_000.0 - 10_000})),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run({})),
+        ):
+            result = supervisor.prune_chair_review_worktrees(config, state)
         self.assertFalse(result)
 
 

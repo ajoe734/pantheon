@@ -1,0 +1,60 @@
+{
+  "manifest_version": "1.4",
+  "extends": "v1.3",
+  "description": "Agora BFF capability manifest v1.4 — additive candidate pool routes.",
+  "capabilities": [
+    {
+      "id": "candidate_pool_crud",
+      "description": "Create, list, and retrieve CandidatePool snapshots scoped to operator.",
+      "routes": [
+        "GET /bff/agora/candidate-pools",
+        "POST /bff/agora/candidate-pools",
+        "GET /bff/agora/candidate-pools/{pool_id}"
+      ]
+    },
+    {
+      "id": "candidate_score",
+      "description": "Trigger score run and retrieve CandidateScoreResult projections driven by CandidateScoringRecipe.",
+      "routes": [
+        "POST /bff/agora/candidate-pools/{pool_id}/score",
+        "GET /bff/agora/candidate-pools/{pool_id}/score"
+      ]
+    },
+    {
+      "id": "candidate_member_crud",
+      "description": "List and retrieve individual pool member projections.",
+      "routes": [
+        "GET /bff/agora/candidate-pools/{pool_id}/members",
+        "GET /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}"
+      ]
+    },
+    {
+      "id": "candidate_member_review",
+      "description": "Submit trader review decisions (approve, shadow, reject, park). Rejected candidates are preserved as negative examples.",
+      "routes": [
+        "POST /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/review"
+      ]
+    },
+    {
+      "id": "candidate_discussion",
+      "description": "Pool-level and member-level discussion threads for collaborative review.",
+      "routes": [
+        "GET /bff/agora/candidate-pools/{pool_id}/discussions",
+        "POST /bff/agora/candidate-pools/{pool_id}/discussions",
+        "GET /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/discussions",
+        "POST /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/discussions"
+      ]
+    },
+    {
+      "id": "candidate_monitoring",
+      "description": "Add, update, list, and remove candidates from monitoring watchlist.",
+      "routes": [
+        "GET /bff/agora/candidate-pools/{pool_id}/monitoring",
+        "POST /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor",
+        "DELETE /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor"
+      ]
+    }
+  ],
+  "no_order_route_proof": "candidate_pool_bff_request_only_no_order_route",
+  "note": "Candidate pool BFF is operator-scoped read/review surface. No broker orders, no RuntimeBinding writes, no capital binding."
+}

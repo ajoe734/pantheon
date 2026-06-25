@@ -38,12 +38,32 @@ AUTH_PROBE_DEFAULT_INTERVAL_SECONDS = 900
 AUTH_PROBE_FAILED_INTERVAL_SECONDS = 60
 AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS = 45
 AUTH_PROBE_PROMPT = "Reply exactly: OK"
+AUTH_PROBE_EXPECTED_OUTPUT = "OK"
 AUTH_ERROR_MAX_CHARS = 600
 CODEX_INHERITED_SESSION_ENV = (
     "CODEX_THREAD_ID",
     "CODEX_SESSION_ID",
     "CODEX_CONVERSATION_ID",
     "CODEX_PARENT_THREAD_ID",
+)
+CODEX_AUTH_REVOKED_MARKERS = (
+    "refresh-token-revoked",
+    "refresh_token_revoked",
+    "refresh token revoked",
+    "refresh token has been revoked",
+    "token has been revoked",
+    "token revoked",
+    "invalid_grant",
+)
+CODEX_AUTH_FAILURE_MARKERS = (
+    "status: 401",
+    "401 unauthorized",
+    "unauthorized",
+    "authentication_failed",
+    "not authenticated",
+    "auth failed",
+    "invalid authentication credentials",
+    "invalid api key",
 )
 
 
@@ -121,6 +141,26 @@ def _codex_runtime_env(config: dict[str, Any] | None = None, provider_id: str = 
     if codex_home:
         env["CODEX_HOME"] = os.path.expanduser(codex_home)
     return env
+
+
+def _codex_runtime_env_with_overrides(
+    config: dict[str, Any] | None = None,
+    provider_id: str = "codex",
+    env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    runtime_env = _codex_runtime_env(config, provider_id)
+    if env:
+        for key, value in env.items():
+            if value is None:
+                continue
+            runtime_env[str(key)] = str(value)
+        for key in CODEX_INHERITED_SESSION_ENV:
+            runtime_env.pop(key, None)
+        codex_settings = ((config or {}).get("providers", {}).get(provider_id, {}) or {}).get("codex", {}) or {}
+        api_key_env = str(codex_settings.get("api_key_env") or "").strip()
+        if api_key_env and runtime_env.get(api_key_env):
+            runtime_env["OPENAI_API_KEY"] = runtime_env[api_key_env]
+    return runtime_env
 
 
 def _antigravity_home(config: dict[str, Any] | None = None, provider_id: str = "antigravity") -> Path:
@@ -293,6 +333,36 @@ def _compact_auth_error(output: str | None) -> str | None:
     return text
 
 
+def _contains_any_marker(text: str, markers: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in markers)
+
+
+def _codex_probe_ready(
+    returncode: int,
+    stdout: str | None,
+    stderr: str | None,
+    *,
+    expected_output: str | None = AUTH_PROBE_EXPECTED_OUTPUT,
+) -> tuple[bool, str | None, str]:
+    output = "\n".join(part for part in (stdout, stderr) if part)
+    compact_error = _compact_auth_error(output)
+    if _contains_any_marker(output, CODEX_AUTH_REVOKED_MARKERS):
+        return False, compact_error or "Codex refresh token is revoked.", "refresh_token_revoked"
+    if returncode != 0:
+        status = "auth_failed" if _contains_any_marker(output, CODEX_AUTH_FAILURE_MARKERS) else f"exit_{returncode}"
+        return False, compact_error, status
+    if _contains_any_marker(output, CODEX_AUTH_FAILURE_MARKERS):
+        return False, compact_error or "Codex authentication probe reported an auth failure.", "auth_failed"
+    stripped_lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not stripped_lines:
+        return False, "Codex auth probe exited 0 but returned no output.", "empty_output"
+    expected = str(expected_output or "").strip()
+    if expected and expected not in stripped_lines:
+        return False, compact_error or "Codex auth probe returned unexpected output.", "unexpected_output"
+    return True, None, "ready"
+
+
 def _gemini_env_auth_type(env: dict[str, str] | None = None) -> str | None:
     if _truthy_env("GOOGLE_GENAI_USE_GCA", env):
         return "oauth-personal"
@@ -363,8 +433,15 @@ def _codex_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str
     return metadata
 
 
-def _codex_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None) -> dict[str, Any]:
-    env = _codex_runtime_env(config, provider_id)
+def _codex_auth_probe(
+    config: dict[str, Any],
+    provider_id: str,
+    binary: str | None,
+    *,
+    env: dict[str, str] | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    env = _codex_runtime_env_with_overrides(config, provider_id, env)
     metadata = _codex_auth_metadata(config, provider_id, env)
     if not binary:
         return _auth_probe_record(
@@ -394,11 +471,12 @@ def _codex_auth_probe(config: dict[str, Any], provider_id: str, binary: str | No
 
     previous = _previous_provider_auth_probe(config, provider_id)
     method = "codex_exec_api_key" if metadata.get("api_key_env_present") else "codex_exec_oauth"
-    if previous and not _auth_probe_due(config, provider_id, previous):
+    if previous and not force and not _auth_probe_due(config, provider_id, previous):
         return _reuse_auth_probe(provider_id, "codex", previous, method=method)
 
     settings = _auth_probe_settings(config, provider_id)
     prompt = str(settings.get("probe_prompt") or AUTH_PROBE_PROMPT)
+    expected_output = str(settings.get("probe_expected_output") or AUTH_PROBE_EXPECTED_OUTPUT)
     timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
     command = [
         binary,
@@ -434,16 +512,38 @@ def _codex_auth_probe(config: dict[str, Any], provider_id: str, binary: str | No
             status="probe_error",
             metadata=metadata,
         )
-    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    ready, error, status = _codex_probe_ready(
+        result.returncode,
+        result.stdout,
+        result.stderr,
+        expected_output=expected_output,
+    )
     return _auth_probe_record(
         provider_id,
         "codex",
-        ready=result.returncode == 0,
+        ready=ready,
         method=method,
-        error=None if result.returncode == 0 else _compact_auth_error(output),
-        status="ready" if result.returncode == 0 else f"exit_{result.returncode}",
+        error=error,
+        status=status,
         metadata=metadata,
     )
+
+
+def codex_auth_ready(
+    provider_id: str = "codex",
+    env: dict[str, str] | None = None,
+    *,
+    config: dict[str, Any] | None = None,
+    binary: str | None = None,
+) -> bool:
+    config = config or load_config()
+    provider_binary = (
+        binary
+        or _configured_provider_binary(config, provider_id, "codex", "codex")
+        or command_exists("codex")
+    )
+    probe = _codex_auth_probe(config, provider_id, provider_binary, env=env, force=True)
+    return probe.get("ready") is True
 
 
 def _claude_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None, env: dict[str, str]) -> dict[str, Any]:
@@ -828,6 +928,7 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
     deny = [
         "Bash(git reset --hard*)",
         "Bash(git checkout -- *)",
+        "Bash(git clean *)",
         "Bash(sudo *)",
         "Bash(rm -rf /*)",
         "Bash(chmod 777 *)",
@@ -1278,7 +1379,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
         profile = provider_settings.get("codex", {}) or codex_profile
         provider_binary = _configured_provider_binary(config, provider_id, "codex", "codex") or codex_binary
-        auth_probe = _codex_auth_probe(config, provider_id, provider_binary)
+        auth_probe = _codex_auth_probe(config, provider_id, provider_binary, force=True)
         auth_ready = bool(auth_probe.get("ready"))
         installed = bool(openai_path or provider_binary)
         config_path_for_provider = _codex_config_path(config, provider_id)

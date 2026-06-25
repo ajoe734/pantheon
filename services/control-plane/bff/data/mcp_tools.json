@@ -1,0 +1,102 @@
+{
+  "mcp-server-research-worker-gateway:mcp-tool-rwg-qlib": {
+    "id": "mcp-tool-rwg-qlib",
+    "tool_id": "mcp-tool-rwg-qlib",
+    "server_id": "mcp-server-research-worker-gateway",
+    "name": "Qlib Worker Tool",
+    "status": "imported",
+    "tool_class": "research",
+    "description": "MCP tool wrapping the qlib research worker backend.",
+    "standalone_create_enabled": false,
+    "descriptor": {
+      "toolId": "mcp-tool-rwg-qlib",
+      "name": "Qlib Worker Tool",
+      "toolClass": "research",
+      "actions": [
+        {
+          "actionId": "invoke.qlib",
+          "actionType": "invoke",
+          "riskLevel": "low"
+        }
+      ]
+    },
+    "source": "research_worker_gateway",
+    "imported_by": "project_skills_to_bff_surfaces",
+    "imported_at": "2026-06-15T14:30:05Z"
+  },
+  "mcp-server-research-worker-gateway:mcp-tool-rwg-vectorbt": {
+    "id": "mcp-tool-rwg-vectorbt",
+    "tool_id": "mcp-tool-rwg-vectorbt",
+    "server_id": "mcp-server-research-worker-gateway",
+    "name": "Vectorbt Worker Tool",
+    "status": "imported",
+    "tool_class": "research",
+    "description": "MCP tool wrapping the vectorbt research worker backend.",
+    "standalone_create_enabled": false,
+    "descriptor": {
+      "toolId": "mcp-tool-rwg-vectorbt",
+      "name": "Vectorbt Worker Tool",
+      "toolClass": "research",
+      "actions": [
+        {
+          "actionId": "invoke.vectorbt",
+          "actionType": "invoke",
+          "riskLevel": "low"
+        }
+      ]
+    },
+    "source": "research_worker_gateway",
+    "imported_by": "project_skills_to_bff_surfaces",
+    "imported_at": "2026-06-15T14:30:05Z"
+  },
+  "mcp-server-research-worker-gateway:mcp-tool-rwg-finrl": {
+    "id": "mcp-tool-rwg-finrl",
+    "tool_id": "mcp-tool-rwg-finrl",
+    "server_id": "mcp-server-research-worker-gateway",
+    "name": "Finrl Worker Tool",
+    "status": "imported",
+    "tool_class": "research",
+    "description": "MCP tool wrapping the finrl research worker backend.",
+    "standalone_create_enabled": false,
+    "descriptor": {
+      "toolId": "mcp-tool-rwg-finrl",
+      "name": "Finrl Worker Tool",
+      "toolClass": "research",
+      "actions": [
+        {
+          "actionId": "invoke.finrl",
+          "actionType": "invoke",
+          "riskLevel": "low"
+        }
+      ]
+    },
+    "source": "research_worker_gateway",
+    "imported_by": "project_skills_to_bff_surfaces",
+    "imported_at": "2026-06-15T14:30:05Z"
+  },
+  "mcp-server-research-worker-gateway:mcp-tool-rwg-quantlib": {
+    "id": "mcp-tool-rwg-quantlib",
+    "tool_id": "mcp-tool-rwg-quantlib",
+    "server_id": "mcp-server-research-worker-gateway",
+    "name": "Quantlib Worker Tool",
+    "status": "imported",
+    "tool_class": "research",
+    "description": "MCP tool wrapping the quantlib research worker backend.",
+    "standalone_create_enabled": false,
+    "descriptor": {
+      "toolId": "mcp-tool-rwg-quantlib",
+      "name": "Quantlib Worker Tool",
+      "toolClass": "research",
+      "actions": [
+        {
+          "actionId": "invoke.quantlib",
+          "actionType": "invoke",
+          "riskLevel": "low"
+        }
+      ]
+    },
+    "source": "research_worker_gateway",
+    "imported_by": "project_skills_to_bff_surfaces",
+    "imported_at": "2026-06-15T14:30:05Z"
+  }
+}

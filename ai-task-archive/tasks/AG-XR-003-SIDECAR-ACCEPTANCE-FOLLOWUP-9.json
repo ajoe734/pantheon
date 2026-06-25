@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9",
+  "archived_at": "2026-06-20T21:50:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9",
+    "title": "Prepare AG-XR-003 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-XR-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-XR / Phase 0",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-001A"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet review_approved by Claude2. All evidence independently verified: no AG-XR/Agora scope changes since follow-up 8, PR #1852 merged, PR #63 still open/unstable. Parent AG-XR-003 remains blocked awaiting Claude2 disposition. PR #1912 merged to dev at 2026-06-20T21:50:41Z.",
+    "last_update": "2026-06-20T21:50:58Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-XR-003",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過，所有 evidence 均獨立驗證：PR #63 OPEN/UNSTABLE、PR #1852 MERGED、hash mismatch、deployment-gate 6 errors、pytest 1 stale 失敗 3 通過，均與 packet 相符。origin/dev 推進至 49d5809f，但 AG-XR/Agora 範圍無改動，結論仍然成立。",
+      "後續追蹤：PR #63 需 merge 並修復 release gate；manifest 需更新至當前 dev HEAD；stale test 需於 manifest 更新後才重新對齊；Claude2 需對 parent AG-XR-003 的 PR #63 aggregate failure 給出明確 disposition。"
+    ],
+    "review_file": "/tmp/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T21:50:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-xr-003-sidecar-acceptance-followup-9",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9",
+      "git_clean_required": false,
+      "commit": "4f552638674de8067df3c1f39076c5af1f673315",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f13a5b6c8d41b10fa120a982720689c3f6b4256a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Follow-up 9 packet ready: support/sidecars/AG-XR-003/AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9.md. Current origin/dev is 4178f919. No AG-XR/Agora scope changes landed since follow-up 8 (db2254d3). Parent AG-XR-003 remains blocked waiting for Claude2. Pantheon PR #1852 is merged; execute-plans PR #63 is still open/unstable with the same integration-gate failure (run 27877483718). Local validation identical to follow-up 8: verify --allow-pending fails on generated-types hash mismatch (committed a6a9296..., local expected 0244eb11...); deployment-gate fails closed on 6 errors; pytest 1 stale assertion failure, 3 passes; contract:drift passes. PR #1912 open. This sidecar changes only support material and should be used as reviewer/parent-owner intake, not as parent approval.",
+      "status": "done",
+      "created_at": "2026-06-20T21:38:11Z",
+      "resolved_at": "2026-06-20T21:45:34Z"
+    },
+    {
+      "task_id": "AG-XR-003-SIDECAR-ACCEPTANCE-FOLLOWUP-9",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all evidence independently verified. Packet accurate and correctly scoped. Returned to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-06-20T21:45:34Z",
+      "resolved_at": "2026-06-20T21:51:00Z"
+    }
+  ],
+  "blockers": []
+}

@@ -82,6 +82,16 @@ KNOWN_AGENTS = {
         "default_branch": "feat/claude2-execution-control",
         "target_workload": 5,
     },
+    "Antigravity": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity-research-runtime",
+        "target_workload": 5,
+    },
+    "Antigravity2": {
+        "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
+        "default_branch": "feat/antigravity2-research-runtime",
+        "target_workload": 5,
+    },
     "Gemini": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini-research-runtime",
@@ -119,12 +129,10 @@ AGENT_ALIASES = {
     "claude 2": "Claude2",
     "gemini2": "Gemini2",
     "gemini 2": "Gemini2",
-    # Antigravity is the runtime worker rename for Gemini (OPS-ANTIGRAVITY-CLI-MIGRATION).
-    # The collaboration layer still uses Gemini/Gemini2 as canonical names.
-    "antigravity": "Gemini",
-    "antigravity2": "Gemini2",
-    "agy": "Gemini",
-    "agy2": "Gemini2",
+    "antigravity": "Antigravity",
+    "antigravity2": "Antigravity2",
+    "agy": "Antigravity",
+    "agy2": "Antigravity2",
     "codex2": "Codex2",
     "codex (2)": "Codex2",
     "codex3": "Codex",
@@ -1788,11 +1796,11 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
             depends = ", ".join(f"`{item}`" for item in task.get("depends_on", [])) or "-"
             lines.append(
                 "| `{id}` | {phase} | {title} | {owner} | {status} | {depends} | {summary} |".format(
-                    id=cell(task["id"]),
-                    phase=cell(task["phase"]),
+                    id=cell(task.get("id")),
+                    phase=cell(task.get("phase") or "Unassigned"),
                     title=cell(display_task_title(task)),
-                    owner=cell(task["owner"]),
-                    status=cell(task["status"]),
+                    owner=cell(task.get("owner")),
+                    status=cell(task.get("status")),
                     depends=cell(depends),
                     summary=cell(task.get("summary_zh") or "-"),
                 )
@@ -1923,13 +1931,13 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         depends = ", ".join(f"`{item}`" for item in task.get("depends_on", [])) or "-"
         lines.append(
             "| `{id}` | {phase} | {title} | {summary} | {owner} | {reviewer} | {status} | {depends} | {last_update} | {next} |".format(
-                id=cell(task["id"]),
-                phase=cell(task["phase"]),
+                id=cell(task.get("id")),
+                phase=cell(task.get("phase") or "Unassigned"),
                 title=cell(display_task_title(task)),
                 summary=cell(task.get("summary_zh") or "-"),
-                owner=cell(task["owner"]),
-                reviewer=cell(task["reviewer"]),
-                status=cell(task["status"]),
+                owner=cell(task.get("owner")),
+                reviewer=cell(task.get("reviewer")),
+                status=cell(task.get("status")),
                 depends=cell(depends),
                 last_update=cell(format_display_timestamp(task.get("last_update"))),
                 next=cell(localize_embedded_timestamps(task.get("next") or "-")),

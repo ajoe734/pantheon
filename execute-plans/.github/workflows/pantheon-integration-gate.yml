@@ -10,7 +10,7 @@ on:
       bff_base_url:
         description: "BFF base URL"
         required: false
-        default: "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io"
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
 
 jobs:
   integration-gate:
@@ -21,10 +21,18 @@ jobs:
       VITE_BFF_MODE: live
       VITE_BFF_FALLBACK: strict
       PANTHEON_E2E_STRICT: "1"
-      PANTHEON_AUDIT_OUT_DIR: .lovable/audits
+      PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run
+      PANTHEON_CONTRACT_ROOT: pantheon-contracts
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Checkout Pantheon contract source
+        uses: actions/checkout@v4
+        with:
+          repository: ajoe734/pantheon
+          ref: dev
+          path: pantheon-contracts
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -86,6 +94,16 @@ jobs:
       - name: Authenticated BFF smoke
         run: node scripts/probe-bff-authenticated-live.mjs
 
+      - name: Strict SSE live soak
+        run: |
+          python3 scripts/probe_bff_sse_stream.py \
+            --base-url "$PANTHEON_BFF_BASE_URL" \
+            --strict-live-evidence \
+            --soak-seconds 75 \
+            --soak-min-heartbeats 1 \
+            --reconnect-attempts 5 \
+            --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json"
+
       - name: Install Playwright
         run: npx playwright install chromium --with-deps
 
@@ -101,6 +119,6 @@ jobs:
         with:
           name: pantheon-integration-evidence
           path: |
-            .lovable/audits/*.md
+            .lovable/audits/current-run
             playwright-report
             test-results

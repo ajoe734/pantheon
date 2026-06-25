@@ -1,0 +1,1630 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.2 Extension
+  version: "1.2.0"
+  description: |
+    Additive extension over the Agora v1.1 contract (agora_v1_1.openapi.yaml).
+    It preserves the frozen AG-XR-001 v1 bundle and the v1.1 extension, then
+    formalizes the Strategy Workshop lifecycle and persistence closure from
+    AG-BE-SW-001 deep-design closure §6-§8.
+
+    v1.2 changes:
+    - Workshop lifecycle status is exactly open, in_review, concluded, archived.
+    - Workshop list filters accept status plus status_group=active|closed.
+    - Authority order: v1.2 replaces the v1.1 status=active lifecycle
+      filter wording. `active` is only a status_group alias for open + in_review;
+      it is not a lifecycle status.
+    - Message events persist only private_content_ref, redacted_summary, and
+      redaction_policy_version; raw private content is not stored in rows.
+    - Workshop create/message requests accept owner raw text only; the browser
+      must not submit private_content_ref. The BFF creates private_content_ref
+      server-side after redaction and encrypted object-store write.
+    - Owner event responses may include decrypted owner-visible content from the
+      private store; management projections never include raw content.
+    - The v3 workshop_persistence schema records the five Postgres tables and
+      all required indexes from the design closure.
+    - ServantSessionCreateRequest accepts optional session_type
+      (enum: interactive | trainer | research_task, default interactive).
+      Aligns with design-closure C1 common envelope; strategy-dialogue allows
+      interactive and trainer modes. additionalProperties remains false;
+      intent, strategy_ref, and metadata are unchanged.
+    - Authority order: v1.2 ServantSessionCreateRequest shape supersedes v1.1.
+
+    v1.1 capability families remain present:
+
+    - agora.servant.v1 — 8 BFF routes for user-private servant provisioning
+      and session facade, plus 3 internal OpenClaw-adapter routes.
+    - agora.workshop.v1 (v1.2) — 13 /bff/agora/workshops routes covering the
+      canonical Strategy Workshop aggregate, streaming, draft versioning, research
+      runs, consultations and conclude. Extends agora.workshop.v1 from v1.1.
+    - agora.dashboard.v2 — 11 dashboard-recipe and widget routes with append-only
+      version history and optimistic concurrency.
+
+    Concurrency model (workshop and dashboard aggregates):
+    - GET returns ETag in the response header.
+    - Every mutating request must supply both If-Match (matching the ETag from the
+      latest GET) and Idempotency-Key.
+    - ETag mismatch returns 409 CONCURRENT_MODIFICATION with the current ETag and
+      a latest_href pointing to the authoritative resource URL.
+
+    OpenClaw adapter restriction (enforced by the adapter, not the BFF):
+    - Adapter MUST reject capability_snapshot entries that include runtime-binding,
+      broker-order, or capital-binding capabilities.
+    - No route in this spec may route live broker orders or bind capital.
+
+    This file does not supersede agora_v1.openapi.yaml or agora_v1_1.openapi.yaml;
+    all three files form the additive v1.2 bundle described in
+    bundle_index.v1_2.json.
+  contact:
+    name: Pantheon Platform
+  x-extends-contract: "services/control-plane/openapi/agora_v1_1.openapi.yaml"
+  x-capability-manifest: "services/control-plane/specs/agora/v3/capability_manifest_v1_2.json"
+  x-persistence-contract: "services/control-plane/specs/agora/v3/workshop_persistence.schema.json"
+  x-private-content-contract: "services/control-plane/specs/agora/v3/workshop_storage_contract.schema.json"
+  x-strategy-ref-contract: "services/control-plane/specs/agora/v3/strategy_ref_contract.schema.json"
+  x-base-frozen-by: "AG-XR-001"
+  x-extension-by: "AG-XR-OPENAPI-003"
+
+servers:
+  - url: "{bff_base}"
+    description: Pantheon BFF (dev/prod)
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: "Operator or agora-user auth token."
+
+  parameters:
+    ServantSessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: Servant session identifier.
+
+    WorkshopId:
+      name: workshop_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: Strategy Workshop identifier.
+
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: Strategy draft version identifier.
+
+    StrategyId:
+      name: strategy_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: Strategy identifier.
+
+    RecipeId:
+      name: recipe_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: Dashboard recipe identifier.
+
+    PersonaId:
+      name: persona_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: Persona Registry identifier (used by OpenClaw adapter routes).
+
+    WidgetId:
+      name: widget_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: Widget identifier.
+
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+      description: >-
+        ETag value from the last GET of this resource. Required for all mutating
+        requests on workshop and dashboard aggregates. Mismatch returns 409
+        CONCURRENT_MODIFICATION.
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Client-generated UUID for idempotent request deduplication.
+
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Caller-assigned request tracing identifier.
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - AUTHZ_DENIED
+                - OBJECT_NOT_FOUND
+                - INVALID_REQUEST
+                - INVALID_STATE
+                - CONCURRENT_MODIFICATION
+                - INVALID_PARAMS
+                - CAPABILITY_UNAVAILABLE
+                - PRIVATE_CONTENT_STORE_UNAVAILABLE
+                - PRIVATE_CONTENT_REDACTION_UNAVAILABLE
+                - PRIVATE_CONTENT_EXPIRED
+                - PRIVATE_CONTENT_ACCESS_DENIED
+                - STRATEGY_REFERENCE_MISMATCH
+                - STRATEGY_REFERENCE_NOT_FOUND
+                - WORKSHOP_ALREADY_CONCLUDED
+                - WORKSHOP_ARCHIVED
+                - WORKSHOP_VERSION_REQUIRED
+            message:
+              type: string
+              description: Must not echo raw message content, object URI, or encrypted key material.
+            details:
+              type: object
+              additionalProperties: true
+              description: >-
+                For CONCURRENT_MODIFICATION: includes expected_version,
+                current_version, current_etag, and latest_href. Error details
+                must never include raw message content, object URI, or encrypted
+                key material.
+          additionalProperties: false
+      additionalProperties: false
+
+    ServantEnsureRequest:
+      type: object
+      description: >-
+        Servant provisioning preferences. tenant_id and agora_user_id are derived
+        from the authenticated subject; the caller must not submit another user's IDs.
+        The BFF never widens the tool allowlist from client input.
+      properties:
+        display_name:
+          type: string
+        locale:
+          type: string
+        timezone:
+          type: string
+      additionalProperties: false
+
+    ServantSessionCreateRequest:
+      type: object
+      description: >-
+        Request to open a new servant-facilitated session. The BFF maps this to
+        the OpenClaw adapter agent session lifecycle.
+        v1.2 adds optional session_type (C1 common envelope alignment).
+        Authority order: this v1.2 shape supersedes the v1.1 definition.
+      properties:
+        intent:
+          type: string
+          description: Short description of the session purpose.
+        strategy_ref:
+          type: string
+          description: Optional reference to the strategy context for this session.
+        session_type:
+          type: string
+          enum: [interactive, trainer, research_task]
+          default: interactive
+          description: >-
+            Session operating mode. interactive is the default conversational
+            session; trainer enables supervised-learning feedback collection;
+            research_task scopes the session to a specific research objective.
+            strategy-dialogue allows interactive and trainer modes.
+        metadata:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+
+    ServantMessageRequest:
+      type: object
+      required: [content]
+      description: Message submitted to an active servant session.
+      properties:
+        content:
+          type: string
+          minLength: 1
+        attachment_refs:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+
+    WorkshopStatus:
+      type: string
+      enum: [open, in_review, concluded, archived]
+      description: Canonical Strategy Workshop lifecycle status. Matches the strategy_workshop_session.status DB CHECK.
+
+    WorkshopCreateRequest:
+      type: object
+      required: [initial_message]
+      description: >-
+        Creates a new Strategy Workshop session. Workshop state references the
+        active draft in the existing Strategy Registry; it is not StrategySpec
+        truth. The browser sends raw owner text in initial_message and must not
+        submit private_content_ref; the BFF creates private_content_ref
+        server-side after redaction and encrypted object-store write.
+      properties:
+        title:
+          type: string
+        initial_message:
+          type: string
+          minLength: 1
+        strategy_ref:
+          type: object
+          description: >-
+            Optional Strategy Registry reference. If supplied, the BFF resolves
+            strategy_spec_registry_id, verifies tenant/user scope, verifies any
+            strategy_id match, and stores only strategy_id plus
+            active_strategy_spec_registry_id on the workshop.
+          properties:
+            strategy_id:
+              type: string
+              minLength: 1
+              description: Stable strategy identity across versions.
+            strategy_spec_registry_id:
+              type: string
+              minLength: 1
+              description: Immutable Strategy Registry record/version ID.
+          additionalProperties: false
+        strategy_spec_ref:
+          type: string
+          deprecated: true
+          description: >-
+            Deprecated v1.1 alias. In v1.2 this is interpreted only as
+            strategy_ref.strategy_spec_registry_id.
+        metadata:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+
+    WorkshopMessageRequest:
+      type: object
+      required: [content]
+      description: >-
+        Message posted into the workshop, dispatching a servant response
+        workflow. The browser sends raw owner text in content and must not submit
+        private_content_ref; the BFF creates private_content_ref server-side.
+      properties:
+        content:
+          type: string
+          minLength: 1
+        attachment_refs:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+
+    OwnerWorkshopEventResponse:
+      type: object
+      required: [event_id, event_type, redacted_summary, created_at]
+      description: >-
+        Owner-facing event projection. May include decrypted owner-visible
+        content from the private store over TLS/no-store transport. It never
+        returns private_content_ref or object-store URI.
+      properties:
+        event_id:
+          type: string
+        event_type:
+          type: string
+        content:
+          type: string
+          description: Decrypted owner-visible content; omitted when unavailable or expired.
+        content_source:
+          type: string
+          enum: [private_store, redacted_only]
+        redacted_summary:
+          type: string
+        payload_refs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+
+    ManagementWorkshopEventProjection:
+      type: object
+      required: [event_id, event_type, redacted_summary, risk_flags, payload_refs, created_at]
+      description: >-
+        Management/institutional projection of a workshop event. Raw content,
+        private_content_ref, object-store URI, and encrypted key material are
+        forbidden.
+      properties:
+        event_id:
+          type: string
+        event_type:
+          type: string
+        redacted_summary:
+          type: string
+        risk_flags:
+          type: array
+          items:
+            type: string
+        payload_refs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+
+    VersionCreateRequest:
+      type: object
+      required: [expected_workshop_version, patch]
+      description: >-
+        Creates a new StrategySpec draft version from the workshop's currently
+        active version. expected_workshop_version must match the workshop
+        aggregate's lock_version at the time of the write.
+      properties:
+        expected_workshop_version:
+          type: integer
+          minimum: 1
+        patch:
+          type: object
+          additionalProperties: true
+          description: Partial update to apply on top of the active StrategySpec draft.
+        reason:
+          type: string
+      additionalProperties: false
+
+    WorkshopResearchRunRequest:
+      type: object
+      description: >-
+        Dispatches a research run scoped to this workshop's active strategy version.
+      properties:
+        research_context:
+          type: string
+          description: Natural-language description of the research objective.
+        strategy_version_ref:
+          type: string
+          description: >-
+            Specific StrategySpec draft version to research against.
+            Defaults to the workshop's currently selected version.
+        parameters:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+
+    WorkshopConsultationRequest:
+      type: object
+      required: [consultation_type]
+      description: Opens a consultation tied to this workshop's current strategy context.
+      properties:
+        consultation_type:
+          type: string
+          enum: [committee, advisory]
+        subject:
+          type: string
+          description: Short description of the matter under consultation.
+        context_refs:
+          type: array
+          items:
+            type: string
+          description: Strategy version or evidence refs to attach to the consultation.
+      additionalProperties: false
+
+    WorkshopConcludeRequest:
+      type: object
+      description: >-
+        Marks the workshop as concluded. The designated version becomes the final
+        strategy output; no further messages or versions may be added after this.
+      properties:
+        final_version_id:
+          type: string
+          description: >-
+            Version to designate as the final output. Must be one of the workshop's
+            existing versions. Defaults to the currently selected version if omitted.
+        conclusion_notes:
+          type: string
+      additionalProperties: false
+
+    DashboardProposalRequest:
+      type: object
+      required: [strategy_version_id, workspace, phase]
+      description: Requests an AI-generated dashboard recipe proposal for a strategy.
+      properties:
+        strategy_version_id:
+          type: string
+          minLength: 1
+        workspace:
+          type: string
+          enum: [trading_room, strategy_workshop, strategy_performance]
+        phase:
+          type: string
+          enum: [candidate_review, monitoring, position_monitoring, post_trade_review]
+        instruction:
+          type: string
+          description: Optional guidance for the recipe generator.
+      additionalProperties: false
+
+    DashboardAcceptRequest:
+      type: object
+      required: [expected_version]
+      description: >-
+        Accepts a proposal version and atomically promotes it as the active recipe,
+        creating a new immutable version and advancing the active pointer.
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        note:
+          type: string
+      additionalProperties: false
+
+    DashboardMutationRequest:
+      type: object
+      required: [expected_version, operations]
+      description: >-
+        Applies a set of layout operations to create a new recipe version.
+        Each operation is validated against WidgetRegistry, data scope, and layout bounds.
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        operations:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [op]
+            properties:
+              op:
+                type: string
+                enum:
+                  - move_widget
+                  - resize_widget
+                  - remove_widget
+                  - add_registered_widget
+                  - replace_chart_spec
+                  - update_widget_query
+              widget_id:
+                type: string
+              payload:
+                type: object
+                additionalProperties: true
+            additionalProperties: false
+        reason:
+          type: string
+      additionalProperties: false
+
+    DashboardRollbackRequest:
+      type: object
+      required: [expected_version, target_version]
+      description: >-
+        Creates a new version whose content equals the content of a historical version.
+        History is never rewound or deleted; this is always an append operation.
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        target_version:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+      additionalProperties: false
+
+    DashboardFeedbackRequest:
+      type: object
+      required: [feedback_type]
+      description: >-
+        Append-only feedback on a dashboard recipe. Does not mutate the recipe or
+        its version chain unless a subsequent accepted proposal references this feedback.
+      properties:
+        feedback_type:
+          type: string
+          enum: [helpful, confusing, incorrect_data, layout_issue, other]
+        content:
+          type: string
+        context_refs:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+
+    WidgetFeedbackRequest:
+      type: object
+      required: [feedback_type]
+      description: Append-only feedback on an individual widget instance.
+      properties:
+        feedback_type:
+          type: string
+          enum: [helpful, confusing, incorrect_data, layout_issue, other]
+        content:
+          type: string
+      additionalProperties: false
+
+    WidgetProposePluginRequest:
+      type: object
+      required: [plugin_type, description]
+      description: >-
+        Proposes a new plugin widget type for registry review. Does not activate
+        the plugin; the proposal enters a review queue and requires separate approval.
+      properties:
+        plugin_type:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        chart_spec_ref:
+          type: string
+          description: Optional reference to a chart spec that this plugin renders.
+        capabilities_required:
+          type: array
+          items:
+            type: string
+          description: List of data capabilities the plugin requires.
+      additionalProperties: false
+
+    OpenClawAdapterEnsureRequest:
+      type: object
+      required: [persona_registry_ref, workspace_ref, capability_snapshot]
+      description: >-
+        Internal BFF→adapter request. Created by the BFF server-side after
+        provisioning in the Persona Registry; must never be submitted directly
+        by a browser client. The adapter MUST reject requests whose
+        capability_snapshot includes runtime-binding, broker-order, or
+        capital-binding capabilities.
+      properties:
+        persona_registry_ref:
+          type: string
+          description: Reference to the Persona Registry entry being ensured.
+        workspace_ref:
+          type: string
+          description: Reference to the user's private workspace.
+        capability_snapshot:
+          type: object
+          required: [allowed_capabilities, persona_class]
+          description: >-
+            Server-computed capability snapshot. MUST NOT contain runtime_binding,
+            broker_order, or capital_binding entries in allowed_capabilities.
+          properties:
+            allowed_capabilities:
+              type: array
+              items:
+                type: string
+              description: >-
+                Allowlisted capabilities for this servant persona. The adapter
+                validates and REJECTS entries for runtime_binding, broker_order,
+                and capital_binding.
+            persona_class:
+              type: string
+              const: agora_servant
+          additionalProperties: false
+      additionalProperties: false
+
+    OpenClawAdapterReconcileRequest:
+      type: object
+      required: [persona_registry_ref, workspace_ref, capability_snapshot]
+      description: >-
+        Internal BFF→adapter reconcile request. Syncs workspace and capability
+        mapping for an existing servant persona. capability_snapshot is server-computed.
+        The adapter MUST reject capability_snapshot entries for runtime-binding,
+        broker-order, and capital-binding.
+      properties:
+        persona_registry_ref:
+          type: string
+        workspace_ref:
+          type: string
+        capability_snapshot:
+          type: object
+          required: [allowed_capabilities, persona_class]
+          properties:
+            allowed_capabilities:
+              type: array
+              items:
+                type: string
+              description: >-
+                MUST NOT contain runtime_binding, broker_order, or capital_binding.
+            persona_class:
+              type: string
+              const: agora_servant
+          additionalProperties: false
+      additionalProperties: false
+
+tags:
+  - name: agora-servant
+    description: "Capability: agora.servant.v1 — User-private servant provisioning and session facade"
+    x-capability: agora.servant.v1
+
+  - name: agora-workshop
+    description: "Capability: agora.workshop.v1 (v1.2) — Strategy Workshop CRUD, canonical lifecycle filters, persistence closure, streaming, draft versioning, research runs, consultations and conclude"
+    x-capability: agora.workshop.v1
+    x-version: "1.2"
+
+  - name: agora-dashboard-v2
+    description: "Capability: agora.dashboard.v2 — Dynamic dashboard recipes with ETag optimistic concurrency and append-only version history"
+    x-capability: agora.dashboard.v2
+
+  - name: openclaw-adapter
+    description: >-
+      Internal OpenClaw adapter routes (non-BFF). Extends the existing adapter
+      service at /api/openclaw-adapter/agents. NOT exposed to browser clients.
+    x-internal: true
+
+paths:
+
+  # ─── agora.servant.v1 — BFF routes (8) ──────────────────────────────────────
+
+  /bff/agora/servant:
+    get:
+      operationId: getAgoraServant
+      summary: Get current user's servant profile
+      tags: [agora-servant]
+      description: >-
+        Returns the one stable ServantProfile for the authenticated user plus
+        the effective capability summary. Resolves the Persona Registry object
+        for the (tenant_id, agora_user_id, persona_class=agora_servant) identity key.
+      responses:
+        "200":
+          description: Current user-private servant profile and effective capability summary
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Servant not yet provisioned; call POST /ensure first}
+
+  /bff/agora/servant/ensure:
+    post:
+      operationId: ensureAgoraServant
+      summary: Provision or reconcile the current user's servant
+      tags: [agora-servant]
+      description: >-
+        Derives tenant_id and agora_user_id from the authenticated subject.
+        The browser must not submit another user's IDs.
+        Behavior: (1) Resolve existing Persona Registry object.
+        (2) Create only when absent. (3) Reconcile workspace/capability mapping
+        when present. (4) Never widen the tool allowlist from client input.
+        (5) Return one stable ServantProfile and effective capability summary.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ServantEnsureRequest"}
+      responses:
+        "200":
+          description: Existing servant reconciled; returns ServantProfile and capability summary
+          content:
+            application/json:
+              schema: {type: object}
+        "201":
+          description: New servant provisioned; returns ServantProfile
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "409":
+          description: Identity or provisioning conflict
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/servant/reconcile:
+    post:
+      operationId: reconcileAgoraServant
+      summary: Reconcile servant capability and workspace binding
+      tags: [agora-servant]
+      description: >-
+        Syncs the servant's workspace and capability mapping with the latest
+        Persona Registry state. Idempotent.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      responses:
+        "200":
+          description: Capability/workspace binding reconciled; returns updated capability summary
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Servant not provisioned}
+
+  /bff/agora/servant/sessions:
+    post:
+      operationId: createServantSession
+      summary: Open a new servant-facilitated session
+      tags: [agora-servant]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ServantSessionCreateRequest"}
+      responses:
+        "201":
+          description: Servant session created; returns session reference
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "409":
+          description: Session creation conflict
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/servant/sessions/{session_id}:
+    get:
+      operationId: getServantSession
+      summary: Get servant session detail
+      tags: [agora-servant]
+      parameters:
+        - $ref: "#/components/parameters/ServantSessionId"
+      responses:
+        "200":
+          description: Servant session detail
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Session not found}
+
+  /bff/agora/servant/sessions/{session_id}/messages:
+    post:
+      operationId: postServantSessionMessage
+      summary: Post a message to an active servant session
+      tags: [agora-servant]
+      parameters:
+        - $ref: "#/components/parameters/ServantSessionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ServantMessageRequest"}
+      responses:
+        "202":
+          description: Message accepted; response dispatched asynchronously via SSE stream
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Session not found}
+        "409":
+          description: Session state conflict
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/servant/sessions/{session_id}/terminate:
+    post:
+      operationId: terminateServantSession
+      summary: Terminate an active servant session
+      tags: [agora-servant]
+      parameters:
+        - $ref: "#/components/parameters/ServantSessionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Session terminated
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Session not found}
+
+  /bff/agora/servant/sessions/{session_id}/stream:
+    get:
+      operationId: streamServantSession
+      summary: Stream servant session events via SSE
+      tags: [agora-servant]
+      parameters:
+        - $ref: "#/components/parameters/ServantSessionId"
+        - name: Last-Event-ID
+          in: header
+          schema: {type: string}
+          description: Last received SSE event ID for connection resumption.
+      responses:
+        "200":
+          description: SSE stream of servant session events
+          content:
+            text/event-stream:
+              schema: {type: string}
+        "401": {description: Unauthorized}
+        "404": {description: Session not found}
+
+  # ─── agora.workshop.v1 (v1.2) — BFF routes (13) ─────────────────────────────
+  # Extends agora.workshop.v1 from agora_v1_1.openapi.yaml.
+  # Canonical route family is /bff/agora/workshops.
+  # Workshop state is NOT StrategySpec truth; it references the active draft
+  # in the existing Strategy Registry.
+
+  /bff/agora/workshops:
+    get:
+      operationId: listAgoraWorkshops
+      summary: List user-scoped Strategy Workshops
+      tags: [agora-workshop]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/WorkshopStatus"
+          description: >-
+            Filter by canonical workshop lifecycle status. The deprecated
+            status=active alias is not part of the v1.2 contract; use
+            status_group=active instead.
+        - name: status_group
+          in: query
+          schema:
+            type: string
+            enum: [active, closed]
+          description: >-
+            Convenience grouping. active expands to open + in_review; closed
+            expands to concluded + archived. Responses always emit canonical
+            status values.
+        - name: cursor
+          in: query
+          schema: {type: string}
+          description: Pagination cursor from a previous response.
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        "200":
+          description: User-scoped workshop list
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+
+    post:
+      operationId: createAgoraWorkshop
+      summary: Create a new Strategy Workshop
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopCreateRequest"}
+      responses:
+        "201":
+          description: Workshop created; returns workshop aggregate with initial ETag
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "409":
+          description: Workshop creation conflict
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/workshops/{workshop_id}:
+    get:
+      operationId: getAgoraWorkshop
+      summary: Get Strategy Workshop aggregate
+      tags: [agora-workshop]
+      description: >-
+        Returns the workshop aggregate. The ETag header is required by all
+        subsequent mutating operations on this workshop.
+        ETag format: W/"workshop:{id}:v{lock_version}"
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+      responses:
+        "200":
+          description: Workshop aggregate (strategy_workshop_session)
+          headers:
+            ETag:
+              description: 'Optimistic concurrency tag. Format: W/"workshop:{id}:v{lock_version}"'
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+
+  /bff/agora/workshops/{workshop_id}/messages:
+    post:
+      operationId: postAgoraWorkshopMessage
+      summary: Post a message to the workshop, dispatching a servant response workflow
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopMessageRequest"}
+      responses:
+        "202":
+          description: Message accepted and workshop event dispatched
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+        "409":
+          description: >-
+            Concurrent modification. details includes expected_version,
+            current_version, current_etag, and latest_href.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/workshops/{workshop_id}/events:
+    get:
+      operationId: listAgoraWorkshopEvents
+      summary: List ordered append-only workshop events
+      tags: [agora-workshop]
+      description: >-
+        Returns owner-facing strategy_workshop_event projections ordered by
+        sequence_no. Owner responses may include decrypted content from the
+        private store, but never return private_content_ref or object-store URI.
+        Management/institutional projections must use
+        ManagementWorkshopEventProjection and receive redacted_summary only.
+      x-management-projection-schema: "#/components/schemas/ManagementWorkshopEventProjection"
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - name: after_sequence
+          in: query
+          schema: {type: integer, minimum: 0}
+          description: Return only events with sequence_no greater than this value.
+      responses:
+        "200":
+          description: Ordered append-only event list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OwnerWorkshopEventResponse"
+                  next_cursor:
+                    type: string
+                additionalProperties: false
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+
+  /bff/agora/workshops/{workshop_id}/completeness:
+    get:
+      operationId: getAgoraWorkshopCompleteness
+      summary: Get latest completeness/conflict/next-question snapshot
+      tags: [agora-workshop]
+      description: >-
+        Returns the latest strategy_completeness_snapshot for this workshop,
+        including state_map_json, blocking_items_json, and next_question_json.
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+      responses:
+        "200":
+          description: Latest completeness snapshot
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+
+  /bff/agora/workshops/{workshop_id}/versions:
+    get:
+      operationId: listAgoraWorkshopVersions
+      summary: List StrategySpec draft versions for this workshop
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+      responses:
+        "200":
+          description: Draft version list ordered by creation time
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+
+    post:
+      operationId: createAgoraWorkshopVersion
+      summary: Create a new StrategySpec draft version from the active draft
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/VersionCreateRequest"}
+      responses:
+        "201":
+          description: Draft version created; returns version reference
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+        "409":
+          description: Concurrent modification
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/workshops/{workshop_id}/versions/{version_id}/select:
+    post:
+      operationId: selectAgoraWorkshopVersion
+      summary: Select a draft version as the active version for this workshop
+      tags: [agora-workshop]
+      description: >-
+        Sets selected_version_id on the workshop aggregate. Mutates lock_version;
+        requires current ETag and Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/VersionId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Version selected as active; returns updated workshop summary
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop or version not found}
+        "409":
+          description: Concurrent modification
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/workshops/{workshop_id}/research-runs:
+    post:
+      operationId: dispatchAgoraWorkshopResearchRun
+      summary: Dispatch a research run scoped to this workshop
+      tags: [agora-workshop]
+      description: >-
+        Creates a research run referenced to this workshop's active strategy version.
+        Mutates the workshop lock_version; requires current ETag and Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopResearchRunRequest"}
+      responses:
+        "202":
+          description: Research run dispatched; returns run reference and initial status
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+        "409":
+          description: Concurrent modification or invalid workshop state for research dispatch
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/workshops/{workshop_id}/consultations:
+    post:
+      operationId: openAgoraWorkshopConsultation
+      summary: Open a consultation tied to this workshop's current strategy context
+      tags: [agora-workshop]
+      description: >-
+        Opens a committee or advisory consultation linked to this workshop.
+        Mutates the workshop lock_version; requires current ETag and Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopConsultationRequest"}
+      responses:
+        "201":
+          description: Consultation opened; returns consultation reference
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+        "409":
+          description: Concurrent modification
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/workshops/{workshop_id}/conclude:
+    post:
+      operationId: concludeAgoraWorkshop
+      summary: Mark the workshop as concluded and finalize the strategy output
+      tags: [agora-workshop]
+      description: >-
+        Transitions the workshop to concluded status. No further messages,
+        versions, research runs, or consultations may be submitted after this.
+        Requires current ETag and Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopConcludeRequest"}
+      responses:
+        "200":
+          description: Workshop concluded; strategy output finalized
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+        "409":
+          description: Concurrent modification or invalid workshop state for conclude
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/workshops/{workshop_id}/stream:
+    get:
+      operationId: streamAgoraWorkshop
+      summary: SSE stream of workshop events for real-time UI updates
+      tags: [agora-workshop]
+      parameters:
+        - $ref: "#/components/parameters/WorkshopId"
+        - name: Last-Event-ID
+          in: header
+          schema: {type: string}
+          description: Last received SSE event ID for connection resumption.
+      responses:
+        "200":
+          description: SSE stream of workshop events (strategy_workshop_event rows)
+          content:
+            text/event-stream:
+              schema: {type: string}
+        "401": {description: Unauthorized}
+        "404": {description: Workshop not found}
+
+  # ─── agora.dashboard.v2 — BFF routes (11) ───────────────────────────────────
+  # Dashboard versions are append-only; no route overwrites a historical version.
+  # ETag format: "recipe:{recipe_id}:v{version}:{content_sha256-prefix}"
+  # Every state-changing request requires If-Match and Idempotency-Key.
+  # Request body must also carry expected_version for explicit auditability.
+
+  /bff/agora/strategies/{strategy_id}/dashboard-recipes:
+    get:
+      operationId: listDashboardRecipes
+      summary: List dashboard recipes for a strategy
+      tags: [agora-dashboard-v2]
+      parameters:
+        - $ref: "#/components/parameters/StrategyId"
+        - name: workspace
+          in: query
+          schema:
+            type: string
+            enum: [trading_room, strategy_workshop, strategy_performance]
+        - name: phase
+          in: query
+          schema:
+            type: string
+            enum: [candidate_review, monitoring, position_monitoring, post_trade_review]
+      responses:
+        "200":
+          description: User-scoped recipe list for this strategy
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Strategy not found}
+
+  /bff/agora/strategies/{strategy_id}/dashboard-recipes/proposals:
+    post:
+      operationId: proposeDashboardRecipe
+      summary: Propose a new AI-generated dashboard recipe for a strategy
+      tags: [agora-dashboard-v2]
+      description: >-
+        Creates a proposal version (status=proposal) for the recipe identity.
+        Does not replace the active version. Acceptance requires a separate
+        POST /accept call.
+      parameters:
+        - $ref: "#/components/parameters/StrategyId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DashboardProposalRequest"}
+      responses:
+        "201":
+          description: Proposal version created; awaiting acceptance
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Strategy not found}
+
+  /bff/agora/dashboard-recipes/{recipe_id}:
+    get:
+      operationId: getDashboardRecipe
+      summary: Get dashboard recipe detail with ETag
+      tags: [agora-dashboard-v2]
+      description: >-
+        Returns the active dashboard recipe version.
+        ETag format: "recipe:{recipe_id}:v{version}:{content_sha256-prefix}"
+        Use this ETag in If-Match for all subsequent mutations.
+      parameters:
+        - $ref: "#/components/parameters/RecipeId"
+      responses:
+        "200":
+          description: Dashboard recipe detail (dashboard_recipe_version at active_version)
+          headers:
+            ETag:
+              description: 'Concurrency tag. Format: "recipe:{id}:v{version}:{sha-prefix}"'
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Recipe not found}
+
+  /bff/agora/dashboard-recipes/{recipe_id}/accept:
+    post:
+      operationId: acceptDashboardRecipe
+      summary: Accept a proposal and promote it as the active recipe version
+      tags: [agora-dashboard-v2]
+      description: >-
+        Atomically marks the proposal accepted, creates/activates the next
+        immutable version, and moves the active pointer. Append-only; does not
+        delete any historical version.
+      parameters:
+        - $ref: "#/components/parameters/RecipeId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DashboardAcceptRequest"}
+      responses:
+        "200":
+          description: New active immutable version created; returns updated recipe
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Recipe not found}
+        "409":
+          description: Concurrent modification
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/dashboard-recipes/{recipe_id}/layout:
+    patch:
+      operationId: patchDashboardRecipeLayout
+      summary: Apply layout patch operations, creating a new recipe version
+      tags: [agora-dashboard-v2]
+      description: >-
+        Applies the listed operations (move_widget, resize_widget, etc.) to the
+        current active version and creates a new immutable version. Each operation
+        is validated against WidgetRegistry, data scope, and layout bounds.
+      parameters:
+        - $ref: "#/components/parameters/RecipeId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DashboardMutationRequest"}
+      responses:
+        "200":
+          description: New recipe version created with the applied operations
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Recipe not found}
+        "409":
+          description: Concurrent modification
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "422":
+          description: Invalid operation; WidgetRegistry, data scope, or layout bounds violated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/dashboard-recipes/{recipe_id}/rollback:
+    post:
+      operationId: rollbackDashboardRecipe
+      summary: Create a new recipe version with content from a historical version
+      tags: [agora-dashboard-v2]
+      description: >-
+        Rollback creates a new append-only version whose content equals the content
+        of the designated historical version. Never rewinds or deletes history.
+      parameters:
+        - $ref: "#/components/parameters/RecipeId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DashboardRollbackRequest"}
+      responses:
+        "200":
+          description: New version created with content from the historical target
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Recipe or target version not found}
+        "409":
+          description: Concurrent modification
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/dashboard-recipes/{recipe_id}/feedback:
+    post:
+      operationId: submitDashboardRecipeFeedback
+      summary: Submit append-only feedback on a dashboard recipe
+      tags: [agora-dashboard-v2]
+      description: >-
+        Feedback is append-only and does not mutate the recipe or its version chain
+        unless a subsequent accepted proposal explicitly references it.
+        Does not require If-Match.
+      parameters:
+        - $ref: "#/components/parameters/RecipeId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DashboardFeedbackRequest"}
+      responses:
+        "202":
+          description: Feedback recorded (append-only; recipe is not mutated)
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Recipe not found}
+
+  /bff/agora/dashboard-recipes/{recipe_id}/versions:
+    get:
+      operationId: listDashboardRecipeVersions
+      summary: List immutable version history for a dashboard recipe
+      tags: [agora-dashboard-v2]
+      description: >-
+        Returns all dashboard_recipe_version rows for this recipe in ascending
+        version order. The list is append-only; no version is ever deleted.
+      parameters:
+        - $ref: "#/components/parameters/RecipeId"
+      responses:
+        "200":
+          description: Append-only version history (dashboard_recipe_version rows)
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Recipe not found}
+
+  /bff/agora/widgets/validate:
+    post:
+      operationId: validateAgoraWidget
+      summary: Validate a WidgetSpec v2 against schema and widget registry
+      tags: [agora-dashboard-v2]
+      description: Stateless validation endpoint; does not create or mutate any resource.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../specs/agora/v2/widget_spec_v2.schema.json"
+      responses:
+        "200":
+          description: Validation passed; returns canonical normalised form
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "422":
+          description: Invalid widget spec
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+
+  /bff/agora/widgets/{widget_id}/feedback:
+    post:
+      operationId: submitWidgetFeedback
+      summary: Submit append-only feedback on an individual widget instance
+      tags: [agora-dashboard-v2]
+      description: Feedback is append-only and does not mutate the widget or recipe.
+      parameters:
+        - $ref: "#/components/parameters/WidgetId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WidgetFeedbackRequest"}
+      responses:
+        "202":
+          description: Feedback recorded
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Widget not found}
+
+  /bff/agora/widgets/propose-plugin:
+    post:
+      operationId: proposeWidgetPlugin
+      summary: Propose a new plugin widget type for registry review
+      tags: [agora-dashboard-v2]
+      description: >-
+        Submits a plugin proposal for widget registry review. Does not activate
+        the plugin; the proposal enters a review queue and requires explicit approval.
+        Does not require If-Match.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WidgetProposePluginRequest"}
+      responses:
+        "202":
+          description: Plugin proposal submitted for registry review
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+
+  # ─── OpenClaw adapter — internal routes (3) ─────────────────────────────────
+  # These extend the EXISTING openclaw-adapter service at /api/openclaw-adapter/.
+  # They are NOT BFF routes and must never be exposed to browser clients.
+  # The adapter MUST reject capability_snapshot entries that include
+  # runtime-binding, broker-order, or capital-binding capabilities.
+
+  /api/openclaw-adapter/agents/ensure:
+    post:
+      operationId: openclawAdapterEnsureAgent
+      summary: Ensure servant persona in the OpenClaw adapter (internal BFF→adapter)
+      tags: [openclaw-adapter]
+      description: >-
+        Extends the existing adapter service at /api/openclaw-adapter/.
+        Called by the BFF after provisioning in the Persona Registry.
+        The adapter validates and REJECTS any capability_snapshot that includes
+        runtime-binding, broker-order, or capital-binding capabilities.
+        Not a new service; adds to the existing agents surface.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenClawAdapterEnsureRequest"}
+      responses:
+        "200":
+          description: Existing adapter agent entry reconciled
+          content:
+            application/json:
+              schema: {type: object}
+        "201":
+          description: New adapter agent entry created
+          content:
+            application/json:
+              schema: {type: object}
+        "400":
+          description: Invalid request or forbidden capability in snapshot
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "401": {description: Unauthorized}
+
+  /api/openclaw-adapter/agents/{persona_id}:
+    get:
+      operationId: openclawAdapterGetAgent
+      summary: Get adapter agent state for a servant persona (internal BFF→adapter)
+      tags: [openclaw-adapter]
+      parameters:
+        - $ref: "#/components/parameters/PersonaId"
+      responses:
+        "200":
+          description: Adapter agent state for the given persona
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: Unauthorized}
+        "404": {description: Agent not found in adapter}
+
+  /api/openclaw-adapter/agents/{persona_id}/reconcile:
+    post:
+      operationId: openclawAdapterReconcileAgent
+      summary: Reconcile workspace/capability mapping in the adapter (internal BFF→adapter)
+      tags: [openclaw-adapter]
+      description: >-
+        Syncs the servant persona's workspace and capability state with the adapter.
+        The adapter MUST reject capability_snapshot entries for runtime-binding,
+        broker-order, and capital-binding. Idempotent.
+      parameters:
+        - $ref: "#/components/parameters/PersonaId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OpenClawAdapterReconcileRequest"}
+      responses:
+        "200":
+          description: Agent workspace and capability mapping reconciled
+          content:
+            application/json:
+              schema: {type: object}
+        "400":
+          description: Invalid request or forbidden capability in snapshot
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorResponse"}
+        "401": {description: Unauthorized}
+        "404": {description: Agent not found in adapter}

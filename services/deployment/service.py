@@ -901,24 +901,38 @@ class DeploymentOrchestrationService:
         saga_id: str,
         request: RecordBindingCreatedRequest,
     ) -> OutboxRecord:
-        return self.saga_store.record_binding_created(
+        outbox = self.saga_store.record_binding_created(
             saga_id,
             binding_id=request.binding_id,
             runtime_id=request.runtime_id,
             note=request.note,
         )
+        saga = self._require_saga(saga_id)
+        self._mark_plan_binding_created(
+            saga=saga,
+            binding_id=request.binding_id,
+            runtime_id=request.runtime_id,
+        )
+        return outbox
 
     def record_runtime_active(
         self,
         saga_id: str,
         request: RecordRuntimeActiveRequest,
     ) -> OutboxRecord:
-        return self.saga_store.record_runtime_active(
+        outbox = self.saga_store.record_runtime_active(
             saga_id,
             binding_id=request.binding_id,
             runtime_id=request.runtime_id,
             note=request.note,
         )
+        saga = self._require_saga(saga_id)
+        self._mark_plan_runtime_active(
+            saga=saga,
+            binding_id=request.binding_id or saga.binding_id,
+            runtime_id=request.runtime_id or saga.runtime_id,
+        )
+        return outbox
 
     def record_failure(
         self,
@@ -979,6 +993,99 @@ class DeploymentOrchestrationService:
         if event is None:
             raise DeploymentSagaError(f"Outbox event '{event_id}' not found")
         return self.saga_store.consume_event(consumer_name, event.event)
+
+    def _mark_plan_binding_created(
+        self,
+        *,
+        saga: DeploymentSaga,
+        binding_id: str,
+        runtime_id: str | None,
+    ) -> None:
+        plan = self._mutable_plan_copy(saga.plan_id)
+        plan.binding_id = binding_id
+        plan.status = self._next_plan_status_for_binding_created(plan)
+        plan.metadata = self._with_runtime_lifecycle_metadata(
+            plan.metadata,
+            binding_id=binding_id,
+            runtime_id=runtime_id,
+            runtime_status=None,
+            activated_stage=None,
+        )
+        self._validate_and_store_plan(plan)
+
+    def _mark_plan_runtime_active(
+        self,
+        *,
+        saga: DeploymentSaga,
+        binding_id: str | None,
+        runtime_id: str | None,
+    ) -> None:
+        plan = self._mutable_plan_copy(saga.plan_id)
+        if _enum_value(plan.target_stage) != str(saga.target_stage):
+            raise DeploymentPlanError(
+                f"DeploymentSaga '{saga.saga_id}' target_stage={saga.target_stage!r} "
+                f"does not match DeploymentPlan '{plan.plan_id}' target_stage={_enum_value(plan.target_stage)!r}"
+            )
+        if binding_id:
+            plan.binding_id = binding_id
+        plan.current_stage = DeploymentStage(saga.target_stage)
+        plan.status = PlanStatus.EXECUTED
+        plan.metadata = self._with_runtime_lifecycle_metadata(
+            plan.metadata,
+            binding_id=binding_id,
+            runtime_id=runtime_id,
+            runtime_status="active",
+            activated_stage=str(saga.target_stage),
+        )
+        self._validate_and_store_plan(plan)
+
+    def _mutable_plan_copy(self, plan_id: str) -> DeploymentPlan:
+        return DeploymentPlan.from_dict(self.planner_service.get_plan(plan_id).to_dict())
+
+    def _next_plan_status_for_binding_created(self, plan: DeploymentPlan) -> PlanStatus | str:
+        current = PlanStatus(plan.status)
+        if current == PlanStatus.APPROVED:
+            return PlanStatus.EXECUTING
+        if current in {PlanStatus.EXECUTING, PlanStatus.EXECUTED}:
+            return current
+        raise DeploymentPlanError(
+            f"DeploymentPlan '{plan.plan_id}' cannot record binding-created from status '{current.value}'"
+        )
+
+    def _validate_and_store_plan(self, plan: DeploymentPlan) -> None:
+        errors = plan.validate()
+        if errors:
+            raise DeploymentPlanError("; ".join(errors))
+        self.planner_service.plan_store.put(plan)
+
+    @staticmethod
+    def _with_runtime_lifecycle_metadata(
+        metadata: Dict[str, Any] | None,
+        *,
+        binding_id: str | None,
+        runtime_id: str | None,
+        runtime_status: str | None,
+        activated_stage: str | None,
+    ) -> Dict[str, Any]:
+        updated = dict(metadata or {})
+        lifecycle = dict(updated.get("runtime_lifecycle") or {})
+        if binding_id:
+            lifecycle["binding_id"] = binding_id
+        if runtime_id:
+            lifecycle["runtime_id"] = runtime_id
+        if runtime_status:
+            lifecycle["runtime_status"] = runtime_status
+        if activated_stage:
+            lifecycle["activated_stage"] = activated_stage
+        if lifecycle:
+            updated["runtime_lifecycle"] = lifecycle
+        return updated
+
+    def _require_saga(self, saga_id: str) -> DeploymentSaga:
+        saga = self.saga_store.get(saga_id)
+        if saga is None:
+            raise DeploymentSagaError(f"Unknown saga: {saga_id}")
+        return saga
 
     def _resolve_registry_entry_for_plan(
         self,
@@ -1672,7 +1779,7 @@ async def get_deployment_saga(saga_id: str):
 async def record_saga_binding_created(saga_id: str, body: RecordBindingCreatedRequest):
     try:
         return _outbox_body(orchestration_service.record_binding_created(saga_id, body))
-    except DeploymentSagaError as exc:
+    except (DeploymentPlanError, DeploymentSagaError) as exc:
         message = str(exc)
         status_code = 404 if "unknown saga" in message.lower() else 400
         raise HTTPException(status_code=status_code, detail=message)
@@ -1682,7 +1789,7 @@ async def record_saga_binding_created(saga_id: str, body: RecordBindingCreatedRe
 async def record_saga_runtime_active(saga_id: str, body: RecordRuntimeActiveRequest):
     try:
         return _outbox_body(orchestration_service.record_runtime_active(saga_id, body))
-    except DeploymentSagaError as exc:
+    except (DeploymentPlanError, DeploymentSagaError) as exc:
         message = str(exc)
         status_code = 404 if "unknown saga" in message.lower() else 400
         raise HTTPException(status_code=status_code, detail=message)

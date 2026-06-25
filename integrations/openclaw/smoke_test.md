@@ -94,7 +94,7 @@ bash scripts/openclaw-gateway-adapter-smoke.sh
 
 The script checks:
 
-- `refs/tags/v2026.4.7^{}` resolves to `5050017543011b61df67744ebc6368d889c25a95`
+- `refs/tags/v2026.6.8^{}` resolves to `8c802aa683510c7f7503597b54c3021733245e59`
 
 Acceptance:
 
@@ -104,8 +104,8 @@ Acceptance:
 
 The script checks:
 
-- `ghcr.io/openclaw/openclaw:2026.4.7` is published
-- the image digest matches `sha256:be45b5187cbec1ff0f4e2503393d66acfc121c2d97eadf03bb1ac75826bad77c`
+- `ghcr.io/openclaw/openclaw:2026.6.8` is published
+- the image digest matches `sha256:4826ca6157377e93463786d5c16852e34eede9f4bd4be55e3773cdc509762857` (multi-arch index)
 - the container can execute:
   - `openclaw --help`
   - `openclaw gateway --help`

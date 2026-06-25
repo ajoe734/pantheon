@@ -23,6 +23,7 @@ x-pantheon-compose-contract:
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -44,6 +45,7 @@ services:
 
   minio:
     image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-pantheon}
@@ -62,6 +64,7 @@ services:
 
   nats:
     image: nats:2.11-alpine
+    restart: unless-stopped
     command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
     volumes:
       - nats-data:/data/jetstream
@@ -91,6 +94,7 @@ services:
     build:
       context: .
       dockerfile: services/governance/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8082"
       GOVERNANCE_DATA_DIR: /data/governance
@@ -128,6 +132,7 @@ services:
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8095"
       DEPLOYMENT_DATA_DIR: /data/governance
@@ -150,6 +155,7 @@ services:
     build:
       context: .
       dockerfile: services/telemetry/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8083"
       TELEMETRY_STORAGE_DIR: /data/telemetry
@@ -178,6 +184,7 @@ services:
     build:
       context: .
       dockerfile: services/incidents/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8090"
       INCIDENTS_DATA_DIR: /data/incidents
@@ -214,6 +221,7 @@ services:
     build:
       context: .
       dockerfile: services/postmortems/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8091"
       POSTMORTEMS_DATA_DIR: /data/incidents
@@ -253,6 +261,7 @@ services:
     build:
       context: .
       dockerfile: services/control-plane/bff/Dockerfile
+    restart: unless-stopped
     environment:
       BFF_DATA_DIR: /data/bff
       PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
@@ -266,9 +275,7 @@ services:
       PANTHEON_ASSISTANT_KERNEL_ENABLED: ${PANTHEON_ASSISTANT_KERNEL_ENABLED:-false}
       PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH: ${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}
       PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS: ${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}
-      # TODO(off-lovable): staging-live FE is migrating off Lovable to a self-hosted
-      # sslip.io origin; replace this default once the staging FE URL is provisioned.
-      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-ai-system-front-staging-live.lovable.app}
+      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-staging-fe.104.155.223.192.sslip.io,https://pantheon-ai-system-front-staging-live.lovable.app}
       PANTHEON_ENV: ${PANTHEON_ENV:-staging-live}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-true}
       PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}
@@ -305,7 +312,7 @@ services:
       MANAGEMENT_AI_STORE_BACKEND: ${MANAGEMENT_AI_STORE_BACKEND:-postgres}
       MANAGEMENT_AI_STORE_SCHEMA: ${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}
       MANAGEMENT_AI_STORE_DSN: ${MANAGEMENT_AI_STORE_DSN:-}
-      MANAGEMENT_AI_DATABASE_URL: ${MANAGEMENT_AI_DATABASE_URL:-}
+      MANAGEMENT_AI_DATABASE_URL: ${MANAGEMENT_AI_DATABASE_URL:-postgresql://pantheon_management_ai:pantheon_management_ai_dev@postgres:5432/pantheon}
       PANTHEON_MGMT_AI_ATTACH_BUCKET: ${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes: !override
@@ -339,6 +346,7 @@ services:
     build:
       context: .
       dockerfile: services/control-plane/persona/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8002"
       LLM_BACKEND: ${LLM_BACKEND:-anthropic}
@@ -368,6 +376,7 @@ services:
     build:
       context: .
       dockerfile: services/evaluation/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8084"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -394,6 +403,7 @@ services:
     build:
       context: .
       dockerfile: services/feedback/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8085"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -420,6 +430,7 @@ services:
     build:
       context: .
       dockerfile: services/memory/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8086"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -452,6 +463,7 @@ services:
     build:
       context: .
       dockerfile: services/registry/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8087"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -480,6 +492,7 @@ services:
     build:
       context: .
       dockerfile: services/optimizer-svc/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8088"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -506,6 +519,7 @@ services:
     build:
       context: .
       dockerfile: services/promotion/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8089"
       PROMOTION_DATA_DIR: /data/promotion
@@ -536,6 +550,7 @@ services:
     build:
       context: .
       dockerfile: services/capital/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8092"
       CAPITAL_DATA_DIR: /data/capital
@@ -568,6 +583,7 @@ services:
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
@@ -591,6 +607,7 @@ services:
     build:
       context: .
       dockerfile: services/lineage-read/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8094"
       LINEAGE_DATA_DIR: /data/lineage
@@ -610,6 +627,7 @@ services:
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8102"
       RECONCILIATION_DRIFT_DATA_DIR: /data/reconciliation-drift

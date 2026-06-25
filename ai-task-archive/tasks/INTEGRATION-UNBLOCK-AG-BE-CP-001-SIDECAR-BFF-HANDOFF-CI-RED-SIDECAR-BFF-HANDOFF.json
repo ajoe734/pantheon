@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T17:08:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED BFF and frontend handoff packet",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-CP-001-SIDECAR-BFF-HANDOFF"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: BFF handoff packet and task brief committed, PR #2116 merged into dev at 2026-06-21T17:07:09Z. All 3 CI checks passed. Support-only scope maintained — no canonical truth, L1 policy, OpenAPI, schema, runtime, or frontend files changed. CI re-trigger note added to document the sidecar task shallow-fetch git log exit 128 false positive.",
+    "last_update": "2026-06-21T17:08:53Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only BFF handoff packet approved: documents CI-red root cause (shallow-fetch git log exit 128 false positive on Commit trailers check), PR #2109 merged resolution, dependency chain (AG-BE-RS-002 done, AG-BE-CP-001-SIDECAR-BFF-HANDOFF done, AG-BE-CP-001 still blocked), 8-route BFF gap forward, and no-order-route boundary without modifying canonical truth or runtime files."
+    ],
+    "review_file": "support/sidecars/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T17:08:53Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/integration-unblock-ag-be-cp-001-sidecar-bff-handoff-ci-red-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "bddaaa9ed0900d8f146cfadaabfb18d908f37136",
+      "commit_subject": "INTEGRATION-UNBLOCK-SIDECAR-BFF-HANDOFF: add ci re-trigger note",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED/",
+        "Not changing": "canonical truth, L1 policy, OpenAPI, schema, BFF runtime, frontend",
+        "Composes with": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED PR #2116",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verified": "git log confirms correct trailers on all task commits; no canonical or runtime files changed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "91eb5ee78f96512597b53d2e489deb2e6a701a93",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF handoff packet for INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED is ready for review. Artifact at support/sidecars/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED/INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF.md (anchor commit 488a8c11). Packet documents: CI-red root cause (shallow-fetch git log exit 128 false positive on Commit trailers check), fix (fresh commit push resolving PR #2109), dependency map (AG-BE-RS-002 done, AG-BE-CP-001-SIDECAR-BFF-HANDOFF done via PR #2109, AG-BE-CP-001 still blocked), 8-route BFF gap forward matrix, and no-order-route guardrail. PR #2114 open at packet time (reviewer should re-check). No canonical truth changed.",
+      "status": "done",
+      "created_at": "2026-06-21T16:50:02Z",
+      "resolved_at": "2026-06-21T16:51:36Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only BFF/frontend handoff packet for INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T16:51:36Z",
+      "resolved_at": "2026-06-21T17:08:56Z"
+    }
+  ],
+  "blockers": []
+}

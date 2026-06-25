@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const BASE = process.env.PANTHEON_BFF_BASE_URL || process.env.VITE_BFF_BASE_URL || "https://pantheon-lupin-dev-bff.34.81.75.241.sslip.io";
+const BASE = process.env.PANTHEON_BFF_BASE_URL || process.env.VITE_BFF_BASE_URL || "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io";
 const OUT_DIR = process.env.PANTHEON_AUDIT_OUT_DIR || ".lovable/audits";
 const AUTH_TOKEN = process.env.PANTHEON_BFF_ACCESS_TOKEN || process.env.PANTHEON_BFF_SMOKE_BEARER_TOKEN || "";
 const mode = process.argv.includes("--authenticated") ? "authenticated" : "anonymous";

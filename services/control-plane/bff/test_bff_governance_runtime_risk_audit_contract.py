@@ -100,7 +100,7 @@ def test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes() 
 
         action_payload = {"reason": "execute-plans compatibility smoke"}
         first = client.post(
-            "/bff/actions/deployment/plan-F-042/promote",
+            "/bff/deployments/plan-F-042/actions/promote",
             json=action_payload,
             headers={**HEADERS, "Idempotency-Key": "gap-005-deployment-action"},
         )
@@ -108,7 +108,7 @@ def test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes() 
         first_receipt = _assert_final_command_envelope(first.json(), "DeploymentAction")
 
         replay = client.post(
-            "/bff/actions/deployment/plan-F-042/promote",
+            "/bff/deployments/plan-F-042/actions/promote",
             json=action_payload,
             headers={**HEADERS, "Idempotency-Key": "gap-005-deployment-action"},
         )
@@ -116,7 +116,7 @@ def test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes() 
         assert _assert_final_command_envelope(replay.json(), "DeploymentAction") == first_receipt
 
         conflict = client.post(
-            "/bff/actions/deployment/plan-F-042/promote",
+            "/bff/deployments/plan-F-042/actions/promote",
             json={"reason": "different payload"},
             headers={**HEADERS, "Idempotency-Key": "gap-005-deployment-action"},
         )
@@ -131,7 +131,7 @@ def test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes() 
         assert runtime.json()["data"]["runtime_id"] == "runtime-042"
 
         runtime_action = client.post(
-            "/bff/actions/runtime/runtime-042/pause",
+            "/bff/runtimes/runtime-042/actions/pause",
             json={"reason": "operator pause"},
             headers={**HEADERS, "Idempotency-Key": "gap-005-runtime-action"},
         )
@@ -151,7 +151,7 @@ def test_bff_deployment_runtime_and_risk_action_routes_return_final_envelopes() 
         assert alias.json()["alerts"][0]["alert_id"] == alert_id
 
         alert_action = client.post(
-            f"/bff/actions/alert/{alert_id}/escalate",
+            f"/bff/risk/alerts/{alert_id}/actions/escalate",
             json={"reason": "risk owner review"},
             headers={**HEADERS, "Idempotency-Key": "gap-005-risk-alert-action"},
         )
@@ -163,7 +163,7 @@ def test_bff_incident_routes_support_create_detail_and_action() -> None:
     with _isolated_bff() as (client, _store):
         incidents = client.get("/bff/incidents", headers=HEADERS)
         assert incidents.status_code == 200, incidents.text
-        assert any(item["incident_id"] == "inc-20260410-001" for item in incidents.json()["items"])
+        assert incidents.json()["items"][0]["incident_id"] == "inc-20260410-001"
 
         existing = client.get("/bff/incidents/inc-20260410-001", headers=HEADERS)
         assert existing.status_code == 200, existing.text
@@ -187,7 +187,7 @@ def test_bff_incident_routes_support_create_detail_and_action() -> None:
         assert created_detail.json()["data"]["audit_ref"]["href"] == "/bff/audit/entities/Incident/inc-gap-005"
 
         action = client.post(
-            "/bff/actions/incident/inc-gap-005/resolve",
+            "/bff/incidents/inc-gap-005/actions/resolve",
             json={"reason": "incident handled"},
             headers={**HEADERS, "Idempotency-Key": "gap-005-incident-action"},
         )

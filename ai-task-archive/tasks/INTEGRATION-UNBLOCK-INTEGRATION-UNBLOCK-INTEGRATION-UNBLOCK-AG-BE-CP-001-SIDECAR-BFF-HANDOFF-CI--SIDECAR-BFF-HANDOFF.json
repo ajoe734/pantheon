@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T19:13:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+    "title": "Prepare INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI- BFF and frontend handoff packet",
+    "summary_zh": "平行支援 INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Auto-integrator unblock",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-RED-SIDECAR-BFF-HAND-SIDECAR-BFF-HANDOFF"
+    ],
+    "artifacts": [
+      "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "BFF handoff packet review approved by Claude; PR #2129 merged into dev at 2026-06-21T18:54:04Z; commit 387476c4 (CI--SIDECAR-BFF-HANDOFF: add BFF handoff packet); 8-route gap matrix, operator journeys A-F, 3 blockers, no-order-route boundary documented; no canonical truth modified; support artifact ready for parent owner absorption.",
+    "last_update": "2026-06-21T19:13:13Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only BFF handoff packet approved: documents triple-nested integration-unblock chain resolution, complete PR chain (#2109–#2127), full dependency map all tiers done, 8-route BFF gap forward (G-01–G-08) and 3 blockers unchanged, operator journeys A–F summarized, and no-order-route boundary — without modifying canonical truth or runtime files."
+    ],
+    "review_file": "support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T19:13:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/integration-unblock-integration-unblock-integration-unblock-ag-be-cp-001-sidecar-bff-handoff-ci-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "18b047dcb300be34d8f6e7a07e516603e22d79b9",
+      "commit_subject": "Merge pull request #2130 from ajoe734/task/INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-MISSING-PR",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "INTEGRATION-UNBLOCK-AG-BE-TR-001-SIDECAR-BFF-HANDOFF-MISSING-PR": "done"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+      "ahead": 7,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4e745eb0ec69d7c107483ef47c9097fa3b692434",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF handoff packet committed (387476c4) and PR #2129 open with auto-merge. Artifact: support/sidecars/INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI-/...SIDECAR-BFF-HANDOFF.md. Documents: triple-nested integration-unblock chain resolution, complete PR chain (#2109-#2127), all dependency tiers done, 8-route BFF gap forward (G-01 through G-08), 3 blockers unchanged, operator journeys A-F, no-order-route boundary. Support artifact only — no canonical truth or runtime files changed.",
+      "status": "done",
+      "created_at": "2026-06-21T18:43:24Z",
+      "resolved_at": "2026-06-21T18:49:11Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: support artifact complete, scope-compliant, PR chain and BFF gap forward verified. Returned to Claude2 for finalization after PR #2129 merges.",
+      "status": "done",
+      "created_at": "2026-06-21T18:49:11Z",
+      "resolved_at": "2026-06-21T18:53:21Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF handoff packet committed (387476c4), PR #2129 merged into dev. Support artifact documents the full triple-nested integration-unblock chain (PR #2109–#2129), 8-route BFF gap matrix (G-01–G-08), 3 remaining AG-BE-CP-001 blockers, operator journeys A–F, and dependency chain all tiers done. No canonical truth, schema, runtime, or frontend files modified. Please approve to unblock done transition.",
+      "status": "done",
+      "created_at": "2026-06-21T18:56:14Z",
+      "resolved_at": "2026-06-21T19:02:05Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only BFF/frontend handoff packet approved: PR #2129 merged into dev, full PR chain #2109-#2129 documented, 8-route BFF gap and 3 blockers unchanged, no canonical truth modified. Ready for owner done transition.",
+      "status": "done",
+      "created_at": "2026-06-21T19:02:05Z",
+      "resolved_at": "2026-06-21T19:04:14Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Sidecar artifact complete; PR #2129 merged into dev at 2026-06-21T18:54:04Z (commit edfebf91). Support-only BFF/frontend handoff packet documents full PR chain #2109-#2129, 8-route BFF gap matrix, 3 AG-BE-CP-001 blockers, operator journeys A-F, and frontend boundary — no canonical truth modified. Requesting formal review approval to close.",
+      "status": "done",
+      "created_at": "2026-06-21T19:05:16Z",
+      "resolved_at": "2026-06-21T19:09:25Z"
+    },
+    {
+      "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI--SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only BFF/frontend handoff packet for INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-AG-BE-CP-001-SIDECAR-BFF-HANDOFF-CI- approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T19:09:25Z",
+      "resolved_at": "2026-06-21T19:13:14Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-002",
+  "archived_at": "2026-06-20T17:03:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-002",
+    "title": "OpenClaw ensure/provision/reconcile servant",
+    "summary_zh": "依 SD §5.2 實作 POST /bff/agora/servant/ensure；缺 user-private persona 時建立 agora_servant registry object，並透過既有 OpenClaw adapter 建/更新 agent；存在則 reconcile status/capabilities；回 ServantProfileDTO。",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "depends_on": [
+      "AG-XR-OPENAPI-001"
+    ],
+    "acceptance": [
+      "ensure 對新 user 建立私有 servant、對既有 user reconcile;effective capability 與 §5.4 allow/deny 一致;永久拒絕清單被 enforce;附 provisioning 測試;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過"
+    ],
+    "artifacts": [
+      "integrations/openclaw/adapter/agora_servant.py",
+      "services/control-plane/bff/agora/servant.py"
+    ],
+    "auto_created_by": "worker_dispatch",
+    "status": "done",
+    "last_update": "2026-06-20T17:03:06Z",
+    "next": "Implementation PR #1855 and closeout PR #1859 merged into dev; local pytest services/control-plane/bff/tests/test_agora_router.py integrations/openclaw/test_persona_agent_sync.py services/control-plane/bff/tests/test_agora_identity_scope.py passed (35 tests); GitHub checks green; merge commit 247211c2208d15bce628c017044a3bf2062603e6.",
+    "task_class": "backend_openclaw_agora",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過｜POST /bff/agora/servant/ensure create/reconcile/prohibited-authority 邏輯正確；OpenClaw adapter 路徑正確；測試覆蓋 create、reconcile 及錯誤路徑；無需修改。"
+    ],
+    "review_file": ".orchestrator/task-briefs/ag_be_id_002_review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T17:03:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-002",
+      "git_clean_required": false,
+      "commit": "95d7c537874bf2526ff2578f4fcbe8888f45a692",
+      "commit_subject": "AG-BE-ID-002: finalize closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-BE-ID-002",
+        "Reviewer": "Claude2",
+        "Verified": "pytest services/control-plane/bff/tests/test_agora_router.py integrations/openclaw/test_persona_agent_sync.py services/control-plane/bff/tests/test_agora_identity_scope.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "247211c2208d15bce628c017044a3bf2062603e6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-20T09:56:05Z",
+      "resolved_at": "2026-06-20T09:56:35Z"
+    },
+    {
+      "task_id": "AG-BE-ID-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-20T09:56:34Z",
+      "resolved_at": "2026-06-20T09:56:51Z"
+    },
+    {
+      "task_id": "AG-BE-ID-002",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-20T16:37:12Z",
+      "resolved_at": "2026-06-20T16:39:20Z"
+    },
+    {
+      "task_id": "AG-BE-ID-002",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #1855 (merge 985d9825, task commit 141f505d). Please review Agora servant ensure/provision/reconcile behavior and approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-20T16:52:12Z",
+      "resolved_at": "2026-06-20T16:57:04Z"
+    },
+    {
+      "task_id": "AG-BE-ID-002",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved — servant ensure/provision/reconcile implementation correct; returning to Codex2 for closeout",
+      "status": "done",
+      "created_at": "2026-06-20T16:57:04Z",
+      "resolved_at": "2026-06-20T17:03:07Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "AG-BE-ID-002",
+      "owner": "Codex2",
+      "waiting_for": "Codex",
+      "message": "STOP per task brief: canonical SD/OpenAPI do not define POST /bff/agora/servant/ensure under §5.2, task cites §5.4 capability set but no Agora §5.4 servant capability allow/deny exists, and the existing OpenClaw adapter exposes session lifecycle/tools but no agent provision/update HTTP surface; dispatch file paths also point at missing old files. Need reviewer/design clarification before implementing without inventing route/schema/capability.",
+      "status": "resolved",
+      "created_at": "2026-06-20T10:01:19Z",
+      "resolved_at": "2026-06-20T15:03:41Z",
+      "resolution_ref": "contract-closure-2026-06-20"
+    }
+  ]
+}

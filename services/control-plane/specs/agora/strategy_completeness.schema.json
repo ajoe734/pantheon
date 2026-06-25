@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/strategy_completeness/v1",
+  "title": "StrategyCompleteness",
+  "description": "Completeness assessment for a strategy candidate. Produced by a persona during a workshop or on-demand. Captures gaps that must be resolved before research or promotion.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "completeness_id",
+    "strategy_ref",
+    "assessed_by_persona_id",
+    "overall_grade",
+    "dimensions",
+    "assessed_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "completeness_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this assessment."
+    },
+    "strategy_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Strategy ID or StrategySpec ref being assessed."
+    },
+    "workshop_id": {
+      "type": "string",
+      "description": "Optional workshop session this assessment was produced in."
+    },
+    "assessed_by_persona_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Persona that produced this assessment."
+    },
+    "overall_grade": {
+      "type": "string",
+      "enum": ["complete", "mostly_complete", "partial", "incomplete"],
+      "description": "Summary completeness grade."
+    },
+    "dimensions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Per-dimension completeness checks.",
+      "items": {
+        "type": "object",
+        "required": ["dimension", "grade"],
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "hypothesis",
+              "data_dependencies",
+              "market_scope",
+              "evaluation_plan",
+              "risk_constraints",
+              "execution_profile",
+              "governance"
+            ]
+          },
+          "grade": {
+            "type": "string",
+            "enum": ["complete", "partial", "missing"]
+          },
+          "gaps": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Free-text gap descriptions for this dimension.",
+            "default": []
+          },
+          "required_actions": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Concrete actions needed to close this dimension's gaps.",
+            "default": []
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Hard blockers that prevent research or promotion regardless of other grades.",
+      "default": []
+    },
+    "research_ready": {
+      "type": "boolean",
+      "description": "Whether the strategy is ready for a research plan to be emitted."
+    },
+    "assessed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

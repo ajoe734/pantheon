@@ -199,7 +199,7 @@ def run_smoke() -> dict[str, Any]:
             json=_pause_execution_payload(reason="MGMT-SAFE-006 changed payload must conflict"),
         )
         conflict_payload = _json_response(conflict)
-        conflict_detail = conflict_payload.get("detail") if isinstance(conflict_payload.get("detail"), dict) else conflict_payload
+        conflict_detail = conflict_payload.get("detail") if isinstance(conflict_payload.get("detail"), dict) else {}
         rows.append(
             _check(
                 "same-key-different-payload-conflicts",
@@ -225,17 +225,12 @@ def run_smoke() -> dict[str, Any]:
             headers={**HEADERS, "Idempotency-Key": "mgmt-safe-006-body-key"},
             json=body_key_payload,
         )
-        body_key_payload_json = _json_response(body_key)
-        body_key_detail = (
-            body_key_payload_json.get("detail")
-            if isinstance(body_key_payload_json.get("detail"), dict)
-            else body_key_payload_json
-        )
+        body_key_detail = _json_response(body_key).get("detail", {})
         rows.append(
             _check(
                 "body-idempotency-key-rejected",
                 body_key.status_code == 400
-                and (body_key_detail.get("error") or {}).get("code") == "VALIDATION_FAILED",
+                and (body_key_detail.get("error") or {}).get("code") == "INVALID_REQUEST",
                 {
                     "status_code": body_key.status_code,
                     "error_code": (body_key_detail.get("error") or {}).get("code"),

@@ -441,7 +441,7 @@ def test_committee_evidence_file_validation_uses_final_error_envelope() -> None:
         )
 
         assert rejected.status_code == 422, rejected.text
-        detail = rejected.json()["detail"]["error"]["details"]
+        detail = rejected.json()["error"]["details"]
         assert detail["precondition_failed"] == "committee_evidence.files"
         assert any(item["code"] == "mime_not_allowed" for item in detail["violations"])
 
@@ -495,4 +495,4 @@ def test_persona_lab_submit_commit_validates_required_review_context() -> None:
         )
 
         assert rejected.status_code == 422, rejected.text
-        assert rejected.json()["detail"]["error"]["details"]["precondition_failed"] == "evaluationRunIds"
+        assert rejected.json()["error"]["details"]["precondition_failed"] == "evaluationRunIds"

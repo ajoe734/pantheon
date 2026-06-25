@@ -133,6 +133,42 @@ class TestStalenessCheck(unittest.TestCase):
         is_stale = self.consumer._is_stale(signal, mock_algo)
         self.assertTrue(is_stale, "Signal >24h old should be stale")
 
+    def test_drain_records_stale_signal_noop_feedback(self):
+        """Draining a stale signal should emit no-order feedback and mark it processed."""
+        now = datetime.now(timezone.utc)
+        stale_signal = {
+            "signal_id": "test-stale-feedback",
+            "version": "1.0",
+            "strategy_id": "test",
+            "timestamp": (now - timedelta(hours=30)).isoformat(),
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 0.5,
+            "quantity_type": "PERCENT_PORTFOLIO",
+            "metadata": {
+                "alpha_source": "unit_stale_filter",
+                "market_data": {"close": 150.0},
+            },
+        }
+        self.store.get_pending.return_value = [stale_signal]
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+
+        self.consumer.drain(algo=algo)
+
+        self.assertIn("test-stale-feedback", self.consumer._processed_signal_ids)
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "stale_signal")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 150.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "stale_signal")
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_stale_filter")
+
     def test_stale_check_with_future_signal_anomaly(self):
         """Stale check should reject signals >1h in future (anomaly)"""
         now = datetime(2026, 4, 6, 12, 0, 0)
@@ -155,6 +191,24 @@ class TestStalenessCheck(unittest.TestCase):
         
         is_stale = self.consumer._is_stale(signal, mock_algo)
         self.assertTrue(is_stale, "Signal >1h in future should be rejected as anomaly")
+
+    def test_stale_check_with_unparseable_timestamp_is_not_filtered(self):
+        """Unparseable timestamps should not be misclassified as stale."""
+        signal = {
+            "signal_id": "test-bad-ts",
+            "version": "1.0",
+            "strategy_id": "test",
+            "timestamp": "not-a-timestamp",
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 0.5,
+            "quantity_type": "PERCENT_PORTFOLIO",
+        }
+
+        is_stale = self.consumer._is_stale(signal, algo=None)
+
+        self.assertFalse(is_stale, "Unparseable timestamp should not be stale-filtered")
 
     def test_stale_check_without_algo(self):
         """Stale check should work with current UTC time if algo not provided"""
@@ -190,6 +244,43 @@ class TestImportPaths(unittest.TestCase):
         self.assertIsNotNone(SignalConsumer)
         self.assertIsNotNone(execute)
         self.assertIsNotNone(SymbolParseError)
+
+
+class _NoopRecordingAlgo:
+    def __init__(self, now: datetime) -> None:
+        self.Time = now
+        self.signal_noops: list[dict] = []
+
+    def RecordSignalNoop(  # noqa: N802
+        self,
+        symbol,
+        *,
+        signal_id,
+        noop_reason,
+        requested_quantity,
+        computed_quantity,
+        quantity_type,
+        order_type,
+        broker_submission_status,
+        submitted_to_broker,
+        price=None,
+        metadata=None,
+    ):
+        payload = {
+            "symbol": symbol,
+            "signal_id": signal_id,
+            "noop_reason": noop_reason,
+            "requested_quantity": requested_quantity,
+            "computed_quantity": computed_quantity,
+            "quantity_type": quantity_type,
+            "order_type": order_type,
+            "broker_submission_status": broker_submission_status,
+            "submitted_to_broker": submitted_to_broker,
+            "metadata": dict(metadata or {}),
+        }
+        if price is not None:
+            payload["price"] = price
+        self.signal_noops.append(payload)
 
 
 def _make_signal(signal_id: str, binding_id: str | None = None) -> dict:
@@ -250,16 +341,162 @@ class TestBindingIsolation(unittest.TestCase):
 
     # --- drain integration: binding filter applied end-to-end ---
 
-    def test_drain_discards_wrong_binding_signal(self):
-        """Signals for a different binding are discarded during drain."""
+    def test_drain_records_symbol_parse_error_noop_feedback(self):
+        """Execution errors should not leave signals invisible or unprocessed."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        bad_symbol_signal = _make_signal("s-symbol-parse-error")
+        bad_symbol_signal["symbol"] = "2330.TW"
+        bad_symbol_signal["metadata"] = {
+            "alpha_source": "unit_symbol_parse_error",
+            "market_data": {"close": 930.0},
+        }
+        store = MagicMock()
+        store.get_pending.return_value = [bad_symbol_signal]
+        c = SignalConsumer(store_client=store)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+
+        c.drain(algo=algo)
+
+        self.assertEqual(c._processed_signal_ids, {"s-symbol-parse-error"})
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "2330.TW")
+        self.assertEqual(noop["noop_reason"], "symbol_parse_error")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 930.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "symbol_parse_error")
+        self.assertEqual(noop["metadata"]["execution_error_type"], "ExecutionError")
+        self.assertEqual(noop["metadata"]["execution_error_stage"], "execute_signal")
+        self.assertEqual(noop["metadata"]["execution_error_symbol"], "2330.TW")
+        self.assertIn("Unknown market code 'TW'", noop["metadata"]["execution_error_message"])
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_symbol_parse_error")
+
+    def test_drain_records_unsupported_action_direction_noop_feedback(self):
+        """Unsupported action/direction combinations should be classified for recovery."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        bad_combo_signal = _make_signal("s-unsupported-combo")
+        bad_combo_signal["action"] = "BUY"
+        bad_combo_signal["direction"] = "SHORT"
+        bad_combo_signal["metadata"] = {
+            "alpha_source": "unit_invalid_combo",
+            "market_data": {"close": 101.0},
+        }
+        store = MagicMock()
+        store.get_pending.return_value = [bad_combo_signal]
+        c = SignalConsumer(store_client=store)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+
+        c.drain(algo=algo)
+
+        self.assertEqual(c._processed_signal_ids, {"s-unsupported-combo"})
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "unsupported_action_direction")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 101.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "unsupported_action_direction")
+        self.assertEqual(noop["metadata"]["execution_error_type"], "ExecutionError")
+        self.assertEqual(noop["metadata"]["execution_error_stage"], "execute_signal")
+        self.assertEqual(noop["metadata"]["execution_error_symbol"], "AAPL.US")
+        self.assertIn("action=BUY direction=SHORT", noop["metadata"]["execution_error_message"])
+        self.assertEqual(noop["metadata"]["signal_action"], "BUY")
+        self.assertEqual(noop["metadata"]["signal_direction"], "SHORT")
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_invalid_combo")
+
+    def test_drain_records_conflict_loser_noop_feedback(self):
+        """Same-symbol conflict losers are terminal no-order outcomes."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        loser = _make_signal("s-conflict-loser")
+        loser["timestamp"] = (now - timedelta(minutes=2)).isoformat()
+        loser["metadata"] = {"alpha_source": "unit_conflict_loser", "market_data": {"close": 153.0}}
+        winner = _make_signal("s-conflict-winner")
+        winner["timestamp"] = now.isoformat()
+        winner["metadata"] = {"alpha_source": "unit_conflict_winner", "market_data": {"close": 153.0}}
+        store = MagicMock()
+        store.get_pending.return_value = [loser, winner]
+        c = SignalConsumer(store_client=store)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            c.drain(algo=algo)
+        mock_exec.assert_called_once_with(winner, algo)
+        self.assertEqual(c._processed_signal_ids, {"s-conflict-loser", "s-conflict-winner"})
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "signal_conflict_loser")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 153.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "signal_conflict_loser")
+        self.assertEqual(noop["metadata"]["conflict_loser_signal_id"], "s-conflict-loser")
+        self.assertEqual(noop["metadata"]["conflict_winner_signal_id"], "s-conflict-winner")
+        self.assertEqual(noop["metadata"]["conflict_symbol"], "AAPL.US")
+        self.assertEqual(
+            noop["metadata"]["conflict_resolution_rule"],
+            "last_write_wins_timestamp_then_confidence",
+        )
+
+    def test_drain_records_duplicate_signal_noop_feedback(self):
+        """Duplicate signal IDs are idempotent and still emit terminal no-order feedback."""
+        duplicate_signal = _make_signal("s-duplicate")
+        duplicate_signal["metadata"] = {"alpha_source": "unit_duplicate_filter", "market_data": {"close": 152.0}}
+        store = MagicMock()
+        store.get_pending.return_value = [duplicate_signal]
+        c = SignalConsumer(store_client=store)
+        c._processed_signal_ids.add("s-duplicate")
+        algo = _NoopRecordingAlgo(datetime.now(timezone.utc).replace(tzinfo=None))
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            c.drain(algo=algo)
+        mock_exec.assert_not_called()
+        self.assertEqual(c._processed_signal_ids, {"s-duplicate"})
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "duplicate_signal_id")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 152.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "duplicate_signal_id")
+        self.assertEqual(noop["metadata"]["duplicate_signal_id"], "s-duplicate")
+        self.assertTrue(noop["metadata"]["idempotent_replay"])
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_duplicate_filter")
+
+    def test_drain_records_wrong_binding_noop_feedback(self):
+        """Signals for a different binding emit terminal no-order feedback."""
         wrong_binding_signal = _make_signal("s-wrong", binding_id="b-other")
+        wrong_binding_signal["metadata"] = {"alpha_source": "unit_binding_filter", "market_data": {"close": 151.0}}
         store = MagicMock()
         store.get_pending.return_value = [wrong_binding_signal]
         c = SignalConsumer(store_client=store, binding_id="b-mine")
+        algo = _NoopRecordingAlgo(datetime.now(timezone.utc).replace(tzinfo=None))
         with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
-            c.drain(algo=self._mock_algo())
+            c.drain(algo=algo)
         mock_exec.assert_not_called()
-        self.assertNotIn("s-wrong", c._processed_signal_ids)
+        self.assertIn("s-wrong", c._processed_signal_ids)
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["symbol"], "AAPL.US")
+        self.assertEqual(noop["noop_reason"], "binding_mismatch")
+        self.assertEqual(noop["requested_quantity"], 0.5)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["price"], 151.0)
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_filtered")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["metadata"]["filter_reason"], "binding_mismatch")
+        self.assertEqual(noop["metadata"]["expected_binding_id"], "b-mine")
+        self.assertEqual(noop["metadata"]["signal_binding_id"], "b-other")
+        self.assertEqual(noop["metadata"]["alpha_source"], "unit_binding_filter")
 
     def test_drain_executes_matching_binding_signal(self):
         """Signals for the consumer's binding are executed normally."""
@@ -360,3 +597,38 @@ class TestPendingSignalStoreQueueKey(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPersistentDedup(unittest.TestCase):
+    """E2E-R16: signal dedup survives a worker restart via the store's
+    persistent processed-id window (fixes the in-memory-only limitation
+    flagged in E2E-R6)."""
+
+    def test_inmemory_store_records_processed(self):
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+        store = InMemoryPendingSignalStore()
+        self.assertFalse(store.is_processed("sig-x"))
+        store.mark_processed("sig-x")
+        self.assertTrue(store.is_processed("sig-x"))
+
+    def test_duplicate_caught_after_restart_via_persistent_store(self):
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+        store = InMemoryPendingSignalStore()
+        sig = _make_signal("sig-restart-1")
+
+        # Worker #1 processes the signal, recording it persistently.
+        c1 = SignalConsumer(store_client=store)
+        c1._remember_processed(sig["signal_id"])
+        self.assertTrue(store.is_processed("sig-restart-1"))
+
+        # Worker #2 (fresh process — empty in-memory set) must still dedup it.
+        c2 = SignalConsumer(store_client=store)
+        self.assertNotIn("sig-restart-1", c2._processed_signal_ids)
+        self.assertTrue(c2._is_duplicate(sig))
+        # and it is now cached in-memory too
+        self.assertIn("sig-restart-1", c2._processed_signal_ids)
+
+    def test_unknown_signal_not_duplicate(self):
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+        c = SignalConsumer(store_client=InMemoryPendingSignalStore())
+        self.assertFalse(c._is_duplicate(_make_signal("sig-fresh")))

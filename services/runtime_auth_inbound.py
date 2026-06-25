@@ -488,18 +488,33 @@ def _verify_jwt_jwks(
 
 
 def _parse_structured_token(token: str, default_role: str) -> AuthContext:
-    """Parse the legacy ``actor_id[:role1,role2]`` shape, accepting plain tokens too."""
-    parts = token.split(":", 1)
+    """Parse the ``actor_id[:role1,role2[:mfa[:cap1,cap2]]]`` stub shape.
+
+    Splitting on only the first colon glued the ``:mfa`` (and capability)
+    suffixes onto the last role, so the canonical dev token
+    ``op-dev:admin:mfa`` resolved to role ``"admin:mfa"`` — not a real role —
+    and every read 403'd in permissive mode. Split all segments: actor id,
+    comma-roles, an optional ``mfa`` marker, and optional capabilities.
+    """
+    parts = token.split(":")
     actor_id = parts[0].strip() or "internal-api-operator"
     raw_roles: list[str] = []
-    if len(parts) == 2:
+    if len(parts) >= 2:
         raw_roles = [role.strip() for role in parts[1].split(",") if role.strip()]
     if not raw_roles:
         raw_roles = [default_role]
+    mfa_verified = len(parts) >= 3 and parts[2].strip().lower() == "mfa"
+    capabilities: list[str] = []
+    if len(parts) >= 4:
+        capabilities = [cap.strip() for cap in parts[3].split(",") if cap.strip()]
+    claims: dict[str, Any] = {"sub": actor_id, "roles": list(raw_roles)}
+    if capabilities:
+        claims["capabilities"] = capabilities
     return AuthContext(
         actor_id=actor_id,
         roles=frozenset(raw_roles),
-        claims={"sub": actor_id, "roles": list(raw_roles)},
+        claims=claims,
+        mfa_verified=mfa_verified,
         token_kind="structured",
     )
 
@@ -515,6 +530,15 @@ def _claim_path_value(claims: Mapping[str, Any], path: str) -> Any:
             return None
         current = current.get(part)
     return current
+
+
+def _claim_path_exists(claims: Mapping[str, Any], path: str) -> bool:
+    current: Any = claims
+    for part in path.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return False
+        current = current.get(part)
+    return True
 
 
 def _claim_values(value: Any) -> list[str]:
@@ -574,7 +598,10 @@ def _claims_to_context(
         or "internal-api-operator"
     ).strip() or "internal-api-operator"
     role_values: list[str] = []
+    role_claim_seen = False
     for claim_path in role_claims:
+        if _claim_path_exists(claims, claim_path):
+            role_claim_seen = True
         role_values.extend(_claim_values(_claim_path_value(claims, claim_path)))
 
     mapping = role_map or {}
@@ -589,7 +616,11 @@ def _claims_to_context(
 
     roles = frozenset(role.strip() for role in mapped_roles if role and str(role).strip())
     if not roles:
-        roles = frozenset() if strict_mapping and role_values else frozenset({default_role})
+        roles = (
+            frozenset()
+            if role_claim_seen or (strict_mapping and role_values)
+            else frozenset({default_role})
+        )
 
     mfa_verified = any(
         _claim_indicates_mfa(_claim_path_value(claims, claim_path), mfa_values)

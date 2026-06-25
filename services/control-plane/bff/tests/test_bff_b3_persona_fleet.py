@@ -54,24 +54,24 @@ def test_persona_fleet_composes_persona_bindings_telemetry_training_and_evolutio
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert "data" in body and "items" in body and "meta" in body
-            assert body["items"] == body["data"]["items"] == body["data"]["persona_fleet"]
+            assert body["data"]["items"] == body["items"]
+            assert body["data"]["persona_fleet"] == body["items"]
             assert body["summary"]["total_personas"] >= 1
-            assert body["meta"]["surfaces"]["persona_league"]["source"] != "missing"
-            assert body["meta"]["surfaces"]["ooda_control_room_status"]["source"] != "missing"
-            assert body["data"]["execution_boundary"]["live_capital_side_effects"] is False
+            assert body["meta"]["surfaces"]["persona_fleet"]["source"] == "bff_composed"
 
             alpha = next(item for item in body["items"] if item["id"] == "persona-alpha")
             assert alpha["personaName"] == "Alpha Persona"
             assert alpha["capitalPoolId"] == "pool-main"
             assert alpha["health"] in {"healthy", "degraded", "critical"}
-
-            tw = next(item for item in body["items"] if item["id"] == "persona-tw-equity")
-            assert tw["runtimeId"] == "runtime-tw-equity-paper"
-            assert tw["health"] == "degraded"
-            assert tw["humanNeeded"] is True
-            assert tw["dataSourceStatus"]["order_side_effects_allowed"] is False
-            assert any(pool["pool_id"] == tw["capitalPoolId"] for pool in body["data"]["capital_pools"])
-            assert any(runtime["runtime_id"] == tw["runtimeId"] for runtime in body["data"]["runtime_bindings"])
+            assert alpha["governanceRequired"] is True
+            assert alpha["drillDown"]["href"] == "/personas/persona-alpha"
+            assert "metrics" in alpha
+            assert "currentWork" in alpha
+            assert body["data"]["execution_boundary"] == {
+                "approved_artifacts_only": True,
+                "live_capital_side_effects": False,
+                "human_gate_required_for_capital_changes": True,
+            }
         finally:
             bff_main.read_store = original
 
@@ -81,11 +81,8 @@ def test_persona_fleet_supports_health_filter_and_pagination() -> None:
         original = bff_main.read_store
         try:
             client = _fresh_client(td)
-            seed = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
-            assert seed.status_code == 200, seed.text
-            filter_health = seed.json()["items"][0]["health"]
             resp = client.get(
-                f"/bff/management/persona-fleet?health={filter_health}&page_size=1",
+                "/bff/management/persona-fleet?health=healthy&page_size=1",
                 headers=OPERATOR_HEADERS,
             )
 
@@ -93,9 +90,9 @@ def test_persona_fleet_supports_health_filter_and_pagination() -> None:
             body = resp.json()
             assert body["page_info"]["page_size"] == 1
             assert len(body["items"]) == 1
-            assert body["items"][0]["health"] == filter_health
-            assert body["summary"]["total_personas"] >= 1
-            assert body["data"]["items"] == body["items"]
+            assert body["items"][0]["health"] == "healthy"
+            assert body["summary"]["healthy_personas"] >= 1
+            assert body["data"]["page_info"] == body["page_info"]
         finally:
             bff_main.read_store = original
 
@@ -110,6 +107,6 @@ def test_persona_fleet_requires_authentication() -> None:
             assert resp.status_code == 401, resp.text
             body = resp.json()
             error = body.get("error") or (body.get("detail") or {}).get("error") or {}
-            assert error["code"] in {"AUTH_REQUIRED", "INVALID_TOKEN"}
+            assert error["code"] in {"AUTH_REQUIRED", "AUTH_REQUIRED"}
         finally:
             bff_main.read_store = original

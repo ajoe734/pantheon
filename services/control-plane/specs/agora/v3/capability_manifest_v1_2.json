@@ -1,0 +1,116 @@
+{
+  "manifest_version": "1.2",
+  "extends_manifest": "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json",
+  "base_frozen_by": "AG-XR-001",
+  "v1_1_frozen_by": "AG-XR-OPENAPI-001",
+  "extension_by": "AG-XR-OPENAPI-003",
+  "governed_by": "docs/04/pantheon_agora_cross_repo_2026-06-20/sw001-deep-closure/AG-BE-SW-001_deep_design_closure_2026-06-21.md",
+  "description": "Agora v1.2 additive capability manifest. Preserves v1 and v1.1 bundles, then tightens Strategy Workshop private-content, Strategy Registry reference, lifecycle filter, projection, persistence, and error semantics. AG-XR-OPENAPI-003 adds session_type to ServantSessionCreateRequest (C1 common envelope alignment).",
+  "capabilities": [
+    {
+      "name": "agora.servant.v1",
+      "version": "1.0",
+      "inherited_from": "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json",
+      "extended_by": "AG-XR-OPENAPI-003",
+      "description": "User-private servant ensure, reconcile and session facade. v1.2 adds optional session_type to ServantSessionCreateRequest (C1 common envelope alignment).",
+      "bff_path_prefixes": ["/bff/agora/servant"],
+      "internal_path_prefixes": ["/api/openclaw-adapter/agents"],
+      "auth_level": "agora_user",
+      "execution_authority": "none",
+      "session_type_contract": {
+        "field": "session_type",
+        "location": "ServantSessionCreateRequest",
+        "enum": ["interactive", "trainer", "research_task"],
+        "default": "interactive",
+        "optional": true,
+        "additionalProperties_unchanged": true,
+        "c1_common_envelope_aligned": true,
+        "strategy_dialogue_allows": ["interactive", "trainer"]
+      },
+      "authority_order": [
+        "agora_v1_2.openapi.yaml and this manifest define the v1.2 ServantSessionCreateRequest shape including session_type.",
+        "v1.2 ServantSessionCreateRequest supersedes the v1.1 definition. The v1.1 file remains immutable historical evidence; do not edit it."
+      ]
+    },
+    {
+      "name": "agora.workshop.v1",
+      "version": "1.2",
+      "description": "Canonical Strategy Workshop routes with server-side private_content_ref creation, owner/management projections, Strategy Registry references, canonical lifecycle filters, persistence closure, and §9 error semantics.",
+      "bff_path_prefixes": ["/bff/agora/workshops"],
+      "schemas": [
+        "v3/private_content_ref.schema.json",
+        "v3/workshop_storage_contract.schema.json",
+        "v3/strategy_ref_contract.schema.json",
+        "v3/workshop_event.schema.json",
+        "v3/workshop_version_link.schema.json",
+        "v3/workshop_persistence.schema.json"
+      ],
+      "auth_level": "agora_user",
+      "authority_order": [
+        "agora_v1_2.openapi.yaml and this manifest supersede agora_v1_1.openapi.yaml for Strategy Workshop lifecycle filters.",
+        "agora_v1_1.openapi.yaml remains immutable historical evidence; do not edit it to remove status=active wording."
+      ],
+      "lifecycle_filters": {
+        "canonical_status_values": ["open", "in_review", "concluded", "archived"],
+        "status_group": {
+          "active": ["open", "in_review"],
+          "closed": ["concluded", "archived"]
+        },
+        "forbidden_lifecycle_status_values": ["active"],
+        "v1_2_replaces_v1_1_status_active_wording": true
+      },
+      "private_content_contract": {
+        "server_side_private_content_ref": true,
+        "browser_must_not_submit_private_content_ref": true,
+        "owner_event_projection_may_include_decrypted_content": true,
+        "management_projection_must_not_include_raw_content": true,
+        "raw_content_forbidden_in": [
+          "application_logs",
+          "audit_payloads",
+          "traces",
+          "error_envelopes",
+          "postgres_plaintext",
+          "management_projection"
+        ]
+      },
+      "strategy_reference_contract": {
+        "strategy_ref_fields": ["strategy_id", "strategy_spec_registry_id"],
+        "deprecated_alias": "strategy_spec_ref",
+        "deprecated_alias_interpretation": "strategy_spec_registry_id only",
+        "workshop_stores_pointers_only": ["strategy_id", "active_strategy_spec_registry_id"],
+        "does_not_copy_strategy_spec_json": true
+      },
+      "error_codes": {
+        "PRIVATE_CONTENT_STORE_UNAVAILABLE": 503,
+        "PRIVATE_CONTENT_REDACTION_UNAVAILABLE": 503,
+        "PRIVATE_CONTENT_EXPIRED": 410,
+        "PRIVATE_CONTENT_ACCESS_DENIED": 403,
+        "STRATEGY_REFERENCE_MISMATCH": 409,
+        "STRATEGY_REFERENCE_NOT_FOUND": 404,
+        "WORKSHOP_ALREADY_CONCLUDED": 409,
+        "WORKSHOP_ARCHIVED": 409,
+        "WORKSHOP_VERSION_REQUIRED": 409,
+        "CONCURRENT_MODIFICATION": 409
+      }
+    },
+    {
+      "name": "agora.dashboard.v2",
+      "version": "2.0",
+      "inherited_from": "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json",
+      "description": "Strategy-bound dynamic dashboard recipes, safe chart grammar and optimistic-concurrency mutations.",
+      "bff_path_prefixes": [
+        "/bff/agora/dashboard-recipes",
+        "/bff/agora/strategies",
+        "/bff/agora/widgets"
+      ],
+      "schemas": [
+        "v2/dashboard_recipe_v2.schema.json",
+        "v2/widget_spec_v2.schema.json",
+        "v2/chart_spec_v1.schema.json"
+      ],
+      "auth_level": "agora_user"
+    }
+  ],
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_2.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1_2.openapi.yaml"
+}

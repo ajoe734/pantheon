@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-002",
+  "archived_at": "2026-06-22T07:42:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-TR-002",
+    "title": "Governed TradingIntent / handoff",
+    "summary_zh": "依 SD §12.4/§21 與 specs/agora/trading_intent.schema.json 做 governed TradingIntent/handoff:requestedMode 僅 shadow/paper/canary_request/live_request,canary/live 只建 request 不送 order(TRADING_INTENT_NOT_ALLOWED 守門),idempotencyKey 必填。絕不從 BFF 發 broker order。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-TR-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/trading_room.py",
+      "services/control-plane/specs/agora/trading_intent.schema.json"
+    ],
+    "acceptance": [
+      "TradingIntent 符合 schema;canary/live 只 handoff 不下單;直接下單路徑被擋並有測試證明;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "Owner finalized approved governed TradingIntent/handoff after PR #2220 and closeout artifact PR #2222 merged; verification rerun: direct trading_room test, pytest trading_room 31/31, pytest agora_router 18/18, py_compile router/store/test.",
+    "last_update": "2026-06-22T07:42:08Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "review_notes_zh": [
+      "審查通過：D1 安全邊界完整(no_order_route_proof 在 Pydantic 與 store 兩層強制)；TradingIntent/GovernedIntentHandoff 欄位與 v4 schema 逐欄一致；stage/type/queue 語義正確實作；idempotency 三個 header 全部必填；31 tests 全過含 jsonschema 驗證；未動 capability allowlist / schema / RuntimeBinding / broker routing",
+      "後續追蹤：requested_by 與 evidence_ref.ref_type 的 Pydantic 層 enum 驗證可在下一次 BFF 強化時補齊，非本 task 阻塞"
+    ],
+    "review_file": ".orchestrator/task-briefs/ag_be_tr_002_review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T07:42:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-tr-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-TR-002",
+      "git_clean_required": false,
+      "commit": "a380a82818836595f2a12b80eb088656c1d9c2bd",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-TR-002",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-TR-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "61ec24785126cb8328396f36c2fe8fd567104896",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #2220 (merge bbc23377794638c189ce83ea0cb8254f0422eef8; task commit 147a372209fc3dfe2983ce980f4780bf23074eea). Please review governed TradingIntent/handoff closeout so owner can mark done after review_approved.",
+      "status": "done",
+      "created_at": "2026-06-22T07:32:57Z",
+      "resolved_at": "2026-06-22T07:35:33Z"
+    },
+    {
+      "task_id": "AG-BE-TR-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Review approved — D1 boundary, schema alignment, stage/type/queue semantics, idempotency all verified; 31/31 tests pass; returned to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-06-22T07:35:33Z",
+      "resolved_at": "2026-06-22T07:42:11Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "AG-BE-TR-002",
+      "owner": "Codex",
+      "waiting_for": "Claude2",
+      "message": "Blocked before implementation: AG-BE-TR-002 is absent from ai-status.json in this worktree, and dispatch brief requires requestedMode enum shadow/paper/canary_request/live_request while v1.3 canonical OpenAPI/schema use requested_stage enum shadow/paper/canary/live. Need reviewer/supervisor decision before changing BFF/schema; brief says stop on spec conflict.",
+      "status": "resolved",
+      "created_at": "2026-06-22T03:25:23Z",
+      "resolved_at": "2026-06-22T07:17:50Z",
+      "resolution_ref": "v13-enum-aligned-2026-06-22"
+    }
+  ]
+}

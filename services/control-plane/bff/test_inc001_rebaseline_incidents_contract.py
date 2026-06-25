@@ -201,4 +201,4 @@ def test_bff_incident_detail_fails_closed_when_incident_backend_is_missing() -> 
     assert list_payload["meta"]["surfaces"]["incidents"]["source"] == "missing"
 
     assert detail_response.status_code == 503, detail_response.text
-    assert detail_response.json()["detail"]["error"]["code"] == "DOWNSTREAM_UNAVAILABLE"
+    assert detail_response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"

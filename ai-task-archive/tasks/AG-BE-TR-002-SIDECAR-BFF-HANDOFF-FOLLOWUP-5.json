@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+  "archived_at": "2026-06-22T07:19:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+    "title": "Prepare AG-BE-TR-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-TR-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Stale sidecar garbage; parent TR-002 已重新派工,作廢回收 slot。",
+    "last_update": "2026-06-22T07:19:03Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-TR-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Followup-5 handoff packet approved: resolves Q9 (stage-sequence lock deferred to Management governance; BFF enforces terminal-state guard and handoff_type/stage mismatch only), Q10 (submitted initial state confirmed; draft reserved for future save-before-submit flow). New gaps Q11 (ETag generation via content hash; If-Match required validation pattern), Q12 (requested_by server-side population from scope.user_id; actor_type trader not operator), Q13 (Pydantic GovernedIntentHandoffBody model needed; jsonschema for tests only; requested_by excluded from client model), Q14 (operation_type bff.SubmitGovernedHandoff; target_ref trading_intent:{intent_id}; server-derived fields excluded from idempotency hash). No canonical truth, schemas, OpenAPI, BFF runtime, or frontend files changed."
+    ],
+    "review_file": "support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup-5 handoff packet ready for review. Resolves Q9 (stage-sequence lock: deferred to Management governance; BFF enforces terminal-state guard and handoff_type/stage mismatch only), Q10 (submitted initial state confirmed). New gaps Q11-Q14: ETag generation for TradingIntent GET/If-Match validation, requested_by server-side population from scope.user_id with actor_type=trader (not operator), Pydantic GovernedIntentHandoffBody model (jsonschema for tests only), IdempotencyRecord.reserve() parameter conventions. Artifact committed as 3883b368.",
+      "status": "done",
+      "created_at": "2026-06-21T23:08:00Z",
+      "resolved_at": "2026-06-21T23:09:33Z"
+    },
+    {
+      "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Followup-5 BFF/frontend handoff packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T23:09:33Z",
+      "resolved_at": "2026-06-21T23:14:29Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
+      "owner": "Claude",
+      "waiting_for": "Claude2",
+      "message": "Status accidentally downgraded from review_approved to in_progress during closeout by a progress call (memory: never call progress on review_approved). PR #2161 already merged into dev (commit 6393f121, 2026-06-21T23:18:03Z). All CI checks passed. Claude2 must re-run: AI_NAME=Claude2 REVIEW_FILE=support/sidecars/AG-BE-TR-002/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.md REVIEW_NOTES_ZH='...' ./scripts/ai-status.sh approve AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5 'Re-approve to restore status; review already completed; PR merged.' — then Claude runs done.",
+      "status": "resolved",
+      "created_at": "2026-06-21T23:20:30Z",
+      "resolved_at": "2026-06-22T07:19:03Z"
+    }
+  ]
+}

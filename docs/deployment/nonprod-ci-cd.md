@@ -91,6 +91,22 @@ PANTHEON_LIVE_BROKER_ENABLED=false
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 ```
 
+Agora frontend/BFF deploys must also pass the compatibility manifest gate before
+the VM stack is treated as deployable:
+
+```bash
+python3 scripts/agora_compat_manifest.py deployment-gate \
+  --manifest docs/contracts/agora/dev-compatibility-manifest.json \
+  --frontend-manifest /home/lupin/code/execute-plans/docs/contracts/agora/dev-compatibility-manifest.json \
+  --backend-runtime-commit <pantheon-backend-commit>
+```
+
+Use `verify --allow-pending` only as a repo sanity check while the frontend type
+mirror is still pending. Actual dev deployment requires
+`compatibility_status=compatible`, exact backend/frontend commit pins, matching
+base bundle, extension bundle and OpenAPI hashes, and advertised required Agora
+capabilities.
+
 Latest verified dev root deploy, 2026-06-11:
 
 - GitHub Actions run `27357842338`

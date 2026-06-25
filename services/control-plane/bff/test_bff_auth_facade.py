@@ -77,6 +77,16 @@ _BFF_ENV = {
 }
 
 
+def _response_error(resp):
+    body = resp.json()
+    if isinstance(body.get("error"), dict):
+        return body["error"]
+    detail = body.get("detail")
+    if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+        return detail["error"]
+    raise AssertionError(f"response did not contain BFF error envelope: {body}")
+
+
 # ---------------------------------------------------------------------------
 # Unit tests: _extract_identity_jwt
 # ---------------------------------------------------------------------------
@@ -202,6 +212,31 @@ class TestExtractIdentityJwt:
         )
         assert identity.operator_id == "op-internal"
         assert "operator" in identity.roles
+
+    def test_permissive_structured_token_preserves_capability_suffix(self):
+        identity = self._call(
+            "Bearer op-admin:admin,operator:mfa:assistant.kernel.debug,audit.read",
+            env_overrides={"PANTHEON_BFF_AUTH_MODE": "permissive", "PANTHEON_BFF_JWT_SECRET": ""},
+        )
+
+        assert identity.operator_id == "op-admin"
+        assert identity.mfa_verified is True
+        assert identity.claims["capabilities"] == ["assistant.kernel.debug", "audit.read"]
+
+    def test_permissive_structured_token_merges_dev_stub_capabilities(self):
+        identity = self._call(
+            "Bearer op-admin:admin,operator:mfa:assistant.kernel.debug",
+            env_overrides={
+                "PANTHEON_BFF_AUTH_MODE": "permissive",
+                "PANTHEON_BFF_JWT_SECRET": "",
+                "PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.debug,assistant.kernel.repair",
+            },
+        )
+
+        assert identity.claims["capabilities"] == [
+            "assistant.kernel.debug",
+            "assistant.kernel.repair",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -719,8 +754,7 @@ class TestExtractIdentityJwks:
                         bff_main.settings_store = original
 
         assert resp.status_code == 403
-        detail = resp.json()
-        assert detail["error"]["details"]["precondition_failed"] == "role_check"
+        assert _response_error(resp)["details"]["precondition_failed"] == "role_check"
 
     # ---- kid matching ----
 

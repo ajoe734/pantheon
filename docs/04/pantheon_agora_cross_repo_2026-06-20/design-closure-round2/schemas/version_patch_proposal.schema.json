@@ -1,0 +1,373 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/version_patch_proposal/v1",
+  "title": "VersionPatchProposal",
+  "description": "A governed proposal to create a new immutable StrategySpec draft version from a workshop-selected Registry version. It never mutates Registry truth in place.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "proposal_id",
+    "workshop_id",
+    "strategy_id",
+    "base_workshop_version_id",
+    "base_strategy_spec_registry_id",
+    "base_document_sha256",
+    "proposed_by",
+    "source_event_ids",
+    "patch_format",
+    "operations",
+    "rationale",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "proposal_id": {
+      "type": "string",
+      "pattern": "^vpp_[A-Za-z0-9_-]+$"
+    },
+    "workshop_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_workshop_version_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_strategy_spec_registry_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_document_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "proposed_by": {
+      "$ref": "#/definitions/actor"
+    },
+    "source_event_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "source_research_run_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "source_consult_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/evidence_ref"
+      },
+      "default": []
+    },
+    "patch_format": {
+      "type": "string",
+      "enum": [
+        "rfc6902-restricted-v1"
+      ]
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/definitions/patch_operation"
+      }
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "change_summary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "summary"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "predicted_effects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/predicted_effect"
+      },
+      "default": []
+    },
+    "validation": {
+      "type": "object",
+      "properties": {
+        "path_policy_valid": {
+          "type": "boolean"
+        },
+        "base_hash_valid": {
+          "type": "boolean"
+        },
+        "strategy_schema_valid": {
+          "type": "boolean"
+        },
+        "policy_valid": {
+          "type": "boolean"
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "validated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "validator_version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "validating",
+        "validated",
+        "invalid",
+        "accepted",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "accepted_workshop_version_id": {
+      "type": "string"
+    },
+    "accepted_strategy_spec_registry_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "decided_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "definitions": {
+    "actor": {
+      "type": "object",
+      "required": [
+        "actor_type",
+        "actor_ref"
+      ],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": [
+            "trader",
+            "agora_servant",
+            "institutional_persona",
+            "system"
+          ]
+        },
+        "actor_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_ref": {
+      "type": "object",
+      "required": [
+        "ref_type",
+        "ref_id"
+      ],
+      "properties": {
+        "ref_type": {
+          "type": "string",
+          "enum": [
+            "evidence_bundle",
+            "evidence_item",
+            "source_record",
+            "citation",
+            "experiment_artifact",
+            "registry_entry",
+            "consult_memo",
+            "research_run",
+            "telemetry_snapshot",
+            "market_context"
+          ]
+        },
+        "ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "data_cutoff": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "patch_operation": {
+      "type": "object",
+      "required": [
+        "op",
+        "path"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "add",
+            "remove",
+            "replace",
+            "test"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/(title|hypothesis|objective|market_scope|data_dependencies|execution_profile|evaluation_plan|governance|evidence_refs|code_refs|metadata)(/.*)?$"
+        },
+        "value": {},
+        "comment": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "enum": [
+                  "add",
+                  "replace",
+                  "test"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ]
+          }
+        }
+      ]
+    },
+    "predicted_effect": {
+      "type": "object",
+      "required": [
+        "metric",
+        "direction",
+        "basis",
+        "confidence"
+      ],
+      "properties": {
+        "metric": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "increase",
+            "decrease",
+            "unchanged",
+            "uncertain"
+          ]
+        },
+        "estimated_delta": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "basis": {
+          "type": "string",
+          "enum": [
+            "heuristic",
+            "model",
+            "prior_backtest",
+            "consultation"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

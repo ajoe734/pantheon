@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "task_id": "DEVLOOP-L2-001",
+  "archived_at": "2026-06-14T14:13:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "DEVLOOP-L2-001",
+    "title": "Activate downstream consumers (reconcile/evolve/incidents)",
+    "summary_zh": "審查並在 dev 啟用右半下游 event/threshold 觸發的 consumer/scheduler:reconciliation-drift、evolution daily sweep、incidents;確認每一個在有 telemetry 事件流時真的會觸發並產出(DriftReport/EvolutionDecision/IncidentCase)。",
+    "phase": "Layer 2 / downstream stages",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "DEVLOOP-L1-002"
+    ],
+    "artifacts": [
+      "services/reconciliation-drift",
+      "services/evolution",
+      "services/incidents"
+    ],
+    "acceptance": [
+      "reconciliation/evolution/incident consumer 在 dev 部署且被事件觸發;各至少產出一筆對應記錄;approvals/evolution-decisions/incidents 不再恆為 0"
+    ],
+    "next": "Split into 3 independent consumer tasks (reconcile/evolve/incident).",
+    "last_update": "2026-06-14T14:13:56Z",
+    "auto_created_by": "dispatch_devloop_rightside_2026-06-14",
+    "terminal_outcome": "superseded",
+    "superseded_by": "DEVLOOP-RECONCILE"
+  },
+  "handoffs": [],
+  "blockers": []
+}

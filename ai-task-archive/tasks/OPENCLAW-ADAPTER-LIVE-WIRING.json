@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "task_id": "OPENCLAW-ADAPTER-LIVE-WIRING",
+  "archived_at": "2026-06-18T05:41:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPENCLAW-ADAPTER-LIVE-WIRING",
+    "title": "Make Management AI -> OpenClaw actually work live (fix the post-#1714/#1723 fake-greens end-to-end)",
+    "summary_zh": "現況查證:ASSISTANT-OPENCLAW-CHANNEL(#1714)/OPENCLAW-AGENT-TURN-LIVE-FIX(#1723) 雖歸檔 done,但實機打 dev 後 Management AI 每次回 degraded 字串『openclaw binary not found』,完全沒在跑——連續多層假綠(測試 mock CLI、pytest live smoke @skipUnless 無 binary 即 skip、6/16『OPENCLAW_LIVE 通過』其實是在 gateway 容器內跑 loopback 非真實 serving path)。四層修復:(1)PR #1735 OPENCLAW-ADAPTER-CLI-BAKE — multi-stage 從受治理 pin ghcr.io/openclaw/openclaw:2026.6.6 把 openclaw CLI(/app + Node24)烤進 adapter image(openclaw 不在 npm),隔離 /opt/openclaw 不污染 codex/claude 的 Node20,build 時 openclaw --version 自驗。(2)PR #1736 OPENCLAW-ADAPTER-AGENT-TURN-FIX — provider 用了不存在的 --url/--token flag,2026.6.6 agent 從 env OPENCLAW_GATEWAY_URL/TOKEN 讀;補 OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1(docker 私網 plaintext ws break-glass)+ 持久 openclaw-adapter-data volume + 解析真實 --json envelope(result.meta.finalAssistantVisibleText)。(3)device pairing — 2026.6.6 gateway 要求遠端 client 先 openclaw devices approve 一次(持久 volume 保留);runbook docs/runbooks/openclaw-adapter-device-pairing.md。(4)PR #1738 OPENCLAW-ADAPTER-STDIN-PROMPT — Management AI 大 prompt 超 argv MAX_ARG_STRLEN(128KiB)『Argument list too long』,改 --message - 走 stdin。Live 實證:adapter HTTP invoke -> OPENCLAW_LIVE(transport=cli);/bff/management/nl/ask -> gpt-5.5 真實回覆。gateway 側 model auth 本來就 OK。禁止造假已遵守:每層只在打真 deployed adapter 時現形、逐一實機驗。",
+    "phase": "Assistant OpenClaw Gateway Kernel/User Mode",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "ASSISTANT-OPENCLAW-CHANNEL",
+      "OPENCLAW-AGENT-TURN-LIVE-FIX",
+      "OPENCLAW-GOVERNED-BUMP-2026-6-6"
+    ],
+    "artifacts": [
+      "services/openclaw-gateway-adapter/Dockerfile",
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+      "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+      "docker-compose.yml",
+      "scripts/openclaw-assistant-openclaw-live-smoke.sh",
+      "docs/runbooks/openclaw-adapter-device-pairing.md",
+      "integrations/openclaw/governance.md"
+    ],
+    "acceptance": [
+      "adapter image contains a working openclaw CLI (openclaw --version -> OpenClaw 2026.6.6) [done #1735]",
+      "adapter HTTP openclaw provider invoke returns OPENCLAW_LIVE with transport=cli (non-mock) [done]",
+      "BFF /bff/management/nl/ask returns a real model answer, not a degraded/argv-error string [done]",
+      "non-skip live smoke scripts/openclaw-assistant-openclaw-live-smoke.sh exists for future deploys [done]",
+      "device pairing persisted on openclaw-adapter-data volume + one-time approval runbook [done]"
+    ],
+    "pull_requests": [
+      "#1735 OPENCLAW-ADAPTER-CLI-BAKE",
+      "#1736 OPENCLAW-ADAPTER-AGENT-TURN-FIX",
+      "#1738 OPENCLAW-ADAPTER-STDIN-PROMPT"
+    ],
+    "next": "Closed: all three PRs merged to dev and deployed to dev VM; live-verified Management AI -> OpenClaw end-to-end (adapter invoke OPENCLAW_LIVE; /bff/management/nl/ask returns real gpt-5.5 answer). Only manual step on a future openclaw-adapter-data volume wipe = re-run the one-time device pairing approval (runbook). Watch for overlap with task/OPENCLAW-MGMT-TURN-RPC: if that lands a different transport, align it with this CLI-over-WS path rather than diverging.",
+    "last_update": "2026-06-18T05:41:13Z",
+    "auto_created_by": "claude-opus-session-2026-06-18",
+    "review_notes_zh": [
+      "本紀錄為 session 內直接執行(非 orchestrator 派工)的整合歸檔;三個 PR 各自過 CI(trailers/mirror guard/smoke acceptance)並 merge 進 dev",
+      "整套 adapter pytest 363 passed / 4 skipped;本機 docker build 實證 openclaw CLI 可跑;dev 實機驗 OPENCLAW_LIVE + Management AI 真答案",
+      "教訓:任務歸檔 done + 測試綠 != 線上能跑;要打 deployed serving path 驗 verb;@skipUnless 缺依賴即 skip 的 smoke 不算 gate"
+    ],
+    "delivery": {
+      "recorded_at": "2026-06-18T05:41:13Z",
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "merge_target_branch": "dev",
+      "deployed_environment": "dev",
+      "deploy_workflow": "nonprod-deploy.yml (environment=dev, component=auto)"
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,9 +1,9 @@
 # OpenClaw Integration — Governance Mapping
 
-Last updated: 2026-04-15
+Last updated: 2026-06-16
 Owner: BP5-OSS-001 (Codex)
 Reviewer: Claude
-Status: governed baseline locked
+Status: governed baseline locked — bumped to 2026.6.8
 Related: `OPENCLAW_RUNTIME_CONTRACT.md`, `OC-001`, `OC-002`, `OC-003`
 
 ## 1. Purpose
@@ -12,9 +12,9 @@ This document defines how the pinned OpenClaw runtime baseline is governed by Pa
 
 Pinned baseline:
 
-- Git tag: `v2026.4.7`
-- Commit: `5050017543011b61df67744ebc6368d889c25a95`
-- Runtime image: `ghcr.io/openclaw/openclaw:2026.4.7`
+- Git tag: `v2026.6.8`
+- Commit: `844f405ac1be805d5c598922a37254f12ab6d765`
+- Runtime image: `ghcr.io/openclaw/openclaw:2026.6.8`
 
 OpenClaw remains an **external runtime substrate**. Pantheon never delegates governance authority to it.
 
@@ -170,7 +170,57 @@ When the pinned OpenClaw version changes:
 4. obtain reviewer approval before changing the governed pin
 5. record the change in `ai-activity-log.jsonl`
 
-## 9. Relationship to Other Governance Documents
+## 9. Pin Bump Record
+
+### 2026-06-16: `v2026.4.7` → `v2026.6.6` (OPENCLAW-GOVERNED-BUMP-2026-6-6)
+
+**Reason for bump:** `v2026.4.7` only supports a localhost-callback paste-back OAuth flow for OpenAI/Codex accounts, which is unusable on headless VMs. `v2026.6.6` adds `openclaw models auth login --provider openai --device-code` (ChatGPT device-code flow), enabling headless subscription-account binding with zero API keys.
+
+**Auth mode change:** Subscription OAuth via device-code flow (`openai/oauth`); no `OPENAI_API_KEY` required or used. The `openclaw-gateway` service in `docker-compose.yml` carries no `OPENAI_API_KEY` env entry (the field is absent — not merely blank).
+
+**Model ref change:** `v2026.6.6` uses `openai/gpt-5.5` with `plugins.entries.codex.enabled=true`; the legacy `openai-codex/*` namespace is deprecated upstream. `openclaw doctor --fix` migrates existing config automatically.
+
+**`~/.codex` removal:** The `v2026.4.7` onboarding attempted to import `~/.codex` on container startup. `v2026.6.6` removes this import; the env vars `PANTHEON_ASSISTANT_CODEX_HOST_HOME` / `PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME` in `docker-compose.yml` are preserved for backwards-compat volume mounts but are no longer read by OpenClaw itself.
+
+**Smoke gates:** `bash scripts/openclaw-smoke-test.sh` and `bash scripts/openclaw-gateway-adapter-smoke.sh` rerun against `ghcr.io/openclaw/openclaw:2026.6.6`; results recorded in `integrations/openclaw/evidence_pack.md §7`.
+
+**Deny rules:** All deny rules in §3.2 remain unchanged; the bump does not relax any capability boundary.
+
+### 2026-06-16: Pantheon-derived gateway image + Claude CLI (multi-model persona routing)
+
+**What:** The `openclaw-gateway` runtime artifact is no longer the bare upstream image; it is a **Pantheon-derived image** built from `integrations/openclaw/gateway/Dockerfile` = `FROM ghcr.io/openclaw/openclaw:2026.6.6` + the Claude Code CLI (`@anthropic-ai/claude-code`, version-aligned with the adapter Dockerfile) layered on top. The governed **upstream pin (tag `v2026.6.6` / commit `8c802aa683510c7f7503597b54c3021733245e59`) is unchanged** — this only layers a CLI on top.
+
+**Reason:** OpenClaw's `claude-cli` agent runtime spawns `claude -p` **inside the gateway container**, so the `claude` binary must live there (the adapter image carrying claude does not help the gateway). Baking it in makes Claude CLI reuse stable across container recreate; ephemeral `npm i -g` in the running container is wiped on every full redeploy. This enables **multi-model persona routing** — e.g. debate personas split across `openai/gpt-5.5` (Codex OAuth) and `anthropic/claude-*` (Claude CLI), each on subscription auth with zero API keys.
+
+**Auth:** Claude side uses Claude CLI subscription login (`claude auth login`, one-time interactive), persisted on the `openclaw-data` volume via `CLAUDE_CONFIG_DIR=/home/node/.openclaw/claude-cli`. No `ANTHROPIC_API_KEY`. **Billing caveat:** per Anthropic policy effective 2026-06-15, subscription `claude -p` usage draws from the account's monthly Agent SDK credit. Anthropic can change Claude Code billing/rate-limits without an OpenClaw release; for shared production automation an Anthropic API key is the predictable path.
+
+**Capability boundary:** unchanged. Layering a CLI does not relax any deny rule; the claude-cli runtime is subject to the same OC-001 deny-first filtering and OC-002 job governance as any model route.
+
+### 2026-06-17: OpenClaw CLI baked into the gateway-adapter image (assistant `openclaw` provider)
+
+**What:** `services/openclaw-gateway-adapter/Dockerfile` now multi-stage-copies the OpenClaw CLI runtime (`/app` + its Node 24) from `FROM ghcr.io/openclaw/openclaw:2026.6.6 AS openclaw_cli` into the adapter image, exposing an `openclaw` wrapper on PATH. The governed **upstream pin (tag `v2026.6.6` / commit `8c802aa683510c7f7503597b54c3021733245e59`) is unchanged**; this reuses the same pin the gateway image already carries.
+
+**Reason:** the assistant `openclaw` provider (`assistant_openclaw_provider.py`, OPENCLAW-AGENT-TURN-LIVE-FIX) shells out to `openclaw agent --url ws://openclaw-gateway:18789 --token … --agent main` as a remote WS-RPC client, but the adapter image had no `openclaw` binary — so every Management-AI turn degraded with `OPENCLAW_BINARY_NOT_FOUND` while unit tests (which mock the CLI) and the skip-when-absent pytest live smoke stayed green. OpenClaw is not on npm, so it cannot be `npm i -g`'d like codex/claude; it must be copied from the governed image.
+
+**Lockstep requirement:** the adapter Dockerfile `FROM` tag MUST be bumped together with `integrations/openclaw/gateway/Dockerfile` and the pin in `OSS_INTEGRATION_CHECKLIST.md` / this file's §1. The Node 24 runtime is isolated under `/opt/openclaw` so it does not shadow the apt Node 20 used by the codex/claude CLIs.
+
+**Gate added:** `scripts/openclaw-assistant-openclaw-live-smoke.sh` drives a real agent turn against a deployed adapter and FAILS (non-skip) on degradation — the live evidence layer the prior change lacked. `compose` also now passes `OPENCLAW_GATEWAY_TOKEN` / `OPENCLAW_AGENT_ID` to the adapter (previously absent, a second latent degrade-cause).
+
+**Capability boundary:** unchanged. The adapter CLI is a remote client of the gateway; model auth stays on the gateway side, and all turns remain subject to OC-001 deny-first filtering.
+
+### 2026-06-19: bump v2026.6.6 → v2026.6.8 + enable OpenAI-compatible /v1/responses (streaming Management AI)
+
+**What:** governed upstream pin bumped to `openclaw/openclaw` tag `v2026.6.8` / commit `844f405ac1be805d5c598922a37254f12ab6d765`. The Pantheon-derived gateway image (`integrations/openclaw/gateway/Dockerfile`) and the adapter's `openclaw_cli` stage (`services/openclaw-gateway-adapter/Dockerfile`) both move their `FROM` to `ghcr.io/openclaw/openclaw:2026.6.8`; `docker-compose.yml` image tag → `pantheon-openclaw-gateway:2026.6.8`.
+
+**Reason:** 2026.6.6 exposes the agent ONLY via the WS `openclaw agent` protocol; the adapter shells out a fresh CLI per turn (one-shot, no token streaming, ~17-73s with no first-token feedback). **2026.6.8 ships the OpenAI-compatible HTTP endpoints — `POST /v1/responses` (OpenResponses) and `/v1/chat/completions`** — which execute as a **normal Gateway agent run (same codepath as `openclaw agent`)**, so workspace/MEMORY.md/persona/tools are preserved, AND support **SSE streaming** (`stream:true` → `text/event-stream`, OpenAI Responses events). This unblocks moving Management AI to a persistent, token-streamed, warm-session HTTP path (ChatGPT-like first-token latency) without losing the agent. Verified on a throwaway 2026.6.8 container: `/v1/responses` streams `response.created`/`response.in_progress`/`response.output_item.added` events through `model:"openclaw/main"`.
+
+**Enablement:** these endpoints are **disabled by default**; enabled via gateway config `gateway.http.endpoints.responses.enabled=true` (persisted on the `openclaw-data` volume, alongside `gateway.mode=local` + `gateway.auth.token`). Auth = the shared gateway bearer (`pantheon-local-token`) = full operator access (per upstream SECURITY.md; not a scoped surface). See the OpenResponses runbook and `pantheon-openclaw-responses-streaming`.
+
+**Config migration:** `openclaw doctor --fix` migrates the volume config across the minor bump (same as the 6.4.7→6.6 bump). `~/.codex` import remains removed.
+
+**Capability boundary:** unchanged. `/v1/responses` is an operator-auth agent-run surface; it does NOT relax OC-001 deny-first tool filtering, OC-002 job governance, or open broker/paper/canary/live/capital-binding — those stay fail-closed.
+
+## 10. Relationship to Other Governance Documents
 
 | Document | Relationship |
 |---|---|

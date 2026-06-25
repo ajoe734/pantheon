@@ -94,6 +94,29 @@ def test_bff_me_stub_returns_frontend_ready_current_user_dto(monkeypatch) -> Non
     assert data["session"]["mfa_verified"] is True
 
 
+def test_bff_me_permissive_structured_token_includes_dev_kernel_capabilities(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", "")
+    monkeypatch.setenv(
+        "PANTHEON_BFF_STUB_CAPABILITIES",
+        "assistant.kernel.debug,assistant.kernel.repair",
+    )
+
+    client = TestClient(bff_main.app)
+    response = client.get(
+        "/bff/me",
+        headers={"Authorization": "Bearer pantheon-dev-browser:admin,operator:mfa"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["session"]["mfa_verified"] is True
+    assert set(data["roles"]) == {"admin", "operator"}
+    assert "assistant.kernel.debug" in data["capabilities"]
+    assert "assistant.kernel.repair" in data["capabilities"]
+
+
 def test_session_lifecycle_routes_require_auth_by_default(monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
 
@@ -441,14 +464,14 @@ def test_bff_me_strict_auth_requires_bearer_token(monkeypatch) -> None:
     assert error["details"]["reason"]
 
 
-def test_bff_me_strict_auth_rejects_viewer_without_read_role(monkeypatch) -> None:
+def test_bff_me_strict_auth_allows_viewer_read_role(monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
     token = _jwt_token(roles=["viewer"], extra={"tenant_id": "tenant-alpha"})
 
     client = TestClient(bff_main.app)
     response = client.get("/bff/me", headers={"Authorization": f"Bearer {token}"})
 
-    assert response.status_code == 403, response.text
-    error = response.json()["error"]
-    assert error["code"] == "FORBIDDEN"
-    assert error["details"]["precondition_failed"] == "role_check"
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["roles"] == ["viewer"]
+    assert data["tenant"]["id"] == "tenant-alpha"

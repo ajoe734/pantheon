@@ -3,6 +3,7 @@ import unittest
 from services.execution.lean_runtime.executor import (
     BRACKET_ORDER_STATUS_LOGGED_ONLY,
     BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER,
+    ExecutionError,
     _build_bracket_legs,
     execute,
 )
@@ -24,9 +25,14 @@ class _SpyAlgo:
         self.limit_orders = []
         self.stop_market_orders = []
         self.bracket_logs = []
+        self.order_rejections = []
+        self.signal_noops = []
+        self.current_signal_context = {}
+        self.signal_contexts = []
 
     def MarketOrder(self, symbol, quantity):  # noqa: N802
         self.market_orders.append((symbol, quantity))
+        self.signal_contexts.append(dict(self.current_signal_context))
 
     def LimitOrder(self, symbol, quantity, limit_price):  # noqa: N802
         self.limit_orders.append((symbol, quantity, limit_price))
@@ -57,11 +63,78 @@ class _SpyAlgo:
             payload["metadata"] = metadata
         self.bracket_logs.append(payload)
 
+    def RecordOrderRejected(  # noqa: N802
+        self,
+        symbol,
+        *,
+        signal_id,
+        reject_reason,
+        requested_quantity,
+        computed_quantity,
+        quantity_type,
+        order_type,
+        broker_submission_status,
+        submitted_to_broker,
+        price=None,
+    ):
+        payload = {
+            "symbol": symbol,
+            "signal_id": signal_id,
+            "reject_reason": reject_reason,
+            "requested_quantity": requested_quantity,
+            "computed_quantity": computed_quantity,
+            "quantity_type": quantity_type,
+            "order_type": order_type,
+            "broker_submission_status": broker_submission_status,
+            "submitted_to_broker": submitted_to_broker,
+        }
+        if price is not None:
+            payload["price"] = price
+        self.order_rejections.append(payload)
+
+    def RecordSignalNoop(  # noqa: N802
+        self,
+        symbol,
+        *,
+        signal_id,
+        noop_reason,
+        requested_quantity,
+        quantity_type,
+        order_type,
+        broker_submission_status,
+        submitted_to_broker,
+        computed_quantity=None,
+        price=None,
+        metadata=None,
+    ):
+        payload = {
+            "symbol": symbol,
+            "signal_id": signal_id,
+            "noop_reason": noop_reason,
+            "requested_quantity": requested_quantity,
+            "computed_quantity": computed_quantity,
+            "quantity_type": quantity_type,
+            "order_type": order_type,
+            "broker_submission_status": broker_submission_status,
+            "submitted_to_broker": submitted_to_broker,
+        }
+        if price is not None:
+            payload["price"] = price
+        if metadata is not None:
+            payload["metadata"] = metadata
+        self.signal_noops.append(payload)
+
     def SetHoldings(self, symbol, target_percent):  # noqa: N802
         raise AssertionError("SetHoldings should not be used by this signal")
 
     def Liquidate(self, symbol):  # noqa: N802
         raise AssertionError("Liquidate should not be used by this signal")
+
+    def SetCurrentSignalContext(self, metadata):  # noqa: N802
+        self.current_signal_context = dict(metadata)
+
+    def ClearCurrentSignalContext(self):  # noqa: N802
+        self.current_signal_context = {}
 
 
 class _GuardedPaperAlgo(_SpyAlgo):
@@ -120,6 +193,250 @@ class _SimAlgo(_GuardedPaperAlgo):
 
 
 class ExecutorBracketOrderTests(unittest.TestCase):
+    def test_hold_signal_records_noop_feedback_without_order(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-hold-001",
+                "symbol": "AAPL.US",
+                "action": "HOLD",
+                "direction": "LONG",
+                "quantity": 0,
+                "quantity_type": "SHARES",
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["noop_reason"], "hold_signal")
+        self.assertEqual(noop["requested_quantity"], 0.0)
+        self.assertEqual(noop["quantity_type"], "SHARES")
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_noop")
+        self.assertFalse(noop["submitted_to_broker"])
+        self.assertEqual(noop["price"], 100.0)
+
+    def test_exit_long_without_position_records_noop_feedback(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-exit-empty-long-001",
+                "symbol": "AAPL.US",
+                "action": "EXIT",
+                "direction": "LONG",
+                "quantity": 0,
+                "quantity_type": "SHARES",
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+        self.assertEqual(len(algo.signal_noops), 1)
+        noop = algo.signal_noops[0]
+        self.assertEqual(noop["noop_reason"], "exit_long_without_position")
+        self.assertEqual(noop["requested_quantity"], 0.0)
+        self.assertEqual(noop["computed_quantity"], 0.0)
+        self.assertEqual(noop["metadata"]["position_quantity"], 0.0)
+        self.assertEqual(noop["metadata"]["exit_direction"], "LONG")
+        self.assertEqual(noop["broker_submission_status"], "not_submitted_signal_noop")
+        self.assertFalse(noop["submitted_to_broker"])
+
+    def test_exit_short_covers_exact_fractional_holding_without_flipping_long(self):
+        algo = _GuardedPaperAlgo()
+        algo.Portfolio["AAPL"].Quantity = -2.5
+
+        execute(
+            {
+                "signal_id": "sig-exit-fractional-short-001",
+                "symbol": "AAPL.US",
+                "action": "EXIT",
+                "direction": "SHORT",
+                "quantity": 0,
+                "quantity_type": "SHARES",
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [("AAPL", 2.5)])
+        self.assertEqual(algo.Portfolio["AAPL"].Quantity, 0.0)
+
+    def test_zero_share_quantity_records_order_rejection(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-zero-shares",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 0.1,
+                "quantity_type": "SHARES",
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+        self.assertEqual(len(algo.order_rejections), 1)
+        rejection = algo.order_rejections[0]
+        self.assertEqual(rejection["reject_reason"], "shares_quantity_rounded_to_zero")
+        self.assertEqual(rejection["requested_quantity"], 0.1)
+        self.assertEqual(rejection["computed_quantity"], 0.0)
+        self.assertEqual(rejection["broker_submission_status"], "rejected_before_broker")
+        self.assertFalse(rejection["submitted_to_broker"])
+
+    def test_default_market_order_type_is_present_in_signal_context(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-default-market-context",
+                "symbol": "AAPL.US",
+                "action": "SELL",
+                "direction": "SHORT",
+                "quantity": 2,
+                "quantity_type": "SHARES",
+                "metadata": {"alpha_source": "pure_quant_default_market"},
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [("AAPL", -2)])
+        self.assertEqual(algo.signal_contexts[0]["order_type"], "MARKET")
+        self.assertEqual(algo.signal_contexts[0]["requested_quantity"], 2.0)
+        self.assertEqual(algo.signal_contexts[0]["alpha_source"], "pure_quant_default_market")
+
+    def test_zero_cash_value_quantity_records_order_rejection(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-zero-cash",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 10.0,
+                "quantity_type": "CASH_VALUE",
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(len(algo.order_rejections), 1)
+        rejection = algo.order_rejections[0]
+        self.assertEqual(rejection["reject_reason"], "cash_value_resolved_to_zero_shares")
+        self.assertEqual(rejection["requested_quantity"], 10.0)
+        self.assertEqual(rejection["computed_quantity"], 0.0)
+        self.assertEqual(rejection["price"], 100.0)
+
+    def test_limit_order_without_limit_price_raises_before_market_order(self):
+        algo = _SpyAlgo()
+
+        with self.assertRaisesRegex(ExecutionError, "limit_price is required"):
+            execute(
+                {
+                    "signal_id": "sig-limit-missing-price",
+                    "symbol": "AAPL.US",
+                    "action": "BUY",
+                    "direction": "LONG",
+                    "quantity": 10,
+                    "quantity_type": "SHARES",
+                    "order_type": "LIMIT",
+                },
+                algo,
+            )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+
+    def test_cash_value_limit_order_uses_limit_order_and_limit_price_for_sizing(self):
+        algo = _SpyAlgo()
+
+        execute(
+            {
+                "signal_id": "sig-cash-limit",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 990.0,
+                "quantity_type": "CASH_VALUE",
+                "order_type": "LIMIT",
+                "limit_price": 99.0,
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [("AAPL", 10, 99.0)])
+
+    def test_sell_long_limit_close_uses_limit_order_instead_of_liquidate(self):
+        algo = _SpyAlgo()
+        algo.Portfolio["AAPL"].Quantity = 10
+
+        execute(
+            {
+                "signal_id": "sig-sell-long-limit-close",
+                "symbol": "AAPL.US",
+                "action": "SELL",
+                "direction": "LONG",
+                "quantity": 6,
+                "quantity_type": "SHARES",
+                "order_type": "LIMIT",
+                "limit_price": 105.0,
+            },
+            algo,
+        )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [("AAPL", -6.0, 105.0)])
+
+    def test_sell_long_limit_close_without_limit_price_raises_before_liquidate(self):
+        algo = _SpyAlgo()
+        algo.Portfolio["AAPL"].Quantity = 10
+
+        with self.assertRaisesRegex(ExecutionError, "LIMIT close failed: limit_price is required"):
+            execute(
+                {
+                    "signal_id": "sig-sell-long-limit-missing-price",
+                    "symbol": "AAPL.US",
+                    "action": "SELL",
+                    "direction": "LONG",
+                    "quantity": 6,
+                    "quantity_type": "SHARES",
+                    "order_type": "LIMIT",
+                },
+                algo,
+            )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+
+    def test_percent_portfolio_limit_order_raises_before_setholdings(self):
+        algo = _SpyAlgo()
+
+        with self.assertRaisesRegex(ExecutionError, "PERCENT_PORTFOLIO quantity_type"):
+            execute(
+                {
+                    "signal_id": "sig-percent-limit",
+                    "symbol": "AAPL.US",
+                    "action": "BUY",
+                    "direction": "LONG",
+                    "quantity": 0.25,
+                    "quantity_type": "PERCENT_PORTFOLIO",
+                    "order_type": "LIMIT",
+                    "limit_price": 99.0,
+                },
+                algo,
+            )
+
+        self.assertEqual(algo.market_orders, [])
+        self.assertEqual(algo.limit_orders, [])
+
     def test_bracket_order_is_logged_only_not_broker_submitted(self):
         algo = _SpyAlgo()
 

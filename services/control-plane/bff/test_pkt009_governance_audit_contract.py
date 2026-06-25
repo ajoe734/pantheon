@@ -98,7 +98,7 @@ def test_pkt009_governance_audit_keeps_entries_when_read_surface_is_degraded() -
             )
             assert response.status_code == 200, response.text
             payload = response.json()
-            assert len(payload["entries"]) >= 5
+            assert len(payload["entries"]) == 5
             assert payload["meta"]["surfaces"]["audit_trail"]["status"] == "degraded"
         finally:
             bff_main.read_store = original_store

@@ -47,6 +47,8 @@ STAGING_EXEC_VM="${STAGING_EXEC_VM:-pantheon-lupin-staging-exec}"
 STAGING_EXEC_ZONE="${STAGING_EXEC_ZONE:-asia-east1-b}"
 STAGING_EXEC_REMOTE_DIR="${STAGING_EXEC_REMOTE_DIR:-/home/lupin/code/pantheon}"
 STAGING_EXEC_HEALTH_URL="${STAGING_EXEC_HEALTH_URL:-http://10.50.0.21:28081}"
+STAGING_BFF_CANONICAL_CORS_ORIGIN="${STAGING_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-staging-fe.104.155.223.192.sslip.io}"
+STAGING_BFF_CORS_ORIGINS="${STAGING_BFF_CORS_ORIGINS:-${STAGING_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-staging-live.lovable.app}"
 
 DEPLOY_ENV=""
 COMPONENT="auto"
@@ -62,8 +64,10 @@ Usage:
 
 Options:
   --environment <name>   Required. dev or staging-live.
-  --component <name>     auto, root, control, exec, or all. Default: auto.
+  --component <name>     auto, root, bff, control, exec, or all. Default: auto.
                          auto maps to root for dev and all for staging-live.
+                         bff (dev only): rebuild only operator-bff; paper fleet
+                         and all other services are left running untouched.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
   --project-id <id>      GCP project. Default: pantheon-benjamin-20260528.
   --allow-dirty          Emergency only: stash dirty managed deploy worktree
@@ -94,6 +98,7 @@ Environment overrides:
   STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR
   STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR
   STAGING_EXEC_HEALTH_URL
+  STAGING_BFF_CANONICAL_CORS_ORIGIN STAGING_BFF_CORS_ORIGINS
 EOF
 }
 
@@ -170,6 +175,7 @@ configure_management_ai_dev_kernel_env() {
 
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_CANONICAL_CORS_ORIGIN")"
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_REQUIRED_CORS_ORIGINS")"
+STAGING_BFF_CORS_ORIGINS="$(append_csv_unique "$STAGING_BFF_CORS_ORIGINS" "$STAGING_BFF_CANONICAL_CORS_ORIGIN")"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -218,7 +224,10 @@ done
 case "$DEPLOY_ENV" in
   dev)
     [[ "$COMPONENT" == "auto" ]] && COMPONENT="root"
-    [[ "$COMPONENT" == "root" ]] || error "dev supports only --component root"
+    case "$COMPONENT" in
+      root|bff) ;;
+      *) error "dev supports only --component root or --component bff" ;;
+    esac
     ;;
   staging-live)
     [[ "$COMPONENT" == "auto" ]] && COMPONENT="all"
@@ -263,6 +272,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "management_ai_attach_bucket=${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
   info "management_ai_attach_location=${DEV_MANAGEMENT_AI_ATTACH_LOCATION}"
   info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL}"
+  info "staging_bff_cors_origins=${STAGING_BFF_CORS_ORIGINS}"
   exit 0
 fi
 
@@ -329,6 +339,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_NAME=$(shell_quote "${DEV_MANAGEMENT_AI_DB_NAME:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_APP_DB_USER=$(shell_quote "${DEV_APP_DB_USER:-pantheon_app}")"
   command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "$STAGING_EXEC_HEALTH_URL")"
+  command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "$STAGING_BFF_CORS_ORIGINS")"
   command_prefix+=" bash -s"
 
   info "ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA}"
@@ -382,6 +393,7 @@ snapshot_remote_state() {
 preserve_known_deploy_runtime_state() {
   local known_paths=(
     ".orchestrator/metrics"
+    ".orchestrator/task-briefs"
     ".orchestrator/watchdog-state.json"
   )
   local present_paths=()
@@ -390,9 +402,19 @@ preserve_known_deploy_runtime_state() {
   local stash_label
 
   for path in "${known_paths[@]}"; do
-    if [[ -e "$path" ]]; then
-      present_paths+=("$path")
+    if [[ ! -e "$path" ]]; then
+      continue
     fi
+    # Skip gitignored runtime paths (e.g. .orchestrator/metrics,
+    # .orchestrator/watchdog-state.json). `git checkout` never touches ignored
+    # files, so they survive the detach untouched and do not need stashing; and
+    # `git stash push -- <ignored-pathspec>` hard-errors ("paths are ignored by
+    # .gitignore"), which under `set -e` aborts the whole deploy. Only tracked
+    # paths can be clobbered by checkout, so only those need preserving.
+    if git check-ignore -q -- "$path"; then
+      continue
+    fi
+    present_paths+=("$path")
   done
 
   if [[ "${#present_paths[@]}" -eq 0 ]]; then
@@ -831,6 +853,42 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 
+  bff)
+    # Rebuild and restart only operator-bff.  All other compose services —
+    # including the paper fleet and runtime-manager — are left running.
+    # Use this component when deploying a BFF-only fix to avoid the OOM
+    # pressure that a full root-stack rebuild causes on the dev VM.
+    snapshot_remote_state pantheon docker-compose.yml
+    prepare_deploy_worktree
+    COMPOSE_BAKE=false \
+    COMPOSE_PROFILES="" \
+    PANTHEON_ENV=dev \
+    PANTHEON_LIVE_BROKER_ENABLED=false \
+    PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
+    PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
+    PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
+    PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
+    PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \
+    PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \
+    PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
+    PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \
+    PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
+    PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
+    PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
+    MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
+    MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
+    MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
+    PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
+    PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
+      docker compose -p pantheon -f docker-compose.yml up -d --build --no-deps operator-bff \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    curl_with_retry http://127.0.0.1:18001/health \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    curl_with_retry http://127.0.0.1:18001/readyz \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    ;;
+
   exec)
     snapshot_remote_state pantheon-exec docker-compose.exec.yml
     prepare_deploy_worktree
@@ -853,6 +911,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_BAKE=false \
     PANTHEON_ENV=staging-live \
     PANTHEON_LIVE_BROKER_ENABLED=true \
+    PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_STAGING_BFF_CORS_ORIGINS}" \
       docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml up -d --build
     curl_with_retry http://127.0.0.1:38001/health
     curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"
@@ -871,6 +930,10 @@ deploy_dev_root() {
   ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" root
 }
 
+deploy_dev_bff() {
+  ssh_bash "$DEV_VM" "$DEV_ZONE" "$DEV_REMOTE_DIR" bff
+}
+
 deploy_staging_exec() {
   ssh_bash "$STAGING_EXEC_VM" "$STAGING_EXEC_ZONE" "$STAGING_EXEC_REMOTE_DIR" exec
 }
@@ -882,6 +945,9 @@ deploy_staging_control() {
 case "${DEPLOY_ENV}:${COMPONENT}" in
   dev:root)
     deploy_dev_root
+    ;;
+  dev:bff)
+    deploy_dev_bff
     ;;
   staging-live:exec)
     deploy_staging_exec

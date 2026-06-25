@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-06-21T19:55:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare AG-BE-TR-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-TR-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: sidecar BFF handoff followup packet merged in PR #2134 (main artifact) and PR #2137 (closeout brief). Task brief updated to review_approved. Handoff packet ready for parent owner Claude2 to absorb at discretion.",
+    "last_update": "2026-06-21T19:55:01Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-TR-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Followup BFF/frontend handoff packet approved: scope limited to support artifact only (no canonical truth, schemas, OpenAPI, BFF runtime, or frontend files changed). Factual alignment confirmed: AG-BE-TR-001 todo/Claude2/Codex; AG-BE-CP-001 blocked/Codex; AG-XR-OPENAPI-004 archived; router.py placeholder; tradingRoom.ts absent. Phase 1/Phase 2 sequence correct. All 3 v4 JSON schemas valid. SSE event catalogue and degraded-response patterns grounded in BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md. Safety wording constraints well-specified. Implementation note for parent owner: TradingDecisionEvent TS interface is missing spec_version (required in v4 schema); top_decision_events and position_summaries from v4 aggregate schema not reflected in TradingRoomAggregate TS type (Q2 surfaces this). degradation_notes field in TS type is guidance-level extension not yet in v4 schema. These are implementation details for parent owner to resolve during AG-BE-TR-001 execution."
+    ],
+    "review_file": "support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T19:55:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-tr-001-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "a1c02a22174c810c6a3a6b6865736e0e131d9b13",
+      "commit_subject": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2: closeout brief",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": ".orchestrator/task-briefs/ag_be_tr_001_sidecar_bff_handoff_followup_2.md",
+        "Not changing": "canonical docs, BFF runtime, schemas, frontend source",
+        "Composes with": "AG-BE-TR-001 (parent owner Claude2 absorbs at discretion)",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+        "Reviewer": "Claude2",
+        "Verified": "git status --short; sidecar artifact confirmed merged in PR #2134; task status review_approved confirmed via ai_status.py show"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b4123caba6ca98f998f6df06e9671b68789189a2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Followup BFF/frontend handoff packet complete. Artifact at support/sidecars/AG-BE-TR-001/AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md (commit 16257ae0, PR #2134 open with auto-merge). Builds on done sidecar AG-BE-TR-001-SIDECAR-BFF-HANDOFF (PR #2128). Adds: phased implementation sequence (Phase 1 independent vs Phase 2 candidate-gated routes), backend module structure and no-order-route enforcement, D9 position event field supplement, Trading Room SSE event catalogue and reconnect contract, BFF degraded-response patterns per BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md, TypeScript types for tradingRoom.ts, safety wording constraints, and 5 pending questions for parent owner Claude2. No canonical truth modified. Please review and approve or reopen with required changes.",
+      "status": "done",
+      "created_at": "2026-06-21T19:32:30Z",
+      "resolved_at": "2026-06-21T19:51:14Z"
+    },
+    {
+      "task_id": "AG-BE-TR-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only AG-BE-TR-001 BFF/frontend handoff followup approved. Parent owner Claude2 to absorb at discretion; implementation notes on spec_version and top_decision_events gaps recorded in review notes.",
+      "status": "done",
+      "created_at": "2026-06-21T19:51:14Z",
+      "resolved_at": "2026-06-21T19:55:02Z"
+    }
+  ],
+  "blockers": []
+}

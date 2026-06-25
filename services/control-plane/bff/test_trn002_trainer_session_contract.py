@@ -90,7 +90,7 @@ def test_trn002_create_session_missing_persona_id_returns_422() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 422, resp.text
-        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "persona_id"
+        assert resp.json()["error"]["details"]["precondition_failed"] == "persona_id"
 
 
 def test_trn002_create_session_missing_objective_returns_422() -> None:
@@ -104,7 +104,7 @@ def test_trn002_create_session_missing_objective_returns_422() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 422, resp.text
-        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "objective"
+        assert resp.json()["error"]["details"]["precondition_failed"] == "objective"
 
 
 def test_trn002_create_session_wrong_session_type_returns_422() -> None:
@@ -119,7 +119,7 @@ def test_trn002_create_session_wrong_session_type_returns_422() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 422, resp.text
-        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "session_type"
+        assert resp.json()["error"]["details"]["precondition_failed"] == "session_type"
 
 
 def test_trn002_create_session_unknown_persona_returns_404() -> None:
@@ -179,6 +179,21 @@ def test_trn002_list_sessions_unknown_persona_returns_404() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 404, resp.text
+
+
+def test_trn002_list_sessions_unauthenticated_returns_401() -> None:
+    # Fail-closed ordering regression: an unauthenticated caller must get 401 even
+    # when the required persona_id query param is absent (previously 422-before-401).
+    with _client() as c:
+        resp = c.get("/api/v1/trainer/sessions")
+        assert resp.status_code == 401, resp.text
+
+
+def test_trn002_list_sessions_missing_persona_id_returns_422_when_authed() -> None:
+    with _client() as c:
+        resp = c.get("/api/v1/trainer/sessions", headers=HEADERS)
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["error"]["details"]["precondition_failed"] == "persona_id"
 
 
 # ------------------------------------------------------------------ #
@@ -243,7 +258,7 @@ def test_trn002_send_message_missing_message_body_returns_422() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 422, resp.text
-        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "message_body"
+        assert resp.json()["error"]["details"]["precondition_failed"] == "message_body"
 
 
 def test_trn002_send_message_to_completed_session_returns_409() -> None:
@@ -254,7 +269,7 @@ def test_trn002_send_message_to_completed_session_returns_409() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 409, resp.text
-        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "status"
+        assert resp.json()["error"]["details"]["precondition_failed"] == "status"
 
 
 def test_trn002_send_message_to_unknown_session_returns_404() -> None:
@@ -317,7 +332,7 @@ def test_trn002_patch_controls_completed_session_returns_409() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 409, resp.text
-        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "status"
+        assert resp.json()["error"]["details"]["precondition_failed"] == "status"
 
 
 def test_trn002_patch_controls_missing_patches_returns_422() -> None:
@@ -328,7 +343,7 @@ def test_trn002_patch_controls_missing_patches_returns_422() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 422, resp.text
-        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "patches"
+        assert resp.json()["error"]["details"]["precondition_failed"] == "patches"
 
 
 # ------------------------------------------------------------------ #
@@ -397,7 +412,7 @@ def test_trn002_refresh_preview_completed_session_returns_409() -> None:
             headers=HEADERS,
         )
         assert resp.status_code == 409, resp.text
-        assert resp.json()["detail"]["error"]["details"]["precondition_failed"] == "status"
+        assert resp.json()["error"]["details"]["precondition_failed"] == "status"
 
 
 def test_trn002_refresh_preview_unknown_session_returns_404() -> None:

@@ -31,6 +31,7 @@ def _load(modname: str, path: Path):
 
 
 check_trailers = _load("check_commit_trailers", HERE / "check_commit_trailers.py")
+resolve_range = _load("resolve_commit_trailer_range", HERE / "resolve_commit_trailer_range.py")
 publish_promote = _load("publish_promote", HERE / "publish_promote.py")
 notify_orchestrator = _load("notify_orchestrator", HERE / "notify_orchestrator.py")
 
@@ -90,6 +91,86 @@ class CheckCommitTrailersTests(unittest.TestCase):
         msg = long_subject + "\n\nLLM-Agent: A\nTask-ID: EP5-FOO-004\nReviewer: B\nWave: 2026-W21\n"
         problems = check_trailers.check_message(msg, self.REQ, True)
         self.assertTrue(any("exceeds 72 chars" in p for p in problems))
+
+
+class ResolveCommitTrailerRangeTests(unittest.TestCase):
+    def test_uses_explicit_base_when_it_is_available_and_ancestor(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="base",
+            head_sha="head",
+            ref_name="task/example",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"base", "head"},
+            is_ancestor=lambda base, head: (base, head) == ("base", "head"),
+            merge_base=lambda ref, head: None,
+        )
+        self.assertEqual(rev_range, "base..head")
+
+    def test_falls_back_to_origin_dev_when_force_push_before_sha_is_missing(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="old-before",
+            head_sha="head",
+            ref_name="task/example",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"head", "origin/dev", "dev-base"},
+            is_ancestor=lambda base, head: False,
+            merge_base=lambda ref, head: "dev-base" if ref == "origin/dev" else None,
+        )
+        self.assertEqual(rev_range, "dev-base..head")
+
+    def test_ignores_available_before_sha_when_it_is_not_an_ancestor(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="rewritten-before",
+            head_sha="head",
+            ref_name="task/example",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"rewritten-before", "head", "origin/dev", "dev-base"},
+            is_ancestor=lambda base, head: False,
+            merge_base=lambda ref, head: "dev-base" if ref == "origin/dev" else None,
+        )
+        self.assertEqual(rev_range, "dev-base..head")
+
+    def test_pull_request_uses_base_ref_merge_base_when_base_sha_is_unavailable(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="pull_request",
+            base_sha="missing-base",
+            head_sha="head",
+            ref_name="123/merge",
+            pr_base_ref="dev",
+            commit_exists=lambda rev: rev in {"head", "origin/dev", "dev-base"},
+            is_ancestor=lambda base, head: False,
+            merge_base=lambda ref, head: "dev-base" if ref == "origin/dev" else None,
+        )
+        self.assertEqual(rev_range, "dev-base..head")
+
+    def test_dev_push_without_usable_base_checks_head_parent(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha=resolve_range.ZERO_SHA,
+            head_sha="head",
+            ref_name="dev",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"head", "head^"},
+            is_ancestor=lambda base, head: False,
+            merge_base=lambda ref, head: None,
+        )
+        self.assertEqual(rev_range, "head^..head")
+
+    def test_root_commit_without_usable_base_checks_head_revision(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha=resolve_range.ZERO_SHA,
+            head_sha="head",
+            ref_name="dev",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev == "head",
+            is_ancestor=lambda base, head: False,
+            merge_base=lambda ref, head: None,
+        )
+        self.assertEqual(rev_range, "head")
 
 
 class PublishPromoteTests(unittest.TestCase):

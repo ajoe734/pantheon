@@ -30,9 +30,9 @@ The adapter must not:
 
 The adapter may assume only these locked upstream inputs from `BP5-OSS-001`:
 
-- Git tag `v2026.4.7`
-- Commit `5050017543011b61df67744ebc6368d889c25a95`
-- Container image `ghcr.io/openclaw/openclaw:2026.4.7`
+- Git tag `v2026.6.8`
+- Commit `8c802aa683510c7f7503597b54c3021733245e59`
+- Container image `ghcr.io/openclaw/openclaw:2026.6.8`
 - Verified command surface:
   - `openclaw --help`
   - `openclaw gateway --help`

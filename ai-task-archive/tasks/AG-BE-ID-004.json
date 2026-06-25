@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-ID-004",
+  "archived_at": "2026-06-20T18:16:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-ID-004",
+    "title": "ContextBundle redaction and central persona boundary",
+    "summary_zh": "依 SD §5.6/§21.3 實作中央 Persona consult 的 ContextBundle:只帶 strategy_spec_draft_ref/question/symbols/evidence_refs/data_cutoff/required_output_schema,raw_prompt_included=false、user_identity_included=false(除非該次 consult 使用者明確授權)。中央人格永遠拿不到原始私人對話與身份。違反時回 RAW_PRIVATE_CONTENT_FORBIDDEN。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "depends_on": [
+      "AG-BE-ID-002"
+    ],
+    "acceptance": [
+      "ContextBundle 預設不含 raw prompt 與身份;測試斷言中央 consult 拿不到私人原文;授權旗標需明確開啟才帶文;redaction 失敗 fail-closed;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過"
+    ],
+    "artifacts": [
+      "integrations/openclaw/adapter/agora_context_bundle.py",
+      "services/control-plane/bff/agora/management_projection.py"
+    ],
+    "auto_created_by": "dispatch_agora_cross_repo_2026-06-20",
+    "status": "done",
+    "last_update": "2026-06-20T18:16:44Z",
+    "next": "Closeout: 21/21 tests pass, ContextBundle privacy boundary enforced (Literal[False] manifest flags, 11-field forbidden blocklist), PR #1868 merged into dev. All CI checks green.",
+    "review_notes_zh": [
+      "審查通過",
+      "raw_prompt_included/user_identity_included 永遠為 False（Literal[False]Pydantic強制）",
+      "11 個禁用欄位全部覆蓋，多違規一次性回報",
+      "manifest fields_shared 精確反映實際提供欄位",
+      "AgoraErrorCode.RAW_PRIVATE_CONTENT_FORBIDDEN 已加入 models.py",
+      "21 個 pytest 全過（3.44s）",
+      "HTTP endpoint 以請求模型充當 allowlist，HTTP 層已不可能傳入禁用欄位"
+    ],
+    "review_file": "docs/04/reviews/ag_be_id_004_review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-20T18:16:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-id-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-ID-004",
+      "git_clean_required": false,
+      "commit": "52bc1ecda50268550c2f4bbb44ec3633dbd59074",
+      "commit_subject": "Merge origin/dev into task/AG-BE-ID-004 (closeout sync)",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-ID-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ddfcfae210a3133aae0c315f969727baa34da7ff",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-ID-004",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-20T17:05:15Z",
+      "resolved_at": "2026-06-20T17:05:31Z"
+    },
+    {
+      "task_id": "AG-BE-ID-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Chair reassigned owner from Codex2 to Claude: Codex2 lane is paused due to quota exhaustion and cannot be re-dispatched. AG-BE-ID-004 is blocked on stale SD section references (§5.6/§21.3 not present in SD_2026-06-20.md); design-closure C1/expert-consult already documents the ContextBundle privacy rule and is sufficient authority for implementation. Claude is healthy, active, and listed as a rescue candidate target. Supervisor should return task to todo for fresh Claude dispatch. Task returned to todo for a blocked-owner rescue dispatch.",
+      "status": "done",
+      "created_at": "2026-06-20T17:46:18Z",
+      "resolved_at": "2026-06-20T17:46:29Z"
+    },
+    {
+      "task_id": "AG-BE-ID-004",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Implementation complete. PR #1868 open with auto-merge. Deliverables: (1) integrations/openclaw/adapter/agora_context_bundle.py — AgoraContextBundle model + build_context_bundle() enforcing privacy boundary via forbidden-field blocklist; ContextBundlePrivacyError(code=RAW_PRIVATE_CONTENT_FORBIDDEN). (2) services/control-plane/bff/agora/management_projection/router.py — POST /bff/agora/management/consult-bundle endpoint. (3) AgoraErrorCode.RAW_PRIVATE_CONTENT_FORBIDDEN added to models.py. (4) 21 pytest cases all passing (2.68s). Please review privacy boundary enforcement: raw_prompt_included/user_identity_included always False, forbidden-field rejection, and manifest completeness.",
+      "status": "done",
+      "created_at": "2026-06-20T17:54:10Z",
+      "resolved_at": "2026-06-20T17:57:17Z"
+    },
+    {
+      "task_id": "AG-BE-ID-004",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved — privacy boundary enforced: Literal[False] manifest flags, 11-field forbidden blocklist, manifest completeness, 21/21 tests passing. Returned to Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-06-20T17:57:17Z",
+      "resolved_at": "2026-06-20T18:16:46Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "AG-BE-ID-004",
+      "owner": "Codex2",
+      "waiting_for": "Claude2",
+      "message": "Blocked before implementation: task brief requires reading SD §5.6/§21.3, but docs/04/pantheon_agora_cross_repo_2026-06-20/SD_2026-06-20.md has no §5.6 or §21.3 and repo-wide docs search found no §21.3; only design-closure C1/expert-consult covers the ContextBundle privacy rule. Need reviewer/design clarification for the authoritative SD section before changing code.",
+      "status": "resolved",
+      "created_at": "2026-06-20T17:07:15Z",
+      "resolved_at": "2026-06-20T17:46:18Z",
+      "resolution_ref": "chair_reassignment:AG-BE-ID-004"
+    }
+  ]
+}

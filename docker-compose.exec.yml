@@ -125,6 +125,7 @@ services:
     build:
       context: .
       dockerfile: services/execution/lean_runtime/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: "8010"
       PANTHEON_RUNTIME_ROLE: pantheon-paper-execution-runtime

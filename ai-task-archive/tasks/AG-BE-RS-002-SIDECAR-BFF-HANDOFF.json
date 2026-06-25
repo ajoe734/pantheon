@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "AG-BE-RS-002-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-21T14:50:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-BE-RS-002-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-BE-RS-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-BE-RS-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-RS / Phase 3",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-BE-RS-002/AG-BE-RS-002-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized approved task: support-only BFF/frontend handoff packet committed (PR #2090 merged into dev 2026-06-21T14:49:45Z). Artifact at support/sidecars/AG-BE-RS-002/AG-BE-RS-002-SIDECAR-BFF-HANDOFF.md is ready for parent owner (Codex) absorption into AG-BE-RS-002.",
+    "last_update": "2026-06-21T14:50:32Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-BE-RS-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only BFF/frontend handoff packet approved: it records the ResearchRunProjection run/progress/result/artifact/SSE gap surfaces, operator journeys, frontend client/card boundaries, no-order-route guardrails, and AG-BE-RS-002 versus AG-BE-RS-001 ownership boundary without modifying canonical truth or runtime files."
+    ],
+    "review_file": "support/sidecars/AG-BE-RS-002/AG-BE-RS-002-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-21T14:50:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-be-rs-002-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-BE-RS-002-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "2dea87011aa5bfefc35e1e824cbb97197f2344c5",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-BE-RS-002-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-BE-RS-002-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "dd812370282b6096205718e58fb8f40781841d07",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-BE-RS-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "BFF handoff packet ready for review: support/sidecars/AG-BE-RS-002/AG-BE-RS-002-SIDECAR-BFF-HANDOFF.md. Covers run/progress/result projection routes, operator journeys A-F, frontend client methods, backend acceptance checks, open design note on SSE event shape gap. PR #2090 open with auto-merge.",
+      "status": "done",
+      "created_at": "2026-06-21T14:37:23Z",
+      "resolved_at": "2026-06-21T14:39:34Z"
+    },
+    {
+      "task_id": "AG-BE-RS-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only AG-BE-RS-002 BFF/frontend handoff packet approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-21T14:39:34Z",
+      "resolved_at": "2026-06-21T14:50:35Z"
+    }
+  ],
+  "blockers": []
+}

@@ -728,6 +728,22 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
         return {"kind": "quota", "summary": "Rate limit reached", "detail": raw[: max(420, limit)]}
     if "rate limit" in lowered or "rate limited" in lowered or "capacity" in lowered or "quota exceeded" in lowered:
         return {"kind": "capacity", "summary": "Capacity / rate limit failure", "detail": raw[: max(420, limit)]}
+    # Codex (OpenAI CLI) revoked/expired-token failures. Anchor on Codex's real
+    # error strings rather than a bare "401" so chair narratives that merely
+    # mention a 401 are not misclassified as auth.
+    codex_auth_markers = (
+        "refresh_token_invalidated",
+        "token_invalidated",
+        "refresh token was revoked",
+        "access token could not be refreshed",
+        "failed to refresh token: 401",
+        "your session has ended. please log in again",
+        "authentication token has been invalidated",
+    )
+    if any(marker in lowered for marker in codex_auth_markers):
+        return {"kind": "auth", "summary": "Authentication failure", "detail": raw[: max(420, limit)]}
+    if "responses_websocket" in lowered and "http error: 401" in lowered:
+        return {"kind": "auth", "summary": "Authentication failure", "detail": raw[: max(420, limit)]}
     if "unauthorized" in lowered or "authentication" in lowered or "invalid api key" in lowered:
         return {"kind": "auth", "summary": "Authentication failure", "detail": raw[: max(420, limit)]}
     if "an unexpected critical error occurred" in lowered:

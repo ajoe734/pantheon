@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.local/schemas/agora/candidate_score_result.v1.json",
+  "title": "CandidateScoreResult",
+  "description": "BFF projection of a scored candidate produced by the active CandidateScoringRecipe. All four score fields (rawScore, penaltyScore, evidenceConfidence, effectiveScore) must be surfaced together; never show only the final effective score.",
+  "type": "object",
+  "required": [
+    "candidate_id",
+    "pool_id",
+    "recipe_id",
+    "recipe_version",
+    "raw_score",
+    "penalty_score",
+    "evidence_confidence",
+    "effective_score",
+    "band",
+    "components",
+    "blockers",
+    "data_cutoff",
+    "scored_at"
+  ],
+  "properties": {
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Registry artifact ID of the candidate."
+    },
+    "pool_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pool snapshot this score belongs to."
+    },
+    "recipe_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ID of the CandidateScoringRecipe used."
+    },
+    "recipe_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic version of the recipe."
+    },
+    "raw_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "base_score − penalty_score, clamped [0,100]."
+    },
+    "penalty_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Sum of penalty component contributions."
+    },
+    "evidence_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Aggregate evidence confidence [0,1]."
+    },
+    "effective_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "raw_score × confidence_multiplier. Never suppress or substitute with another number."
+    },
+    "rank": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Rank within this pool snapshot; null when suppressed or not yet ranked."
+    },
+    "band": {
+      "type": "string",
+      "enum": ["priority_review", "discuss", "needs_research", "park", "suppressed"],
+      "description": "Score band derived from effective_score against recipe score_bands."
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/score_component" },
+      "description": "Per-component breakdown. All recipe components must appear."
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Human-readable blocker reasons (critical gate failures, missing data, suppression).",
+      "default": []
+    },
+    "data_cutoff": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Data cutoff timestamp used for normalization; same for all candidates in the pool."
+    },
+    "scored_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "override_reason": {
+      "type": ["string", "null"],
+      "description": "Non-null when a trader or governance override modified the effective rank or band."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "score_component": {
+      "type": "object",
+      "required": [
+        "component_id",
+        "label",
+        "category",
+        "direction",
+        "weight",
+        "contribution",
+        "transform",
+        "missing_policy",
+        "evidence_refs"
+      ],
+      "properties": {
+        "component_id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "category": {
+          "type": "string",
+          "enum": ["alpha", "confidence", "liquidity", "risk", "execution", "data_quality", "custom"]
+        },
+        "raw_value": {
+          "type": ["number", "null"],
+          "description": "Raw metric value before transformation; null when missing."
+        },
+        "normalized_value": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Post-transform value in [0,1]; null when missing_policy triggered."
+        },
+        "transform": {
+          "type": "string",
+          "enum": [
+            "min_max", "robust_zscore", "percentile_rank",
+            "binary", "logistic", "piecewise_linear", "inverse_percentile"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["higher_better", "lower_better"]
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.5
+        },
+        "contribution": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "weight × normalized_value × 100; 0 when normalized_value is null."
+        },
+        "missing_policy": {
+          "type": "string",
+          "enum": [
+            "reject_candidate", "score_zero", "impute_median",
+            "mark_needs_research", "cap_final_score", "not_applicable"
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Evidence or artifact IDs supporting this component's value.",
+          "default": []
+        },
+        "explanation": {
+          "type": "string",
+          "description": "Human-readable explanation of what drove this component's value."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
