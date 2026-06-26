@@ -217,6 +217,15 @@ def preflight_item(root: Path) -> dict[str, str]:
     return status_item("pass", "Strict preflight is not blocking live probes", evidence=rel(file_path, root))
 
 
+def allowed_current_run_artifact_path(path: Path, root: Path) -> bool:
+    parts = path.relative_to(root).parts
+    if len(parts) == 1:
+        return True
+    if parts[0] == "bff-live-evidence-current-run":
+        return True
+    return len(parts) >= 4 and parts[:3] == (".lovable", "audits", "current-run")
+
+
 def artifact_scope_item(root: Path, summary: Any) -> dict[str, str]:
     files = list_files(root)
     forbidden = [
@@ -224,14 +233,21 @@ def artifact_scope_item(root: Path, summary: Any) -> dict[str, str]:
         for path in files
         if any(part.lower() in FORBIDDEN_AUDIT_DIR_NAMES for part in path.relative_to(root).parts[:-1])
     ]
+    out_of_scope = [
+        rel(path, root)
+        for path in files
+        if not allowed_current_run_artifact_path(path, root)
+    ]
     summary_status, summary_note = summary_check_status(summary, "current_run_only")
     if forbidden:
         return status_item("fail", CHECK_LABELS["current_run_only"], note="forbidden audit paths: " + ",".join(forbidden[:5]))
+    if out_of_scope:
+        return status_item("fail", CHECK_LABELS["current_run_only"], note="outside current-run scope: " + ",".join(out_of_scope[:5]))
     if summary_status == "pass":
         return status_item("pass", CHECK_LABELS["current_run_only"], note=summary_note)
     if isinstance(summary, dict):
         return status_item(summary_status, CHECK_LABELS["current_run_only"], note=summary_note)
-    return status_item("pass", CHECK_LABELS["current_run_only"], note=f"{len(files)} artifact file(s); no historical/archive paths")
+    return status_item("pass", CHECK_LABELS["current_run_only"], note=f"{len(files)} artifact file(s); current-run scope only")
 
 
 def secret_leak_item(root: Path) -> dict[str, str]:
