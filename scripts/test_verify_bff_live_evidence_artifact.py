@@ -774,6 +774,32 @@ def test_verifier_accepts_redacted_sensitive_json_keys(tmp_path: Path) -> None:
     assert payload["criteria"]["raw_secret_scan"]["status"] == "pass"
 
 
+def test_verifier_accepts_downloaded_current_run_bundle_root(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "downloaded"
+    write_passing_artifact(artifact_root / "bff-live-evidence-current-run")
+
+    result = run_verifier(artifact_root)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["overall"] == "pass"
+    assert payload["criteria"]["current_run_only"]["status"] == "pass"
+
+
+def test_verifier_rejects_non_current_run_sibling_paths_even_without_forbidden_names(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    old_runs = artifact_dir / "old-runs"
+    old_runs.mkdir()
+    (old_runs / "old-audit.json").write_text("{}", encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["current_run_only"]
+    assert item["status"] == "fail"
+    assert "outside current-run scope: old-runs/old-audit.json" in item["note"]
+
+
 def test_verifier_rejects_historical_audit_paths_even_when_checks_pass(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifact"
     write_passing_artifact(artifact_dir)
