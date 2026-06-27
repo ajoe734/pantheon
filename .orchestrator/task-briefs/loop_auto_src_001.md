@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude
 - Reviewer: Codex
-- Next: Finalization in progress. PR #2411 MERGEABLE, all CI pass. Verified 27 tests OK on closeout re-run. Awaiting PR merge then done.
+- Next: Finalizing — merging dev and pushing for PR auto-merge into dev.
 
 ## Summary
 把 persona 的資料需求從 metadata label 升級成 first-class required_data_sources schema。
@@ -20,6 +20,6 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Closeout
 - Owner: Claude
-- PR: #2411 (open, MERGEABLE, awaiting merge into dev)
+- PR: #2411 (open, MERGEABLE, all CI pass — awaiting merge into dev)
 - Verified: `python3 services/control-plane/persona/test_persona_data_sources.py` — 27 tests OK
 - CI: Commit trailers / Runtime mirror guard / Smoke acceptance — all pass
