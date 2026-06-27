@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add source-to-strategy distillation worker
-- Status: todo
+- Status: in_progress
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached. Task returned to todo until Claude starts a fresh run.
+- Next: Implemented distillation worker (distillation_worker.py + 36 tests). Commit e913b652. Running task_finalize.sh for PR.
 
 ## Summary
 新增 SourceRecord/evidence event 到 StrategySpec draft head 的 distillation worker。
