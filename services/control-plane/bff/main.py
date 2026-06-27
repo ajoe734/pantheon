@@ -14034,19 +14034,25 @@ async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Heade
             f"Deployment plan {plan_id} does not exist",
         )
 
+    payload = _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
     decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
-    payload = dict(plan)
     if decision:
         payload["approval_decision"] = decision
+    stage_surfaces = _deployment_stage_truth_surfaces(
+        payload["stage_truth"],
+        snapshot_at=snapshot_at,
+    )
+    meta = _read_surface_meta(
+        "deployment_plans",
+        "deployment_plan_detail",
+        snapshot_at=snapshot_at,
+        surface=plan_surface,
+    )
+    meta["surfaces"].update(stage_surfaces)
 
     return {
         "data": payload,
-        "meta": _read_surface_meta(
-            "deployment_plans",
-            "deployment_plan_detail",
-            snapshot_at=snapshot_at,
-            surface=plan_surface,
-        ),
+        "meta": meta,
     }
 
 
@@ -14407,6 +14413,7 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
     if approval_decision:
         deployment_plan_payload["approval_decision"] = approval_decision
 
+    stage_truth = _deployment_stage_truth(plan)
     data = {
         "deployment_plan": deployment_plan_payload,
         "approval_decision": approval_decision or {},
@@ -14417,6 +14424,7 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
         "allowedActions": allowed_actions,
         "latestRun": latest_run,
         "review": review,
+        "stage_truth": stage_truth,
     }
 
     surfaces = {
@@ -14466,6 +14474,8 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
             has_data=review is not None,
         ),
     }
+
+    surfaces.update(_deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at))
 
     meta: Dict[str, Any] = {
         "snapshot_at": snapshot_at,
@@ -44625,6 +44635,366 @@ async def bff_approval_evidence(
 
 # -- Deployments -------------------------------------------------------------
 
+_DEPLOYMENT_STAGE_TRUTH_ORDER = (
+    "approval",
+    "plan",
+    "saga",
+    "binding",
+    "runtime_fleet",
+)
+_DEPLOYMENT_STAGE_FAILURE_STATUSES = {
+    "aborted",
+    "blocked",
+    "dead_lettered",
+    "degraded",
+    "failed",
+    "missing",
+    "rejected",
+    "stale",
+    "unavailable",
+}
+
+
+def _deployment_stage_status(value: Any, *, default: str = "unknown") -> str:
+    status = str(value or "").strip().lower()
+    return status or default
+
+
+def _deployment_stage_entry(
+    *,
+    stage: str,
+    status: Any,
+    source_dataset: str,
+    source_id: Optional[str] = None,
+    available: bool = True,
+    message: Optional[str] = None,
+    failure: Optional[bool] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    normalized_status = _deployment_stage_status(status)
+    entry: Dict[str, Any] = {
+        "stage": stage,
+        "status": normalized_status,
+        "source_dataset": source_dataset,
+        "available": bool(available),
+        "failure": bool(
+            normalized_status in _DEPLOYMENT_STAGE_FAILURE_STATUSES
+            if failure is None
+            else failure
+        ),
+    }
+    if source_id:
+        entry["source_id"] = source_id
+    if message:
+        entry["message"] = message
+    for key, value in extra.items():
+        if value is not None:
+            entry[key] = value
+    return entry
+
+
+def _deployment_plan_identifier(plan: Dict[str, Any]) -> str:
+    return str(plan.get("plan_id") or plan.get("id") or "").strip()
+
+
+def _runtime_binding_matches_deployment_plan(
+    runtime_binding: Dict[str, Any],
+    plan: Dict[str, Any],
+) -> bool:
+    plan_id = _deployment_plan_identifier(plan)
+    runtime_plan_id = str(
+        runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or ""
+    ).strip()
+    if plan_id and runtime_plan_id == plan_id:
+        return True
+
+    requested_binding_ids = {
+        str(plan.get("runtime_binding_id") or "").strip(),
+        str(plan.get("binding_id") or plan.get("persona_capital_binding_id") or "").strip(),
+    }
+    requested_binding_ids.update(
+        str(value).strip()
+        for value in (plan.get("binding_ids") or [])
+        if str(value).strip()
+    )
+    requested_binding_ids.discard("")
+    runtime_binding_ids = {
+        str(runtime_binding.get("id") or "").strip(),
+        str(runtime_binding.get("binding_id") or "").strip(),
+        str(runtime_binding.get("runtime_binding_id") or "").strip(),
+        str(runtime_binding.get("persona_capital_binding_id") or "").strip(),
+    }
+    runtime_binding_ids.discard("")
+    return bool(requested_binding_ids.intersection(runtime_binding_ids))
+
+
+def _deployment_runtime_binding(plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    runtime_binding_id = str(plan.get("runtime_binding_id") or "").strip()
+    if runtime_binding_id:
+        binding = read_store.get_runtime_binding(runtime_binding_id)
+        if binding:
+            return binding
+
+    for binding in read_store.list_runtime_bindings():
+        if _runtime_binding_matches_deployment_plan(binding, plan):
+            return binding
+    return None
+
+
+def _runtime_fleet_stage_truth(runtime_binding: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not runtime_binding:
+        return _deployment_stage_entry(
+            stage="runtime_fleet",
+            status="unavailable",
+            source_dataset="runtime_bindings",
+            available=False,
+            message=(
+                "Runtime fleet evidence unavailable because no RuntimeBinding "
+                "projection is linked to this deployment plan."
+            ),
+        )
+
+    runtime_id = str(
+        runtime_binding.get("runtime_id")
+        or runtime_binding.get("id")
+        or runtime_binding.get("binding_id")
+        or ""
+    ).strip()
+    runtime_binding_id = str(
+        runtime_binding.get("runtime_binding_id")
+        or runtime_binding.get("binding_id")
+        or runtime_binding.get("id")
+        or ""
+    ).strip()
+    deployment_stage = str(
+        runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode") or ""
+    ).strip().lower()
+
+    monitoring = read_store.get_paper_runtime_monitoring_session(
+        runtime_id=runtime_id,
+        binding_id=runtime_binding_id,
+    )
+    if monitoring:
+        active = bool(monitoring.get("active", True))
+        staleness = monitoring.get("staleness") if isinstance(monitoring.get("staleness"), dict) else {}
+        terminal_reason = (
+            monitoring.get("terminal_reason")
+            or monitoring.get("ended_reason")
+            or staleness.get("reason")
+        )
+        status = "active" if active and not terminal_reason else "degraded"
+        return _deployment_stage_entry(
+            stage="runtime_fleet",
+            status=status,
+            source_dataset="paper_runtime_monitoring_sessions",
+            source_id=str(monitoring.get("session_id") or monitoring.get("id") or ""),
+            available=True,
+            failure=status != "active",
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            deployment_stage=deployment_stage or None,
+            active=active,
+            last_heartbeat_at=monitoring.get("last_heartbeat_at"),
+            terminal_reason=terminal_reason,
+        )
+
+    telemetry = read_store.get_telemetry_summary(runtime_id) if runtime_id else None
+    if telemetry:
+        health_summary = telemetry.get("health_summary") if isinstance(telemetry.get("health_summary"), dict) else {}
+        unhealthy = [
+            str(key)
+            for key, value in health_summary.items()
+            if str(value).strip().lower() not in {"", "ok", "not_applicable"}
+        ]
+        status = "degraded" if unhealthy else "observed"
+        return _deployment_stage_entry(
+            stage="runtime_fleet",
+            status=status,
+            source_dataset="telemetry_summaries",
+            source_id=runtime_id,
+            available=True,
+            failure=status == "degraded",
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            deployment_stage=deployment_stage or None,
+            last_heartbeat_at=telemetry.get("last_heartbeat_at"),
+            last_event_at=telemetry.get("last_event_at"),
+            degraded_checks=unhealthy or None,
+        )
+
+    source_dataset = (
+        "paper_runtime_monitoring_sessions"
+        if deployment_stage == "paper"
+        else "telemetry_summaries"
+    )
+    return _deployment_stage_entry(
+        stage="runtime_fleet",
+        status="unavailable",
+        source_dataset=source_dataset,
+        source_id=runtime_id or None,
+        available=False,
+        failure=True,
+        runtime_id=runtime_id or None,
+        runtime_binding_id=runtime_binding_id or None,
+        deployment_stage=deployment_stage or None,
+        message=(
+            "Runtime fleet evidence unavailable; status is not inferred from "
+            "deployment plan metadata or RuntimeBinding existence."
+        ),
+    )
+
+
+def _deployment_stage_truth(plan: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    plan_id = _deployment_plan_identifier(plan)
+    approval_decision_id = str(plan.get("approval_decision_id") or "").strip()
+    approval_decision = read_store.get_approval_decision(approval_decision_id)
+    if approval_decision:
+        approval_status = approval_decision.get("outcome") or approval_decision.get("state")
+        approval_entry = _deployment_stage_entry(
+            stage="approval",
+            status=approval_status,
+            source_dataset="approval_decisions",
+            source_id=str(
+                approval_decision.get("decision_id")
+                or approval_decision.get("id")
+                or approval_decision_id
+            ),
+            available=True,
+            failure=_deployment_stage_status(approval_status) in {"rejected", "failed"},
+            decision_state=approval_decision.get("state"),
+            reviewer=approval_decision.get("reviewer"),
+        )
+    else:
+        plan_status = _deployment_stage_status(plan.get("status"))
+        pending_status = "pending" if plan_status in {"pending_approval", "draft", "proposed"} else "missing"
+        approval_entry = _deployment_stage_entry(
+            stage="approval",
+            status=pending_status,
+            source_dataset="approval_decisions",
+            source_id=approval_decision_id or None,
+            available=False,
+            failure=False,
+            message="Approval decision has not been recorded for this deployment plan.",
+        )
+
+    plan_status = plan.get("status") or plan.get("state") or "unknown"
+    plan_entry = _deployment_stage_entry(
+        stage="plan",
+        status=plan_status,
+        source_dataset="deployment_plans",
+        source_id=plan_id or None,
+        available=True,
+        failure=_deployment_stage_status(plan_status) in {"aborted", "failed", "rejected"},
+        current_stage=plan.get("current_stage"),
+        target_stage=plan.get("target_stage") or plan.get("stage"),
+        transition_type=plan.get("transition_type"),
+    )
+
+    saga_progress = plan.get("saga_progress") if isinstance(plan.get("saga_progress"), dict) else {}
+    if saga_progress:
+        saga_status = saga_progress.get("progress_status") or saga_progress.get("saga_status")
+        saga_entry = _deployment_stage_entry(
+            stage="saga",
+            status=saga_status,
+            source_dataset="deployment_sagas",
+            source_id=str(saga_progress.get("saga_id") or plan.get("deployment_saga_id") or ""),
+            available=True,
+            failure=_deployment_stage_status(saga_status) in {"blocked", "failed"},
+            saga_status=saga_progress.get("saga_status"),
+            current_step=saga_progress.get("current_step"),
+            blocked_reason=saga_progress.get("blocked_reason"),
+            dlq_count=saga_progress.get("dlq_count"),
+            pending_event_count=saga_progress.get("pending_event_count"),
+        )
+    else:
+        saga_entry = _deployment_stage_entry(
+            stage="saga",
+            status="not_started",
+            source_dataset="deployment_sagas",
+            source_id=str(plan.get("deployment_saga_id") or "") or None,
+            available=False,
+            failure=False,
+            message="Deployment saga progress has not been observed for this plan.",
+        )
+
+    runtime_binding = _deployment_runtime_binding(plan)
+    if runtime_binding:
+        binding_status = runtime_binding.get("status") or runtime_binding.get("state") or "present"
+        binding_entry = _deployment_stage_entry(
+            stage="binding",
+            status=binding_status,
+            source_dataset="runtime_bindings",
+            source_id=str(
+                runtime_binding.get("runtime_binding_id")
+                or runtime_binding.get("binding_id")
+                or runtime_binding.get("id")
+                or ""
+            ),
+            available=True,
+            failure=_deployment_stage_status(binding_status) in {"failed", "rejected", "stopped"},
+            runtime_id=runtime_binding.get("runtime_id"),
+            deployment_stage=runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode"),
+            artifact_id=runtime_binding.get("artifact_id"),
+            artifact_version=runtime_binding.get("artifact_version"),
+        )
+    else:
+        binding_entry = _deployment_stage_entry(
+            stage="binding",
+            status="missing",
+            source_dataset="runtime_bindings",
+            available=False,
+            failure=False,
+            message="RuntimeBinding projection is not available for this deployment plan.",
+        )
+
+    return {
+        "approval": approval_entry,
+        "plan": plan_entry,
+        "saga": saga_entry,
+        "binding": binding_entry,
+        "runtime_fleet": _runtime_fleet_stage_truth(runtime_binding),
+    }
+
+
+def _deployment_stage_truth_surfaces(
+    stage_truth: Dict[str, Dict[str, Any]],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Dict[str, Any]]:
+    surfaces: Dict[str, Dict[str, Any]] = {}
+    for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER:
+        entry = stage_truth.get(stage) or {}
+        dataset = str(entry.get("source_dataset") or "").strip() or "deployment_plans"
+        surface = _dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at,
+            has_data=bool(entry.get("available")),
+            missing_message=entry.get("message"),
+        )
+        if entry.get("failure") and surface.get("status") == "ok":
+            surface["status"] = "degraded"
+            surface["message"] = entry.get("message") or f"{stage} stage requires operator attention."
+        surfaces[f"{stage}_stage"] = surface
+
+    surfaces["deployment_stage_truth"] = _aggregate_group_surface(
+        "deployment_stage_truth",
+        [surfaces[f"{stage}_stage"] for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER],
+        snapshot_at=snapshot_at,
+        unavailable_message="Deployment stage truth is unavailable.",
+        degraded_message="Deployment stage truth is degraded because one or more stages need evidence or attention.",
+    )
+    return surfaces
+
+
+def _deployment_plan_with_stage_truth(
+    plan: Dict[str, Any],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    payload = dict(plan)
+    payload["stage_truth"] = _deployment_stage_truth(plan)
+    return payload
+
 @app.get("/bff/deployments")
 async def bff_list_deployments(
     status: Optional[str] = None,
@@ -44650,9 +45020,18 @@ async def bff_list_deployments(
         total = 0
     else:
         plans, next_page_token = _page_slice(plans, page_token, page_size)
+        plans = [
+            _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
+            for plan in plans
+        ]
 
     meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"deployments": surface}
+    stage_surfaces = (
+        _deployment_stage_truth_surfaces(plans[0]["stage_truth"], snapshot_at=snapshot_at)
+        if plans
+        else {}
+    )
+    meta["surfaces"] = {"deployments": surface, **stage_surfaces}
     staleness = _meta_staleness()
     if staleness is not None:
         meta["staleness"] = staleness
@@ -44685,16 +45064,28 @@ async def bff_get_deployment(
         )
 
     snapshot_at = utc_now()
+    plan_payload = _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
     decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
     review = read_store.get_review_summary(clean_id)
+    stage_surfaces = _deployment_stage_truth_surfaces(
+        plan_payload["stage_truth"],
+        snapshot_at=snapshot_at,
+    )
 
     return {
         "data": {
-            **plan,
+            **plan_payload,
             "approval_decision": decision or {},
             "review": review or {},
         },
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "deployments": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+                **stage_surfaces,
+            },
+            "staleness": _meta_staleness(),
+        },
     }
 
 
