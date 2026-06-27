@@ -503,7 +503,7 @@ services:
     restart: unless-stopped
     environment:
       PORT: "8102"
-      BROKER_PAPER_ENABLED: "false"
+      BROKER_PAPER_ENABLED: "${BROKER_PAPER_ENABLED:-false}"
       BROKER_PAPER_STORE_PATH: /data/broker/paper_orders.jsonl
     volumes:
       - broker-data:/data/broker
