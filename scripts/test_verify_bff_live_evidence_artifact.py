@@ -24,6 +24,7 @@ BEARER_SHAPE_REQUIRED_SOURCES = (
     "approval_race:a",
     "approval_race:b",
 )
+CROSS_SECRET_REQUIRED_SOURCES = BEARER_SHAPE_REQUIRED_SOURCES
 MIN_BEARER_TOKEN_LENGTH = 12
 
 
@@ -418,6 +419,25 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
     )
 
 
+def strict_preflight_cross_secret(
+    *,
+    present: bool = True,
+    duplicate_groups: list[list[str]] | None = None,
+) -> dict[str, object]:
+    present_sources = list(CROSS_SECRET_REQUIRED_SOURCES) if present else []
+    duplicate_groups = duplicate_groups or []
+    return {
+        "required_sources": list(CROSS_SECRET_REQUIRED_SOURCES),
+        "present_sources": present_sources,
+        "missing_sources": [source for source in CROSS_SECRET_REQUIRED_SOURCES if source not in set(present_sources)],
+        "provided_sources": len(present_sources),
+        "expected_sources": len(CROSS_SECRET_REQUIRED_SOURCES),
+        "distinct_bearers": present and not duplicate_groups,
+        "distinct_bearer_count": len(present_sources) - len(duplicate_groups),
+        "duplicate_source_groups": duplicate_groups,
+    }
+
+
 def strict_preflight_bearer_shape(
     *,
     checked: bool = True,
@@ -448,6 +468,7 @@ def write_passing_artifact(artifact_dir: Path) -> None:
                 "ref": "refs/heads/dev",
                 "sha": "a" * 40,
                 "secret_values_written": False,
+                "cross_secret_bearers": strict_preflight_cross_secret(),
                 "bearer_shape": strict_preflight_bearer_shape(),
             }
         ),
@@ -617,6 +638,84 @@ def test_verifier_rejects_dry_run_validation_without_error_envelope(tmp_path: Pa
     assert "validation-error-envelope" in item["note"]
 
 
+def test_verifier_fails_when_preflight_cross_secret_bearers_are_missing(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight.pop("cross_secret_bearers")
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "cross_secret_bearers:missing"
+
+
+def test_verifier_fails_when_ready_preflight_cross_secret_sources_are_incomplete(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["cross_secret_bearers"]["present_sources"].remove("approval_race:b")
+    preflight["cross_secret_bearers"]["missing_sources"] = ["approval_race:b"]
+    preflight["cross_secret_bearers"]["provided_sources"] = 9
+    preflight["cross_secret_bearers"]["distinct_bearer_count"] = 9
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert "present_sources:9/10" in item["note"]
+    assert "missing_sources_ready" in item["note"]
+
+
+def test_verifier_rejects_cross_secret_duplicate_groups_without_matching_invalid(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["cross_secret_bearers"] = strict_preflight_cross_secret(
+        duplicate_groups=[["smoke", "rbac:viewer"]],
+    )
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert "duplicate_groups_without_invalid" in item["note"]
+
+
+def test_verifier_allows_cross_secret_duplicate_groups_only_when_preflight_reports_cross_secret_invalid(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["invalid"] = [
+        {
+            "name": "PANTHEON_BFF_LIVE_EVIDENCE_BEARERS",
+            "reason": "bearer tokens must be unique across smoke, RBAC, and approval race sources: smoke/rbac:viewer",
+        }
+    ]
+    preflight["cross_secret_bearers"] = strict_preflight_cross_secret(
+        duplicate_groups=[["smoke", "rbac:viewer"]],
+    )
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "environment:dev invalid:PANTHEON_BFF_LIVE_EVIDENCE_BEARERS"
+
+
 def test_verifier_fails_when_preflight_bearer_shape_is_missing(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifact"
     write_passing_artifact(artifact_dir)
@@ -691,6 +790,7 @@ def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:
                 "ref": "refs/heads/dev",
                 "sha": "b" * 40,
                 "secret_values_written": False,
+                "cross_secret_bearers": strict_preflight_cross_secret(present=False),
                 "bearer_shape": strict_preflight_bearer_shape(checked=False, valid=False),
             }
         ),
