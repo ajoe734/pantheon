@@ -152,7 +152,7 @@ services:
       # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-jsonl}
       SOURCE_INGEST_EVIDENCE_DSN: ${SOURCE_INGEST_EVIDENCE_DSN:-}
-      # Notify search service after completed ingest runs (incremental index refresh trigger).
+      # Notify search service after completed ingest runs (event-driven refresh/materialization truth).
       SEARCH_INGEST_NOTIFY_URL: ${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}
     volumes:
       - source-ingest-data:/data/source-ingest
@@ -178,14 +178,29 @@ services:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "-m", "services.source_ingestion.scheduler_worker"]
+    restart: unless-stopped
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS: ${SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS:-60}
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
       SOURCE_INGEST_SCHEDULER_MAX_TICKS: ${SOURCE_INGEST_SCHEDULER_MAX_TICKS:-0}
+      SOURCE_INGEST_SCHEDULER_STATE_PATH: /data/source-ingest/scheduler_state.json
+      SOURCE_INGEST_SCHEDULER_ALIVE_PATH: /data/source-ingest/scheduler_alive
+    volumes:
+      - source-ingest-data:/data/source-ingest
     depends_on:
       source-ingest:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, sys, time; s=os.stat('/data/source-ingest/scheduler_alive'); sys.exit(0 if time.time()-s.st_mtime < 300 else 1)\"",
+        ]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
 
   search-svc:
     build:
@@ -196,6 +211,7 @@ services:
       PORT: "8098"
       SEARCH_DATA_DIR: /data/search
       SEARCH_INDEX_STORE_PATH: /data/search/search-index.jsonl
+      SEARCH_MATERIALIZE_STORE_PATH: /data/search/search-materialize.jsonl
       SEARCH_PIPELINE_STORE_PATH: /data/search/search-pipeline.jsonl
       SEARCH_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       SEARCH_FRESHNESS_SLA_SECONDS: ${SEARCH_FRESHNESS_SLA_SECONDS:-3600}
@@ -280,6 +296,23 @@ services:
       timeout: 5s
       retries: 10
       start_period: 5s
+
+  training-session-preview-worker:
+    profiles: ["training-session-preview-worker"]
+    build:
+      context: .
+      dockerfile: services/training-session/Dockerfile
+    command: ["python", "services/training-session/preview_eval_worker.py"]
+    restart: unless-stopped
+    environment:
+      TRAINING_SESSION_API_URL: http://training-session-svc:8099
+      TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS:-30}
+      TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS: ${TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS:-0}
+      TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT: ${TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT:-10}
+      TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-}
+    depends_on:
+      training-session-svc:
+        condition: service_healthy
 
   policy-learning-svc:
     build:

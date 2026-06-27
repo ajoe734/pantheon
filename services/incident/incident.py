@@ -284,6 +284,11 @@ class Postmortem:
     timeline: List[Dict[str, Any]] = field(default_factory=list)
     action_items: List[str] = field(default_factory=list)
     author_ids: List[str] = field(default_factory=list)
+    telemetry_event_ids: List[str] = field(default_factory=list)
+    reconciliation_ids: List[str] = field(default_factory=list)
+    incident_cluster_id: Optional[str] = None
+    incident_evidence_summary: Optional[str] = None
+    lineage_ref: Optional[str] = None
 
     # Optional
     published_at: Optional[str] = None
@@ -572,6 +577,30 @@ class IncidentStore:
             raise IncidentError(f"Invalid Postmortem: {errors}")
         if pm.postmortem_id in self._postmortems:
             raise IncidentError(f"Postmortem already exists: {pm.postmortem_id}")
+        if pm.incident_id not in self._incidents:
+            raise IncidentError(
+                f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
+                "Create the IncidentCase first."
+            )
+        self._validate_postmortem_against_incident(pm, self._incidents[pm.incident_id])
+        self._postmortems[pm.postmortem_id] = pm
+        self._save()
+        return pm
+
+    def update_postmortem_draft(self, pm: Postmortem) -> Postmortem:
+        """Replace an existing draft Postmortem with an updated draft."""
+        self._refresh_from_disk()
+        existing = self.require_postmortem(pm.postmortem_id)
+        if existing.status != PostmortemStatus.DRAFT.value or pm.status != PostmortemStatus.DRAFT.value:
+            raise IncidentError("Only draft Postmortems can be updated by the draft worker")
+        if existing.incident_id != pm.incident_id:
+            raise IncidentError(
+                "Postmortem draft updates cannot change the referenced IncidentCase: "
+                f"existing={existing.incident_id!r}, incoming={pm.incident_id!r}"
+            )
+        errors = validate_postmortem(pm)
+        if errors:
+            raise IncidentError(f"Invalid Postmortem: {errors}")
         if pm.incident_id not in self._incidents:
             raise IncidentError(
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "

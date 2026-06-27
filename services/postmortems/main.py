@@ -17,6 +17,10 @@ POST  /api/postmortems
     Enforces referential integrity: the referenced incident_id must exist.
     Returns 201 on success, 422 on validation failure, 409 if already exists.
 
+POST  /api/postmortems/consume-resolved-incident
+    Consume a resolved IncidentCase event and create or refresh an idempotent
+    Postmortem draft. Returns 201 on first draft, 200 on duplicate/update.
+
 GET   /api/postmortems
     List postmortems.  Optional query params:
       incident_id  — filter by IncidentCase
@@ -64,9 +68,9 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -106,6 +110,10 @@ try:
         PostmortemResponse,
         UpdatePostmortemStatusRequest,
     )
+    from .consumer import (
+        PostmortemDraftConsumerError,
+        ResolvedIncidentPostmortemDraftConsumer,
+    )
 except ImportError:
     from models import (  # type: ignore
         CreatePostmortemRequest,
@@ -113,6 +121,10 @@ except ImportError:
         OperatorPostmortemPayload,
         PostmortemResponse,
         UpdatePostmortemStatusRequest,
+    )
+    from consumer import (  # type: ignore
+        PostmortemDraftConsumerError,
+        ResolvedIncidentPostmortemDraftConsumer,
     )
 
 try:
@@ -186,7 +198,14 @@ def _utc_now() -> str:
 
 def _to_response(pm: Postmortem) -> PostmortemResponse:
     d = pm.to_dict()
-    for list_field in ("contributing_factors", "timeline", "action_items", "author_ids"):
+    for list_field in (
+        "contributing_factors",
+        "timeline",
+        "action_items",
+        "author_ids",
+        "telemetry_event_ids",
+        "reconciliation_ids",
+    ):
         d.setdefault(list_field, [])
     return PostmortemResponse(**d)
 
@@ -258,6 +277,11 @@ def create_postmortem(body: CreatePostmortemRequest) -> PostmortemResponse:
             timeline=body.timeline,
             action_items=body.action_items,
             author_ids=body.author_ids,
+            telemetry_event_ids=body.telemetry_event_ids,
+            reconciliation_ids=body.reconciliation_ids,
+            incident_cluster_id=body.incident_cluster_id,
+            incident_evidence_summary=body.incident_evidence_summary,
+            lineage_ref=body.lineage_ref,
         )
     except (IncidentError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -292,6 +316,35 @@ def create_postmortem(body: CreatePostmortemRequest) -> PostmortemResponse:
         postmortem_id, body.incident_id, body.binding_id,
     )
     return _to_response(pm)
+
+
+@app.post(
+    "/api/postmortems/consume-resolved-incident",
+    response_model=PostmortemResponse,
+    status_code=201,
+    summary="Consume a resolved IncidentCase into an idempotent Postmortem draft",
+)
+def consume_resolved_incident(
+    response: Response,
+    body: Dict[str, Any] = Body(...),
+) -> PostmortemResponse:
+    """Create or refresh a draft Postmortem from a resolved IncidentCase."""
+    consumer = ResolvedIncidentPostmortemDraftConsumer(incident_store=store)
+    try:
+        result = consumer.consume(body)
+    except PostmortemDraftConsumerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    if not result.created:
+        response.status_code = 200
+
+    log.info(
+        "Consumed resolved incident into Postmortem %s created=%s updated=%s",
+        result.postmortem.postmortem_id,
+        result.created,
+        result.updated,
+    )
+    return _to_response(result.postmortem)
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +395,14 @@ def get_operator_payload(postmortem_id: str) -> OperatorPostmortemPayload:
     incident = _get_incident_for_postmortem_or_404(postmortem_id)
 
     pm_dict = pm.to_dict()
-    for list_field in ("contributing_factors", "timeline", "action_items", "author_ids"):
+    for list_field in (
+        "contributing_factors",
+        "timeline",
+        "action_items",
+        "author_ids",
+        "telemetry_event_ids",
+        "reconciliation_ids",
+    ):
         pm_dict.setdefault(list_field, [])
 
     return OperatorPostmortemPayload(

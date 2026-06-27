@@ -24236,7 +24236,7 @@ def _project_persona_dto(
 ) -> Dict[str, Any]:
     """Project canonical persona data into execute-plans Persona DTO."""
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
-    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+    metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     archetype = str(
         metadata.get("archetype")
         or raw.get("strategy_family")
@@ -24271,10 +24271,26 @@ def _project_persona_dto(
         "strategyFamily": raw.get("strategy_family") or "",
         "traits": metadata.get("traits") if isinstance(metadata.get("traits"), dict) else {},
     }
+    required_data_sources = (
+        raw.get("required_data_sources")
+        if isinstance(raw.get("required_data_sources"), list)
+        else []
+    )
+    if isinstance(metadata.get("data_source_status"), dict) or isinstance(metadata.get("data_sources"), list) or required_data_sources:
+        data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
+            metadata.get("data_source_status") if isinstance(metadata.get("data_source_status"), dict) else {},
+            metadata.get("data_sources") if isinstance(metadata.get("data_sources"), list) else [],
+            required_data_sources=required_data_sources,
+        )
+        metadata["data_source_status"] = data_source_status
+        metadata["data_sources"] = data_sources
+        metadata["source_health_bindings"] = source_health_bindings
+
     for source_key, dto_key in (
         ("data_source_status", "dataSourceStatus"),
         ("data_sources", "dataSources"),
         ("data_source_refs", "dataSourceRefs"),
+        ("source_health_bindings", "sourceHealthBindings"),
         ("research_status", "researchStatus"),
         ("research_refs", "researchRefs"),
         ("current_research_projects", "currentResearchProjects"),
@@ -24282,6 +24298,8 @@ def _project_persona_dto(
         value = metadata.get(source_key)
         if value is not None:
             dto[dto_key] = json.loads(json.dumps(value))
+    if required_data_sources:
+        dto["requiredDataSources"] = json.loads(json.dumps(required_data_sources))
     performance = metadata.get("performance") if isinstance(metadata.get("performance"), dict) else {}
     if performance:
         dto["metrics"] = json.loads(json.dumps(performance))
@@ -44986,6 +45004,50 @@ def _deployment_stage_truth_surfaces(
     return surfaces
 
 
+def _deployment_stage_truth_collection_surfaces(
+    stage_truths: Sequence[Dict[str, Dict[str, Any]]],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Dict[str, Any]]:
+    collected = [
+        _deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at)
+        for stage_truth in stage_truths
+        if stage_truth
+    ]
+    if not collected:
+        return {}
+    if len(collected) == 1:
+        return collected[0]
+
+    surfaces: Dict[str, Dict[str, Any]] = {}
+    for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER:
+        surface_key = f"{stage}_stage"
+        stage_label = stage.replace("_", " ")
+        surfaces[surface_key] = _aggregate_group_surface(
+            surface_key,
+            [item[surface_key] for item in collected],
+            snapshot_at=snapshot_at,
+            unavailable_message=(
+                f"{stage_label} stage truth is unavailable across listed deployment plans."
+            ),
+            degraded_message=(
+                f"{stage_label} stage truth is degraded for one or more listed deployment plans."
+            ),
+        )
+
+    surfaces["deployment_stage_truth"] = _aggregate_group_surface(
+        "deployment_stage_truth",
+        [surfaces[f"{stage}_stage"] for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER],
+        snapshot_at=snapshot_at,
+        unavailable_message="Deployment stage truth is unavailable.",
+        degraded_message=(
+            "Deployment stage truth is degraded because one or more stages need "
+            "evidence or attention."
+        ),
+    )
+    return surfaces
+
+
 def _deployment_plan_with_stage_truth(
     plan: Dict[str, Any],
     *,
@@ -45027,7 +45089,10 @@ async def bff_list_deployments(
 
     meta = _snapshot_meta(snapshot_at)
     stage_surfaces = (
-        _deployment_stage_truth_surfaces(plans[0]["stage_truth"], snapshot_at=snapshot_at)
+        _deployment_stage_truth_collection_surfaces(
+            [plan["stage_truth"] for plan in plans],
+            snapshot_at=snapshot_at,
+        )
         if plans
         else {}
     )
@@ -50099,26 +50164,279 @@ def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
 
 _SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
 _SOURCE_HEALTH_OVERLAY_TTL = 60.0
+_SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
+    "finmind": (
+        "tw-finmind-datasets",
+        "tw-finmind-broker-daily-report",
+        "tw-finmind-broker-bulk-parquet",
+    ),
+    "twse": ("tw-twse-tpex-official-market",),
+    "tpex": ("tw-twse-tpex-official-market",),
+    "mops": ("tw-mops-official-disclosures",),
+}
 
 
-def _live_source_health_by_connector() -> Dict[str, Any]:
+def _source_ingest_truth_by_connector() -> Dict[str, Dict[str, Any]]:
     now = time.monotonic()
-    cached = _SOURCE_HEALTH_OVERLAY_CACHE.get("by_connector")
+    cached = _SOURCE_HEALTH_OVERLAY_CACHE.get("truth_by_connector")
     if cached is not None and (now - float(_SOURCE_HEALTH_OVERLAY_CACHE.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
         return cached
-    by_conn: Dict[str, Any] = {}
+
+    truth: Dict[str, Dict[str, Any]] = {}
+    try:
+        registry = read_store.get_source_connector_registry()
+        for connector in (registry.get("connectors") or []):
+            if not isinstance(connector, dict):
+                continue
+            connector_id = str(connector.get("connector_id") or "").strip()
+            if connector_id:
+                truth.setdefault(connector_id, {})["connector"] = json.loads(json.dumps(connector))
+    except Exception:  # read-only enrichment must never break persona surfaces
+        pass
+
     try:
         snapshot = read_store.get_source_health_usage_snapshot()
         for source in (snapshot.get("sources") or []):
+            if not isinstance(source, dict):
+                continue
             health = source.get("health") if isinstance(source.get("health"), dict) else {}
-            connector_id = str(health.get("source_id") or "")
+            connector_id = str(health.get("source_id") or "").strip()
             if connector_id:
-                by_conn[connector_id] = health
-    except Exception:  # read-only enrichment must never break the fleet surface
-        by_conn = {}
+                truth.setdefault(connector_id, {})["health"] = json.loads(json.dumps(health))
+                truth[connector_id]["usage_aggregate_30d"] = json.loads(
+                    json.dumps(source.get("usage_aggregate_30d") or {})
+                )
+                if source.get("recommendation") is not None:
+                    truth[connector_id]["recommendation"] = json.loads(json.dumps(source.get("recommendation")))
+    except Exception:  # read-only enrichment must never break persona surfaces
+        pass
+
     _SOURCE_HEALTH_OVERLAY_CACHE["at"] = now
-    _SOURCE_HEALTH_OVERLAY_CACHE["by_connector"] = by_conn
-    return by_conn
+    _SOURCE_HEALTH_OVERLAY_CACHE["truth_by_connector"] = truth
+    _SOURCE_HEALTH_OVERLAY_CACHE["by_connector"] = {
+        connector_id: payload["health"]
+        for connector_id, payload in truth.items()
+        if isinstance(payload.get("health"), dict)
+    }
+    return truth
+
+
+def _live_source_health_by_connector() -> Dict[str, Any]:
+    return {
+        connector_id: payload["health"]
+        for connector_id, payload in _source_ingest_truth_by_connector().items()
+        if isinstance(payload.get("health"), dict)
+    }
+
+
+def _connector_candidates_for_provider(source: Dict[str, Any]) -> List[str]:
+    candidates: List[str] = []
+    for key in ("connector_id", "connectorId", "source_id", "sourceId"):
+        value = str(source.get(key) or "").strip()
+        if value:
+            candidates.append(value)
+    provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip().lower()
+    candidates.extend(_SOURCE_PROVIDER_CONNECTOR_CANDIDATES.get(provider_key, ()))
+    return list(dict.fromkeys(candidates))
+
+
+def _source_failure_reason(health: Dict[str, Any], connector: Dict[str, Any]) -> Optional[str]:
+    metadata = health.get("metadata") if isinstance(health.get("metadata"), dict) else {}
+    health_metrics = connector.get("health_metrics") if isinstance(connector.get("health_metrics"), dict) else {}
+    state = connector.get("state") if isinstance(connector.get("state"), dict) else {}
+    for candidate in (
+        metadata.get("source_error"),
+        metadata.get("last_failure_error"),
+        health_metrics.get("source_error"),
+        state.get("last_error"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _provider_status_from_truth(health: Dict[str, Any], connector: Dict[str, Any]) -> str:
+    status = str(health.get("status") or "").strip().lower()
+    if status:
+        return "read_ok" if status == "ok" else f"source_health_{status}"
+    freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
+    freshness_status = str(freshness.get("status") or "").strip().lower()
+    if freshness_status:
+        return f"connector_{freshness_status}"
+    return "connector_configured_no_health"
+
+
+def _source_truth_projection(connector_id: str, truth: Dict[str, Any]) -> Dict[str, Any]:
+    health = truth.get("health") if isinstance(truth.get("health"), dict) else {}
+    connector = truth.get("connector") if isinstance(truth.get("connector"), dict) else {}
+    schedule = connector.get("schedule") if isinstance(connector.get("schedule"), dict) else {}
+    freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
+    latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), dict) else {}
+    health_metrics = connector.get("health_metrics") if isinstance(connector.get("health_metrics"), dict) else {}
+    status = _provider_status_from_truth(health, connector)
+    last_fetch_at = (
+        latest_run.get("finished_at")
+        or latest_run.get("started_at")
+        or health.get("last_failure_at")
+        or health.get("last_success_at")
+        or freshness.get("last_success_at")
+    )
+    last_push_at = (
+        health.get("last_success_at")
+        or health_metrics.get("last_success_at")
+        or freshness.get("last_success_at")
+    )
+    failure_reason = _source_failure_reason(health, connector)
+    projection = {
+        "schema_version": "bff_source_health_truth.v1",
+        "connector_id": connector_id,
+        "connectorId": connector_id,
+        "health_source": "source_ingest",
+        "healthSource": "source_ingest",
+        "static_label": False,
+        "staticLabel": False,
+        "source_health_available": bool(health),
+        "sourceHealthAvailable": bool(health),
+        "health_status": health.get("status"),
+        "healthStatus": health.get("status"),
+        "connector_status": connector.get("status"),
+        "connectorStatus": connector.get("status"),
+        "status": status,
+        "last_success_at": health.get("last_success_at"),
+        "lastSuccessAt": health.get("last_success_at"),
+        "last_failure_at": health.get("last_failure_at"),
+        "lastFailureAt": health.get("last_failure_at"),
+        "last_fetch_at": last_fetch_at,
+        "lastFetchAt": last_fetch_at,
+        "last_push_at": last_push_at,
+        "lastPushAt": last_push_at,
+        "failure_reason": failure_reason,
+        "failureReason": failure_reason,
+        "latest_watermark": health.get("latest_watermark") or freshness.get("last_watermark"),
+        "latestWatermark": health.get("latest_watermark") or freshness.get("last_watermark"),
+        "row_count_last_run": health.get("row_count_last_run"),
+        "rowCountLastRun": health.get("row_count_last_run"),
+        "rejected_count_last_run": health.get("rejected_count_last_run"),
+        "rejectedCountLastRun": health.get("rejected_count_last_run"),
+        "connector_schedule": json.loads(json.dumps(schedule)),
+        "connectorSchedule": json.loads(json.dumps(schedule)),
+        "connector_freshness": json.loads(json.dumps(freshness)),
+        "connectorFreshness": json.loads(json.dumps(freshness)),
+        "source_health": json.loads(json.dumps(health)),
+        "sourceHealth": json.loads(json.dumps(health)),
+    }
+    if isinstance(truth.get("usage_aggregate_30d"), dict):
+        projection["usage_aggregate_30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
+        projection["usageAggregate30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
+    if truth.get("recommendation") is not None:
+        projection["recommendation"] = json.loads(json.dumps(truth["recommendation"]))
+    return projection
+
+
+def _select_source_truth(
+    candidate_ids: List[str],
+    truth_by_connector: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    for connector_id in candidate_ids:
+        truth = truth_by_connector.get(connector_id)
+        if isinstance(truth, dict) and (truth.get("health") or truth.get("connector")):
+            return connector_id, truth
+    return None, None
+
+
+def _source_health_bindings_from_requirements(
+    required_data_sources: List[Dict[str, Any]],
+    truth_by_connector: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    bindings: List[Dict[str, Any]] = []
+    for requirement in required_data_sources:
+        if not isinstance(requirement, dict):
+            continue
+        candidates = [
+            str(candidate).strip()
+            for candidate in (requirement.get("connector_candidates") or [])
+            if str(candidate).strip()
+        ]
+        connector_id, truth = _select_source_truth(candidates, truth_by_connector)
+        binding = {
+            "dataset": requirement.get("dataset"),
+            "market": requirement.get("market"),
+            "cadence": requirement.get("cadence"),
+            "source_class": requirement.get("source_class"),
+            "sourceClass": requirement.get("source_class"),
+            "connector_candidates": candidates,
+            "connectorCandidates": candidates,
+            "selected_connector_id": connector_id,
+            "selectedConnectorId": connector_id,
+            "health_source": "source_ingest" if truth else "unbound",
+            "healthSource": "source_ingest" if truth else "unbound",
+            "source_health_available": bool(truth and truth.get("health")),
+            "sourceHealthAvailable": bool(truth and truth.get("health")),
+        }
+        if truth and connector_id:
+            binding.update(_source_truth_projection(connector_id, truth))
+        elif str(requirement.get("source_class") or "") == "seed_only":
+            binding["health_source"] = "seed_only_not_live_binding"
+            binding["healthSource"] = "seed_only_not_live_binding"
+        bindings.append(binding)
+    return bindings
+
+
+def _overlay_source_health_truth(
+    data_source_status: Any,
+    data_sources: Any,
+    *,
+    required_data_sources: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
+    srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
+    truth_by_connector = _source_ingest_truth_by_connector()
+    provider_statuses = dss.get("provider_statuses")
+    if not isinstance(provider_statuses, dict):
+        provider_statuses = {}
+        dss["provider_statuses"] = provider_statuses
+
+    connector_health: List[Dict[str, Any]] = []
+    live_connector_ids: List[str] = []
+    static_source_labels: List[str] = []
+    for source in srcs:
+        if not isinstance(source, dict):
+            continue
+        provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip()
+        connector_id, truth = _select_source_truth(
+            _connector_candidates_for_provider(source),
+            truth_by_connector,
+        )
+        if connector_id and truth:
+            projection = _source_truth_projection(connector_id, truth)
+            source.update(projection)
+            if provider_key:
+                provider_statuses[provider_key] = projection["status"]
+            connector_health.append(projection)
+            live_connector_ids.append(connector_id)
+        else:
+            source.setdefault("health_source", "static_metadata")
+            source.setdefault("healthSource", "static_metadata")
+            source.setdefault("static_label", True)
+            source.setdefault("staticLabel", True)
+            if provider_key in _SOURCE_PROVIDER_CONNECTOR_CANDIDATES:
+                static_source_labels.append(provider_key)
+
+    bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
+    has_live_truth = bool(connector_health) or any(binding.get("health_source") == "source_ingest" for binding in bindings)
+    dss["source_health_source"] = "source_ingest" if has_live_truth else "static_metadata"
+    dss["sourceHealthSource"] = dss["source_health_source"]
+    dss["live_ingestion_enabled"] = bool(has_live_truth)
+    dss["connector_health"] = json.loads(json.dumps(connector_health))
+    dss["connectorHealth"] = json.loads(json.dumps(connector_health))
+    dss["live_source_connector_ids"] = list(dict.fromkeys(live_connector_ids))
+    dss["liveSourceConnectorIds"] = dss["live_source_connector_ids"]
+    dss["static_source_labels"] = sorted(set(static_source_labels))
+    dss["staticSourceLabels"] = dss["static_source_labels"]
+    dss["required_source_health"] = json.loads(json.dumps(bindings))
+    dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
+    return dss, srcs, bindings
 
 
 def _overlay_live_finmind_health(data_source_status, data_sources):
@@ -50253,8 +50571,15 @@ def _build_persona_health_items(
             if isinstance(metadata.get("data_sources"), list)
             else []
         )
-        data_source_status, data_sources = _overlay_live_finmind_health(
-            data_source_status, data_sources
+        required_data_sources = (
+            persona.get("required_data_sources")
+            if isinstance(persona.get("required_data_sources"), list)
+            else []
+        )
+        data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
+            data_source_status,
+            data_sources,
+            required_data_sources=required_data_sources,
         )
         data_source_refs = (
             metadata.get("data_source_refs")
@@ -50342,6 +50667,10 @@ def _build_persona_health_items(
             "dataSources": json.loads(json.dumps(data_sources)),
             "data_source_refs": json.loads(json.dumps(data_source_refs)),
             "dataSourceRefs": json.loads(json.dumps(data_source_refs)),
+            "required_data_sources": json.loads(json.dumps(required_data_sources)),
+            "requiredDataSources": json.loads(json.dumps(required_data_sources)),
+            "source_health_bindings": json.loads(json.dumps(source_health_bindings)),
+            "sourceHealthBindings": json.loads(json.dumps(source_health_bindings)),
             "research_status": json.loads(json.dumps(research_status)),
             "researchStatus": json.loads(json.dumps(research_status)),
             "research_refs": json.loads(json.dumps(research_refs)),
