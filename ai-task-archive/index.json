@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-27T14:22:14Z",
+  "updated_at": "2026-06-27T14:22:43Z",
   "counts": {
-    "total": 1444,
-    "completed": 1421,
+    "total": 1445,
+    "completed": 1422,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "LOOP-AUTO-TEL-002",
     "LOOP-AUTO-DEP-002",
     "LOOP-AUTO-RT-003",
     "LOOP-AUTO-BFF-001",
@@ -25,7 +26,6 @@
     "AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
     "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
     "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
-    "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
-    "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2"
+    "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3"
   ]
 }
