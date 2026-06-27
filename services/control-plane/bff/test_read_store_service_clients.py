@@ -245,6 +245,65 @@ def test_governance_runtime_and_evidence_reads_use_http_service_clients_without_
                 assert store.dataset_source("lineage_edges") == "service_client"
 
 
+def test_paper_runtime_monitoring_staleness_marker_is_not_active() -> None:
+    responses = {
+        ("http://paper-fleet:8011", "/api/fleet/state"): {
+            "monitoring_sessions": [
+                {
+                    "session_id": "prmon-stale-marker",
+                    "session_type": "paper_runtime_monitoring",
+                    "binding_id": "rtb-stale-marker",
+                    "runtime_binding_id": "rtb-stale-marker",
+                    "runtime_id": "runtime-stale-marker",
+                    "deployment_stage": "paper",
+                    "status": "running",
+                    "active": True,
+                    "started_at": "2026-06-09T00:00:00Z",
+                    "ended_at": None,
+                    "last_heartbeat_at": "2026-06-09T00:00:00Z",
+                    "staleness": {
+                        "status": "stale",
+                        "reason": "stale_heartbeat",
+                        "last_known_at": "2026-06-09T00:00:00Z",
+                        "age_seconds": 600,
+                        "threshold_seconds": 90,
+                    },
+                }
+            ],
+        }
+    }
+
+    def fake_get(base_url: str, path: str, *, headers=None):
+        return True, responses[(base_url, path)]
+
+    with tempfile.TemporaryDirectory() as td:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_PAPER_FLEET_RECONCILER_URL": "http://paper-fleet:8011",
+                "PANTHEON_PAPER_RUNTIME_MONITORING_URL": "",
+                "PANTHEON_RUNTIME_DATA_DIR": "",
+                "BFF_DATA_DIR": td,
+            },
+            clear=False,
+        ):
+            with mock.patch("read_store._http_json_get", side_effect=fake_get):
+                store = ReadSurfaceStore(
+                    os.path.join(td, "read_surfaces.json"),
+                    allow_local_snapshot_fallback=False,
+                )
+
+                session = store.get_paper_runtime_monitoring_session(
+                    runtime_id="runtime-stale-marker",
+                    binding_id="rtb-stale-marker",
+                )
+
+                assert session is not None
+                assert session["active"] is False
+                assert session["staleness"]["reason"] == "stale_heartbeat"
+                assert store.dataset_source("paper_runtime_monitoring_sessions") == "service_client"
+
+
 def test_snapshot_payload_does_not_mask_missing_service_client_data_when_fallback_disabled() -> None:
     with tempfile.TemporaryDirectory() as td:
         with mock.patch.dict(

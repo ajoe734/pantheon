@@ -76,6 +76,14 @@
       "format": "date-time",
       "description": "Last update timestamp (UTC ISO-8601)."
     },
+    "required_data_sources": {
+      "type": "array",
+      "description": "First-class data requirements for this persona. Each entry declares a dataset the persona needs, how it must be sourced, which connectors can satisfy it, and what policy gates must pass before binding. Seed-class entries (source_class: seed_only) must not be treated as live data source binding proof.",
+      "items": {
+        "$ref": "required_data_sources.schema.json"
+      },
+      "default": []
+    },
     "metadata": {
       "type": "object",
       "description": "Arbitrary governance metadata."

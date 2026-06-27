@@ -214,6 +214,88 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
             bff_main.read_store = original_store
 
 
+def test_pkt010_runtime_state_board_surfaces_terminal_monitoring_session() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        store.list_runtime_bindings = lambda: [
+            {
+                "id": "rtb-stale-001",
+                "runtime_id": "runtime-stale-001",
+                "deployment_stage": "paper",
+                "status": "running",
+                "plan_id": "plan-stale-001",
+                "artifact_id": "artifact-stale-001",
+                "artifact_version": "1.0.0",
+            }
+        ]
+        store.get_telemetry_summary = lambda runtime_id: {
+            "runtime_id": "runtime-stale-001",
+            "runtime_binding_id": "rtb-stale-001",
+            "deployment_stage": "paper",
+            "state": "active",
+            "window": "latest",
+            "collected_at": "2026-06-09T00:10:00Z",
+            "last_heartbeat_at": "2026-06-09T00:00:00Z",
+            "last_event_at": "2026-06-09T00:00:00Z",
+        } if runtime_id == "runtime-stale-001" else None
+        store.get_paper_runtime_monitoring_session = lambda *, runtime_id=None, binding_id=None: {
+            "session_id": "prmon-stale-001",
+            "session_type": "paper_runtime_monitoring",
+            "binding_id": "rtb-stale-001",
+            "runtime_binding_id": "rtb-stale-001",
+            "runtime_id": "runtime-stale-001",
+            "deployment_stage": "paper",
+            "status": "ended",
+            "active": False,
+            "started_at": "2026-06-09T00:00:00Z",
+            "ended_at": "2026-06-09T00:10:00Z",
+            "ended_reason": "stale_heartbeat",
+            "last_heartbeat_at": "2026-06-09T00:00:00Z",
+            "heartbeat_status": "active",
+            "stale_after_seconds": 90,
+            "restart_count": 1,
+            "staleness": {
+                "status": "stale",
+                "reason": "stale_heartbeat",
+                "last_known_at": "2026-06-09T00:00:00Z",
+                "age_seconds": 600,
+                "threshold_seconds": 90,
+            },
+        } if runtime_id == "runtime-stale-001" else None
+        store.get_rollbacks = lambda runtime_id: []
+        store.dataset_source = lambda dataset: {
+            "runtime_bindings": "canonical",
+            "telemetry_summaries": "service_client",
+            "paper_runtime_monitoring_sessions": "service_client",
+            "rollbacks": "local_snapshot",
+        }.get(dataset, "missing")
+        bff_main.read_store = store
+        client = TestClient(bff_main.app)
+
+        try:
+            response = client.get(
+                "/api/v1/operator/runtime-state",
+                headers={"Authorization": OPERATOR_TOKEN},
+            )
+            assert response.status_code == 200, response.text
+            runtime = response.json()["runtimes"][0]
+            monitoring = runtime["paper_runtime_monitoring"]
+            assert monitoring["active"] is False
+            assert monitoring["ended_reason"] == "stale_heartbeat"
+            assert monitoring["terminal_reason"] == "stale_heartbeat"
+            assert monitoring["staleness"]["reason"] == "stale_heartbeat"
+            assert runtime["row_health"]["status"] == "degraded"
+            check = runtime["row_health"]["checks"]["paper_runtime_monitoring"]
+            assert check["status"] == "degraded"
+            assert "stale_heartbeat" in check["message"]
+        finally:
+            bff_main.read_store = original_store
+
+
 def test_pkt010_runtime_state_board_keeps_healthy_rows_when_rollback_surface_unavailable() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store

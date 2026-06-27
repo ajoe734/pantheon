@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-RT-002",
+  "archived_at": "2026-06-27T13:42:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-RT-002",
+    "title": "Implement managed paper runtime fleet reconciler",
+    "summary_zh": "實作 active paper RuntimeBinding 到 exactly-one supervised worker 的 fleet reconciler。",
+    "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-RT-001"
+    ],
+    "artifacts": [
+      "services/execution",
+      "services/runtime-manager",
+      "docker-compose.yml",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Stack restart recreates workers for all active paper bindings",
+      "Killing one worker restarts only that worker",
+      "Paused or retired binding stops its worker"
+    ],
+    "next": "Claude2 owner finalization: 34/34 tests pass, all 3 ACs confirmed. Fleet reconciler correctly wired to LOOP-AUTO-RT-001 desired-state endpoint. PR #2418 merged into dev at 2026-06-27T13:42:17Z.",
+    "last_update": "2026-06-27T13:42:29Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "capital_pool_execution"
+    ],
+    "current_maturity": "manual",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "active RuntimeBinding"
+    ],
+    "actual_state_sources": [
+      "managed worker processes",
+      "runtime heartbeat"
+    ],
+    "wave_id": "Wave 2 Runtime Fleet",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：所有3條驗收標準均有命名單元測試覆蓋，34/34 測試通過。_fetch_fleet_state() 正確連接 LOOP-AUTO-RT-001 canonical endpoint，fetch 失敗時安全保留所有運行中的 worker。"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-rt-002-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T13:42:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-rt-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-RT-002",
+      "git_clean_required": false,
+      "commit": "6cec7612ff444f0e40e724e55b77731f223c109e",
+      "commit_subject": "Merge dev into task/LOOP-AUTO-RT-002 to update for PR",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-RT-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "beef9ec574d99623548cb9a05fc75ce2159d6bc6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-RT-002",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned LOOP-AUTO-RT-002 away from unavailable lane Gemini (disabled, sidecar-only, or auth-down); owner Gemini -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:43Z",
+      "resolved_at": "2026-06-27T12:36:43Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-002",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned LOOP-AUTO-RT-002 away from unavailable lane Gemini (disabled, sidecar-only, or auth-down); owner Gemini -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:43Z",
+      "resolved_at": "2026-06-27T13:17:58Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Fleet reconciler wired to LOOP-AUTO-RT-001 desired-state endpoint. All 3 acceptance criteria covered by named unit tests. Please review commit 9949749e on task/LOOP-AUTO-RT-002.",
+      "status": "done",
+      "created_at": "2026-06-27T13:26:08Z",
+      "resolved_at": "2026-06-27T13:28:36Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-002",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: all 3 ACs covered by named unit tests (34/34 pass). Fleet reconciler correctly wired to LOOP-AUTO-RT-001 desired-state endpoint. Fetch failure safety, SIGKILL restart logic, and excluded binding stop path are all correct. Return to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T13:28:36Z",
+      "resolved_at": "2026-06-27T13:42:30Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-000",
+  "archived_at": "2026-06-27T12:58:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-000",
+    "title": "Define loop catalog schema and maturity registry",
+    "summary_zh": "建立全域 loop catalog schema 與 maturity registry，讓每條 loop 的 desired state、actual state、owner、maturity、target、evidence 都可機器讀取。",
+    "phase": "Global Loop Autopilot / Wave 0 Inventory Substrate",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "services",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Every canonical loop has a stable loop_id",
+      "Inventory distinguishes seed fixture registry scheduled reconciled and live proof",
+      "Reconciled status requires owner desired-state query actual-state query and restart behavior"
+    ],
+    "next": "Closed out loop catalog registry after PR #2405 and closeout PR #2406 merged; validation: python3 -m json.tool schema/registry and pytest -q tests/test_loop_catalog_registry.py.",
+    "last_update": "2026-06-27T12:58:03Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "all"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+      "SA-21"
+    ],
+    "actual_state_sources": [
+      "service registry",
+      "scheduler manifests",
+      "BFF read models",
+      "runtime evidence"
+    ],
+    "wave_id": "Wave 0 Inventory Substrate",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：schema 嚴格、maturity guardrail 測試覆蓋、PR #2405 已 merge",
+      "後續：LOOP-AUTO-001 read model 和 LOOP-AUTO-002 guardrails 可直接消費此 registry"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-000/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T12:58:03Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon/.worktrees/loop-auto-000",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-000",
+      "git_clean_required": false,
+      "commit": "e19166053f297b2e1f2501f88b14ac1a8f1fa18b",
+      "commit_subject": "LOOP-AUTO-000: record review closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task closeout records for reviewer approval and task brief state.",
+        "Not changing": "loop catalog schema, registry payload, service code, or guardrail tests.",
+        "Composes with": "merged PR #2405 and follow-up LOOP-AUTO-001/LOOP-AUTO-002 consumers.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOOP-AUTO-000",
+        "Reviewer": "Claude",
+        "Verified": "python3 -m json.tool docs/deployment/loop-catalog.schema.json; python3 -m json.tool docs/deployment/loop-catalog.registry.json; pytest -q tests/test_loop_catalog_registry.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-000",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a635aa0e97b36bb1af1da4721a9f43e1cb997995",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-000",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented static loop catalog schema and registry in commit eae7776e6f2c65539616694c48e3d43b3eb5ff34; PR #2405 https://github.com/ajoe734/pantheon/pull/2405 is open with auto-merge enabled. Validation: python3 -m json.tool schema/registry and pytest -q tests/test_loop_catalog_registry.py (7 passed). Awaiting Claude review approval before owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T12:50:51Z",
+      "resolved_at": "2026-06-27T12:53:33Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-000",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: schema strict with additionalProperties:false, maturity guardrail tests pass, PR #2405 merged with all CI green. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T12:53:33Z",
+      "resolved_at": "2026-06-27T12:58:04Z"
+    }
+  ],
+  "blockers": []
+}
