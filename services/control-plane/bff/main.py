@@ -141,6 +141,7 @@ from loop_inventory import (
     list_loop_health_entries,
     list_loop_inventory_entries,
     loop_inventory_meta,
+    truth_label_payload,
 )
 from read_store import ReadSurfaceStore, redact_evidence_refs
 from settings_store import SettingsStore
@@ -48040,12 +48041,11 @@ def _loop_health_response_meta(
     surfaces["loop_inventory"] = registry_surface
     surfaces["loop_health_snapshots"] = snapshot_surface
     meta["catalog"] = loop_inventory_meta()
-    meta["truth_labels"] = {
-        "seed_fixture": "Seed or fixture data; never accepted as liveness proof.",
-        "snapshot": "BFF local snapshot fallback; useful for inspection but not live proof.",
-        "registry": "Durable static loop catalog metadata.",
-        "scheduled": "Scheduler or worker tick evidence without reconciliation proof.",
-        "live_truth": "Reconciled or proven-live evidence packet.",
+    meta["truth_labels"] = truth_label_payload()
+    meta["truth_source_policy"] = {
+        "accepted_live_source_types": ["live_truth"],
+        "non_live_source_types": ["seed_fixture", "snapshot", "registry", "scheduled"],
+        "note": "Operator panels must display seed, fixture, snapshot, registry, and scheduled truth separately from accepted live truth.",
     }
     meta["coverage"] = {
         "loop_count": item_count,
