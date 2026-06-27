@@ -69,6 +69,13 @@ python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_
 
 python3 -m pytest services/reconciliation-drift/tests/ -q
 # 24 passed in 11.97s
+
+# Post-merge validation on latest origin/dev base:
+python3 -m pytest services/reconciliation-drift/tests/ -q
+# 24 passed in 25.87s
+
+python3 -m pytest services/incidents/test_main_routes.py -q
+# 27 passed in 8.75s
 ```
 
 No live-capital behavior changed. The listener only creates derived
