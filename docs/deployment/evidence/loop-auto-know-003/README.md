@@ -28,4 +28,14 @@ Task: `LOOP-AUTO-KNOW-003` - Add persona teaching async preview and eval worker
 
 ## Verification
 
-Pending local validation.
+```bash
+python3 -m pytest services/training-session/tests/test_http_service.py services/training-session/tests/test_compose_activation.py services/training-session/tests/test_preview_eval_worker.py services/training-session/test_rapid_eval_integration.py services/training-session/test_policy_lineage.py -q
+```
+
+Result: `15 passed in 4.99s`.
+
+```bash
+python3 -m pytest services/training-session -q
+```
+
+Result: `29 passed in 9.23s`.

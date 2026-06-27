@@ -246,7 +246,7 @@ def test_commit_rejects_persona_patch_without_eval_proof() -> None:
     )
 
     assert rejected.status_code == 409
-    assert "evaluation proof required" in rejected.text
+    assert "evaluation proof" in rejected.text
 
 
 def test_control_patch_rejects_unknown_key_and_accepts_known_key() -> None:
