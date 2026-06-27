@@ -320,6 +320,49 @@ def transition_binding(binding_id):
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
 
+@app.route("/api/runtime-fleet/desired-state", methods=["GET"])
+@require_authn(roles=_OPERATOR_ROLES)
+def fleet_desired_state():
+    """Return the active fleet desired state for paper/canary RuntimeBindings.
+
+    LOOP-AUTO-RT-001: this is the stable desired-state query consumed by the
+    fleet reconciler (LOOP-AUTO-RT-002) to drive exactly-one-worker-per-binding
+    enforcement.
+
+    Active bindings in fleet-managed stages (paper, canary) are returned in
+    ``bindings``.  Retired, failed, pending_pause, and paused bindings are
+    excluded (listed in ``excluded`` when include_excluded=true).
+
+    Query params
+    ------------
+    stage            : optional; filter by "paper" or "canary"
+    pool_id          : optional; filter by capital_pool_id
+    include_excluded : optional; "true" to include excluded bindings in response
+    """
+    from fleet_desired_state import (
+        FleetDesiredStateQueryError,
+        build_fleet_desired_state as _build,
+    )
+
+    stage = request.args.get("stage") or None
+    pool_id_filter = request.args.get("pool_id") or None
+    include_excluded = request.args.get("include_excluded", "").lower() in {
+        "true", "1", "yes"
+    }
+
+    svc = _get_service()
+    if pool_id_filter:
+        bindings = svc.list_by_pool(pool_id_filter)
+    else:
+        bindings = svc.list_all()
+
+    try:
+        desired = _build([b.to_dict() for b in bindings], stage_filter=stage)
+    except FleetDesiredStateQueryError as exc:
+        return jsonify({"error": {"code": "INVALID_STAGE", "message": str(exc)}}), 400
+    return jsonify(desired.to_dict(include_excluded=include_excluded)), 200
+
+
 @app.route("/api/runtimes/<pool_id>/active", methods=["GET"])
 @require_authn(roles=_OPERATOR_ROLES)
 def get_active_binding(pool_id):
