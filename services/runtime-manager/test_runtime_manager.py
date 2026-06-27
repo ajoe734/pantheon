@@ -464,6 +464,73 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.assertEqual(history_payload["count"], 1)
         self.assertEqual(history_payload["rollbacks"][0]["rollback_action_type"], "replace")
 
+    def test_runtime_fleet_desired_state_route_returns_active_and_excluded(self):
+        paper = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(
+                plan_id="plan-fleet-paper",
+                capital_pool_id="pool-fleet-paper",
+                runtime_id="rt-fleet-paper",
+            ),
+            headers=self.auth,
+        ).get_json()
+        canary = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(
+                plan_id="plan-fleet-canary",
+                target_stage="canary",
+                capital_pool_id="pool-fleet-canary",
+                runtime_id="rt-fleet-canary",
+                promotion_gate=_valid_activation_gate(),
+            ),
+            headers=self.auth,
+        ).get_json()
+        paused = self.client.post(
+            "/api/runtimes/deploy",
+            json=_valid_deploy_request(
+                plan_id="plan-fleet-paused",
+                capital_pool_id="pool-fleet-paused",
+                runtime_id="rt-fleet-paused",
+            ),
+            headers=self.auth,
+        ).get_json()
+        self.client.post(
+            f"/api/runtime-bindings/{paused['binding_id']}/transition",
+            json={"new_status": "pending_pause"},
+            headers=self.auth,
+        )
+        self.client.post(
+            f"/api/runtime-bindings/{paused['binding_id']}/transition",
+            json={"new_status": "paused"},
+            headers=self.auth,
+        )
+
+        response = self.client.get(
+            "/api/runtime-fleet/desired-state?include_excluded=true",
+            headers=self.auth,
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200, payload)
+        self.assertEqual(payload["active_count"], 2)
+        self.assertEqual(
+            {binding["binding_id"] for binding in payload["bindings"]},
+            {paper["binding_id"], canary["binding_id"]},
+        )
+        canary_binding = next(
+            binding
+            for binding in payload["bindings"]
+            if binding["binding_id"] == canary["binding_id"]
+        )
+        self.assertEqual(canary_binding["policy_envelope"]["stage"], "canary")
+        self.assertEqual(
+            canary_binding["policy_envelope"]["allowed_deployment_scope"],
+            "live",
+        )
+        self.assertEqual(payload["excluded_count"], 1)
+        self.assertEqual(payload["excluded"][0]["binding_id"], paused["binding_id"])
+        self.assertEqual(payload["excluded"][0]["exclusion_reason"], "draining")
+
 
 class KillSwitchControllerUnitTests(unittest.TestCase):
     """Pure unit tests for KillSwitchController — no I/O."""
