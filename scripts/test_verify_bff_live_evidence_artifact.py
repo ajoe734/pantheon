@@ -25,6 +25,7 @@ BEARER_SHAPE_REQUIRED_SOURCES = (
     "approval_race:b",
 )
 CROSS_SECRET_REQUIRED_SOURCES = BEARER_SHAPE_REQUIRED_SOURCES
+RBAC_REQUIRED_LABELS = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
 MIN_BEARER_TOKEN_LENGTH = 12
 
 
@@ -419,6 +420,33 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
     )
 
 
+def strict_preflight_rbac_matrix(
+    *,
+    present: bool = True,
+    duplicate_groups: list[list[str]] | None = None,
+) -> dict[str, object]:
+    present_labels = list(RBAC_REQUIRED_LABELS) if present else []
+    duplicate_groups = duplicate_groups or []
+    return {
+        "required_labels": list(RBAC_REQUIRED_LABELS),
+        "present_labels": present_labels,
+        "missing_labels": [label for label in RBAC_REQUIRED_LABELS if label not in set(present_labels)],
+        "provided_cases": len(present_labels),
+        "expected_cases": len(RBAC_REQUIRED_LABELS),
+        "distinct_bearers": present and not duplicate_groups,
+        "distinct_bearer_count": len(present_labels) - len(duplicate_groups),
+        "duplicate_label_groups": duplicate_groups,
+    }
+
+
+def strict_preflight_approval_race_tokens(*, present: bool = True, distinct: bool = True) -> dict[str, object]:
+    return {
+        "token_a_present": present,
+        "token_b_present": present,
+        "distinct_bearers": present and distinct,
+    }
+
+
 def strict_preflight_cross_secret(
     *,
     present: bool = True,
@@ -468,6 +496,8 @@ def write_passing_artifact(artifact_dir: Path) -> None:
                 "ref": "refs/heads/dev",
                 "sha": "a" * 40,
                 "secret_values_written": False,
+                "rbac_matrix": strict_preflight_rbac_matrix(),
+                "approval_race_tokens": strict_preflight_approval_race_tokens(),
                 "cross_secret_bearers": strict_preflight_cross_secret(),
                 "bearer_shape": strict_preflight_bearer_shape(),
             }
@@ -638,6 +668,92 @@ def test_verifier_rejects_dry_run_validation_without_error_envelope(tmp_path: Pa
     assert "validation-error-envelope" in item["note"]
 
 
+def test_verifier_fails_when_preflight_rbac_matrix_is_missing(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight.pop("rbac_matrix")
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "rbac_matrix:missing"
+
+
+def test_verifier_fails_when_ready_preflight_rbac_matrix_is_incomplete(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["rbac_matrix"]["present_labels"].remove("unknown")
+    preflight["rbac_matrix"]["missing_labels"] = ["unknown"]
+    preflight["rbac_matrix"]["provided_cases"] = 6
+    preflight["rbac_matrix"]["distinct_bearer_count"] = 6
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert "present_labels:6/7" in item["note"]
+    assert "missing_labels_ready" in item["note"]
+
+
+def test_verifier_rejects_rbac_matrix_duplicate_groups_without_matching_invalid(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["rbac_matrix"] = strict_preflight_rbac_matrix(
+        duplicate_groups=[["viewer", "operator"]],
+    )
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert "duplicate_groups_without_invalid" in item["note"]
+
+
+def test_verifier_fails_when_preflight_approval_race_tokens_are_missing(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight.pop("approval_race_tokens")
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "approval_race_tokens:missing"
+
+
+def test_verifier_fails_when_ready_preflight_approval_race_tokens_are_not_distinct(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["approval_race_tokens"] = strict_preflight_approval_race_tokens(distinct=False)
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "approval_race_tokens:distinct_bearers"
+
+
 def test_verifier_fails_when_preflight_cross_secret_bearers_are_missing(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifact"
     write_passing_artifact(artifact_dir)
@@ -790,6 +906,8 @@ def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:
                 "ref": "refs/heads/dev",
                 "sha": "b" * 40,
                 "secret_values_written": False,
+                "rbac_matrix": strict_preflight_rbac_matrix(present=False),
+                "approval_race_tokens": strict_preflight_approval_race_tokens(present=False),
                 "cross_secret_bearers": strict_preflight_cross_secret(present=False),
                 "bearer_shape": strict_preflight_bearer_shape(checked=False, valid=False),
             }
