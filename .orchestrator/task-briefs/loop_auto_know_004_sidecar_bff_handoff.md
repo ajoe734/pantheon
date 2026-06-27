@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare LOOP-AUTO-KNOW-004 BFF and frontend handoff packet
-- Status: in_progress
+- Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Sidecar BFF handoff packet complete and approved; task brief sync committed; pushing closeout commits to dev via PR
+- Next: Support-only BFF/frontend handoff packet approved for parent owner absorption. Returning to Claude2 for closeout after PR #2498 merges.
 
 ## Summary
 平行支援 LOOP-AUTO-KNOW-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
