@@ -3,7 +3,7 @@
 **Sidecar kind:** `acceptance_packet`  
 **Sidecar task:** `LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4`  
 **Parent task:** `LOOP-AUTO-EVO-005` - Prove evolution rollback and follow-through  
-**Parent owner:** Gemini2  
+**Parent owner:** Claude2  
 **Parent reviewer:** Claude  
 **Sidecar owner:** Codex  
 **Sidecar reviewer:** Claude2  
@@ -13,35 +13,43 @@
 > **Scope constraint:** support artifact only. This packet does not edit
 > canonical truth, L1 policy, runtime contracts, registry/governance behavior,
 > or the parent task implementation. It refreshes the acceptance checklist and
-> dependency map for the parent owner/reviewer using the current `dev` state.
+> dependency map for the parent owner/reviewer using the active status command
+> state.
 
 ---
 
 ## 1. Current Durable State
 
-Current repository state at packet time:
+Current active state at corrected packet time:
 
 | Item | Value |
 |---|---|
-| HEAD | `d94ea21e` (`origin/dev`, task branch base) |
-| Parent task status in `ai-status.json` | `todo` |
-| Parent owner / reviewer in `ai-status.json` | Gemini2 / Claude |
-| Parent dependency | `LOOP-AUTO-EVO-004` |
+| Repository base | `e1d0121a` (`origin/dev` after PR #2493) |
+| Parent task status from `AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-EVO-005` | `blocked` |
+| Parent owner / reviewer | Claude2 / Claude |
+| Parent waiting_for | Claude |
+| Parent review file | `docs/deployment/evidence/loop-auto-evo-005/review-claude.md` |
+| Parent review notes | Present in active task state |
+| Parent hard dependency | `LOOP-AUTO-EVO-004` archived `done` |
 | Parent maturity | `reconciled` -> `proven-live` |
-| Sidecar task entry in `ai-status.json` | Not present |
+| Sidecar task status | `in_progress`; owner Codex; reviewer Claude2 |
 
-The earlier support packets remain useful as historical analysis, but their
-state-specific statements no longer match current durable truth:
+Correction note: the first revision of this follow-up packet, merged in PR
+#2493, used the stale local `ai-status.json` file and incorrectly described the
+parent task as `todo` with owner Gemini2. The active status command shows the
+current parent is `blocked`, owner Claude2, waiting for Claude. This corrected
+revision supersedes that state section.
+
+The earlier support packets are still aligned with the active blocker:
 
 | Packet | Historical claim | Current correction |
 |---|---|---|
-| `LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md` | Parent was `blocked`, owner Claude2 | Current `ai-status.json` says `todo`, owner Gemini2 |
-| `LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md` | Parent needed Claude2 handoff from `blocked` | Current owner is Gemini2; parent must proceed from `todo` through normal owner workflow |
+| `LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md` | Parent was `blocked`; formal approve transition missing | Still valid |
+| `LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md` | Parent needs Claude2 handoff from `blocked` before Claude can approve | Still valid |
 
-Implication: do not run the old `blocked -> review -> approve` remediation
-sequence unless the parent task state changes back to that condition. The
-current path is a normal parent-task start, evidence verification, handoff to
-Claude, review approval, and closeout.
+Implication: do run the `blocked -> review -> approve -> review_approved ->
+done` remediation path. Do not restart the parent from `todo`, and do not
+create a new owner flow for Gemini2.
 
 ---
 
@@ -55,18 +63,19 @@ The repository already contains EVO-005 evidence artifacts:
 | `docs/deployment/evidence/loop-auto-evo-005/review-claude.md` | Claude review with APPROVED verdict and 20-test verification |
 | `services/evolution/test_evo_005_rollback_followthrough.py` | Test suite referenced by both evidence documents |
 
-These artifacts can reduce parent-task work, but they are not by themselves a
-fresh closeout from current `ai-status.json` because the parent task is `todo`
-and has no `review_file` or `review_notes_zh` attached in current durable state.
+These artifacts are already attached to the active parent task via
+`review_file` and `review_notes_zh`. They are enough to support formal reviewer
+approval, but they are not a completed closeout while the task remains
+`blocked`.
 
-Minimum reuse rule for Gemini2:
+Minimum reuse rule for Claude2:
 
-1. Re-run the referenced test suite from current HEAD.
-2. Confirm the evidence docs still match the actual output and implementation.
-3. If unchanged, hand off the parent task to Claude with the current test output
-   and existing evidence paths.
-4. If changed, update only parent-task evidence artifacts in the parent task
-   branch before handoff.
+1. Treat the existing review file and review notes as the evidence packet for
+   formal approval.
+2. Move the parent from `blocked` to `review` by handing it to Claude.
+3. Let Claude run the formal `approve` transition from `review`.
+4. After `review_approved`, perform owner closeout per
+   `task-closeout-finalization.md`.
 
 ---
 
@@ -144,22 +153,22 @@ Reviewer check:
 
 ## 4. Dependency Map
 
-Current `ai-status.json` dependency state:
+Current active/archive dependency state:
 
 ```
-LOOP-AUTO-000 (todo) - loop catalog schema and maturity registry
+LOOP-AUTO-000 (done, archive) - loop catalog schema and maturity registry
   |
-  +-- LOOP-AUTO-DEP-001 (todo) - deployment saga outbox consumer
+  +-- LOOP-AUTO-DEP-001 (done, archive) - deployment saga outbox consumer
   |
-  +-- LOOP-AUTO-EVO-001 (todo) - resolved incidents -> postmortem drafts
+  +-- LOOP-AUTO-EVO-001 (done, archive) - resolved incidents -> postmortem drafts
         |
-        +-- LOOP-AUTO-EVO-002 (todo) - postmortems -> evolution proposals
+        +-- LOOP-AUTO-EVO-002 (done, archive) - postmortems -> evolution proposals
               |
-              +-- LOOP-AUTO-EVO-003 (todo) - daily evolution sweep
+              +-- LOOP-AUTO-EVO-003 (done, archive) - daily evolution sweep
               |
-              +-- LOOP-AUTO-EVO-004 (todo) - dispatch approved evolution actions
+              +-- LOOP-AUTO-EVO-004 (done, archive) - dispatch approved evolution actions
                     |
-                    +-- LOOP-AUTO-EVO-005 (todo) - rollback follow-through proof
+                    +-- LOOP-AUTO-EVO-005 (blocked, active) - rollback follow-through proof
                           |
                           +-- LOOP-AUTO-BFF-004 (todo) - cross-loop operator drills
 ```
@@ -168,52 +177,49 @@ Dependency interpretation:
 
 | Dependency | Current state | Parent-task implication |
 |---|---|---|
-| `LOOP-AUTO-EVO-004` | `todo` in `ai-status.json` | Hard declared dependency. Before parent closeout, Gemini2/Claude must either confirm the required dispatch behavior is already merged despite the stale task status, or leave the parent blocked. |
-| `LOOP-AUTO-DEP-001` | `todo` in `ai-status.json` | Required for deployment-plane proof. Runtime rollback proof can still proceed if the scenario routes to runtime-manager only. |
-| `LOOP-AUTO-EVO-001/002` | `todo` in `ai-status.json` | Real postmortem lineage is not required for the rollback proof if an approved decision is constructed directly for evidence. |
+| `LOOP-AUTO-EVO-004` | archived `done` | Hard declared dependency is satisfied; archived review says 13/13 tests passed and PR #2469 merged. |
+| `LOOP-AUTO-DEP-001` | archived `done` | Deployment saga outbox consumer is no longer a blocker. |
+| `LOOP-AUTO-EVO-001/002/003` | archived `done` | Upstream evolution chain is closed; EVO-005 is blocked only on status workflow finalization. |
 | `LOOP-AUTO-BFF-004` | `todo`, depends on EVO-005 | Should not begin cross-loop drill closure until EVO-005 is truthfully reviewed and closed. |
 
 The original sidecar's dependency map is still technically useful, but the
-current durable task state says the entire upstream EVO chain remains `todo`.
-That should be treated as a truth-reconciliation risk during parent review.
+current dependency blocker has been resolved. The remaining blocker is the
+formal status transition: parent is `blocked`, waiting for Claude, with review
+evidence already attached.
 
 ---
 
 ## 5. Recommended Parent Workflow From Current State
 
-For Gemini2, if continuing the parent task from current `todo`:
+For Claude2, as parent owner, first move the task out of `blocked` and into
+review:
 
 ```bash
-AI_NAME=Gemini2 ./scripts/ai-status.sh start LOOP-AUTO-EVO-005 \
-  "Revalidating existing rollback follow-through evidence from current dev"
-
-python3 -m pytest services/evolution/test_evo_005_rollback_followthrough.py -v
-
-AI_NAME=Gemini2 ./scripts/ai-status.sh handoff LOOP-AUTO-EVO-005 Claude \
-  "Rollback follow-through evidence revalidated; see docs/deployment/evidence/loop-auto-evo-005/README.md and review-claude.md"
+AI_NAME=Claude2 ./scripts/ai-status.sh handoff LOOP-AUTO-EVO-005 Claude \
+  "All ACs met; review_file and review_notes already attached; ready for formal approve transition"
 ```
 
 For Claude, after the task is in `review`:
 
 ```bash
 REVIEW_FILE=docs/deployment/evidence/loop-auto-evo-005/review-claude.md \
-REVIEW_NOTES_ZH="審查通過：rollback follow-through evidence revalidated; all ACs checked against current HEAD" \
+REVIEW_NOTES_ZH="審查通過：20 tests pass｜AC-1 E2E rollback-followthrough 驗證完成｜AC-2 BFF observation-report 暴露全部五個 stage｜AC-3 failure paths 明確 surfaced 阻塞原因" \
 AI_NAME=Claude ./scripts/ai-status.sh approve LOOP-AUTO-EVO-005 \
-  "All three EVO-005 ACs verified against current HEAD"
+  "All three ACs met; 20 tests pass; evidence in docs/deployment/evidence/loop-auto-evo-005/review-claude.md"
 ```
 
-For Gemini2, only after `review_approved`:
+For Claude2, only after `review_approved`:
 
 ```bash
-./scripts/git/task_finalize.sh "LOOP-AUTO-EVO-005"
-# wait until the PR merges into dev
-AI_NAME=Gemini2 ./scripts/ai-status.sh done LOOP-AUTO-EVO-005 \
-  "Evolution rollback follow-through closed with merged PR and reviewed evidence"
+AI_NAME=Claude2 ./scripts/ai-status.sh done LOOP-AUTO-EVO-005 \
+  "Evolution rollback follow-through closed; PR #2475 merged and reviewed evidence approved"
 ```
 
-Do not run `done` while the parent is still `todo`, `in_progress`, `blocked`, or
-`review`. The closeout finalization skill requires `review_approved` plus merged
-task PR evidence.
+Do not run `done` while the parent is still `blocked` or `review`. The closeout
+finalization skill requires `review_approved` plus merged task PR evidence. The
+active `next` text says PR #2475 is already merged and CI green, so the owner
+should not create a redundant parent PR unless a new closeout artifact is
+actually changed.
 
 ---
 
@@ -222,11 +228,11 @@ task PR evidence.
 Claude2 should review this sidecar for:
 
 - It does not mutate canonical truth or runtime behavior.
-- It reflects current `ai-status.json` rather than the older blocked-state
-  follow-up packets.
-- It gives parent-owner actions to Gemini2, not Claude2.
-- It identifies the dependency risk around `LOOP-AUTO-EVO-004` still being
-  `todo`.
+- It reflects active `ai-status.sh show` output rather than stale local
+  `ai-status.json`.
+- It gives parent-owner actions to Claude2 and reviewer actions to Claude.
+- It identifies that `LOOP-AUTO-EVO-004` and other upstream dependencies are
+  archived `done`; the remaining blocker is formal status workflow.
 - It preserves Claude as the parent reviewer and Claude2 as this sidecar's
   reviewer.
 
@@ -236,7 +242,14 @@ Claude2 should review this sidecar for:
 
 This packet was assembled from:
 
-- `ai-status.json` current parent and dependency entries
+- `AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4`
+- `AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-EVO-005`
+- `AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-EVO-004`
+- `AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-DEP-001`
+- `AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-EVO-001`
+- `AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-EVO-002`
+- `AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-EVO-003`
+- `AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-BFF-004`
 - `.orchestrator/task-briefs/loop_auto_evo_005_sidecar_acceptance_followup_4.md`
 - `support/sidecars/LOOP-AUTO-EVO-005/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE.md`
 - `support/sidecars/LOOP-AUTO-EVO-005/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md`
