@@ -332,7 +332,7 @@ Focused verification:
 
 ```bash
 python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/execution/lean_runtime/test_signal_isolation.py services/execution/lean_runtime/test_signal_consumer.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q
-# Result: 114 passed in 37.31s
+# Result: 114 passed in 33.49s
 ```
 
 Boundary: this is local controller/contract evidence. It does not claim a dev

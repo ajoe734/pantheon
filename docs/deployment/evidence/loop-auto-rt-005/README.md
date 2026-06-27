@@ -3,7 +3,7 @@
 Task: LOOP-AUTO-RT-005  
 Owner: Codex  
 Reviewer: Claude  
-Generated: 2026-06-27T14:35:13Z
+Generated: 2026-06-27T14:38:31Z
 
 ## Scope
 
@@ -30,7 +30,7 @@ python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler
 Result:
 
 ```text
-114 passed in 37.31s
+114 passed in 33.49s
 ```
 
 ## Evidence Matrix
@@ -62,4 +62,3 @@ Result:
 - No live-capital execution was performed.
 - This packet should not raise `capital_pool_execution` above its current
   maturity without a later environment-level fleet drill.
-
