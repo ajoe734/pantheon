@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
-- Next: PR #2466 open; all CI checks pass; branch BEHIND dev — merging dev and re-pushing to unblock auto-merge; will run done after PR merges into dev.
+- Next: Support-only BFF/frontend handoff packet approved for parent owner absorption. Sidecar artifact covers: current Agora BFF write/read surface inventory, BFF query gap matrix (6 gaps), suggested extraction provenance schema, extraction health projection, operator journey, frontend handoff rules, parent verification test cases, and clear non-goals. No canonical truth or runtime changes introduced.
 
 ## Summary
 平行支援 LOOP-AUTO-KNOW-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
