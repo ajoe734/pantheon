@@ -38,4 +38,5 @@ Result: `15 passed in 4.99s`.
 python3 -m pytest services/training-session -q
 ```
 
-Result: `29 passed in 9.23s`.
+Result: `29 passed in 9.23s`; post-rebase rerun on `origin/dev` tip:
+`29 passed in 8.00s`.
