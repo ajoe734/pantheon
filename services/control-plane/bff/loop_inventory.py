@@ -35,6 +35,37 @@ _TRUTH_SOURCE_TYPES = {
     "reconciled_live_proof": "live_truth",
     "proven_live_evidence": "live_truth",
 }
+_TRUTH_SOURCE_LABELS = {
+    "seed_fixture": "Seed / fixture",
+    _SNAPSHOT_TRUTH_LEVEL: "Snapshot fallback",
+    "registry_metadata": "Registry metadata",
+    "scheduled_tick": "Scheduled tick",
+    "reconciled_live_proof": "Reconciled live truth",
+    "proven_live_evidence": "Proven live truth",
+}
+_TRUTH_SOURCE_DESCRIPTIONS = {
+    "seed_fixture": "Seed or fixture data; never accepted as liveness proof.",
+    _SNAPSHOT_TRUTH_LEVEL: "BFF local snapshot fallback; visible for inspection but not live proof.",
+    "registry_metadata": "Durable static loop catalog metadata.",
+    "scheduled_tick": "Scheduler or worker tick evidence without reconciliation proof.",
+    "reconciled_live_proof": "Desired-vs-actual reconciliation evidence from a non-snapshot source.",
+    "proven_live_evidence": "Target-environment live evidence with liveness, recovery, and readback.",
+}
+
+
+def truth_label_payload() -> Dict[str, Dict[str, Any]]:
+    return {
+        level: {
+            "truth_level": level,
+            "truth_bucket": _TRUTH_SOURCE_TYPES[level],
+            "source_type": _TRUTH_SOURCE_TYPES[level],
+            "rank": _TRUTH_LEVEL_RANKS[level],
+            "label": _TRUTH_SOURCE_LABELS[level],
+            "description": _TRUTH_SOURCE_DESCRIPTIONS[level],
+            "accepted_as_live": level in _LIVE_EVIDENCE_LEVELS,
+        }
+        for level in _TRUTH_LEVEL_ORDER
+    }
 
 
 def _load_registry() -> Dict[str, Any]:
@@ -126,20 +157,39 @@ def _truth_source_from_profile(
         note = health_record.get("truth_note") or note
         source = health_source or "service_store"
 
+    accepted_as_live = (
+        level in _LIVE_EVIDENCE_LEVELS
+        and status == "present"
+        and source != "local_snapshot"
+    )
+    if accepted_as_live:
+        operator_note = "Accepted as live liveness proof."
+    elif level == "seed_fixture":
+        operator_note = "Seed or fixture data is not live proof."
+    elif level == _SNAPSHOT_TRUTH_LEVEL or source == "local_snapshot":
+        operator_note = "Local snapshot fallback is not live proof."
+    elif level == "registry_metadata":
+        operator_note = "Registry metadata identifies the loop but does not prove runtime liveness."
+    elif level == "scheduled_tick":
+        operator_note = "Scheduled tick evidence does not prove desired-vs-actual reconciliation."
+    else:
+        operator_note = "Live proof is missing or not present from an accepted source."
+
     return {
         "truth_level": level,
         "truth_bucket": _TRUTH_SOURCE_TYPES[level],
         "source_type": _TRUTH_SOURCE_TYPES[level],
+        "label": _TRUTH_SOURCE_LABELS[level],
+        "description": _TRUTH_SOURCE_DESCRIPTIONS[level],
         "rank": _TRUTH_LEVEL_RANKS[level],
         "status": status,
         "source": source,
         "refs": refs,
         "note": note,
-        "accepted_as_live": (
-            level in _LIVE_EVIDENCE_LEVELS
-            and status == "present"
-            and source != "local_snapshot"
-        ),
+        "accepted_as_live": accepted_as_live,
+        "is_live_truth_level": level in _LIVE_EVIDENCE_LEVELS,
+        "operator_note": operator_note,
+        "operator_visibility": "live_proof" if accepted_as_live else "not_live_proof",
     }
 
 
@@ -174,6 +224,61 @@ def _highest_present_truth_source(truth_sources: List[Dict[str, Any]]) -> Dict[s
             str(source.get("truth_level") or ""),
         ),
     )
+
+
+def _operator_truth_source(
+    truth_sources: List[Dict[str, Any]],
+    highest: Dict[str, Any],
+) -> Dict[str, Any]:
+    accepted_live = [
+        source
+        for source in truth_sources
+        if source.get("status") == "present" and source.get("accepted_as_live")
+    ]
+    if accepted_live:
+        selected = max(
+            accepted_live,
+            key=lambda source: (
+                int(source.get("rank") or 0),
+                str(source.get("truth_level") or ""),
+            ),
+        )
+        degraded_reason = None
+    else:
+        snapshot = next(
+            (
+                source
+                for source in truth_sources
+                if source.get("truth_level") == _SNAPSHOT_TRUTH_LEVEL
+                and source.get("status") == "present"
+            ),
+            None,
+        )
+        if snapshot is not None:
+            selected = snapshot
+        else:
+            selected = highest
+        degraded_reason = selected.get("operator_note") or "No accepted live truth is present."
+
+    truth_level = str(selected.get("truth_level") or "missing")
+    return {
+        "truth_level": truth_level,
+        "truth_bucket": selected.get("truth_bucket"),
+        "source_type": selected.get("source_type"),
+        "source": selected.get("source"),
+        "rank": selected.get("rank"),
+        "status": selected.get("status"),
+        "label": selected.get("label") or truth_level.replace("_", " "),
+        "description": selected.get("description"),
+        "accepted_as_live": bool(selected.get("accepted_as_live")),
+        "is_live_truth": bool(selected.get("accepted_as_live")),
+        "degraded": not bool(selected.get("accepted_as_live")),
+        "degraded_reason": degraded_reason,
+        "highest_available_truth_level": highest.get("truth_level"),
+        "highest_available_source": highest.get("source"),
+        "highest_available_label": highest.get("label"),
+        "truth_labels": truth_label_payload(),
+    }
 
 
 def _has_present_live_evidence(evidence_profile: Dict[str, Any]) -> bool:
@@ -387,6 +492,7 @@ def _project_evidence_packet(
     packet = _dict_or_empty(health_record.get("evidence_packet"))
     truth_sources = _truth_sources(evidence_profile, health_record, health_source)
     highest = _highest_present_truth_source(truth_sources)
+    operator_truth = _operator_truth_source(truth_sources, highest)
     profile_refs: List[Any] = []
     for evidence in evidence_profile.values():
         if isinstance(evidence, dict) and isinstance(evidence.get("refs"), list):
@@ -404,6 +510,7 @@ def _project_evidence_packet(
         "highest_truth_level": highest.get("truth_level"),
         "highest_truth_rank": highest.get("rank"),
         "accepted_live_liveness": accepted_live_liveness,
+        "operator_truth": operator_truth,
         "can_claim_reconciled": (
             accepted_live_liveness
             and int(highest.get("rank") or -1) >= _TRUTH_LEVEL_RANKS["reconciled_live_proof"]
@@ -460,8 +567,10 @@ def _project_loop_health(
         "registry_ref": _REGISTRY_REF,
         "live_truth_levels": list(_LIVE_EVIDENCE_LEVELS),
         "truth_sources": evidence_packet["truth_sources"],
+        "operator_truth": evidence_packet["operator_truth"],
     }
     has_live_evidence = bool(evidence_packet["accepted_live_liveness"])
+    operator_truth = evidence_packet["operator_truth"]
     projected["live_status"] = {
         "is_live": bool(evidence_packet["can_claim_proven_live"]),
         "is_reconciled": bool(evidence_packet["can_claim_reconciled"]),
@@ -469,8 +578,10 @@ def _project_loop_health(
         "reason": (
             "live evidence is present in the loop health evidence packet"
             if has_live_evidence
-            else "no reconciled or proven-live evidence packet is present"
+            else operator_truth.get("degraded_reason")
+            or "no reconciled or proven-live evidence packet is present"
         ),
+        "operator_truth": operator_truth,
     }
     return projected
 

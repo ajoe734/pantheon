@@ -193,6 +193,8 @@ export const paths = {
   managementAiConversation: (id: string) => `${BASE}/management/ai/conversations/${enc(id)}`,
 
   // ---- v5 closed-loop ----
+  v5LoopHealth: () => `${BASE}/v5/loop-health`,
+  v5LoopHealthEntry: (id: string) => `${BASE}/v5/loop-health/${enc(id)}`,
   v5LoopRuns: () => `${BASE}/v5/loop-runs`,
   v5LoopRun: (id: string) => `${BASE}/v5/loop-runs/${enc(id)}`,
   v5SentinelFindings: () => `${BASE}/v5/sentinel/findings`,
