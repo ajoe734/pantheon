@@ -1047,6 +1047,165 @@ def test_propose_from_incident_rejects_postmortem_for_different_incident():
 
 
 # ---------------------------------------------------------------------------
+# LOOP-AUTO-EVO-002: published postmortem bridge
+# ---------------------------------------------------------------------------
+
+def test_propose_from_postmortem_published_creates_review_gated_decision():
+    pm_id = f"pm-published-{uuid.uuid4().hex[:8]}"
+    inc_id = _seed_incident_and_postmortem(
+        pm_id,
+        incident_overrides={
+            "severity": "high",
+            "artifact_id": "artifact-postmortem-bridge",
+            "artifact_version": "v3",
+            "incident_cluster_id": "cluster-postmortem-bridge",
+            "telemetry_event_ids": ["tel-pm-bridge-001"],
+            "reconciliation_ids": ["recon-pm-bridge-001"],
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:30:00Z",
+            "incident_cluster_id": "cluster-postmortem-bridge",
+            "telemetry_event_ids": ["tel-pm-bridge-001"],
+            "reconciliation_ids": ["recon-pm-bridge-001"],
+            "root_cause": "Postmortem published after a clustered threshold breach.",
+        },
+    )
+
+    r = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id, "publish_event_id": "evt-publish-001"},
+    )
+
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["decision_state"] == "proposed"
+    assert d["action_type"] == "flag_for_review"
+    assert d["target_type"] == "candidate_artifact"
+    assert d["target_id"] == "artifact-postmortem-bridge"
+    assert d["target_version"] == "v3"
+    assert d["linked_incident_id"] == inc_id
+    assert d["linked_postmortem_id"] == pm_id
+    assert d["review_chain"] == []
+    assert d["execution_result"] is None
+    assert d["metadata"]["source"] == "postmortem_published_bridge"
+    assert d["metadata"]["review_gate_state"] == "awaiting_review"
+    assert d["metadata"]["proposal_only"] is True
+    assert d["metadata"]["runtime_binding_mutation_allowed"] is False
+    assert d["metadata"]["broker_order_allowed"] is False
+    assert d["metadata"]["capital_binding_mutation_allowed"] is False
+    assert d["metadata"]["bridge_legacy_proposed_action"] == "rollback"
+    assert d["metadata"]["rollback_is_followthrough"] is True
+    assert d["metadata"]["publish_event_id"] == "evt-publish-001"
+    assert {ref["ref_id"] for ref in d["evidence_refs"]} >= {
+        pm_id,
+        inc_id,
+        "tel-pm-bridge-001",
+        "recon-pm-bridge-001",
+    }
+
+    pm = evo_main.incident_store.get_postmortem(pm_id)
+    assert pm is not None
+    assert pm.linked_evolution_decision_id == d["decision_id"]
+
+
+def test_propose_from_postmortem_published_duplicate_event_is_idempotent():
+    pm_id = f"pm-dup-{uuid.uuid4().hex[:8]}"
+    _seed_incident_and_postmortem(
+        pm_id,
+        incident_overrides={
+            "severity": "medium",
+            "artifact_id": "artifact-duplicate-postmortem",
+            "incident_cluster_id": "cluster-duplicate-postmortem",
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:30:00Z",
+            "incident_cluster_id": "cluster-duplicate-postmortem",
+        },
+    )
+
+    first = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id, "publish_event_id": "evt-publish-dup-a"},
+    )
+    second = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id, "publish_event_id": "evt-publish-dup-b"},
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["decision_id"] == first.json()["decision_id"]
+    assert len(evo_main.store.list_all()) == 1
+
+
+def test_propose_from_postmortem_published_is_once_per_target_and_cluster():
+    cluster_id = f"cluster-target-{uuid.uuid4().hex[:8]}"
+    target_id = f"artifact-target-cluster-{uuid.uuid4().hex[:8]}"
+    first_pm = f"pm-cluster-a-{uuid.uuid4().hex[:8]}"
+    second_pm = f"pm-cluster-b-{uuid.uuid4().hex[:8]}"
+    _seed_incident_and_postmortem(
+        first_pm,
+        incident_id=f"inc-cluster-a-{uuid.uuid4().hex[:8]}",
+        incident_overrides={
+            "severity": "high",
+            "artifact_id": target_id,
+            "incident_cluster_id": cluster_id,
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:30:00Z",
+            "incident_cluster_id": cluster_id,
+        },
+    )
+    _seed_incident_and_postmortem(
+        second_pm,
+        incident_id=f"inc-cluster-b-{uuid.uuid4().hex[:8]}",
+        incident_overrides={
+            "severity": "high",
+            "artifact_id": target_id,
+            "incident_cluster_id": cluster_id,
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:35:00Z",
+            "incident_cluster_id": cluster_id,
+        },
+    )
+
+    first = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": first_pm},
+    )
+    second = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": second_pm},
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["decision_id"] == first.json()["decision_id"]
+    assert len(evo_main.store.list_all()) == 1
+    linked_second = evo_main.incident_store.get_postmortem(second_pm)
+    assert linked_second is not None
+    assert linked_second.linked_evolution_decision_id == first.json()["decision_id"]
+
+
+def test_propose_from_postmortem_published_rejects_unpublished_postmortem():
+    pm_id = f"pm-unpublished-{uuid.uuid4().hex[:8]}"
+    _seed_incident_and_postmortem(pm_id)
+
+    r = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id},
+    )
+
+    assert r.status_code == 422
+    assert "must be published" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
 # EVO-004: Cooldown enforcement — repeated triggers blocked
 # ---------------------------------------------------------------------------
 
