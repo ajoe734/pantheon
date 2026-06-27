@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Audit telemetry readiness and writer durability
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Live dispatch materialized; waiting for supervisor pickup
+- Next: Review approved — all 3 acceptance criteria met, 75 tests pass. Explicit-tag replay dedupe gap fixed. Evidence doc complete. Returning to Codex for finalization.
 
 ## Summary
 審計 telemetry readiness、canonical table bootstrap、writer metrics、DLQ 與 replay semantics，作為 reconciliation autopilot 前置。
