@@ -238,6 +238,23 @@ class TestRunPoll:
         assert result["duplicates"] == 1
         assert result["errors"] == []
 
+    def test_out_of_order_event_counts_as_error_not_consumed(self, worker):
+        records = [_outbox_record("evt-002", sequence_no=2)]
+        receipt = _inbox_receipt("evt-002", status="out_of_order")
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=records),
+            patch.object(worker, "consume_event", return_value=receipt),
+        ):
+            result = worker.run_poll(
+                api_url="http://localhost:8095",
+                consumer_name="test-consumer",
+            )
+
+        assert result["events_found"] == 1
+        assert result["consumed"] == 0
+        assert result["duplicates"] == 0
+        assert "out_of_order" in result["errors"][0]
+
     def test_multiple_events_consumed_independently(self, worker):
         records = [_outbox_record("evt-001"), _outbox_record("evt-002"), _outbox_record("evt-003")]
         receipts = {
