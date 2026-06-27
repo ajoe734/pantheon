@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parents[2]
@@ -220,14 +220,17 @@ class PaperFleetReconciler:
 
     def reconcile_once(self) -> Dict[str, Any]:
         """Run one reconcile cycle. Returns a snapshot of the fleet state."""
-        bindings = self._fetch_active_paper_bindings()
+        fleet = self._fetch_fleet_state()
+        # fleet is None when the fetch failed — must not evict existing workers
+        # in that case, since we have no reliable picture of desired state.
+        bindings = fleet[0] if fleet is not None else None
+        excluded_ids = fleet[1] if fleet is not None else set()
+
         runtime_summaries = (
             self._fetch_runtime_summaries()
             if bindings is not None
             else None
         )
-        # bindings is None when the fetch failed — we must not evict existing workers
-        # in that case, since we have no reliable picture of desired state.
 
         with self._lock:
             # Poll live processes for exit — always run, even on fetch failure
@@ -290,10 +293,19 @@ class PaperFleetReconciler:
                                 self._max_restarts,
                             )
 
-                # Stop workers for bindings that are no longer active
+                # Stop workers for excluded bindings (paused/retired) first,
+                # then any remaining workers no longer in the desired fleet.
                 for binding_id in list(self._workers):
-                    if binding_id not in desired:
-                        self._terminate_worker(binding_id, reason="binding no longer active")
+                    if binding_id in excluded_ids:
+                        self._terminate_worker(
+                            binding_id,
+                            reason="binding excluded from fleet (paused or retired)",
+                        )
+                    elif binding_id not in desired:
+                        self._terminate_worker(
+                            binding_id,
+                            reason="binding no longer in fleet desired state",
+                        )
 
                 self._last_error = None
 
@@ -683,41 +695,70 @@ class PaperFleetReconciler:
     # Runtime-manager polling
     # ------------------------------------------------------------------
 
-    def _fetch_active_paper_bindings(self) -> Optional[List[Dict[str, Any]]]:
-        """Return the active paper bindings, or None if the fetch failed.
+    def _fetch_fleet_state(
+        self,
+    ) -> Optional[Tuple[List[Dict[str, Any]], Set[str]]]:
+        """Fetch the canonical fleet desired state from the runtime-manager.
 
-        Callers must treat None as "unknown desired state" and must not modify
-        the running fleet (no starts, no stops) when None is returned.
-        An empty list means the runtime-manager is reachable but has no active
-        paper bindings; in that case the fleet should be wound down normally.
+        Calls the LOOP-AUTO-RT-001 stable endpoint:
+            GET /api/runtime-fleet/desired-state?stage=paper&include_excluded=true
+
+        Returns
+        -------
+        (desired_bindings, excluded_binding_ids) on success:
+            desired_bindings    — list of active paper RuntimeBinding dicts the
+                                  reconciler must run exactly one worker for
+            excluded_binding_ids — set of binding_ids that must be stopped
+                                  (paused, retired, failed, or draining)
+        None when the runtime-manager is unreachable or returns an error —
+        callers must treat None as "unknown desired state" and must not modify
+        the running fleet (no starts, no stops).
         """
         if not self._url:
-            return []
+            return ([], set())
         try:
-            import urllib.error
             import urllib.request
 
             headers: Dict[str, str] = {"Accept": "application/json"}
             if self._token:
                 headers["Authorization"] = f"Bearer {self._token}"
             req = urllib.request.Request(
-                f"{self._url}/api/runtime-bindings",
+                f"{self._url}/api/runtime-fleet/desired-state"
+                "?stage=paper&include_excluded=true",
                 headers=headers,
                 method="GET",
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             bindings = payload.get("bindings", []) if isinstance(payload, dict) else []
-            return [
-                b for b in bindings
-                if b.get("deployment_mode") == "paper"
-                and b.get("status") == "active"
-            ]
+            excluded = payload.get("excluded", []) if isinstance(payload, dict) else []
+            excluded_ids: Set[str] = {
+                str(e["binding_id"])
+                for e in excluded
+                if isinstance(e, dict) and e.get("binding_id")
+            }
+            return (bindings, excluded_ids)
         except Exception as exc:  # noqa: BLE001
             with self._lock:
-                self._last_error = f"binding fetch failed: {type(exc).__name__}: {exc}"
-            log.warning("could not fetch bindings from runtime-manager: %s", exc)
+                self._last_error = (
+                    f"fleet desired state fetch failed: {type(exc).__name__}: {exc}"
+                )
+            log.warning(
+                "could not fetch fleet desired state from runtime-manager: %s", exc
+            )
             return None
+
+    def _fetch_active_paper_bindings(self) -> Optional[List[Dict[str, Any]]]:
+        """Return the active paper bindings, or None if the fetch failed.
+
+        Deprecated: use _fetch_fleet_state() to get both desired and excluded
+        bindings from the canonical LOOP-AUTO-RT-001 endpoint.  This method is
+        retained for subclasses and tests that override it directly.
+        """
+        result = self._fetch_fleet_state()
+        if result is None:
+            return None
+        return result[0]
 
     # ------------------------------------------------------------------
     # State snapshot
