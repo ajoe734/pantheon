@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add deployment saga outbox consumer
-- Status: todo
+- Status: review_approved
 - Owner: Claude
 - Reviewer: Codex
-- Next: Live dispatch materialized; waiting for supervisor pickup
+- Next: Supervisor resumed LOOP-AUTO-DEP-001 for finalize after successful dispatch.
 
 ## Summary
 新增 durable deployment saga outbox consumer，讓 approved DeploymentPlan 不再需要手動 endpoint stepping。
