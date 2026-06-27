@@ -341,6 +341,16 @@ def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"incident service unavailable: {exc.reason}") from exc
 
 
+def _classify_drift_report_incident(report: Dict[str, Any]) -> Dict[str, Any] | None:
+    incidents_api_url = os.getenv("PANTHEON_INCIDENTS_API_URL", "").rstrip("/")
+    if not incidents_api_url:
+        return None
+    return _post_json(
+        f"{incidents_api_url}/api/incidents/consume-drift-report",
+        {"drift_report": report},
+    )
+
+
 def _stage_reconciliation_checks(
     *,
     binding_id: str,
@@ -648,6 +658,7 @@ def consume_telemetry_events(body: TelemetryEventConsumeBody) -> Dict[str, Any]:
 
     existing_report_ids = {str(item.get("drift_report_id") or "") for item in store.list_drift_reports()}
     drift_reports: List[Dict[str, Any]] = []
+    incident_cases: List[Dict[str, Any]] = []
     ignored_event_ids: List[str] = []
     for event in events:
         report = build_drift_report_from_event(
@@ -663,15 +674,21 @@ def consume_telemetry_events(body: TelemetryEventConsumeBody) -> Dict[str, Any]:
         stored = store.put_drift_report(report)
         existing_report_ids.add(str(stored.get("drift_report_id") or ""))
         drift_reports.append(stored)
+        incident_case = _classify_drift_report_incident(stored)
+        if incident_case is not None:
+            incident_cases.append(incident_case)
 
     return {
         "status": "ok",
         "consumed_event_count": len(events),
         "drift_report_count": len(drift_reports),
         "drift_reports": drift_reports,
+        "incident_case_count": len(incident_cases),
+        "incident_cases": incident_cases,
         "ignored_event_ids": ignored_event_ids,
         "source_contract": {
             "telemetry_truth_owner": "telemetry-ingest",
+            "incident_truth_owner": "incidents",
             "derived_only": True,
             "emergency_control_chain_affected": False,
         },

@@ -20,6 +20,11 @@ POST  /api/incidents/consume-threshold
     Consume a telemetry threshold-breach payload and create an IncidentCase.
     Returns 201 on first write, 200 when the payload is idempotently replayed.
 
+POST  /api/incidents/consume-drift-report
+    Consume a reconciliation DriftReport threshold breach into a deduped
+    IncidentCase. Returns 201 on first write, 200 when the payload updates an
+    existing binding/runtime/cluster incident.
+
 GET   /api/incidents
     List incidents.  Optional query params:
       binding_id      — filter by RuntimeBinding
@@ -104,7 +109,11 @@ try:
         OperatorIncidentPayload,
         UpdateIncidentStatusRequest,
     )
-    from .consumer import IncidentConsumerError, ThresholdTelemetryIncidentConsumer
+    from .consumer import (
+        DriftReportIncidentConsumer,
+        IncidentConsumerError,
+        ThresholdTelemetryIncidentConsumer,
+    )
 except ImportError:
     from models import (  # type: ignore
         CreateIncidentRequest,
@@ -112,7 +121,11 @@ except ImportError:
         OperatorIncidentPayload,
         UpdateIncidentStatusRequest,
     )
-    from consumer import IncidentConsumerError, ThresholdTelemetryIncidentConsumer  # type: ignore
+    from consumer import (  # type: ignore
+        DriftReportIncidentConsumer,
+        IncidentConsumerError,
+        ThresholdTelemetryIncidentConsumer,
+    )
 
 try:
     from services.incident.reference_validation import (  # type: ignore
@@ -179,6 +192,7 @@ def _utc_now() -> str:
 def _to_response(inc: IncidentCase) -> IncidentResponse:
     d = inc.to_dict()
     d.setdefault("telemetry_event_ids", [])
+    d.setdefault("reconciliation_ids", [])
     return IncidentResponse(**d)
 
 
@@ -230,6 +244,8 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
             runtime_id=body.runtime_id,
             trace_id=body.trace_id,
             telemetry_event_ids=body.telemetry_event_ids,
+            reconciliation_ids=body.reconciliation_ids,
+            incident_cluster_id=body.incident_cluster_id,
             evidence_summary=body.evidence_summary,
             lineage_ref=body.lineage_ref,
         )
@@ -282,6 +298,40 @@ def consume_threshold_incident(
         "Consumed threshold telemetry into IncidentCase %s created=%s",
         result.incident.incident_id,
         result.created,
+    )
+    return _to_response(result.incident)
+
+
+@app.post(
+    "/api/incidents/consume-drift-report",
+    response_model=IncidentResponse,
+    status_code=201,
+    summary="Consume a DriftReport threshold breach into a deduped IncidentCase",
+)
+def consume_drift_report_incident(
+    response: Response,
+    body: Dict[str, Any] = Body(...),
+) -> IncidentResponse:
+    """Consume a DriftReport through the Incident domain writer."""
+    consumer = DriftReportIncidentConsumer(
+        incident_store=store,
+        reference_validator=reference_validator,
+    )
+    try:
+        result = consumer.consume(body)
+    except CanonicalReferenceError as exc:
+        raise HTTPException(status_code=422, detail={"reference_errors": exc.errors})
+    except IncidentConsumerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    if not result.created:
+        response.status_code = 200
+
+    log.info(
+        "Consumed DriftReport into IncidentCase %s created=%s cluster=%s",
+        result.incident.incident_id,
+        result.created,
+        result.incident_cluster_id,
     )
     return _to_response(result.incident)
 
@@ -389,6 +439,7 @@ def get_operator_payload(incident_id: str) -> OperatorIncidentPayload:
 
     inc_dict = inc.to_dict()
     inc_dict.setdefault("telemetry_event_ids", [])
+    inc_dict.setdefault("reconciliation_ids", [])
 
     return OperatorIncidentPayload(
         **inc_dict,

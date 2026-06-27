@@ -79,6 +79,8 @@ The third downstream edge is owned by EVO-003:
 |---|---|---|
 | `resolved_at` | ISO-8601 UTC | Required when status is `resolved` or `closed` |
 | `telemetry_event_ids` | `string[]` | Triggering or evidence TelemetryEvent IDs |
+| `reconciliation_ids` | `string[]` | Reconciliation records or DriftReports linked to the incident |
+| `incident_cluster_id` | string | Stable cluster id used to dedupe repeated binding/runtime incidents |
 | `evidence_summary` | string | Human-readable evidence summary |
 | `lineage_ref` | string | Composite ref e.g. `"{artifact_id}@{artifact_version}"` |
 

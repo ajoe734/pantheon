@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -144,6 +145,69 @@ def test_reconciliation_drift_marks_degraded_inputs_and_mismatch_alerts() -> Non
     assert alerts.status_code == 200
     assert alerts.json()[0]["alert_type"] == "reconciliation_mismatch"
     assert alerts.json()[0]["target_service"] == "incidents"
+
+
+def test_telemetry_consume_classifies_drift_report_into_incident_service() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"incident_id":"inc-drift-http-001","status":"open"}'
+
+    with mock.patch.dict("os.environ", {"PANTHEON_INCIDENTS_API_URL": "http://incidents:8090"}), mock.patch.object(
+        module.urllib.request,
+        "urlopen",
+        return_value=_Response(),
+    ) as urlopen:
+        created = client.post(
+            "/api/reconciliation-drift/telemetry-events/consume",
+            json={
+                "event": {
+                    "event_id": "evt-drift-http-001",
+                    "binding_id": "binding-drift-http-001",
+                    "runtime_id": "runtime-drift-http-001",
+                    "deployment_stage": "paper",
+                    "deployment_plan_id": "plan-drift-http-001",
+                    "capital_pool_id": "pool-drift-http-001",
+                    "persona_capital_binding_id": "pcb-drift-http-001",
+                    "artifact_id": "artifact-drift-http-001",
+                    "artifact_version": "1.0.0",
+                    "trace_id": "trace-drift-http-001",
+                    "metrics": {"rolling_drawdown_multiple": 1.6},
+                    "baseline_metrics": {"rolling_drawdown_multiple": 1.0},
+                    "thresholds": {
+                        "rolling_drawdown_multiple": {
+                            "warning_relative_delta": 0.20,
+                            "critical_relative_delta": 0.50,
+                        }
+                    },
+                },
+                "generated_at": "2026-06-27T15:10:00Z",
+            },
+        )
+
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    assert payload["drift_report_count"] == 1
+    assert payload["incident_case_count"] == 1
+    assert payload["incident_cases"][0]["incident_id"] == "inc-drift-http-001"
+    request = urlopen.call_args.args[0]
+    assert request.full_url == "http://incidents:8090/api/incidents/consume-drift-report"
+    posted = json.loads(request.data.decode("utf-8"))
+    report = posted["drift_report"]
+    assert report["drift_report_id"] == "drift-evt-drift-http-001"
+    assert report["binding_id"] == "binding-drift-http-001"
+    assert report["runtime_id"] == "runtime-drift-http-001"
+    assert report["deployment_plan_id"] == "plan-drift-http-001"
+    assert report["telemetry_event_ids"] == ["evt-drift-http-001"]
+    assert report["incident_cluster_id"] == "drift:rolling_drawdown_multiple"
 
 
 def test_paper_run_creates_reconciliation_record_incident_request_and_proposed_evolution() -> None:
