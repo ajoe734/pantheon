@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-RT-003",
+  "archived_at": "2026-06-27T14:08:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-RT-003",
+    "title": "Add runtime session reaper and restart alignment",
+    "summary_zh": "清理 stale paper monitoring sessions，讓 worker restart 建立 fresh session，不再用 ended_at=null 當 liveness proof。",
+    "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-RT-002"
+    ],
+    "artifacts": [
+      "services/runtime-manager",
+      "services/control-plane/bff",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Stale monitoring sessions are automatically ended",
+      "Restarted workers create fresh sessions",
+      "BFF surfaces session staleness and terminal reason"
+    ],
+    "next": "PR #2427 merged into dev at d63d052da9eacdf7e3b455302efc17baca9db0f5; runtime reaper closeout finalized. Verified locally: python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q (50 passed in 18.71s). GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator.",
+    "last_update": "2026-06-27T14:08:04Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "capital_pool_execution",
+      "bff_health_monitoring"
+    ],
+    "current_maturity": "manual",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "runtime heartbeat freshness"
+    ],
+    "actual_state_sources": [
+      "monitoring session store",
+      "BFF runtime board"
+    ],
+    "wave_id": "Wave 2 Runtime Fleet",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：三項驗收標準全部實作",
+      "stale session 自動終止、restart 建立 fresh session、BFF 暴露 terminal_reason 和 staleness 均有測試覆蓋",
+      "50 tests pass (verified locally)"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-rt-003/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T14:08:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-rt-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-RT-003",
+      "git_clean_required": false,
+      "commit": "7738793a63d509ad1be9df60b8d1255933e077ec",
+      "commit_subject": "LOOP-AUTO-RT-003: refresh post-merge evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOOP-AUTO-RT-003",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q (50 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-RT-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d63d052da9eacdf7e3b455302efc17baca9db0f5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-RT-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Implementation pushed in PR #2427: stale paper monitoring evidence is terminal, restarts open fresh sessions, and BFF runtime-state surfaces terminal_reason/staleness; local verification 50 passed.",
+      "status": "done",
+      "created_at": "2026-06-27T13:52:04Z",
+      "resolved_at": "2026-06-27T13:55:06Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "All three acceptance criteria implemented and test-verified: stale session reaper active (missing/stale heartbeat detection), fresh session on restart (zombie force-close + new UUID), BFF terminal_reason/staleness projection with row_health degraded. 50 tests pass.",
+      "status": "done",
+      "created_at": "2026-06-27T13:55:06Z",
+      "resolved_at": "2026-06-27T14:08:08Z"
+    }
+  ],
+  "blockers": []
+}
