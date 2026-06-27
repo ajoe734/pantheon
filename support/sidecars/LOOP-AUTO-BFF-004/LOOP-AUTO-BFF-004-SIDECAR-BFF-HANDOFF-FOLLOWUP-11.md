@@ -16,14 +16,18 @@ executed the missing EVO-005 owner handoff, after which Claude approved and Clau
 closed EVO-005.
 
 This packet is the first post-unblock BFF-004 handoff record. It updates the parent
-owner/reviewer path with the current state:
+owner/reviewer path with the current state, then adds a later same-day parent-progress
+note because BFF-004 moved to review while this sidecar branch was still open:
 
 1. EVO-005 is now archived `done`, so it is no longer the BFF-004 blocker.
-2. LOOP-AUTO-BFF-004 is active `in_progress`, owner Claude, reviewer Claude2.
+2. LOOP-AUTO-BFF-004 is active `review`, owner Claude, reviewer Claude2.
 3. All direct BFF-004 dependencies are now recorded as `done` in task archive.
-4. No BFF-004 drill evidence files are present in this worktree yet.
-5. Remaining BFF-004 work is drill execution, route smoke, filter decision, evidence
-   packet creation, review, and closeout.
+4. BFF-004 drill evidence exists on local parent branch `task/LOOP-AUTO-BFF-004` at
+   commit `835fc135`, but is not present in this sidecar branch or `origin/dev` as of
+   `a9f31589`.
+5. Remaining BFF-004 work is parent review, branch publication/merge if still pending,
+   and owner closeout. Any live route smoke or native filter proof beyond service-level
+   tests remains a parent/reviewer decision.
 
 This packet does **not** modify L1 canonical truth, `ai-status.json`, any loop
 registry, BFF implementation, runtime implementation, or parent task acceptance.
@@ -45,10 +49,14 @@ AI_NAME=Codex2 python3 scripts/ai_status.py show LOOP-AUTO-KNOW-006
 AI_NAME=Codex2 python3 scripts/ai_status.py show LOOP-AUTO-BFF-003
 AI_NAME=Codex2 python3 scripts/ai_status.py show LOOP-AUTO-BFF-001
 find docs/deployment/evidence -maxdepth 2 -type f | rg 'loop-auto-evo-005|LOOP-AUTO-BFF-004'
+git fetch origin --prune
+git merge-base --is-ancestor HEAD origin/dev
+git show task/LOOP-AUTO-BFF-004:docs/deployment/evidence/loop-auto-bff-004/README.md
 ```
 
-No runtime tests or route probes were run by this sidecar. The parent owner must still
-run the BFF-004 drill verification against the intended environment.
+No runtime tests or route probes were run by this sidecar. The parent branch records
+service-level drill tests; any full-stack, dev VM, or live BFF route smoke proof must
+still be provided by the parent task if reviewer scope requires it.
 
 ---
 
@@ -87,15 +95,18 @@ carry forward "EVO-005 blocked" as a current BFF-004 blocker.
 | Field | Value |
 |---|---|
 | Source | `active` |
-| Status | `in_progress` |
+| Status | `review` |
 | Owner / reviewer | Claude / Claude2 |
-| Last update | `2026-06-27T22:40:50Z` |
-| Next | `Claude helper-claimed; surveying services and BFF to assess drill readiness across all depends_on tasks` |
+| Last update | `2026-06-27T22:59:59Z` |
+| Next | Drills complete; evidence at `docs/deployment/evidence/loop-auto-bff-004/README.md`; 5 drill tests and 81-test regression pass; maturity remains `reconciled` |
 | Current maturity | `reconciled` |
 | Target maturity | `proven-live` |
+| Parent anchor commit | `835fc135` on local branch `task/LOOP-AUTO-BFF-004` |
 
-**Interpretation:** parent work can now proceed without waiting for EVO-005 lifecycle
-commands. The remaining gate is evidence quality, not dependency status.
+**Interpretation:** parent work did proceed without waiting for EVO-005 lifecycle
+commands. The current gate is parent review and publication/closeout, not dependency
+status. The parent evidence intentionally stops at `reconciled`; it does not claim
+`proven-live`.
 
 ---
 
@@ -119,8 +130,10 @@ Additional BFF surface dependency referenced by prior packets:
 |---|---|---|---|
 | LOOP-AUTO-BFF-001 | Add loop health read model | `done` | PR #2423; `docs/deployment/evidence/loop-auto-bff-001/README.md` |
 
-**Go/no-go update:** dependency lifecycle is green. The parent task still needs
-environment currency checks and route-level smoke before claiming either drill passed.
+**Go/no-go update:** dependency lifecycle is green. Parent branch `task/LOOP-AUTO-BFF-004`
+now records a consolidated service-level evidence packet and 81 passing tests. Review
+should distinguish that evidence from full-stack or dev VM route smoke, which this
+sidecar did not run and the parent evidence does not claim.
 
 ---
 
@@ -156,8 +169,10 @@ Keep using these prior packet sections:
 
 ### 5.1 Drill 1 - Source-to-Health
 
-Lifecycle dependencies are done. The parent owner must still run these checks against
-the target BFF environment:
+Lifecycle dependencies are done. The parent branch reports service-level Drill 1 proof
+through `services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py`.
+If reviewer scope requires live/dev route proof, run these checks against the target
+BFF environment:
 
 ```bash
 # SG-001: source-health sub-resource
@@ -178,13 +193,15 @@ curl -s "$BFF_BASE/api/v1/personas/$PERSONA_ID/source-health" | jq '.[0].truth_s
 # Expect: non-null label string and not a seed/fixture value for live proof
 ```
 
-Drill 1 can pass only if the evidence file records actual responses and a truthful
-maturity statement. If the environment serves stale dev code, record the deployment
-blocker instead of claiming pass.
+Drill 1 can advance beyond service-level proof only if the evidence file records actual
+responses and a truthful maturity statement. If the environment serves stale dev code,
+record the deployment blocker instead of claiming pass.
 
 ### 5.2 Drill 2 - Runtime-to-Incident-to-Evolution
 
-EVO-005 is now done, so Drill 2 can proceed to route smoke and drill evidence:
+EVO-005 is now done, and the parent branch reports service-level Drill 2 proof through
+the incident -> postmortem -> evolution proposal chain. If reviewer scope requires
+live/dev route proof, run these checks against the target BFF environment:
 
 ```bash
 # SG-006: 5-stage deployment split
@@ -215,24 +232,39 @@ operator-verifiable route are confirmed.
 
 ---
 
-## 6. Evidence Files Still Missing
+## 6. Parent Evidence Update
 
-This sidecar found no BFF-004 drill evidence files in the current worktree. The parent
-owner should produce:
+This sidecar branch still does not contain the parent evidence file. The local parent
+branch `task/LOOP-AUTO-BFF-004` does contain:
 
-| Drill | Required file |
+| Evidence | Location |
+|---|---|
+| Consolidated BFF-004 drill evidence | `docs/deployment/evidence/loop-auto-bff-004/README.md` |
+| Cross-loop drill test | `services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py` |
+| Parent task brief | `.orchestrator/task-briefs/loop_auto_bff_004.md` |
+
+The parent evidence replaces this packet's earlier "evidence files still missing"
+statement for current BFF-004 review. It records:
+
+- source-health connector truth projecting into persona panel and loop-health labels
+- runtime heartbeat-loss incident creation and resolution
+- postmortem draft and publish flow
+- evolution proposal creation without approval-gate bypass
+- duplicate publish idempotency
+- unresolved incident blocking postmortem draft
+- verification totals: 5 drill tests plus 76 regression tests, 81 passing total
+- maturity bounded to `reconciled`, with no Docker Compose or dev VM `proven-live` claim
+
+The older split-file expectation from FOLLOWUP-3 remains a template option only:
+
+| Drill | Template file |
 |---|---|
 | Source-to-health | `docs/deployment/evidence/LOOP-AUTO-BFF-004-drill1-source-health.md` |
 | Runtime-to-incident-to-evolution | `docs/deployment/evidence/LOOP-AUTO-BFF-004-drill2-runtime-incident-evolution.md` |
 
-Use the templates in FOLLOWUP-3 §3.1 and §3.2. Each file should include:
-
-- environment and commit/deploy refs
-- exact commands or UI/API steps
-- raw response excerpts or summarized machine-readable payloads
-- pass/fail verdict per acceptance criterion
-- fallback annotation if FG-001 or FG-002 is not native
-- final maturity statement bounded by observed evidence
+Claude2 may accept the consolidated README if it is sufficient for parent review, or
+request split files from the parent owner. This sidecar should not create parent
+evidence files.
 
 ---
 
@@ -260,13 +292,15 @@ instead, note that UI rendering was not part of the proof.
 
 Recommended next parent-task sequence for Claude:
 
-1. Confirm the dev/test BFF deployment contains the merged dependency commits.
-2. Run Drill 1 route smoke from §5.1.
-3. Create `LOOP-AUTO-BFF-004-drill1-source-health.md`.
-4. Run Drill 2 route smoke from §5.2, including FG-001/FG-002 decision.
-5. Create `LOOP-AUTO-BFF-004-drill2-runtime-incident-evolution.md`.
-6. Record any remaining blocker as route/deployment/filter evidence, not as EVO-005 lifecycle.
-7. Hand BFF-004 to Claude2 for review with both evidence files and exact verification commands.
+1. Keep the stale EVO-005 blocker retired; dependencies are archived `done`.
+2. For parent BFF-004, let Claude2 review the consolidated evidence on
+   `task/LOOP-AUTO-BFF-004` at `835fc135`.
+3. If Claude2 requires live/dev route proof, run the §5 smoke checks and append them to
+   parent evidence rather than changing this sidecar.
+4. If consolidated evidence is accepted, publish/merge the parent task branch and close
+   BFF-004 through normal owner finalization.
+5. Treat this FOLLOWUP-11 packet as a support snapshot only; parent closeout should
+   supersede it with the final evidence record.
 
 Reviewer questions for Claude:
 
@@ -276,6 +310,7 @@ Reviewer questions for Claude:
 | Does it avoid claiming route smoke not run by Codex2? | Should be yes |
 | Does it preserve prior normative drill templates? | Should be yes |
 | Does it keep sidecar scope? | Should be yes |
+| Does the later parent-progress note avoid reviewing parent acceptance here? | Should be yes |
 
 ---
 
@@ -298,3 +333,4 @@ This packet is a support artifact only. It:
 | Date | Author | Change |
 |---|---|---|
 | 2026-06-27 | Codex2 | FOLLOWUP-11 packet: confirms EVO-005 is now archived done; confirms BFF-004 active owner Claude/reviewer Claude2; updates dependency go/no-go; retires stale EVO-005 blocker narrative; lists remaining route smoke, filter decision, evidence files, and frontend handoff checks |
+| 2026-06-27 | Codex2 | Same-day update: BFF-004 is now in `review`; parent branch `task/LOOP-AUTO-BFF-004` has consolidated service-level drill evidence at commit `835fc135`; remaining parent work is review/publication/closeout, while any live route smoke remains outside this sidecar |
