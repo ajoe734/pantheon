@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prove evolution rollback and follow-through
-- Status: review_approved
+- Status: in_progress
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Supervisor resumed LOOP-AUTO-EVO-005 for finalize after successful dispatch.
+- Next: CI passed (all 3 checks green); branch BEHIND dev after sidecar acceptance merge — merging dev to unblock auto-merge on PR 2475.
 
 ## Summary
 產出 approved rollback/mitigation command 到 runtime-manager/deployment 的 follow-through evidence。
