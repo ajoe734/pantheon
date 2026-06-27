@@ -559,6 +559,40 @@ class ShioajiBrokerAdapter:
 
         return order
 
+    def snapshot_price(self, symbol: str) -> Optional[float]:
+        """Read-only live price from a Shioaji snapshot (last, else bid/ask mid).
+
+        Returns None when the sandbox gate is closed, credentials/SDK are
+        missing, or no quote is available, so callers fall back to another
+        source. Never places or matches an order.
+        """
+        self._gate_check()
+        ticker = str(symbol or "").strip().upper().split(".", 1)[0]
+        if not ticker:
+            return None
+        api = self._get_api()
+        contract = self._resolve_contract(
+            api, account_kind=_ACCOUNT_STOCK, symbol=ticker, futures_category=None
+        )
+        snaps = api.snapshots([contract])
+        if not snaps:
+            return None
+        snap = snaps[0]
+        last = getattr(snap, "close", None)
+        try:
+            if last is not None and float(last) > 0:
+                return float(last)
+            bid = getattr(snap, "buy_price", None)
+            ask = getattr(snap, "sell_price", None)
+            if bid and ask and float(bid) > 0 and float(ask) > 0:
+                return round((float(bid) + float(ask)) / 2.0, 4)
+            for v in (bid, ask):
+                if v and float(v) > 0:
+                    return float(v)
+        except (TypeError, ValueError):
+            return None
+        return None
+
     def cancel(self, order_id: str) -> ShioajiOrder:
         """Cancel a pending order on the simulation account."""
         self._gate_check()
