@@ -448,6 +448,13 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(writer._total_failed, 3)
         self.assertEqual(writer._total_dlq, 3)
+        stats = writer.stats()
+        self.assertEqual(stats["total_failed"], 3)
+        self.assertEqual(stats["total_dlq"], 3)
+        self.assertIsNotNone(stats["last_failed_write_at"])
+        self.assertIsNotNone(stats["last_dlq_at"])
+        self.assertIsNotNone(stats["seconds_since_last_failed_write"])
+        self.assertEqual(stats["last_error"], "db connection refused")
 
     async def test_retry_exhausted_to_dlq(self):
         buf = InMemoryBuffer(maxsize=100)
@@ -568,6 +575,9 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
         await writer.stop(graceful=True)
 
         self.assertEqual(writer._total_written, 2)
+        stats = writer.stats()
+        self.assertIsNotNone(stats["last_successful_write_at"])
+        self.assertIsNotNone(stats["seconds_since_last_successful_write"])
 
     async def test_stats(self):
         buf = InMemoryBuffer(maxsize=100)
@@ -1095,6 +1105,21 @@ class TestReplayPolicy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(replayed, 1)
 
         await svc.stop(graceful=True)
+
+    async def test_replay_with_explicit_tag_filter_deduplicates_event_id(self):
+        """Explicit tag replay must still be idempotent by event_id."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+
+        duplicate = _make_event(event_id="explicit-tag-dup")
+        svc._dlq.reject(duplicate, tags=[TAG_WRITER_ERROR], reason="first transient error")
+        svc._dlq.reject(dict(duplicate), tags=[TAG_WRITER_ERROR], reason="second transient error")
+
+        replayed = await svc.replay_dlq(tag_filter=TAG_WRITER_ERROR)
+        self.assertEqual(replayed, 1)
+
+        await svc.stop(graceful=True)
+        self.assertEqual(svc.stats()["writer"]["total_written"], 1)
 
     async def test_stats_includes_dedup_and_duplicate_counts(self):
         """Stats must expose dedup_tracked_ids and total_duplicates."""
