@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Claude2 finalizing per owned_finalize_dispatch; sidecar artifact at commit 4b2046bf, PR #2466 open with auto-merge enabled; branch updated to dev tip, awaiting PR merge then done.
+- Next: PR #2466 open; all CI checks pass; branch BEHIND dev — merging dev and re-pushing to unblock auto-merge; will run done after PR merges into dev.
 
 ## Summary
 平行支援 LOOP-AUTO-KNOW-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
