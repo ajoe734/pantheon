@@ -37,7 +37,11 @@ def _write_json(path: Path, payload: object) -> None:
 
 
 @contextmanager
-def _isolated_dep004_bff(*, include_monitoring: bool) -> Iterator[TestClient]:
+def _isolated_dep004_bff(
+    *,
+    include_monitoring: bool,
+    include_second_plan: bool = False,
+) -> Iterator[TestClient]:
     original_store = bff_main.read_store
     original_env = {key: os.environ.get(key) for key in _TRACKED_ENV}
     with tempfile.TemporaryDirectory(prefix="dep004_bff_") as td:
@@ -50,70 +54,123 @@ def _isolated_dep004_bff(*, include_monitoring: bool) -> Iterator[TestClient]:
         os.environ["PANTHEON_GOVERNANCE_DATA_DIR"] = str(governance_dir)
         os.environ["PANTHEON_RUNTIME_DATA_DIR"] = str(runtime_dir)
 
-        _write_json(
-            governance_dir / "deployment_plans.json",
-            {
-                "plan-dep004-001": {
-                    "plan_id": "plan-dep004-001",
-                    "approval_decision_id": "approval-dep004-001",
-                    "artifact_id": "artifact-dep004-001",
-                    "artifact_version": "v1.0.0",
-                    "strategy_id": "strategy-dep004",
-                    "capital_pool_id": "pool-dep004",
-                    "current_stage": "none",
-                    "target_stage": "paper",
-                    "transition_type": "activate",
-                    "runtime_action": "deploy_new_binding",
-                    "status": "approved",
-                    "created_at": "2026-06-27T01:00:00Z",
-                }
-            },
-        )
+        deployment_plans = {
+            "plan-dep004-001": {
+                "plan_id": "plan-dep004-001",
+                "approval_decision_id": "approval-dep004-001",
+                "artifact_id": "artifact-dep004-001",
+                "artifact_version": "v1.0.0",
+                "strategy_id": "strategy-dep004",
+                "capital_pool_id": "pool-dep004",
+                "current_stage": "none",
+                "target_stage": "paper",
+                "transition_type": "activate",
+                "runtime_action": "deploy_new_binding",
+                "status": "approved",
+                "created_at": "2026-06-27T01:00:00Z",
+            }
+        }
+        if include_second_plan:
+            deployment_plans["plan-dep004-002"] = {
+                "plan_id": "plan-dep004-002",
+                "approval_decision_id": "approval-dep004-002",
+                "artifact_id": "artifact-dep004-002",
+                "artifact_version": "v1.0.0",
+                "strategy_id": "strategy-dep004",
+                "capital_pool_id": "pool-dep004",
+                "current_stage": "none",
+                "target_stage": "paper",
+                "transition_type": "activate",
+                "runtime_action": "deploy_new_binding",
+                "status": "approved",
+                "created_at": "2026-06-27T01:02:00Z",
+            }
+        _write_json(governance_dir / "deployment_plans.json", deployment_plans)
+
+        approval_decisions = {
+            "approval-dep004-001": {
+                "decision_id": "approval-dep004-001",
+                "decision": "approved",
+                "decision_state": "decided",
+                "actor_id": "risk-committee",
+                "risk_level": "medium",
+                "decided_at": "2026-06-27T01:05:00Z",
+            }
+        }
+        if include_second_plan:
+            approval_decisions["approval-dep004-002"] = {
+                "decision_id": "approval-dep004-002",
+                "decision": "approved",
+                "decision_state": "decided",
+                "actor_id": "risk-committee",
+                "risk_level": "medium",
+                "decided_at": "2026-06-27T01:07:00Z",
+            }
         _write_json(
             governance_dir / "approval_decisions.json",
-            {
-                "approval-dep004-001": {
-                    "decision_id": "approval-dep004-001",
-                    "decision": "approved",
-                    "decision_state": "decided",
-                    "actor_id": "risk-committee",
-                    "risk_level": "medium",
-                    "decided_at": "2026-06-27T01:05:00Z",
-                }
-            },
+            approval_decisions,
         )
+        deployment_sagas = {
+            "deployment-saga-dep004-001": {
+                "saga_id": "deployment-saga-dep004-001",
+                "plan_id": "plan-dep004-001",
+                "approval_decision_id": "approval-dep004-001",
+                "strategy_id": "strategy-dep004",
+                "artifact_id": "artifact-dep004-001",
+                "artifact_version": "v1.0.0",
+                "capital_pool_id": "pool-dep004",
+                "current_stage": "none",
+                "target_stage": "paper",
+                "runtime_action": "deploy_new_binding",
+                "status": "awaiting_binding",
+                "current_step": "binding_requested",
+                "trace_id": "trace-dep004",
+                "created_at": "2026-06-27T01:00:00Z",
+                "updated_at": "2026-06-27T01:15:00Z",
+                "last_sequence_no": 1,
+                "history": [
+                    {
+                        "step": "binding_requested",
+                        "status": "awaiting_binding",
+                        "event_id": "deployment-saga-dep004-001-evt-0001",
+                        "sequence_no": 1,
+                        "emitted_at": "2026-06-27T01:00:00Z",
+                    }
+                ],
+            }
+        }
+        if include_second_plan:
+            deployment_sagas["deployment-saga-dep004-002"] = {
+                "saga_id": "deployment-saga-dep004-002",
+                "plan_id": "plan-dep004-002",
+                "approval_decision_id": "approval-dep004-002",
+                "strategy_id": "strategy-dep004",
+                "artifact_id": "artifact-dep004-002",
+                "artifact_version": "v1.0.0",
+                "capital_pool_id": "pool-dep004",
+                "current_stage": "none",
+                "target_stage": "paper",
+                "runtime_action": "deploy_new_binding",
+                "status": "completed",
+                "current_step": "completed",
+                "trace_id": "trace-dep004-002",
+                "created_at": "2026-06-27T01:02:00Z",
+                "updated_at": "2026-06-27T01:12:00Z",
+                "last_sequence_no": 2,
+                "history": [
+                    {
+                        "step": "completed",
+                        "status": "completed",
+                        "event_id": "deployment-saga-dep004-002-evt-0002",
+                        "sequence_no": 2,
+                        "emitted_at": "2026-06-27T01:12:00Z",
+                    }
+                ],
+            }
         _write_json(
             governance_dir / "deployment_sagas.json",
             {
-                "sagas": {
-                    "deployment-saga-dep004-001": {
-                        "saga_id": "deployment-saga-dep004-001",
-                        "plan_id": "plan-dep004-001",
-                        "approval_decision_id": "approval-dep004-001",
-                        "strategy_id": "strategy-dep004",
-                        "artifact_id": "artifact-dep004-001",
-                        "artifact_version": "v1.0.0",
-                        "capital_pool_id": "pool-dep004",
-                        "current_stage": "none",
-                        "target_stage": "paper",
-                        "runtime_action": "deploy_new_binding",
-                        "status": "awaiting_binding",
-                        "current_step": "binding_requested",
-                        "trace_id": "trace-dep004",
-                        "created_at": "2026-06-27T01:00:00Z",
-                        "updated_at": "2026-06-27T01:15:00Z",
-                        "last_sequence_no": 1,
-                        "history": [
-                            {
-                                "step": "binding_requested",
-                                "status": "awaiting_binding",
-                                "event_id": "deployment-saga-dep004-001-evt-0001",
-                                "sequence_no": 1,
-                                "emitted_at": "2026-06-27T01:00:00Z",
-                            }
-                        ],
-                    }
-                },
+                "sagas": deployment_sagas,
                 "outbox": [
                     {
                         "owner_service": "deployment-orchestrator",
@@ -158,7 +215,26 @@ def _isolated_dep004_bff(*, include_monitoring: bool) -> Iterator[TestClient]:
                     "status": "active",
                     "plan_id": "plan-dep004-001",
                     "persona_capital_binding_id": "pcb-dep004-001",
-                }
+                },
+                *(
+                    [
+                        {
+                            "binding_id": "rb-dep004-002",
+                            "runtime_binding_id": "rb-dep004-002",
+                            "runtime_id": "runtime-dep004-002",
+                            "capital_pool_id": "pool-dep004",
+                            "artifact_id": "artifact-dep004-002",
+                            "artifact_version": "v1.0.0",
+                            "deployment_mode": "paper",
+                            "effective_at": "2026-06-27T01:12:00Z",
+                            "status": "active",
+                            "plan_id": "plan-dep004-002",
+                            "persona_capital_binding_id": "pcb-dep004-002",
+                        }
+                    ]
+                    if include_second_plan
+                    else []
+                ),
             ],
         )
         if include_monitoring:
@@ -248,3 +324,24 @@ def test_dep004_runtime_fleet_requires_runtime_evidence_to_be_active() -> None:
     assert runtime_fleet["failure"] is False
     assert runtime_fleet["last_heartbeat_at"] == "2026-06-27T01:16:00Z"
     assert payload["meta"]["surfaces"]["runtime_fleet_stage"]["source"] == "canonical"
+
+
+def test_dep004_deployment_list_stage_surfaces_aggregate_page_failures() -> None:
+    with _isolated_dep004_bff(
+        include_monitoring=True,
+        include_second_plan=True,
+    ) as client:
+        response = client.get("/bff/deployments", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert [item["plan_id"] for item in payload["items"]] == [
+        "plan-dep004-001",
+        "plan-dep004-002",
+    ]
+    assert payload["items"][0]["stage_truth"]["runtime_fleet"]["status"] == "active"
+    assert payload["items"][1]["stage_truth"]["runtime_fleet"]["status"] == "unavailable"
+
+    surfaces = payload["meta"]["surfaces"]
+    assert surfaces["runtime_fleet_stage"]["status"] == "degraded"
+    assert surfaces["deployment_stage_truth"]["status"] == "degraded"
