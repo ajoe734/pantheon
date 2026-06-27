@@ -17,7 +17,10 @@ import pytest
 
 from services.evolution.postmortem_bridge import (
     PostmortemBridgeError,
+    build_published_postmortem_proposal_request,
+    decision_id_for_published_postmortem,
     on_postmortem_published,
+    postmortem_bridge_key,
 )
 
 
@@ -35,6 +38,51 @@ def _base_postmortem(**kwargs):
         "artifact_version": "1.0.0",
         "deployment_stage": "paper",
         "corrective_action_required": False,
+    }
+    base.update(kwargs)
+    return base
+
+
+def _published_postmortem(**kwargs):
+    base = {
+        "postmortem_id": "PM-PUB-001",
+        "title": "Published postmortem",
+        "status": "published",
+        "published_at": "2026-06-27T15:30:00Z",
+        "incident_id": "INC-PUB-001",
+        "binding_id": "binding-001",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-001",
+        "capital_pool_id": "pool-001",
+        "persona_capital_binding_id": "pcb-001",
+        "artifact_id": "artifact-001",
+        "artifact_version": "1.0.0",
+        "runtime_id": "runtime-001",
+        "trace_id": "trace-001",
+        "root_cause": "Threshold drift was not caught before deployment.",
+        "action_items": [],
+        "telemetry_event_ids": ["tel-001"],
+        "reconciliation_ids": ["recon-001"],
+        "incident_cluster_id": "cluster-drift-001",
+    }
+    base.update(kwargs)
+    return base
+
+
+def _incident(**kwargs):
+    base = {
+        "incident_id": "INC-PUB-001",
+        "severity": "high",
+        "binding_id": "binding-001",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-001",
+        "capital_pool_id": "pool-001",
+        "persona_capital_binding_id": "pcb-001",
+        "artifact_id": "artifact-001",
+        "artifact_version": "1.0.0",
+        "runtime_id": "runtime-001",
+        "trace_id": "trace-001",
+        "incident_cluster_id": "cluster-drift-001",
     }
     base.update(kwargs)
     return base
@@ -211,3 +259,53 @@ def test_bridge_does_not_mutate_input():
     original = dict(pm)
     on_postmortem_published(pm)
     assert pm == original
+
+
+# ---------------------------------------------------------------------------
+# Published postmortem admission builder
+# ---------------------------------------------------------------------------
+
+def test_published_postmortem_builder_creates_review_gated_request():
+    pm = _published_postmortem()
+    incident = _incident(severity="high")
+
+    result = build_published_postmortem_proposal_request(pm, incident)
+
+    assert result["decision_id"] == decision_id_for_published_postmortem(pm, incident)
+    assert result["target_type"] == "candidate_artifact"
+    assert result["target_id"] == "artifact-001"
+    assert result["target_version"] == "1.0.0"
+    assert result["action_type"] == "flag_for_review"
+    assert result["linked_postmortem_id"] == "PM-PUB-001"
+    assert result["linked_incident_id"] == "INC-PUB-001"
+    assert result["metadata"]["postmortem_bridge_key"] == postmortem_bridge_key(pm, incident)
+    assert result["metadata"]["review_gate_state"] == "awaiting_review"
+    assert result["metadata"]["proposal_only"] is True
+    assert result["metadata"]["broker_order_allowed"] is False
+    assert result["metadata"]["bridge_legacy_proposed_action"] == "rollback"
+    assert {ref["ref_id"] for ref in result["evidence_refs"]} >= {
+        "PM-PUB-001",
+        "INC-PUB-001",
+        "tel-001",
+        "recon-001",
+    }
+
+
+def test_published_postmortem_builder_is_keyed_by_target_and_cluster():
+    incident = _incident()
+    first_pm = _published_postmortem(postmortem_id="PM-PUB-001")
+    duplicate_pm = _published_postmortem(postmortem_id="PM-PUB-002")
+
+    assert postmortem_bridge_key(first_pm, incident) == postmortem_bridge_key(duplicate_pm, incident)
+    assert decision_id_for_published_postmortem(first_pm, incident) == decision_id_for_published_postmortem(
+        duplicate_pm,
+        incident,
+    )
+
+
+def test_published_postmortem_builder_rejects_unpublished_postmortem():
+    with pytest.raises(PostmortemBridgeError, match="must be published"):
+        build_published_postmortem_proposal_request(
+            _published_postmortem(status="approved", published_at=None),
+            _incident(),
+        )
