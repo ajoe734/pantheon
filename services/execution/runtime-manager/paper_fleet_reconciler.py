@@ -514,11 +514,31 @@ class PaperFleetReconciler:
         os.replace(tmp_path, path)
 
     @staticmethod
+    def _monitoring_session_staleness_marker(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        staleness = session.get("staleness")
+        if not isinstance(staleness, dict):
+            return None
+        marker = dict(staleness)
+        status = str(marker.get("status") or "").strip().lower()
+        reason = str(marker.get("reason") or "").strip()
+        if status == "stale" or reason:
+            marker.setdefault("status", "stale")
+            return marker
+        return None
+
+    @staticmethod
     def _monitoring_session_open(session: Dict[str, Any]) -> bool:
         if session.get("ended_at") not in (None, ""):
             return False
         status = str(session.get("status") or "").strip().lower()
-        return status not in {"ended", "stale", "failed"}
+        if status in {"ended", "stale", "failed"}:
+            return False
+        if PaperFleetReconciler._monitoring_session_staleness_marker(session) is not None:
+            return False
+        explicit = session.get("active")
+        if explicit is not None:
+            return bool(explicit)
+        return True
 
     def _open_monitoring_session(
         self,
@@ -529,10 +549,18 @@ class PaperFleetReconciler:
         binding_id = str(binding.get("binding_id") or "")
         now = _iso_now()
         for session_id, session in list(self._monitoring_sessions.items()):
-            if (
-                str(session.get("binding_id") or session.get("runtime_binding_id") or "") == binding_id
-                and self._monitoring_session_open(session)
-            ):
+            if str(session.get("binding_id") or session.get("runtime_binding_id") or "") != binding_id:
+                continue
+            staleness = self._monitoring_session_staleness_marker(session)
+            if staleness is not None and session.get("ended_at") in (None, ""):
+                self._end_monitoring_session(
+                    session_id,
+                    reason=str(staleness.get("reason") or "stale_monitoring_session"),
+                    ended_at=now,
+                    staleness=staleness,
+                    force=True,
+                )
+            elif self._monitoring_session_open(session):
                 self._end_monitoring_session(
                     session_id,
                     reason="superseded_by_restart",
@@ -568,15 +596,21 @@ class PaperFleetReconciler:
         ended_at: Optional[str] = None,
         staleness: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
+        force: bool = False,
     ) -> None:
         if not session_id:
             return
         session = self._monitoring_sessions.get(session_id)
-        if not session or not self._monitoring_session_open(session):
+        if not session:
+            return
+        if session.get("ended_at") not in (None, ""):
+            return
+        if not force and not self._monitoring_session_open(session):
             return
         session["ended_at"] = ended_at or _iso_now()
         session["status"] = "ended"
         session["ended_reason"] = reason
+        session["terminal_reason"] = reason
         if staleness is not None:
             session["staleness"] = dict(staleness)
         if error:
@@ -625,12 +659,24 @@ class PaperFleetReconciler:
         self,
         summaries: Optional[Dict[str, Dict[str, Any]]],
     ) -> None:
-        if summaries is None:
-            return
+        may_derive_staleness = summaries is not None
+        summaries = summaries or {}
         now = datetime.now(timezone.utc)
         stale_binding_ids: List[str] = []
         changed = False
         for session_id, session in list(self._monitoring_sessions.items()):
+            existing_staleness = self._monitoring_session_staleness_marker(session)
+            if existing_staleness is not None and session.get("ended_at") in (None, ""):
+                self._end_monitoring_session(
+                    session_id,
+                    reason=str(existing_staleness.get("reason") or "stale_monitoring_session"),
+                    staleness=existing_staleness,
+                    force=True,
+                )
+                binding_id = str(session.get("binding_id") or session.get("runtime_binding_id") or "")
+                if binding_id:
+                    stale_binding_ids.append(binding_id)
+                continue
             if not self._monitoring_session_open(session):
                 continue
             runtime_id = str(session.get("runtime_id") or "")
@@ -644,6 +690,8 @@ class PaperFleetReconciler:
                     entry.last_heartbeat_at = str(summary.get("last_heartbeat_at"))
                     entry.heartbeat_status = str(session["heartbeat_status"])
                 changed = True
+            if not may_derive_staleness:
+                continue
             staleness = self._monitoring_staleness(session, summary, now=now)
             if staleness is None:
                 continue

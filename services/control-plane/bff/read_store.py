@@ -10772,17 +10772,29 @@ class ReadSurfaceStore:
         return sorted(bindings, key=lambda x: x.get("id", ""))
 
     @staticmethod
+    def _paper_runtime_monitoring_staleness_marker(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        staleness = session.get("staleness")
+        if not isinstance(staleness, dict):
+            return None
+        status = str(staleness.get("status") or "").strip().lower()
+        reason = str(staleness.get("reason") or "").strip()
+        if status == "stale" or reason:
+            return dict(staleness)
+        return None
+
+    @staticmethod
     def _paper_runtime_monitoring_session_active(session: Dict[str, Any]) -> bool:
         if session.get("ended_at") not in (None, ""):
+            return False
+        status = str(session.get("status") or "").strip().lower()
+        if status in {"ended", "stale", "failed"}:
+            return False
+        if ReadSurfaceStore._paper_runtime_monitoring_staleness_marker(session) is not None:
             return False
         explicit = session.get("active")
         if explicit is not None:
             return bool(explicit)
-        status = str(session.get("status") or "").strip().lower()
-        if status in {"ended", "stale", "failed"}:
-            return False
-        staleness = session.get("staleness")
-        return not isinstance(staleness, dict)
+        return True
 
     @staticmethod
     def _paper_runtime_monitoring_sort_key(session: Dict[str, Any]) -> tuple[str, str, str]:
