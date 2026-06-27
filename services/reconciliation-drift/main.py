@@ -1242,9 +1242,20 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             skipped_binding_ids.append(binding_id)
             continue
 
-        telemetry_event_ids = [
-            str(eid) for eid in (summary.get("telemetry_event_ids") or []) if eid
-        ]
+        # Normalize telemetry event IDs from the real telemetry runtime-summary
+        # contract.  The projection exposes last_event_id and last_heartbeat_event_id
+        # rather than a telemetry_event_ids list; accept both forms so the scheduled
+        # reconciler links real event evidence regardless of the source shape.
+        raw_event_ids: list[Any] = list(summary.get("telemetry_event_ids") or [])
+        if not raw_event_ids:
+            seen_eids: set[str] = set()
+            for _eid in (summary.get("last_event_id"), summary.get("last_heartbeat_event_id")):
+                if _eid:
+                    _eid_str = str(_eid)
+                    if _eid_str not in seen_eids:
+                        raw_event_ids.append(_eid_str)
+                        seen_eids.add(_eid_str)
+        telemetry_event_ids = [str(eid) for eid in raw_event_ids if eid]
         observed_metrics: Dict[str, Any] = summary.get("observed_metrics") or summary.get("metrics") or {}
         baseline_metrics: Dict[str, Any] = summary.get("baseline_metrics") or {}
 

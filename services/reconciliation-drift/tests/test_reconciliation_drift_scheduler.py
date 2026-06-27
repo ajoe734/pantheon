@@ -213,6 +213,70 @@ def test_scheduled_reconcile_idempotent_same_tick_id() -> None:
         assert len(listed.json()) == 1
 
 
+def test_scheduled_reconcile_normalizes_last_event_id_fields() -> None:
+    """Real telemetry runtime-summary exposes last_event_id / last_heartbeat_event_id,
+    not telemetry_event_ids.  The scheduled reconciler must normalise both forms so
+    event evidence is always linked in the evaluation record."""
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        fake_summaries = [
+            {
+                "binding_id": "rtb-norm-001",
+                "runtime_id": "runtime-norm-001",
+                # Real contract fields — no telemetry_event_ids list present
+                "last_event_id": "evt-last-001",
+                "last_heartbeat_event_id": "evt-hb-001",
+                "observed_metrics": {},
+                "baseline_metrics": {},
+            },
+            {
+                "binding_id": "rtb-norm-002",
+                "runtime_id": "runtime-norm-002",
+                # Only last_event_id; last_heartbeat_event_id absent
+                "last_event_id": "evt-last-002",
+                "observed_metrics": {},
+                "baseline_metrics": {},
+            },
+            {
+                "binding_id": "rtb-norm-003",
+                "runtime_id": "runtime-norm-003",
+                # last_event_id == last_heartbeat_event_id — should be deduplicated
+                "last_event_id": "evt-same-003",
+                "last_heartbeat_event_id": "evt-same-003",
+                "observed_metrics": {},
+                "baseline_metrics": {},
+            },
+        ]
+
+        with mock.patch.object(svc, "_fetch_telemetry_runtime_summaries", return_value=fake_summaries):
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-norm-001"},
+            )
+        assert resp.status_code == 201
+        assert resp.json()["evaluated_binding_count"] == 3
+
+        ev1 = client.get("/api/reconciliation-drift/evaluations",
+                         params={"binding_id": "rtb-norm-001"}).json()[0]
+        check1 = ev1["reconciliation_checks"][0]
+        assert set(check1["telemetry_event_ids"]) == {"evt-last-001", "evt-hb-001"}
+
+        ev2 = client.get("/api/reconciliation-drift/evaluations",
+                         params={"binding_id": "rtb-norm-002"}).json()[0]
+        check2 = ev2["reconciliation_checks"][0]
+        assert check2["telemetry_event_ids"] == ["evt-last-002"]
+
+        ev3 = client.get("/api/reconciliation-drift/evaluations",
+                         params={"binding_id": "rtb-norm-003"}).json()[0]
+        check3 = ev3["reconciliation_checks"][0]
+        # Deduplicated when last_event_id == last_heartbeat_event_id
+        assert check3["telemetry_event_ids"] == ["evt-same-003"]
+
+
 def test_scheduled_reconcile_different_tick_ids_create_separate_records() -> None:
     """Different tick_ids for same binding create separate evaluation records."""
     from fastapi.testclient import TestClient
