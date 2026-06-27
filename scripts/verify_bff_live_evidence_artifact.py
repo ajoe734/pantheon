@@ -57,6 +57,13 @@ CHECK_LABELS = {
 }
 RBAC_LABELS = ("anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
 RBAC_PROVIDED_LABELS = tuple(label for label in RBAC_LABELS if label != "anonymous")
+BEARER_SHAPE_REQUIRED_SOURCES = (
+    "smoke",
+    *(f"rbac:{label}" for label in RBAC_PROVIDED_LABELS),
+    "approval_race:a",
+    "approval_race:b",
+)
+MIN_BEARER_SHAPE_TOKEN_LENGTH = 12
 RBAC_READ_RESOURCES = ("bff-strategies", "bff-ranking-formulas", "bff-agora-signals")
 RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-note", "intervention-claim")
 RBAC_READ_ALLOWED = {"viewer", "operator", "reviewer", "approver", "admin"}
@@ -166,6 +173,95 @@ def summary_check_status(summary: Any, key: str) -> tuple[str, str]:
     return status, note
 
 
+def list_of_strings(value: Any) -> tuple[list[str], bool]:
+    if not isinstance(value, list):
+        return [], False
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            return [], False
+        result.append(item)
+    return result, True
+
+
+def invalid_input_names(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    names: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            names.append(str(item.get("name") or ""))
+        elif item:
+            names.append(str(item))
+    return names
+
+
+def preflight_bearer_shape_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    shape = payload.get("bearer_shape")
+    if not isinstance(shape, dict):
+        return ["missing"]
+
+    failures: list[str] = []
+    expected_sources = list(BEARER_SHAPE_REQUIRED_SOURCES)
+    expected_source_set = set(expected_sources)
+    required_sources, required_ok = list_of_strings(shape.get("required_sources"))
+    checked_sources, checked_ok = list_of_strings(shape.get("checked_sources"))
+    valid_sources, valid_ok = list_of_strings(shape.get("valid_sources"))
+
+    if not required_ok or required_sources != expected_sources:
+        failures.append("required_sources")
+    if not checked_ok:
+        failures.append("checked_sources_type")
+    if not valid_ok:
+        failures.append("valid_sources_type")
+
+    min_length = shape.get("min_length")
+    if (
+        isinstance(min_length, bool)
+        or not isinstance(min_length, (int, float))
+        or min_length < MIN_BEARER_SHAPE_TOKEN_LENGTH
+    ):
+        failures.append("min_length")
+    if shape.get("placeholder_values_rejected") is not True:
+        failures.append("placeholder_values_rejected")
+
+    invalid_sources = shape.get("invalid_sources")
+    invalid_source_notes: list[str] = []
+    if not isinstance(invalid_sources, list):
+        failures.append("invalid_sources_type")
+    else:
+        for index, item in enumerate(invalid_sources):
+            if not isinstance(item, dict):
+                failures.append(f"invalid_sources[{index}]")
+                continue
+            source = item.get("source")
+            reason = item.get("reason")
+            if not isinstance(source, str) or source not in expected_source_set:
+                failures.append(f"invalid_source:{index}")
+                continue
+            if not isinstance(reason, str) or not reason:
+                failures.append(f"invalid_reason:{source}")
+                continue
+            invalid_source_notes.append(f"{source}={reason}")
+
+    shape_invalid_reported = "PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE" in invalid_input_names(invalid)
+    if invalid_source_notes and not shape_invalid_reported:
+        failures.append("invalid_sources_without_invalid")
+    if shape_invalid_reported and not invalid_source_notes:
+        failures.append("invalid_missing_sources")
+
+    ready = not missing and not invalid
+    if ready:
+        if checked_sources != expected_sources:
+            failures.append(f"checked_sources:{len(checked_sources)}/{len(expected_sources)}")
+        if valid_sources != expected_sources:
+            failures.append(f"valid_sources:{len(valid_sources)}/{len(expected_sources)}")
+        if invalid_source_notes:
+            failures.append("invalid_sources")
+
+    return failures
+
+
 def preflight_item(root: Path) -> dict[str, str]:
     file_path = find_file(root, PREFLIGHT_JSON_NAME)
     if not file_path:
@@ -205,6 +301,14 @@ def preflight_item(root: Path) -> dict[str, str]:
         )
     missing = payload.get("missing") if isinstance(payload.get("missing"), list) else []
     invalid = payload.get("invalid") if isinstance(payload.get("invalid"), list) else []
+    bearer_shape_failures = preflight_bearer_shape_failures(payload, missing, invalid)
+    if bearer_shape_failures:
+        return status_item(
+            "fail",
+            "Strict preflight bearer-shape evidence is valid",
+            evidence=rel(file_path, root),
+            note="bearer_shape:" + ",".join(bearer_shape_failures[:8]),
+        )
     if missing or invalid:
         missing_text = ",".join(str(item) for item in missing)
         invalid_text = ",".join(str(item.get("name") or item) for item in invalid)
