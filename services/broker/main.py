@@ -22,11 +22,30 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from paper_simulation import PaperSimulationStore, SimulationError, simulate_paper_order
+from quote_pricing import QuotePricer
+from shioaji.adapter import ShioajiBrokerAdapter, ShioajiBrokerError
 
 _PAPER_ENABLED = os.getenv("BROKER_PAPER_ENABLED", "").lower() in {"1", "true", "yes"}
 _LIVE_ENABLED = False  # never enabled; kept explicit for telemetry clarity
 
 _STORE = PaperSimulationStore()
+
+_SHIOAJI_SANDBOX_ENABLED = os.getenv("BROKER_SHIOAJI_SANDBOX_ENABLED", "").lower() in {"1", "true", "yes"}
+
+
+def _build_quote_pricer() -> QuotePricer:
+    """Authoritative live-quote pricer: Shioaji snapshot primary (when the
+    sandbox session is enabled), TWSE MIS public endpoint fallback."""
+    adapter = None
+    if _SHIOAJI_SANDBOX_ENABLED:
+        try:
+            adapter = ShioajiBrokerAdapter()
+        except Exception:  # pragma: no cover - never block paper pricing on quote setup
+            adapter = None
+    return QuotePricer(shioaji_adapter=adapter)
+
+
+_QUOTE_PRICER = _build_quote_pricer()
 
 app = FastAPI(
     title="Pantheon Broker Sidecar",
@@ -86,6 +105,7 @@ class PaperOrderRequest(BaseModel):
     side: str
     order_type: str = "market"
     limit_price: Optional[float] = None
+    market_price: Optional[float] = None
 
 
 @app.post("/api/broker/paper/orders")
@@ -93,6 +113,9 @@ def submit_paper_order(req: PaperOrderRequest) -> JSONResponse:
     gate = _paper_gate_check()
     if gate is not None:
         return gate
+    market_price = req.market_price
+    if req.order_type == "market" and (market_price is None or market_price <= 0):
+        market_price = _QUOTE_PRICER.market_price(req.symbol)
     try:
         order = simulate_paper_order(
             capital_pool_id=req.capital_pool_id,
@@ -102,6 +125,7 @@ def submit_paper_order(req: PaperOrderRequest) -> JSONResponse:
             side=req.side,
             order_type=req.order_type,
             limit_price=req.limit_price,
+            market_price=market_price,
         )
         _STORE.submit(order)
         return JSONResponse(status_code=201, content={"status": "ok", "order": order.to_dict()})
