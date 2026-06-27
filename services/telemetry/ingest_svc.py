@@ -714,6 +714,20 @@ class TelemetryIngestService:
         """Get dead-letter queue entries."""
         return self._dlq.get_entries_as_dicts(tag_filter=tag_filter, limit=limit)
 
+    @staticmethod
+    def _deduplicate_replay_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return replay candidates once per event_id while preserving order."""
+        seen: set[str] = set()
+        deduplicated: list[dict[str, Any]] = []
+        for event in events:
+            eid = event.get("event_id")
+            if eid:
+                if eid in seen:
+                    continue
+                seen.add(eid)
+            deduplicated.append(event)
+        return deduplicated
+
     async def replay_dlq(self, tag_filter: Optional[str] = None) -> int:
         """
         Replay dead-letter events through the full ingest validation path.
@@ -750,20 +764,15 @@ class TelemetryIngestService:
             Number of events successfully re-enqueued.
         """
         if tag_filter is not None:
-            events = self._dlq.replay_entries(tag_filter=tag_filter)
+            events = self._deduplicate_replay_events(
+                self._dlq.replay_entries(tag_filter=tag_filter)
+            )
         else:
-            # Collect write-failure entries only (deduplicated by event_id)
-            seen: set[str] = set()
-            events = []
+            # Collect write-failure entries only.
+            replay_candidates: list[dict[str, Any]] = []
             for tag in _WRITE_FAILURE_TAGS:
-                for ev in self._dlq.replay_entries(tag_filter=tag):
-                    eid = ev.get("event_id")
-                    if eid:
-                        if eid not in seen:
-                            seen.add(eid)
-                            events.append(ev)
-                    else:
-                        events.append(ev)
+                replay_candidates.extend(self._dlq.replay_entries(tag_filter=tag))
+            events = self._deduplicate_replay_events(replay_candidates)
 
         count = 0
         for event in events:

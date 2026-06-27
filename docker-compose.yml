@@ -1208,6 +1208,23 @@ services:
       retries: 10
       start_period: 5s
 
+  deployment-outbox-consumer:
+    profiles: ["deployment-outbox-consumer"]
+    build:
+      context: .
+      dockerfile: services/deployment/Dockerfile
+    command: ["python", "-m", "services.deployment.outbox_consumer_worker"]
+    restart: unless-stopped
+    environment:
+      DEPLOYMENT_API_URL: http://deployment:8095
+      DEPLOYMENT_OUTBOX_CONSUMER_NAME: ${DEPLOYMENT_OUTBOX_CONSUMER_NAME:-deployment-outbox-consumer}
+      DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS:-10}
+      DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS: ${DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS:-0}
+      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-}
+    depends_on:
+      deployment:
+        condition: service_healthy
+
   evolution:
     build:
       context: .
