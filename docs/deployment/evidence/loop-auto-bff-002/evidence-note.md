@@ -3,7 +3,7 @@
 
 **Owner:** Claude
 **Reviewer:** Codex
-**Status:** implementation complete, pending review
+**Status:** review approved — owner finalization
 **Date:** 2026-06-27
 
 ---
@@ -56,6 +56,7 @@ Implemented a continuous BFF downstream health monitor (`services/control-plane/
 
 ## Verification
 
+Implementation (commit 92245b8d):
 ```
 $ cd services/control-plane/bff
 $ python3 -m pytest test_bff_downstream_health_monitor.py -q
@@ -65,7 +66,24 @@ $ python3 -m pytest test_bff_v5_loop_sentinel_contract.py test_loop_health_read_
 33 passed, 20 warnings in 45.10s
 ```
 
-No regressions in existing health status board, loop health read model, or operator home tests.
+Review (commit 08560d2b, Codex — after merging origin/dev):
+```
+git diff --check: passed
+test_bff_downstream_health_monitor.py: 26 passed, 20 warnings
+focused health/loop/operator suite: 33 passed, 20 warnings
+```
+
+Owner finalization (after merge 3625251d):
+```
+$ cd services/control-plane/bff
+$ python3 -m pytest test_bff_downstream_health_monitor.py -q
+26 passed, 20 warnings in 53.53s
+
+$ python3 -m pytest test_bff_v5_loop_sentinel_contract.py test_loop_health_read_model_contract.py test_loop_inventory_read_model_contract.py test_pkt011_health_status_board_contract.py test_pkt013_operator_home_contract.py -q
+33 passed, 20 warnings in 50.10s
+```
+
+No regressions across all three verification runs.
 
 ---
 
