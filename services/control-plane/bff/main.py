@@ -135,6 +135,7 @@ from source_search_ops_client import (
     SourceIngestCommandClient,
     SourceSearchOpsClientError,
 )
+from downstream_health_monitor import DownstreamHealthMonitor
 from loop_inventory import (
     get_loop_health_entry,
     get_loop_inventory_entry,
@@ -863,6 +864,19 @@ read_store = ReadSurfaceStore(
 )
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
 _COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
+
+downstream_health_monitor = DownstreamHealthMonitor()
+
+
+@app.on_event("startup")
+async def _start_downstream_health_monitor() -> None:
+    await downstream_health_monitor.start()
+
+
+@app.on_event("shutdown")
+async def _stop_downstream_health_monitor() -> None:
+    await downstream_health_monitor.stop()
+
 
 _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 
@@ -48184,6 +48198,31 @@ async def bff_v5_loop_inventory_detail(
         surface_key="loop_inventory",
     )
     return _loop_inventory_response_meta(payload)
+
+
+@app.get("/bff/v5/downstream-health")
+async def bff_v5_downstream_health(
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return the current BFF downstream service health probe state.
+
+    Reports the most-recent probe result per downstream target.
+    overall_ok is null when no probes have run yet (monitor just started).
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    state = downstream_health_monitor.get_state()
+    return {
+        "read_model": "downstream_health",
+        "data": state,
+        "meta": {
+            "source": "bff_downstream_health_monitor",
+            "description": (
+                "Live probe results from the BFF continuous downstream health monitor. "
+                "Degraded targets have their last failure reason and consecutive failure count."
+            ),
+        },
+    }
 
 
 # -- V5 Loop-runs ------------------------------------------------------------
