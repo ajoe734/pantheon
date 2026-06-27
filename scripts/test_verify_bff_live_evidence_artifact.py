@@ -12,6 +12,19 @@ APPROVAL_LABEL = "Authenticated: strict multi-operator approval race evidence is
 TWO_MAN_LABEL = "Authenticated: strict two-man-sign race evidence is operator-scoped."
 SSE_LABEL = "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
 CURRENT_RUN_LABEL = "Evidence written to `.lovable/audits/current-run`."
+BEARER_SHAPE_REQUIRED_SOURCES = (
+    "smoke",
+    "rbac:viewer",
+    "rbac:operator",
+    "rbac:reviewer",
+    "rbac:approver",
+    "rbac:admin",
+    "rbac:empty",
+    "rbac:unknown",
+    "approval_race:a",
+    "approval_race:b",
+)
+MIN_BEARER_TOKEN_LENGTH = 12
 
 
 def run_verifier(artifact_dir: Path) -> subprocess.CompletedProcess[str]:
@@ -405,6 +418,22 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
     )
 
 
+def strict_preflight_bearer_shape(
+    *,
+    checked: bool = True,
+    valid: bool = True,
+    invalid_sources: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
+    return {
+        "required_sources": list(BEARER_SHAPE_REQUIRED_SOURCES),
+        "checked_sources": list(BEARER_SHAPE_REQUIRED_SOURCES) if checked else [],
+        "valid_sources": list(BEARER_SHAPE_REQUIRED_SOURCES) if valid else [],
+        "invalid_sources": invalid_sources or [],
+        "min_length": MIN_BEARER_TOKEN_LENGTH,
+        "placeholder_values_rejected": True,
+    }
+
+
 def write_passing_artifact(artifact_dir: Path) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     (artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
@@ -419,6 +448,7 @@ def write_passing_artifact(artifact_dir: Path) -> None:
                 "ref": "refs/heads/dev",
                 "sha": "a" * 40,
                 "secret_values_written": False,
+                "bearer_shape": strict_preflight_bearer_shape(),
             }
         ),
         encoding="utf-8",
@@ -587,6 +617,65 @@ def test_verifier_rejects_dry_run_validation_without_error_envelope(tmp_path: Pa
     assert "validation-error-envelope" in item["note"]
 
 
+def test_verifier_fails_when_preflight_bearer_shape_is_missing(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight.pop("bearer_shape")
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "bearer_shape:missing"
+
+
+def test_verifier_fails_when_ready_preflight_bearer_shape_sources_are_incomplete(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["bearer_shape"]["checked_sources"].remove("rbac:unknown")
+    preflight["bearer_shape"]["valid_sources"].remove("approval_race:b")
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert "checked_sources:9/10" in item["note"]
+    assert "valid_sources:9/10" in item["note"]
+
+
+def test_verifier_allows_bearer_shape_invalid_sources_only_when_preflight_reports_shape_invalid(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight["invalid"] = [
+        {
+            "name": "PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE",
+            "reason": "bearer tokens must not be placeholders and must be at least 12 characters: rbac:viewer=placeholder_prefix",
+        }
+    ]
+    preflight["bearer_shape"] = strict_preflight_bearer_shape(
+        valid=False,
+        invalid_sources=[{"source": "rbac:viewer", "reason": "placeholder_prefix"}],
+    )
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "environment:dev invalid:PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE"
+
+
 def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifact"
     artifact_dir.mkdir(parents=True)
@@ -602,6 +691,7 @@ def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:
                 "ref": "refs/heads/dev",
                 "sha": "b" * 40,
                 "secret_values_written": False,
+                "bearer_shape": strict_preflight_bearer_shape(checked=False, valid=False),
             }
         ),
         encoding="utf-8",
