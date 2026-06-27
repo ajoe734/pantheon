@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-RT-001",
+  "archived_at": "2026-06-27T13:17:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-RT-001",
+    "title": "Define runtime fleet desired-state query",
+    "summary_zh": "定義 runtime fleet reconciler 要消費的 active paper/canary RuntimeBinding desired-state query 與 policy envelope。",
+    "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-000"
+    ],
+    "artifacts": [
+      "services/runtime-manager",
+      "docs/deployment/runtime-telemetry-hardening-2026-06-06.md",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Active runtime bindings are queryable with stage and policy envelope",
+      "Retired paused and blocked bindings are excluded or explicitly marked",
+      "Query is stable for fleet reconciliation and tests"
+    ],
+    "next": "Closeout: fleet desired-state query implemented and merged (PR #2408, #2413). 113 tests pass including 39 focused fleet tests. Acceptance criteria met: active paper/canary bindings queryable with policy envelope, excluded statuses explicit, invalid stage filters fail closed. Evidence at docs/deployment/evidence/loop-auto-rt-001/desired-state-query-evidence.md.",
+    "last_update": "2026-06-27T13:17:21Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "capital_pool_execution"
+    ],
+    "current_maturity": "manual",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "RuntimeBinding active set"
+    ],
+    "actual_state_sources": [
+      "runtime-manager binding store"
+    ],
+    "wave_id": "Wave 2 Runtime Fleet",
+    "mutates_canonical": true,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T13:17:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-rt-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-RT-001",
+      "git_clean_required": false,
+      "commit": "5efb9117d59c7aa0d12f923c8de3bb29485e8672",
+      "commit_subject": "Merge pull request #2413 from ajoe734/task/LOOP-AUTO-RT-001",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "LOOP-AUTO-RT-001": "reject invalid fleet stage filters"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-RT-001",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "feb8f3d92bc9c38ceffa90f64fcb178ff5cafcb9",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-RT-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implemented desired-state query module (fleet_desired_state.py), GET /api/runtime-fleet/desired-state route, 32 passing unit tests, and evidence note. PR #2408 open with auto-merge. Please review for contract correctness, policy envelope completeness, and test coverage.",
+      "status": "done",
+      "created_at": "2026-06-27T13:04:45Z",
+      "resolved_at": "2026-06-27T13:13:27Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review complete: PR #2408 and follow-up PR #2413 merged; local focused validation 89 passed; owner may finalize once status lifecycle is reconciled from todo to review.",
+      "status": "done",
+      "created_at": "2026-06-27T13:13:27Z",
+      "resolved_at": "2026-06-27T13:17:22Z"
+    }
+  ],
+  "blockers": []
+}

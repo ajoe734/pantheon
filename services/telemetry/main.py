@@ -141,6 +141,7 @@ import threading
 import types
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -261,6 +262,8 @@ _DEFAULT_STORAGE_DIR = "/tmp/pantheon/telemetry"
 _DEFAULT_LINEAGE_CORPUS_PATH = (
     Path(__file__).resolve().parent.parent / "registry" / "lineage" / "lin001a_benchmark_corpus.json"
 )
+_CANONICAL_TELEMETRY_TABLE = "telemetry_events"
+_REQUIRED_TELEMETRY_COLUMNS = ("event_id", "event_type", "created_at", "payload")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -268,6 +271,125 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _split_table_name(table: str) -> tuple[str, str]:
+    if "." not in table:
+        return "public", table
+    schema, name = table.split(".", 1)
+    return schema or "public", name
+
+
+async def _probe_canonical_telemetry_table(
+    dsn: str,
+    table: str = _CANONICAL_TELEMETRY_TABLE,
+    timeout: float = 2.0,
+) -> dict[str, Any]:
+    """Verify the canonical telemetry_events table exists with required columns."""
+    schema_name, table_name = _split_table_name(table)
+    try:
+        import asyncpg  # type: ignore[import]
+    except ImportError:
+        return {
+            "status": "error",
+            "backend": "postgres",
+            "dsn_configured": True,
+            "table": table,
+            "table_exists": None,
+            "message": "asyncpg is not installed; telemetry Postgres readiness cannot be checked",
+        }
+
+    conn = None
+    try:
+        conn = await asyncpg.connect(dsn, timeout=timeout)
+        regclass = await conn.fetchval("SELECT to_regclass($1)", table)
+        if regclass is None:
+            return {
+                "status": "error",
+                "backend": "postgres",
+                "dsn_configured": True,
+                "table": table,
+                "table_exists": False,
+                "message": (
+                    "canonical telemetry table is missing; run scripts/db_migrate.sh "
+                    "before marking telemetry ready"
+                ),
+            }
+
+        rows = await conn.fetch(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = $1 AND table_name = $2
+            """,
+            schema_name,
+            table_name,
+        )
+        columns = {
+            str(row["column_name"] if isinstance(row, Mapping) else row[0])
+            for row in rows
+        }
+        missing_columns = [
+            column for column in _REQUIRED_TELEMETRY_COLUMNS if column not in columns
+        ]
+        if missing_columns:
+            return {
+                "status": "error",
+                "backend": "postgres",
+                "dsn_configured": True,
+                "table": table,
+                "table_exists": True,
+                "required_columns_present": False,
+                "missing_columns": missing_columns,
+                "message": (
+                    "canonical telemetry table is present but missing required columns; "
+                    "run scripts/db_migrate.sh"
+                ),
+            }
+
+        return {
+            "status": "ok",
+            "backend": "postgres",
+            "dsn_configured": True,
+            "table": table,
+            "table_exists": True,
+            "required_columns_present": True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "error",
+            "backend": "postgres",
+            "dsn_configured": True,
+            "table": table,
+            "table_exists": None,
+            "message": str(exc),
+        }
+    finally:
+        if conn is not None:
+            await conn.close()
+
+
+def _canonical_telemetry_table_dependency() -> dict[str, Any]:
+    dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
+    if not dsn:
+        return {
+            "status": "ok",
+            "backend": "memory",
+            "dsn_configured": False,
+            "table": _CANONICAL_TELEMETRY_TABLE,
+            "table_exists": None,
+            "message": "TELEMETRY_DB_DSN is not set; memory-only dev sink active",
+        }
+    if _loop is None:
+        return {
+            "status": "error",
+            "backend": "postgres",
+            "dsn_configured": True,
+            "table": _CANONICAL_TELEMETRY_TABLE,
+            "table_exists": None,
+            "message": "background event loop is unavailable for telemetry Postgres readiness",
+        }
+    return _run_async(_probe_canonical_telemetry_table(dsn), timeout=3.0)
 
 
 def _build_service() -> TelemetryIngestService:
@@ -407,6 +529,11 @@ def _telemetry_metrics() -> dict[str, Any]:
     dlq_stats = stats.get("dead_letter_queue", {}) if isinstance(stats, dict) else {}
     buffer_stats = stats.get("buffer", {}) if isinstance(stats, dict) else {}
     startup_stats = stats.get("startup", {}) if isinstance(stats, dict) else {}
+    tag_counts = dlq_stats.get("tag_counts", {}) if isinstance(dlq_stats, dict) else {}
+    write_failure_dlq_entries = (
+        int(tag_counts.get("writer_error", 0) or 0)
+        + int(tag_counts.get("retry_exhausted", 0) or 0)
+    )
     return {
         "service_started": 1 if service_stats.get("started") else 0,
         "accepted_count": service_stats.get("total_ingested", 0),
@@ -418,6 +545,11 @@ def _telemetry_metrics() -> dict[str, Any]:
         "writer_total_retried": writer_stats.get("total_retried", 0),
         "writer_total_dlq": writer_stats.get("total_dlq", 0),
         "writer_batches_flushed": writer_stats.get("batches_flushed", 0),
+        "writer_failure_dlq_entries": write_failure_dlq_entries,
+        "writer_seconds_since_last_write_attempt": writer_stats.get("seconds_since_last_write_attempt"),
+        "writer_seconds_since_last_successful_write": writer_stats.get("seconds_since_last_successful_write"),
+        "writer_seconds_since_last_failed_write": writer_stats.get("seconds_since_last_failed_write"),
+        "writer_seconds_since_last_dlq": writer_stats.get("seconds_since_last_dlq"),
         "buffer_size": buffer_stats.get("size", 0),
         "buffer_capacity": buffer_stats.get("capacity", 0),
         "dlq_memory_entries": dlq_stats.get("memory_entries", 0),
@@ -437,10 +569,16 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "message": str(exc),
         }
         dlq_payload: dict[str, Any] = {"status": "ok", "memory_entries": 0}
+        canonical_table_payload = _canonical_telemetry_table_dependency()
     else:
         writer_stats = stats.get("writer", {}) if isinstance(stats, dict) else {}
         service_stats = stats.get("service", {}) if isinstance(stats, dict) else {}
         dlq_stats = stats.get("dead_letter_queue", {}) if isinstance(stats, dict) else {}
+        tag_counts = dlq_stats.get("tag_counts", {}) if isinstance(dlq_stats, dict) else {}
+        write_failure_dlq_entries = (
+            int(tag_counts.get("writer_error", 0) or 0)
+            + int(tag_counts.get("retry_exhausted", 0) or 0)
+        )
         writer_running = bool(service_stats.get("started")) and bool(writer_stats.get("running"))
         writer_payload = {
             "status": "ok" if writer_running else "error",
@@ -450,6 +588,16 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "total_retried": writer_stats.get("total_retried", 0),
             "total_dlq": writer_stats.get("total_dlq", 0),
             "batches_flushed": writer_stats.get("batches_flushed", 0),
+            "failure_dlq_entries": write_failure_dlq_entries,
+            "last_write_attempt_at": writer_stats.get("last_write_attempt_at"),
+            "last_successful_write_at": writer_stats.get("last_successful_write_at"),
+            "last_failed_write_at": writer_stats.get("last_failed_write_at"),
+            "last_dlq_at": writer_stats.get("last_dlq_at"),
+            "seconds_since_last_write_attempt": writer_stats.get("seconds_since_last_write_attempt"),
+            "seconds_since_last_successful_write": writer_stats.get("seconds_since_last_successful_write"),
+            "seconds_since_last_failed_write": writer_stats.get("seconds_since_last_failed_write"),
+            "seconds_since_last_dlq": writer_stats.get("seconds_since_last_dlq"),
+            "last_error": writer_stats.get("last_error"),
         }
         dlq_payload = {
             "status": "ok",
@@ -458,7 +606,9 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "incident_fired": bool(dlq_stats.get("incident_fired")),
             "spill_path": dlq_stats.get("spill_path"),
             "tag_counts": dlq_stats.get("tag_counts", {}),
+            "write_failure_entries": write_failure_dlq_entries,
         }
+        canonical_table_payload = _canonical_telemetry_table_dependency()
 
     return {
         "runtime_manager": {
@@ -466,6 +616,7 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip(),
         },
         "lineage_read": {"status": "ok" if _lineage_svc is not None else "degraded"},
+        "canonical_telemetry_table": canonical_table_payload,
         "telemetry_writer": writer_payload,
         "dead_letter_queue": dlq_payload,
     }
