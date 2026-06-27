@@ -58,6 +58,23 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     )
     assert scheduler["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
 
+    listener = services["reconciliation-drift-incident-listener"]
+    assert listener["profiles"] == ["reconciliation-drift-incident-listener"]
+    assert listener["build"]["dockerfile"] == "services/reconciliation-drift/Dockerfile"
+    assert listener["command"] == ["python", "services/reconciliation-drift/incident_listener.py"]
+    assert listener["environment"]["RECONCILIATION_DRIFT_URL"] == "http://reconciliation-drift-svc:8102"
+    assert listener["environment"]["PANTHEON_INCIDENTS_API_URL"] == "http://incidents:8090"
+    assert (
+        listener["environment"]["RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS"]
+        == "${RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS:-15}"
+    )
+    assert (
+        listener["environment"]["RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_TICKS"]
+        == "${RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_TICKS:-0}"
+    )
+    assert listener["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
+    assert listener["depends_on"]["incidents"]["condition"] == "service_healthy"
+
     smoke = services["smoke-stack"]
     assert smoke["environment"]["RECONCILIATION_DRIFT_URL"] == "http://reconciliation-drift-svc:8102"
     assert smoke["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
