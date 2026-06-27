@@ -15,7 +15,7 @@ Reviewer: Claude2
 ## Verification
 
 ```bash
-python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py -q
+python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q
 ```
 
-Result: `46 passed in 18.78s`.
+Result: `50 passed in 18.15s`.
