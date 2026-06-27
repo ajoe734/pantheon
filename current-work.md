@@ -4,7 +4,7 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-06-10 08:45:22
+Last updated: 2026-06-27 14:45:10
 
 ## Objective
 
@@ -26,13 +26,15 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 ## Active Slices
 
 - `Claude`: execution, control-plane, governance-review; next: Assignment created
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
 - `Codex`: integration, status-system, schema, acceptance; next: Assignment created
 - `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
 - `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
 - `Claude2`: execution, control-plane, governance-review; next: Assignment created
 - `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
 - `Human/Ops`: human-gate, operations, signoff; next: No active assignment
+- `Antigravity`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Antigravity2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
 
@@ -40,58 +42,118 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `MPOS-P1-E2E-002` | Sprint MPOS-P1 / Allocation policy runtime closure | Run approved AllocationPolicyArtifact through paper LEAN loop | Claude | todo | `MPOS-P1-ART-001`, `MPOS-P1-PER-002`, `MPOS-P1-RISK-001`, `MPOS-P1-MEM-001`, `MPOS-P1-PER-001` | 把已核准 AllocationPolicyArtifact 實際接到 DeploymentPlan、RuntimeBinding、paper LEAN、fills/telemetry 與 lineage 查詢。 |
-| `MPOS-P1-CONSULT-001` | Sprint MPOS-P1 / Consultation governance gate | Require consultation handoff for high-risk allocation approval | Claude2 | todo | `MPOS-P1-ART-001`, `MPOS-P1-PER-002` | 把 consultation/committee memo 與 sponsor decision handoff 變成 allocation approval 的硬門檻，而不是旁路資料。 |
-| `MPOS-P1-RISK-002` | Sprint MPOS-P1 / Homogeneity correlation gate | Add homogeneity and correlation review to allocation gate | Codex | todo | `MPOS-P1-RISK-001`, `MPOS-P1-PER-002` | 在 pre-LEAN allocation gate 補 homogeneity/correlation review，避免多個 persona 同時堆疊高度相關或重複 exposure。 |
-| `MPOS-P1-MEM-002` | Sprint MPOS-P1 / Learn feedback attribution | Automate persona and sponsor Learn feedback writeback | Codex2 | todo | `MPOS-P1-MEM-001`, `MPOS-P1-E2E-002` | 把 runtime telemetry、postmortem、evolution 結果自動寫回 persona memory 與 sponsor-attributed institutional memory。 |
-| `MPOS-P1-VERIFY-001` | Sprint MPOS-P1 / Supervisor closure evidence | Produce supervisor closure packet for MPOS full-loop proof | Gemini2 | todo | `MPOS-P1-PER-002`, `MPOS-P1-E2E-002`, `MPOS-P1-CONSULT-001`, `MPOS-P1-RISK-002`, `MPOS-P1-MEM-002` | 彙整所有 MPOS P1 修補任務的 PR、commit、CI 與本機驗證，產生 supervisor 可審的完整閉環證據包。 |
-| `MPOS-P2-BACKEND-001` | Sprint MPOS-P2 / Research backend clarity | Normalize MPOS Observe backend maturity matrix | Copilot | todo | `MPOS-P1-PER-002` | 整理 Qlib/vectorbt/statsmodels/QuantLib 在 MPOS Observe 流程中的 maturity、no-order-route 與驗收證據。 |
+| `LOOP-AUTO-000` | Global Loop Autopilot / Wave 0 Inventory Substrate | Define loop catalog schema and maturity registry | Codex | todo | - | 建立全域 loop catalog schema 與 maturity registry，讓每條 loop 的 desired state、actual state、owner、maturity、target、evidence 都可機器讀取。 |
+| `LOOP-AUTO-001` | Global Loop Autopilot / Wave 0 Inventory Substrate | Publish current loop inventory read model | Codex2 | todo | `LOOP-AUTO-000` | 把 SA-21 inventory 發布成 BFF/operator 可讀的 read model，讓每條 loop 的 maturity 與 evidence 狀態不再只藏在文件裡。 |
+| `LOOP-AUTO-002` | Global Loop Autopilot / Wave 0 Inventory Substrate | Add completion guardrails for loop claims | Claude | todo | `LOOP-AUTO-000` | 新增完成宣告 guardrail，阻止 worker 只靠 route、seed、fixture 或 panel copy 宣稱 loop 已完成。 |
+| `LOOP-AUTO-SRC-001` | Global Loop Autopilot / Wave 1 Source Persona Search | Add persona data requirement schema | Copilot | todo | `LOOP-AUTO-000` | 把 persona 的資料需求從 metadata label 升級成 first-class required_data_sources schema。 |
+| `LOOP-AUTO-RT-001` | Global Loop Autopilot / Wave 2 Runtime Fleet | Define runtime fleet desired-state query | Claude | todo | `LOOP-AUTO-000` | 定義 runtime fleet reconciler 要消費的 active paper/canary RuntimeBinding desired-state query 與 policy envelope。 |
+| `LOOP-AUTO-RT-002` | Global Loop Autopilot / Wave 2 Runtime Fleet | Implement managed paper runtime fleet reconciler | Gemini | todo | `LOOP-AUTO-RT-001` | 實作 active paper RuntimeBinding 到 exactly-one supervised worker 的 fleet reconciler。 |
+| `LOOP-AUTO-RT-003` | Global Loop Autopilot / Wave 2 Runtime Fleet | Add runtime session reaper and restart alignment | Codex | todo | `LOOP-AUTO-RT-002` | 清理 stale paper monitoring sessions，讓 worker restart 建立 fresh session，不再用 ended_at=null 當 liveness proof。 |
+| `LOOP-AUTO-RT-004` | Global Loop Autopilot / Wave 2 Runtime Fleet | Add runtime-aware signal isolation | Gemini2 | todo | `LOOP-AUTO-RT-002` | 把 paper runtime signal consumption 依 runtime 或 binding identity 隔離，移除 shared queue blind consumption 風險。 |
+| `LOOP-AUTO-RT-005` | Global Loop Autopilot / Wave 2 Runtime Fleet | Produce runtime fleet evidence packet | Codex2 | todo | `LOOP-AUTO-RT-002`, `LOOP-AUTO-RT-003`, `LOOP-AUTO-RT-004` | 產出 stack restart、kill-one-worker、retire-binding、heartbeat、signal isolation 的 runtime fleet evidence packet。 |
+| `LOOP-AUTO-DEP-001` | Global Loop Autopilot / Wave 3 Deployment Saga | Add deployment saga outbox consumer | Claude | todo | `LOOP-AUTO-000` | 新增 durable deployment saga outbox consumer，讓 approved DeploymentPlan 不再需要手動 endpoint stepping。 |
+| `LOOP-AUTO-DEP-002` | Global Loop Autopilot / Wave 3 Deployment Saga | Add runtime-manager dispatch adapter | Claude2 | todo | `LOOP-AUTO-DEP-001`, `LOOP-AUTO-RT-001` | 新增 idempotent plan-to-binding adapter，讓 deployment saga 能安全呼叫 runtime-manager 建立或驗證 RuntimeBinding。 |
+| `LOOP-AUTO-DEP-003` | Global Loop Autopilot / Wave 3 Deployment Saga | Add deployment saga progress feedback and DLQ | Codex | todo | `LOOP-AUTO-DEP-001`, `LOOP-AUTO-DEP-002` | 補 saga status updates、retry policy、blocked reason 與 DLQ replay，讓 deployment failure 不再消失在 outbox。 |
+| `LOOP-AUTO-DEP-004` | Global Loop Autopilot / Wave 3 Deployment Saga | Split promotion and deployment BFF truth by stage | Codex2 | todo | `LOOP-AUTO-DEP-003` | 讓 BFF 明確分開 approval、plan、saga、binding、runtime fleet 狀態，避免單一綠燈掩蓋某段未執行。 |
+| `LOOP-AUTO-TEL-001` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Audit telemetry readiness and writer durability | Codex | todo | `LOOP-AUTO-000` | 審計 telemetry readiness、canonical table bootstrap、writer metrics、DLQ 與 replay semantics，作為 reconciliation autopilot 前置。 |
+| `LOOP-AUTO-TEL-002` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Add scheduled reconciliation worker | Claude | todo | `LOOP-AUTO-TEL-001`, `LOOP-AUTO-RT-002` | 新增 scheduled reconciliation worker，從 telemetry truth 定期對 binding/run 狀態做 reconciliation。 |
+| `LOOP-AUTO-TEL-004` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Classify drift reports into incidents with dedupe | Codex2 | todo | `LOOP-AUTO-TEL-002`, `LOOP-AUTO-TEL-003` | 把 drift report threshold breach 自動轉成 IncidentCase create/update，並依 binding/runtime/incident cluster 去重。 |
+| `LOOP-AUTO-EVO-001` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Create postmortem drafts from resolved incidents | Claude2 | todo | `LOOP-AUTO-TEL-004` | 新增 incident-to-postmortem draft worker，讓 resolved incident 不再掉進手動 backlog。 |
+| `LOOP-AUTO-EVO-002` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Bridge postmortems into evolution proposals | Codex | todo | `LOOP-AUTO-EVO-001` | 新增 postmortem-to-evolution proposal bridge，讓 published postmortem 可以產生 exactly-one EvolutionDecision proposal。 |
+| `LOOP-AUTO-EVO-003` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Add evolution daily sweep worker | Gemini | todo | `LOOP-AUTO-EVO-002` | 新增 threshold/cooldown governed evolution daily sweep，補 missing decisions 並避免 active-decision 衝突。 |
+| `LOOP-AUTO-EVO-004` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Dispatch approved evolution actions through gates | Claude | todo | `LOOP-AUTO-EVO-002`, `LOOP-AUTO-DEP-001` | 把 approved EvolutionDecision action 透過 gated research/deployment/runtime command paths dispatch，不允許直接 production mutation。 |
+| `LOOP-AUTO-EVO-005` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Prove evolution rollback and follow-through | Gemini2 | todo | `LOOP-AUTO-EVO-004` | 產出 approved rollback/mitigation command 到 runtime-manager/deployment 的 follow-through evidence。 |
+| `LOOP-AUTO-KNOW-002` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add alpha replication queue and revalidation worker | Copilot | todo | `LOOP-AUTO-KNOW-001` | 新增 reviewed StrategySpec 到 replication queue 與 scheduled revalidation worker，讓 alpha replication 不停在手動 API。 |
+| `LOOP-AUTO-KNOW-003` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add persona teaching async preview and eval worker | Codex2 | todo | `LOOP-AUTO-SRC-004` | 補 persona teaching async preview/eval worker，讓 teaching commit 前必須有 evaluation proof。 |
+| `LOOP-AUTO-KNOW-004` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Extract Agora interaction evidence into datasets | Copilot | todo | `LOOP-AUTO-KNOW-003` | 把 Agora ask、feedback、journal、note、insight、training example 路由成 governed learning datasets，不碰 runtime authority。 |
+| `LOOP-AUTO-KNOW-005` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add human imitation and shadow evaluation scheduler | Gemini | todo | `LOOP-AUTO-KNOW-004`, `LOOP-AUTO-TEL-005` | 新增 trace dataset 到 imitation/shadow eval 的 scheduled loop，產生 gated candidates 而不直接影響 running artifact。 |
+| `LOOP-AUTO-KNOW-006` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add consultation workflow executor | Claude | todo | `LOOP-AUTO-KNOW-001` | 新增 durable consultation committee/red-team workflow executor，消費 handoff/outbox 並產生 memo/gate handoff。 |
+| `LOOP-AUTO-BFF-001` | Global Loop Autopilot / Wave 7 BFF Operator Truth | Add loop health read model | Codex | todo | `LOOP-AUTO-001` | 新增 BFF/operator loop health read model，列出 maturity、controller health、last success、last failure 與 evidence packet。 |
+| `LOOP-AUTO-BFF-002` | Global Loop Autopilot / Wave 7 BFF Operator Truth | Add BFF downstream health monitor | Gemini2 | todo | `LOOP-AUTO-BFF-001`, `LOOP-AUTO-TEL-001` | 新增 continuous BFF/downstream health monitor，把 probe 結果寫進 telemetry/incident pipeline。 |
+| `LOOP-AUTO-BFF-003` | Global Loop Autopilot / Wave 7 BFF Operator Truth | Label seed snapshot registry scheduled and live truth | Codex2 | todo | `LOOP-AUTO-BFF-001` | 在 operator panels 明確標示 seed、fixture、snapshot、registry、scheduled、live truth，避免 demo fixture 被看成真實 loop。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `MPOS-P1-PER-002` | Sprint MPOS-P1 / Persona OODA evidence | Prove Persona A/B/C research-to-proposal OODA packets | Copilot | todo | `MPOS-P0-VAL-001`, `MPOS-P1-PER-001`, `MPOS-P0-E2E-001` | 補三個 persona 各自從 Observe/Orient 到 PersonaAllocationProposal 的證據鏈，避免多人格 synthesis 只吃手寫 proposal fixture。 |
+| `LOOP-AUTO-SRC-002` | Global Loop Autopilot / Wave 1 Source Persona Search | Implement source provisioning reconciler | Copilot | todo | `LOOP-AUTO-SRC-001` | 實作 persona required_data_sources 到 source connector 註冊與 schedule 建立的 idempotent reconciler。 |
+| `LOOP-AUTO-SRC-003` | Global Loop Autopilot / Wave 1 Source Persona Search | Harden source scheduler supervision | Gemini | todo | `LOOP-AUTO-SRC-002` | 讓 source scheduler 變成 required supervised worker，補 restart、readiness、missed tick metrics 與 DNS/worker 故障恢復。 |
+| `LOOP-AUTO-SRC-004` | Global Loop Autopilot / Wave 1 Source Persona Search | Wire SourceHealth truth into persona panels | Codex2 | todo | `LOOP-AUTO-SRC-002`, `LOOP-AUTO-SRC-003` | 讓 persona/BFF 面板讀 SourceHealth truth，而不是 twse/tpex/finmind 靜態 metadata label。 |
+| `LOOP-AUTO-SRC-005` | Global Loop Autopilot / Wave 1 Source Persona Search | Connect source completion to search index refresh truth | Copilot | todo | `LOOP-AUTO-SRC-003` | 把 source run completion 與 search index refresh/materialization 串成可觀測路徑，避免 search scheduler optional profile 造成假活性。 |
+| `LOOP-AUTO-TEL-003` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Add incident-triggered reconciliation listener | Claude2 | todo | `LOOP-AUTO-TEL-002` | 新增 anomaly/incident-trigger listener，讓 heartbeat loss、order rejection spike 等事件立即觸發 reconciliation。 |
+| `LOOP-AUTO-TEL-005` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Add telemetry incident replay and operator evidence | Gemini2 | todo | `LOOP-AUTO-TEL-004` | 補 order rejection spike、heartbeat loss、PnL drift、recovery 的 replay suite 與 operator evidence。 |
+| `LOOP-AUTO-KNOW-001` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add source-to-strategy distillation worker | Copilot | todo | `LOOP-AUTO-SRC-005` | 新增 SourceRecord/evidence event 到 StrategySpec draft head 的 distillation worker。 |
+| `LOOP-AUTO-BFF-004` | Global Loop Autopilot / Wave 7 BFF Operator Truth | Run cross-loop operator drills | Claude2 | todo | `LOOP-AUTO-SRC-004`, `LOOP-AUTO-RT-005`, `LOOP-AUTO-DEP-004`, `LOOP-AUTO-TEL-005`, `LOOP-AUTO-EVO-005`, `LOOP-AUTO-KNOW-006`, `LOOP-AUTO-BFF-003` | 執行 source-to-health 與 runtime-to-incident-to-evolution-proposal 的 cross-loop operator drills，作為 autopilot wave closeout。 |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-06-10 08:45:22
-- Terminal tasks archived: `1433` total, `1410` completed, `23` superseded
+- Archive updated: 2026-06-22 16:33:56
+- Terminal tasks archived: `1697` total, `1668` completed, `29` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
-| `DATASTRAT-PERSONA-005` | EPIC DATASTRAT / Persona strategy discovery | Implement Persona strategy discovery deterministic matching | Codex | completed | 2026-06-10 08:45:22 | `ai-task-archive/tasks/DATASTRAT-PERSONA-005.json` |
-| `DATASTRAT-SEED-004` | EPIC DATASTRAT / Strategy seed store and materializer | Persist StrategySpecSeed and materialize seeds from evidence bundles | Claude | completed | 2026-06-10 08:04:38 | `ai-task-archive/tasks/DATASTRAT-SEED-004.json` |
-| `DATASTRAT-USAGE-007` | EPIC DATASTRAT / Usage based retirement | Add source usage, yield, health, and retirement recommendations | Claude | completed | 2026-06-09 23:39:35 | `ai-task-archive/tasks/DATASTRAT-USAGE-007.json` |
-| `MPOS-P1-ART-001` | EPIC MPOS / P1 governance risk and artifact integration | Wire AllocationPolicyArtifact into registry governance and deployment path | Claude2 | completed | 2026-06-09 23:23:47 | `ai-task-archive/tasks/MPOS-P1-ART-001.json` |
-| `DATASTRAT-PROPOSAL-006` | EPIC DATASTRAT / LLM proposal governance | Add governed LLM source-change proposal workflow | Claude | completed | 2026-06-09 22:58:57 | `ai-task-archive/tasks/DATASTRAT-PROPOSAL-006.json` |
-| `DATASTRAT-CATALOG-003` | EPIC DATASTRAT / Financial data source catalog | Add initial financial data source catalog and active-universe scheduling policy | Codex | completed | 2026-06-09 22:27:40 | `ai-task-archive/tasks/DATASTRAT-CATALOG-003.json` |
-| `DATASTRAT-REG-002` | EPIC DATASTRAT / Registry split layer | Implement registry split layer for data sources and strategy seed sources | Claude | completed | 2026-06-09 21:54:58 | `ai-task-archive/tasks/DATASTRAT-REG-002.json` |
-| `MPOS-P1-RISK-001` | EPIC MPOS / P1 governance risk and artifact integration | Create first class RiskPolicy evaluator contract | Codex | completed | 2026-06-09 21:25:19 | `ai-task-archive/tasks/MPOS-P1-RISK-001.json` |
-| `MPOS-P1-PER-001` | EPIC MPOS / P1 persona policy and memory | Implement PersonaPolicyResolver for route consult tool and capital eligibility | Claude | completed | 2026-06-09 21:04:21 | `ai-task-archive/tasks/MPOS-P1-PER-001.json` |
-| `MPOS-P1-MEM-001` | EPIC MPOS / P1 persona policy and memory | Add first class PersonaMemory retrieval and writeback | Codex | completed | 2026-06-09 20:48:22 | `ai-task-archive/tasks/MPOS-P1-MEM-001.json` |
-| `MPOS-P0-E2E-001` | EPIC MPOS / P0 validation and governed E2E | Add minimal governed persona proposal to runtime binding E2E | Codex | completed | 2026-06-09 20:39:21 | `ai-task-archive/tasks/MPOS-P0-E2E-001.json` |
-| `OPS-RTEL-005` | Runtime Telemetry Hardening | BFF runtime-state truth split and closeout | Codex | completed | 2026-06-09 20:29:11 | `ai-task-archive/tasks/OPS-RTEL-005.json` |
-| `OPS-RTEL-004` | Runtime Telemetry Hardening | Runtime-aware signal isolation | Claude2 | completed | 2026-06-09 20:00:27 | `ai-task-archive/tasks/OPS-RTEL-004.json` |
-| `MPOS-P0-VAL-001` | EPIC MPOS / P0 validation and governed E2E | Restore multi-persona OS validation baseline | Claude | completed | 2026-06-09 19:27:48 | `ai-task-archive/tasks/MPOS-P0-VAL-001.json` |
-| `ASST-SKILL-004` | EPIC ASST-SKILL / Remaining toolbar migration | Migrate remaining toolbar capabilities (control-mode, resync, openclaw) to skills | Codex | completed | 2026-06-09 19:18:31 | `ai-task-archive/tasks/ASST-SKILL-004.json` |
-| `OPS-RTEL-002` | Runtime Telemetry Hardening | Paper runtime fleet reconciler | Claude | completed | 2026-06-09 19:11:05 | `ai-task-archive/tasks/OPS-RTEL-002.json` |
-| `DATASTRAT-CONTRACT-001` | EPIC DATASTRAT / Contracts and semantic split | Add contracts for data sources, strategy seed sources, proposals, and persona matches | Codex | completed | 2026-06-09 16:03:02 | `ai-task-archive/tasks/DATASTRAT-CONTRACT-001.json` |
-| `ASST-SKILL-005` | EPIC ASST-SKILL / Provider re-auth skill | Add provider re-auth as device-flow skill assistant.provider.reauth | Codex | completed | 2026-06-09 14:25:15 | `ai-task-archive/tasks/ASST-SKILL-005.json` |
-| `ASST-SKILL-003` | EPIC ASST-SKILL / FE generic renderer | Frontend generic renderer: surfaces driven by the effective skill catalog | Codex | completed | 2026-06-09 12:40:16 | `ai-task-archive/tasks/ASST-SKILL-003.json` |
-| `ASST-SKILL-002` | EPIC ASST-SKILL / SA-SD pilot (template) | Pilot: migrate SA/SD button to governed skill assistant.sa_sd.generate | Codex | completed | 2026-06-09 08:58:25 | `ai-task-archive/tasks/ASST-SKILL-002.json` |
+| `AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3` | EPIC AGORA-FE / Phase 2 | Prepare AG-FE-SW-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 16:33:56 | `ai-task-archive/tasks/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 16:15:20 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 16:02:31 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-43.json` |
+| `AG-BE-TR-002` | EPIC AGORA-TR / Phase 4 | Governed TradingIntent / handoff | Codex | completed | 2026-06-22 15:42:08 | `ai-task-archive/tasks/AG-BE-TR-002.json` |
+| `AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6` | EPIC AGORA-TR / Phase 4 | Prepare AG-BE-TR-002 BFF and frontend handoff packet | Claude | completed | 2026-06-22 15:39:38 | `ai-task-archive/tasks/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 15:20:01 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.json` |
+| `AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | EPIC AGORA-TR / Phase 4 | Prepare AG-BE-TR-002 BFF and frontend handoff packet | Claude | superseded | 2026-06-22 15:19:03 | `ai-task-archive/tasks/AG-BE-TR-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.json` |
+| `AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7` | EPIC AGORA-SW / Phase 2 | Prepare AG-BE-SW-001 BFF and frontend handoff packet | Claude2 | superseded | 2026-06-22 15:18:40 | `ai-task-archive/tasks/AG-BE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-42` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 15:10:33 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-42.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 14:52:05 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-41.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 14:31:56 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-7.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 14:17:17 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-40` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 14:06:33 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-40.json` |
+| `AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` | EPIC AGORA-FE / Phase 2 | Prepare AG-FE-SW-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 13:44:25 | `ai-task-archive/tasks/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.json` |
+| `AG-FE-SW-001-SIDECAR-BFF-HANDOFF` | EPIC AGORA-FE / Phase 2 | Prepare AG-FE-SW-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 13:31:28 | `ai-task-archive/tasks/AG-FE-SW-001-SIDECAR-BFF-HANDOFF.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 13:10:34 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 13:03:48 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-39.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 12:42:28 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-38.json` |
+| `AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4` | EPIC AGORA-FE / Phase 3 | Prepare AG-FE-RS-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 12:23:44 | `ai-task-archive/tasks/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.json` |
+| `AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37` | EPIC AGORA-FE / Phase 1 | Prepare AG-FE-ID-001 BFF and frontend handoff packet | Codex | completed | 2026-06-22 12:13:45 | `ai-task-archive/tasks/AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-37.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `MPOS-P1-PER-002` | Sprint MPOS-P1 / Persona OODA evidence | Prove Persona A/B/C research-to-proposal OODA packets | 補三個 persona 各自從 Observe/Orient 到 PersonaAllocationProposal 的證據鏈，避免多人格 synthesis 只吃手寫 proposal fixture。 | Copilot | Codex | todo | `MPOS-P0-VAL-001`, `MPOS-P1-PER-001`, `MPOS-P0-E2E-001` | 2026-06-09 23:28:07 | Assignment created |
-| `MPOS-P1-E2E-002` | Sprint MPOS-P1 / Allocation policy runtime closure | Run approved AllocationPolicyArtifact through paper LEAN loop | 把已核准 AllocationPolicyArtifact 實際接到 DeploymentPlan、RuntimeBinding、paper LEAN、fills/telemetry 與 lineage 查詢。 | Claude | Codex | todo | `MPOS-P1-ART-001`, `MPOS-P1-PER-002`, `MPOS-P1-RISK-001`, `MPOS-P1-MEM-001`, `MPOS-P1-PER-001` | 2026-06-09 23:28:09 | Assignment created |
-| `MPOS-P1-CONSULT-001` | Sprint MPOS-P1 / Consultation governance gate | Require consultation handoff for high-risk allocation approval | 把 consultation/committee memo 與 sponsor decision handoff 變成 allocation approval 的硬門檻，而不是旁路資料。 | Claude2 | Codex | todo | `MPOS-P1-ART-001`, `MPOS-P1-PER-002` | 2026-06-09 23:28:10 | Assignment created |
-| `MPOS-P1-RISK-002` | Sprint MPOS-P1 / Homogeneity correlation gate | Add homogeneity and correlation review to allocation gate | 在 pre-LEAN allocation gate 補 homogeneity/correlation review，避免多個 persona 同時堆疊高度相關或重複 exposure。 | Codex | Claude | todo | `MPOS-P1-RISK-001`, `MPOS-P1-PER-002` | 2026-06-09 23:28:10 | Assignment created |
-| `MPOS-P1-MEM-002` | Sprint MPOS-P1 / Learn feedback attribution | Automate persona and sponsor Learn feedback writeback | 把 runtime telemetry、postmortem、evolution 結果自動寫回 persona memory 與 sponsor-attributed institutional memory。 | Codex2 | Claude | todo | `MPOS-P1-MEM-001`, `MPOS-P1-E2E-002` | 2026-06-09 23:28:11 | Assignment created |
-| `MPOS-P1-VERIFY-001` | Sprint MPOS-P1 / Supervisor closure evidence | Produce supervisor closure packet for MPOS full-loop proof | 彙整所有 MPOS P1 修補任務的 PR、commit、CI 與本機驗證，產生 supervisor 可審的完整閉環證據包。 | Gemini2 | Codex | todo | `MPOS-P1-PER-002`, `MPOS-P1-E2E-002`, `MPOS-P1-CONSULT-001`, `MPOS-P1-RISK-002`, `MPOS-P1-MEM-002` | 2026-06-09 23:28:12 | Assignment created |
-| `MPOS-P2-BACKEND-001` | Sprint MPOS-P2 / Research backend clarity | Normalize MPOS Observe backend maturity matrix | 整理 Qlib/vectorbt/statsmodels/QuantLib 在 MPOS Observe 流程中的 maturity、no-order-route 與驗收證據。 | Copilot | Claude | todo | `MPOS-P1-PER-002` | 2026-06-09 23:28:12 | Assignment created |
+| `LOOP-AUTO-000` | Global Loop Autopilot / Wave 0 Inventory Substrate | Define loop catalog schema and maturity registry | 建立全域 loop catalog schema 與 maturity registry，讓每條 loop 的 desired state、actual state、owner、maturity、target、evidence 都可機器讀取。 | Codex | Claude | todo | - | 2026-06-27 14:44:26 | Assignment created |
+| `LOOP-AUTO-001` | Global Loop Autopilot / Wave 0 Inventory Substrate | Publish current loop inventory read model | 把 SA-21 inventory 發布成 BFF/operator 可讀的 read model，讓每條 loop 的 maturity 與 evidence 狀態不再只藏在文件裡。 | Codex2 | Claude | todo | `LOOP-AUTO-000` | 2026-06-27 14:44:30 | Assignment created |
+| `LOOP-AUTO-002` | Global Loop Autopilot / Wave 0 Inventory Substrate | Add completion guardrails for loop claims | 新增完成宣告 guardrail，阻止 worker 只靠 route、seed、fixture 或 panel copy 宣稱 loop 已完成。 | Claude | Codex | todo | `LOOP-AUTO-000` | 2026-06-27 14:44:31 | Assignment created |
+| `LOOP-AUTO-SRC-001` | Global Loop Autopilot / Wave 1 Source Persona Search | Add persona data requirement schema | 把 persona 的資料需求從 metadata label 升級成 first-class required_data_sources schema。 | Copilot | Codex | todo | `LOOP-AUTO-000` | 2026-06-27 14:44:32 | Assignment created |
+| `LOOP-AUTO-SRC-002` | Global Loop Autopilot / Wave 1 Source Persona Search | Implement source provisioning reconciler | 實作 persona required_data_sources 到 source connector 註冊與 schedule 建立的 idempotent reconciler。 | Copilot | Claude | todo | `LOOP-AUTO-SRC-001` | 2026-06-27 14:44:33 | Assignment created |
+| `LOOP-AUTO-SRC-003` | Global Loop Autopilot / Wave 1 Source Persona Search | Harden source scheduler supervision | 讓 source scheduler 變成 required supervised worker，補 restart、readiness、missed tick metrics 與 DNS/worker 故障恢復。 | Gemini | Codex | todo | `LOOP-AUTO-SRC-002` | 2026-06-27 14:44:34 | Assignment created |
+| `LOOP-AUTO-SRC-004` | Global Loop Autopilot / Wave 1 Source Persona Search | Wire SourceHealth truth into persona panels | 讓 persona/BFF 面板讀 SourceHealth truth，而不是 twse/tpex/finmind 靜態 metadata label。 | Codex2 | Claude | todo | `LOOP-AUTO-SRC-002`, `LOOP-AUTO-SRC-003` | 2026-06-27 14:44:35 | Assignment created |
+| `LOOP-AUTO-SRC-005` | Global Loop Autopilot / Wave 1 Source Persona Search | Connect source completion to search index refresh truth | 把 source run completion 與 search index refresh/materialization 串成可觀測路徑，避免 search scheduler optional profile 造成假活性。 | Copilot | Codex | todo | `LOOP-AUTO-SRC-003` | 2026-06-27 14:44:36 | Assignment created |
+| `LOOP-AUTO-RT-001` | Global Loop Autopilot / Wave 2 Runtime Fleet | Define runtime fleet desired-state query | 定義 runtime fleet reconciler 要消費的 active paper/canary RuntimeBinding desired-state query 與 policy envelope。 | Claude | Codex | todo | `LOOP-AUTO-000` | 2026-06-27 14:44:37 | Assignment created |
+| `LOOP-AUTO-RT-002` | Global Loop Autopilot / Wave 2 Runtime Fleet | Implement managed paper runtime fleet reconciler | 實作 active paper RuntimeBinding 到 exactly-one supervised worker 的 fleet reconciler。 | Gemini | Claude | todo | `LOOP-AUTO-RT-001` | 2026-06-27 14:44:38 | Assignment created |
+| `LOOP-AUTO-RT-003` | Global Loop Autopilot / Wave 2 Runtime Fleet | Add runtime session reaper and restart alignment | 清理 stale paper monitoring sessions，讓 worker restart 建立 fresh session，不再用 ended_at=null 當 liveness proof。 | Codex | Claude2 | todo | `LOOP-AUTO-RT-002` | 2026-06-27 14:44:39 | Assignment created |
+| `LOOP-AUTO-RT-004` | Global Loop Autopilot / Wave 2 Runtime Fleet | Add runtime-aware signal isolation | 把 paper runtime signal consumption 依 runtime 或 binding identity 隔離，移除 shared queue blind consumption 風險。 | Gemini2 | Claude | todo | `LOOP-AUTO-RT-002` | 2026-06-27 14:44:40 | Assignment created |
+| `LOOP-AUTO-RT-005` | Global Loop Autopilot / Wave 2 Runtime Fleet | Produce runtime fleet evidence packet | 產出 stack restart、kill-one-worker、retire-binding、heartbeat、signal isolation 的 runtime fleet evidence packet。 | Codex2 | Claude | todo | `LOOP-AUTO-RT-002`, `LOOP-AUTO-RT-003`, `LOOP-AUTO-RT-004` | 2026-06-27 14:44:42 | Assignment created |
+| `LOOP-AUTO-DEP-001` | Global Loop Autopilot / Wave 3 Deployment Saga | Add deployment saga outbox consumer | 新增 durable deployment saga outbox consumer，讓 approved DeploymentPlan 不再需要手動 endpoint stepping。 | Claude | Codex | todo | `LOOP-AUTO-000` | 2026-06-27 14:44:43 | Assignment created |
+| `LOOP-AUTO-DEP-002` | Global Loop Autopilot / Wave 3 Deployment Saga | Add runtime-manager dispatch adapter | 新增 idempotent plan-to-binding adapter，讓 deployment saga 能安全呼叫 runtime-manager 建立或驗證 RuntimeBinding。 | Claude2 | Codex | todo | `LOOP-AUTO-DEP-001`, `LOOP-AUTO-RT-001` | 2026-06-27 14:44:44 | Assignment created |
+| `LOOP-AUTO-DEP-003` | Global Loop Autopilot / Wave 3 Deployment Saga | Add deployment saga progress feedback and DLQ | 補 saga status updates、retry policy、blocked reason 與 DLQ replay，讓 deployment failure 不再消失在 outbox。 | Codex | Claude | todo | `LOOP-AUTO-DEP-001`, `LOOP-AUTO-DEP-002` | 2026-06-27 14:44:45 | Assignment created |
+| `LOOP-AUTO-DEP-004` | Global Loop Autopilot / Wave 3 Deployment Saga | Split promotion and deployment BFF truth by stage | 讓 BFF 明確分開 approval、plan、saga、binding、runtime fleet 狀態，避免單一綠燈掩蓋某段未執行。 | Codex2 | Claude | todo | `LOOP-AUTO-DEP-003` | 2026-06-27 14:44:46 | Assignment created |
+| `LOOP-AUTO-TEL-001` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Audit telemetry readiness and writer durability | 審計 telemetry readiness、canonical table bootstrap、writer metrics、DLQ 與 replay semantics，作為 reconciliation autopilot 前置。 | Codex | Claude | todo | `LOOP-AUTO-000` | 2026-06-27 14:44:47 | Assignment created |
+| `LOOP-AUTO-TEL-002` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Add scheduled reconciliation worker | 新增 scheduled reconciliation worker，從 telemetry truth 定期對 binding/run 狀態做 reconciliation。 | Claude | Codex | todo | `LOOP-AUTO-TEL-001`, `LOOP-AUTO-RT-002` | 2026-06-27 14:44:48 | Assignment created |
+| `LOOP-AUTO-TEL-003` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Add incident-triggered reconciliation listener | 新增 anomaly/incident-trigger listener，讓 heartbeat loss、order rejection spike 等事件立即觸發 reconciliation。 | Claude2 | Codex | todo | `LOOP-AUTO-TEL-002` | 2026-06-27 14:44:49 | Assignment created |
+| `LOOP-AUTO-TEL-004` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Classify drift reports into incidents with dedupe | 把 drift report threshold breach 自動轉成 IncidentCase create/update，並依 binding/runtime/incident cluster 去重。 | Codex2 | Claude | todo | `LOOP-AUTO-TEL-002`, `LOOP-AUTO-TEL-003` | 2026-06-27 14:44:50 | Assignment created |
+| `LOOP-AUTO-TEL-005` | Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident | Add telemetry incident replay and operator evidence | 補 order rejection spike、heartbeat loss、PnL drift、recovery 的 replay suite 與 operator evidence。 | Gemini2 | Codex | todo | `LOOP-AUTO-TEL-004` | 2026-06-27 14:44:51 | Assignment created |
+| `LOOP-AUTO-EVO-001` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Create postmortem drafts from resolved incidents | 新增 incident-to-postmortem draft worker，讓 resolved incident 不再掉進手動 backlog。 | Claude2 | Codex | todo | `LOOP-AUTO-TEL-004` | 2026-06-27 14:44:53 | Assignment created |
+| `LOOP-AUTO-EVO-002` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Bridge postmortems into evolution proposals | 新增 postmortem-to-evolution proposal bridge，讓 published postmortem 可以產生 exactly-one EvolutionDecision proposal。 | Codex | Claude | todo | `LOOP-AUTO-EVO-001` | 2026-06-27 14:44:54 | Assignment created |
+| `LOOP-AUTO-EVO-003` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Add evolution daily sweep worker | 新增 threshold/cooldown governed evolution daily sweep，補 missing decisions 並避免 active-decision 衝突。 | Gemini | Codex | todo | `LOOP-AUTO-EVO-002` | 2026-06-27 14:44:55 | Assignment created |
+| `LOOP-AUTO-EVO-004` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Dispatch approved evolution actions through gates | 把 approved EvolutionDecision action 透過 gated research/deployment/runtime command paths dispatch，不允許直接 production mutation。 | Claude | Codex | todo | `LOOP-AUTO-EVO-002`, `LOOP-AUTO-DEP-001` | 2026-06-27 14:44:56 | Assignment created |
+| `LOOP-AUTO-EVO-005` | Global Loop Autopilot / Wave 5 Postmortem Evolution | Prove evolution rollback and follow-through | 產出 approved rollback/mitigation command 到 runtime-manager/deployment 的 follow-through evidence。 | Gemini2 | Claude | todo | `LOOP-AUTO-EVO-004` | 2026-06-27 14:44:58 | Assignment created |
+| `LOOP-AUTO-KNOW-001` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add source-to-strategy distillation worker | 新增 SourceRecord/evidence event 到 StrategySpec draft head 的 distillation worker。 | Copilot | Codex | todo | `LOOP-AUTO-SRC-005` | 2026-06-27 14:44:59 | Assignment created |
+| `LOOP-AUTO-KNOW-002` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add alpha replication queue and revalidation worker | 新增 reviewed StrategySpec 到 replication queue 與 scheduled revalidation worker，讓 alpha replication 不停在手動 API。 | Copilot | Claude | todo | `LOOP-AUTO-KNOW-001` | 2026-06-27 14:45:00 | Assignment created |
+| `LOOP-AUTO-KNOW-003` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add persona teaching async preview and eval worker | 補 persona teaching async preview/eval worker，讓 teaching commit 前必須有 evaluation proof。 | Codex2 | Claude | todo | `LOOP-AUTO-SRC-004` | 2026-06-27 14:45:01 | Assignment created |
+| `LOOP-AUTO-KNOW-004` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Extract Agora interaction evidence into datasets | 把 Agora ask、feedback、journal、note、insight、training example 路由成 governed learning datasets，不碰 runtime authority。 | Copilot | Codex | todo | `LOOP-AUTO-KNOW-003` | 2026-06-27 14:45:03 | Assignment created |
+| `LOOP-AUTO-KNOW-005` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add human imitation and shadow evaluation scheduler | 新增 trace dataset 到 imitation/shadow eval 的 scheduled loop，產生 gated candidates 而不直接影響 running artifact。 | Gemini | Codex | todo | `LOOP-AUTO-KNOW-004`, `LOOP-AUTO-TEL-005` | 2026-06-27 14:45:04 | Assignment created |
+| `LOOP-AUTO-KNOW-006` | Global Loop Autopilot / Wave 6 Knowledge Learning Consultation | Add consultation workflow executor | 新增 durable consultation committee/red-team workflow executor，消費 handoff/outbox 並產生 memo/gate handoff。 | Claude | Codex | todo | `LOOP-AUTO-KNOW-001` | 2026-06-27 14:45:06 | Assignment created |
+| `LOOP-AUTO-BFF-001` | Global Loop Autopilot / Wave 7 BFF Operator Truth | Add loop health read model | 新增 BFF/operator loop health read model，列出 maturity、controller health、last success、last failure 與 evidence packet。 | Codex | Claude | todo | `LOOP-AUTO-001` | 2026-06-27 14:45:07 | Assignment created |
+| `LOOP-AUTO-BFF-002` | Global Loop Autopilot / Wave 7 BFF Operator Truth | Add BFF downstream health monitor | 新增 continuous BFF/downstream health monitor，把 probe 結果寫進 telemetry/incident pipeline。 | Gemini2 | Codex | todo | `LOOP-AUTO-BFF-001`, `LOOP-AUTO-TEL-001` | 2026-06-27 14:45:08 | Assignment created |
+| `LOOP-AUTO-BFF-003` | Global Loop Autopilot / Wave 7 BFF Operator Truth | Label seed snapshot registry scheduled and live truth | 在 operator panels 明確標示 seed、fixture、snapshot、registry、scheduled、live truth，避免 demo fixture 被看成真實 loop。 | Codex2 | Claude | todo | `LOOP-AUTO-BFF-001` | 2026-06-27 14:45:09 | Assignment created |
+| `LOOP-AUTO-BFF-004` | Global Loop Autopilot / Wave 7 BFF Operator Truth | Run cross-loop operator drills | 執行 source-to-health 與 runtime-to-incident-to-evolution-proposal 的 cross-loop operator drills，作為 autopilot wave closeout。 | Claude2 | Codex | todo | `LOOP-AUTO-SRC-004`, `LOOP-AUTO-RT-005`, `LOOP-AUTO-DEP-004`, `LOOP-AUTO-TEL-005`, `LOOP-AUTO-EVO-005`, `LOOP-AUTO-KNOW-006`, `LOOP-AUTO-BFF-003` | 2026-06-27 14:45:10 | Assignment created |
 
 ## Handoff Queue
 
@@ -139,23 +201,23 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:42 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:43 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:47 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:48 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:52 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:53 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:57 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:57 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:53:02 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:53:02 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
-- 2026-06-09 23:28:07 Operator: `MPOS-P1-PER-002` Assigned MPOS-P1-PER-002 to Copilot with reviewer Codex
-- 2026-06-09 23:28:09 Operator: `MPOS-P1-E2E-002` Assigned MPOS-P1-E2E-002 to Claude with reviewer Codex
-- 2026-06-09 23:28:10 Operator: `MPOS-P1-CONSULT-001` Assigned MPOS-P1-CONSULT-001 to Claude2 with reviewer Codex
-- 2026-06-09 23:28:10 Operator: `MPOS-P1-RISK-002` Assigned MPOS-P1-RISK-002 to Codex with reviewer Claude
-- 2026-06-09 23:28:11 Operator: `MPOS-P1-MEM-002` Assigned MPOS-P1-MEM-002 to Codex2 with reviewer Claude
-- 2026-06-09 23:28:12 Operator: `MPOS-P1-VERIFY-001` Assigned MPOS-P1-VERIFY-001 to Gemini2 with reviewer Codex
-- 2026-06-09 23:28:12 Operator: `MPOS-P2-BACKEND-001` Assigned MPOS-P2-BACKEND-001 to Copilot with reviewer Claude
+- 2026-06-27 14:44:47 Codex: `LOOP-AUTO-TEL-001` Assigned LOOP-AUTO-TEL-001 to Codex with reviewer Claude
+- 2026-06-27 14:44:48 Codex: `LOOP-AUTO-TEL-002` Assigned LOOP-AUTO-TEL-002 to Claude with reviewer Codex
+- 2026-06-27 14:44:49 Codex: `LOOP-AUTO-TEL-003` Assigned LOOP-AUTO-TEL-003 to Claude2 with reviewer Codex
+- 2026-06-27 14:44:50 Codex: `LOOP-AUTO-TEL-004` Assigned LOOP-AUTO-TEL-004 to Codex2 with reviewer Claude
+- 2026-06-27 14:44:51 Codex: `LOOP-AUTO-TEL-005` Assigned LOOP-AUTO-TEL-005 to Gemini2 with reviewer Codex
+- 2026-06-27 14:44:53 Codex: `LOOP-AUTO-EVO-001` Assigned LOOP-AUTO-EVO-001 to Claude2 with reviewer Codex
+- 2026-06-27 14:44:54 Codex: `LOOP-AUTO-EVO-002` Assigned LOOP-AUTO-EVO-002 to Codex with reviewer Claude
+- 2026-06-27 14:44:55 Codex: `LOOP-AUTO-EVO-003` Assigned LOOP-AUTO-EVO-003 to Gemini with reviewer Codex
+- 2026-06-27 14:44:56 Codex: `LOOP-AUTO-EVO-004` Assigned LOOP-AUTO-EVO-004 to Claude with reviewer Codex
+- 2026-06-27 14:44:58 Codex: `LOOP-AUTO-EVO-005` Assigned LOOP-AUTO-EVO-005 to Gemini2 with reviewer Claude
+- 2026-06-27 14:44:59 Codex: `LOOP-AUTO-KNOW-001` Assigned LOOP-AUTO-KNOW-001 to Copilot with reviewer Codex
+- 2026-06-27 14:45:00 Codex: `LOOP-AUTO-KNOW-002` Assigned LOOP-AUTO-KNOW-002 to Copilot with reviewer Claude
+- 2026-06-27 14:45:01 Codex: `LOOP-AUTO-KNOW-003` Assigned LOOP-AUTO-KNOW-003 to Codex2 with reviewer Claude
+- 2026-06-27 14:45:03 Codex: `LOOP-AUTO-KNOW-004` Assigned LOOP-AUTO-KNOW-004 to Copilot with reviewer Codex
+- 2026-06-27 14:45:04 Codex: `LOOP-AUTO-KNOW-005` Assigned LOOP-AUTO-KNOW-005 to Gemini with reviewer Codex
+- 2026-06-27 14:45:06 Codex: `LOOP-AUTO-KNOW-006` Assigned LOOP-AUTO-KNOW-006 to Claude with reviewer Codex
+- 2026-06-27 14:45:07 Codex: `LOOP-AUTO-BFF-001` Assigned LOOP-AUTO-BFF-001 to Codex with reviewer Claude
+- 2026-06-27 14:45:08 Codex: `LOOP-AUTO-BFF-002` Assigned LOOP-AUTO-BFF-002 to Gemini2 with reviewer Codex
+- 2026-06-27 14:45:09 Codex: `LOOP-AUTO-BFF-003` Assigned LOOP-AUTO-BFF-003 to Codex2 with reviewer Claude
+- 2026-06-27 14:45:10 Codex: `LOOP-AUTO-BFF-004` Assigned LOOP-AUTO-BFF-004 to Claude2 with reviewer Codex

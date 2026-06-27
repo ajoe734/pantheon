@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-06-09T15:28:12Z",
+  "updated_at": "2026-06-27T06:45:10Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -96,7 +96,9 @@
       ],
       "status": "waiting",
       "current_task_ids": [
-        "MPOS-P1-E2E-002"
+        "LOOP-AUTO-002",
+        "LOOP-AUTO-RT-001",
+        "LOOP-AUTO-DEP-001"
       ],
       "branch": "task/LSP-002-V2",
       "next": "Assignment created",
@@ -110,10 +112,14 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "waiting",
+      "current_task_ids": [
+        "LOOP-AUTO-SRC-003",
+        "LOOP-AUTO-RT-002",
+        "LOOP-AUTO-EVO-003"
+      ],
       "branch": "feat/gemini-research-runtime",
-      "next": "",
+      "next": "Assignment created",
       "last_update": "2026-06-02T01:20:16Z"
     },
     {
@@ -124,13 +130,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
+      "status": "ready",
       "current_task_ids": [
-        "MPOS-P1-RISK-002"
+        "LOOP-AUTO-000"
       ],
       "branch": "task/ASST-OCGW-001",
       "next": "Assignment created",
-      "last_update": "2026-06-06T10:13:34Z"
+      "last_update": "2026-06-27T06:44:26Z"
     },
     {
       "name": "Codex2",
@@ -142,7 +148,9 @@
       ],
       "status": "waiting",
       "current_task_ids": [
-        "MPOS-P1-MEM-002"
+        "LOOP-AUTO-001",
+        "LOOP-AUTO-SRC-004",
+        "LOOP-AUTO-RT-005"
       ],
       "branch": "task/ASST-OCGW-004",
       "next": "Assignment created",
@@ -156,9 +164,11 @@
         "spec-review",
         "critique"
       ],
-      "status": "ready",
+      "status": "waiting",
       "current_task_ids": [
-        "MPOS-P1-PER-002"
+        "LOOP-AUTO-SRC-001",
+        "LOOP-AUTO-SRC-002",
+        "LOOP-AUTO-SRC-005"
       ],
       "branch": "feat/grok-research-critique",
       "next": "Assignment created",
@@ -173,7 +183,9 @@
       ],
       "status": "waiting",
       "current_task_ids": [
-        "MPOS-P1-CONSULT-001"
+        "LOOP-AUTO-DEP-002",
+        "LOOP-AUTO-TEL-003",
+        "LOOP-AUTO-EVO-001"
       ],
       "branch": "feat/claude2-execution-control",
       "next": "Assignment created",
@@ -189,7 +201,9 @@
       ],
       "status": "waiting",
       "current_task_ids": [
-        "MPOS-P1-VERIFY-001"
+        "LOOP-AUTO-RT-004",
+        "LOOP-AUTO-TEL-005",
+        "LOOP-AUTO-EVO-005"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
       "next": "Assignment created",
@@ -209,263 +223,2289 @@
       "branch": "human/ops",
       "next": "",
       "last_update": "2026-06-01T02:42:08Z"
+    },
+    {
+      "name": "Antigravity",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/antigravity-research-runtime",
+      "next": "",
+      "last_update": null
+    },
+    {
+      "name": "Antigravity2",
+      "capability_lane": [
+        "gcp",
+        "ci-cd",
+        "runtime-packaging",
+        "worker-ops"
+      ],
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "feat/antigravity2-research-runtime",
+      "next": "",
+      "last_update": null
     }
   ],
   "tasks": [
     {
-      "id": "MPOS-P1-PER-002",
-      "title": "Prove Persona A/B/C research-to-proposal OODA packets",
-      "summary_zh": "補三個 persona 各自從 Observe/Orient 到 PersonaAllocationProposal 的證據鏈，避免多人格 synthesis 只吃手寫 proposal fixture。",
-      "phase": "Sprint MPOS-P1 / Persona OODA evidence",
-      "owner": "Copilot",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "MPOS-P0-VAL-001",
-        "MPOS-P1-PER-001",
-        "MPOS-P0-E2E-001"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-        "tests/e2e/test_multi_persona_ooda_packet.py",
-        "tests/e2e/test_source_to_strategy_spec.py",
-        "tests/e2e/test_strategy_spec_to_experiment_run.py",
-        "services/source_ingestion/strategy_seed_builder.py",
-        "services/research/strategy_spec/conversion.py",
-        "services/optimizer-svc/portfolio_synthesis/models.py"
-      ],
-      "acceptance": [
-        "Persona A B C each start from source or strategy evidence;each packet includes StrategySpecSeed or StrategySpec and ExperimentRun or OOS validation;each packet records regime risk mandate fit evidence quality and no-order-route proof;each PersonaAllocationProposal evidence_refs point back to its packet;ineligible or suspended persona remains excluded by policy or health gate"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-06-09T15:28:07Z",
-      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-      "gap_ids": [
-        "G2"
-      ],
-      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
-      "task_class": "mpos_full_loop_gap_closure",
-      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
-      "auto_generated": true
-    },
-    {
-      "id": "MPOS-P1-E2E-002",
-      "title": "Run approved AllocationPolicyArtifact through paper LEAN loop",
-      "summary_zh": "把已核准 AllocationPolicyArtifact 實際接到 DeploymentPlan、RuntimeBinding、paper LEAN、fills/telemetry 與 lineage 查詢。",
-      "phase": "Sprint MPOS-P1 / Allocation policy runtime closure",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "MPOS-P1-ART-001",
-        "MPOS-P1-PER-002",
-        "MPOS-P1-RISK-001",
-        "MPOS-P1-MEM-001",
-        "MPOS-P1-PER-001"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-        "services/registry/test_allocation_policy_artifact.py",
-        "services/control-plane/governance/deployment_plan.py",
-        "services/control-plane/governance/approval_decision.py",
-        "services/control-plane/governance/test_persona_proposal_runtime_binding_e2e.py",
-        "tests/e2e/test_deployment_plan_to_paper_run.py",
-        "services/execution/lean_runtime/paper_runtime.py",
-        "services/telemetry/feedback_adapter.py"
-      ],
-      "acceptance": [
-        "Start from synthesized AllocationPolicyArtifact;register allocation artifact as candidate and advance to approved with ApprovalDecision evidence;create DeploymentPlan whose artifact_type is allocation_policy;create RuntimeBinding with sponsor persona and persona capital binding attribution;run paper LEAN only and assert no live broker order route;capture fills telemetry and query lineage by runtime binding deployment plan capital pool artifact and persona capital binding"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-06-09T15:28:09Z",
-      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-      "gap_ids": [
-        "G1"
-      ],
-      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
-      "task_class": "mpos_full_loop_gap_closure",
-      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
-      "auto_generated": true
-    },
-    {
-      "id": "MPOS-P1-CONSULT-001",
-      "title": "Require consultation handoff for high-risk allocation approval",
-      "summary_zh": "把 consultation/committee memo 與 sponsor decision handoff 變成 allocation approval 的硬門檻，而不是旁路資料。",
-      "phase": "Sprint MPOS-P1 / Consultation governance gate",
-      "owner": "Claude2",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "MPOS-P1-ART-001",
-        "MPOS-P1-PER-002"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-        "services/consultation/test_e2e_consult_review.py",
-        "services/consultation/sponsor_decision_bridge.py",
-        "services/control-plane/bff/test_cw03_committee_board_contract.py",
-        "services/consultation/store.py",
-        "services/control-plane/governance/approval_decision.py",
-        "services/registry/test_allocation_policy_artifact.py"
-      ],
-      "acceptance": [
-        "Open conflicts or high-risk allocation paths require consultation request;committee memo and service_handoff refs are stored as approval evidence;allocation approval rejects missing stale or mismatched committee handoff;sponsor decision bridge can emit approval proposal for allocation_policy;tests cover approve approve-with-conditions reject missing-handoff and stale-handoff cases"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-06-09T15:28:10Z",
-      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-      "gap_ids": [
-        "G3"
-      ],
-      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
-      "task_class": "mpos_full_loop_gap_closure",
-      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
-      "auto_generated": true
-    },
-    {
-      "id": "MPOS-P1-RISK-002",
-      "title": "Add homogeneity and correlation review to allocation gate",
-      "summary_zh": "在 pre-LEAN allocation gate 補 homogeneity/correlation review，避免多個 persona 同時堆疊高度相關或重複 exposure。",
-      "phase": "Sprint MPOS-P1 / Homogeneity correlation gate",
+      "id": "LOOP-AUTO-000",
+      "title": "Define loop catalog schema and maturity registry",
+      "summary_zh": "建立全域 loop catalog schema 與 maturity registry，讓每條 loop 的 desired state、actual state、owner、maturity、target、evidence 都可機器讀取。",
+      "phase": "Global Loop Autopilot / Wave 0 Inventory Substrate",
       "owner": "Codex",
       "reviewer": "Claude",
       "status": "todo",
-      "depends_on": [
-        "MPOS-P1-RISK-001",
-        "MPOS-P1-PER-002"
-      ],
+      "depends_on": [],
       "artifacts": [
-        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-        "services/optimizer-svc/portfolio_synthesis/conflict_classifier.py",
-        "services/capital/risk_policy.py",
-        "services/optimizer-svc/test_allocation_conflict_classifier.py",
-        "services/optimizer-svc/test_portfolio_synthesis.py",
-        "services/capital/test_risk_policy.py"
+        "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+        "services",
+        "docs/deployment/evidence"
       ],
       "acceptance": [
-        "Add first-class homogeneity or correlation review to allocation conflict taxonomy or adjacent gate;detect duplicated strategy family high target overlap high correlation bucket and concentration by capital pool;escalate or reject according to RiskPolicy evaluator precedence;risk veto still outranks committee escalation;tests include low correlation pass high correlation committee escalation and hard veto"
+        "Every canonical loop has a stable loop_id",
+        "Inventory distinguishes seed fixture registry scheduled reconciled and live proof",
+        "Reconciled status requires owner desired-state query actual-state query and restart behavior"
       ],
       "next": "Assignment created",
-      "last_update": "2026-06-09T15:28:10Z",
-      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-      "gap_ids": [
-        "G4"
+      "last_update": "2026-06-27T06:44:26Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
       ],
-      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
-      "task_class": "mpos_full_loop_gap_closure",
-      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
-      "auto_generated": true
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "all"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "SA-21"
+      ],
+      "actual_state_sources": [
+        "service registry",
+        "scheduler manifests",
+        "BFF read models",
+        "runtime evidence"
+      ],
+      "wave_id": "Wave 0 Inventory Substrate",
+      "mutates_canonical": true
     },
     {
-      "id": "MPOS-P1-MEM-002",
-      "title": "Automate persona and sponsor Learn feedback writeback",
-      "summary_zh": "把 runtime telemetry、postmortem、evolution 結果自動寫回 persona memory 與 sponsor-attributed institutional memory。",
-      "phase": "Sprint MPOS-P1 / Learn feedback attribution",
+      "id": "LOOP-AUTO-001",
+      "title": "Publish current loop inventory read model",
+      "summary_zh": "把 SA-21 inventory 發布成 BFF/operator 可讀的 read model，讓每條 loop 的 maturity 與 evidence 狀態不再只藏在文件裡。",
+      "phase": "Global Loop Autopilot / Wave 0 Inventory Substrate",
       "owner": "Codex2",
       "reviewer": "Claude",
       "status": "todo",
       "depends_on": [
-        "MPOS-P1-MEM-001",
-        "MPOS-P1-E2E-002"
+        "LOOP-AUTO-000"
       ],
       "artifacts": [
-        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-        "services/memory/main.py",
-        "services/memory/persona_memory_store.py",
-        "services/memory/institutional_memory_store.py",
-        "services/telemetry/feedback_adapter.py",
-        "services/incident/incident.py",
-        "services/evolution/postmortem_bridge.py",
-        "services/memory/test_main.py"
+        "services/control-plane/bff",
+        "docs/deployment/evidence",
+        "ai-status.json"
       ],
       "acceptance": [
-        "Telemetry postmortem or evolution outcomes create persona memory writebacks;sponsor-attributed institutional memory includes sponsor persona and contributing persona ids;contributor memory entries link proposal ids and runtime telemetry evidence;writeback is idempotent by source event id;tests cover success duplicate replay missing persona attribution and unauthorized writeback"
+        "Loop inventory is queryable by operator surfaces",
+        "Read model includes current maturity target maturity owner and evidence",
+        "Read model does not mark any loop live without evidence"
       ],
       "next": "Assignment created",
-      "last_update": "2026-06-09T15:28:11Z",
-      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-      "gap_ids": [
-        "G5"
+      "last_update": "2026-06-27T06:44:30Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
       ],
-      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
-      "task_class": "mpos_full_loop_gap_closure",
-      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
-      "auto_generated": true
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "all"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "SA-21 loop table"
+      ],
+      "actual_state_sources": [
+        "loop catalog read model"
+      ],
+      "wave_id": "Wave 0 Inventory Substrate",
+      "mutates_canonical": true
     },
     {
-      "id": "MPOS-P1-VERIFY-001",
-      "title": "Produce supervisor closure packet for MPOS full-loop proof",
-      "summary_zh": "彙整所有 MPOS P1 修補任務的 PR、commit、CI 與本機驗證，產生 supervisor 可審的完整閉環證據包。",
-      "phase": "Sprint MPOS-P1 / Supervisor closure evidence",
-      "owner": "Gemini2",
+      "id": "LOOP-AUTO-002",
+      "title": "Add completion guardrails for loop claims",
+      "summary_zh": "新增完成宣告 guardrail，阻止 worker 只靠 route、seed、fixture 或 panel copy 宣稱 loop 已完成。",
+      "phase": "Global Loop Autopilot / Wave 0 Inventory Substrate",
+      "owner": "Claude",
       "reviewer": "Codex",
       "status": "todo",
       "depends_on": [
-        "MPOS-P1-PER-002",
-        "MPOS-P1-E2E-002",
-        "MPOS-P1-CONSULT-001",
-        "MPOS-P1-RISK-002",
-        "MPOS-P1-MEM-002"
+        "LOOP-AUTO-000"
       ],
       "artifacts": [
-        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-        ".orchestrator/task-briefs",
-        "current-work.md",
-        "dashboard-bundle.json",
-        "tests/e2e",
-        "services/telemetry/lineage_read/service.py"
+        "scripts",
+        "docs/conventions",
+        "ai-status.json"
       ],
       "acceptance": [
-        "Build one supervisor-visible closure packet for all MPOS P1 gates;include task PR commit and check refs for all implementation tasks;include requirement matrix against MPOS gap dispatch doc;include local validation commands and CI status;mark live or canary broker activation as intentionally fail-closed when not activated"
+        "Done claims require controller liveness and evidence fields",
+        "Panel-only closure is rejected or flagged",
+        "Guardrail is documented for supervisor and auto-worker dispatch"
       ],
       "next": "Assignment created",
-      "last_update": "2026-06-09T15:28:12Z",
-      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-      "gap_ids": [
-        "G1",
-        "G2",
-        "G3",
-        "G4",
-        "G5"
+      "last_update": "2026-06-27T06:44:31Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
       ],
-      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
-      "task_class": "mpos_full_loop_gap_closure",
-      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
-      "auto_generated": true
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "all"
+      ],
+      "current_maturity": "manual",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "SA-21 dispatch rules"
+      ],
+      "actual_state_sources": [
+        "task closeout metadata",
+        "commit trailers",
+        "evidence packet"
+      ],
+      "wave_id": "Wave 0 Inventory Substrate",
+      "mutates_canonical": true
     },
     {
-      "id": "MPOS-P2-BACKEND-001",
-      "title": "Normalize MPOS Observe backend maturity matrix",
-      "summary_zh": "整理 Qlib/vectorbt/statsmodels/QuantLib 在 MPOS Observe 流程中的 maturity、no-order-route 與驗收證據。",
-      "phase": "Sprint MPOS-P2 / Research backend clarity",
+      "id": "LOOP-AUTO-SRC-001",
+      "title": "Add persona data requirement schema",
+      "summary_zh": "把 persona 的資料需求從 metadata label 升級成 first-class required_data_sources schema。",
+      "phase": "Global Loop Autopilot / Wave 1 Source Persona Search",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-000"
+      ],
+      "artifacts": [
+        "services/control-plane/persona",
+        "docs/03/SD-02_persona_governance.md",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Persona declares required_data_sources with dataset market cadence and source class",
+        "Schema carries connector candidates and policy gates",
+        "Seed labels no longer count as live data source binding"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:32Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "source_ingestion",
+        "persona_teaching"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "Persona.required_data_sources"
+      ],
+      "actual_state_sources": [
+        "persona registry",
+        "source connector registry"
+      ],
+      "wave_id": "Wave 1 Source Persona Search",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-SRC-002",
+      "title": "Implement source provisioning reconciler",
+      "summary_zh": "實作 persona required_data_sources 到 source connector 註冊與 schedule 建立的 idempotent reconciler。",
+      "phase": "Global Loop Autopilot / Wave 1 Source Persona Search",
       "owner": "Copilot",
       "reviewer": "Claude",
       "status": "todo",
       "depends_on": [
-        "MPOS-P1-PER-002"
+        "LOOP-AUTO-SRC-001"
       ],
       "artifacts": [
-        "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-        "services/research/experiment_orchestrator/parallel_dispatch.py",
-        "RESEARCH_BACKEND_MATURITY_MATRIX.md",
-        "services/research/qlib",
-        "services/research/vectorbt",
-        "services/research/statsmodels",
-        "services/research/quantlib"
+        "services/source_ingestion",
+        "services/control-plane/persona",
+        "docs/deployment/evidence"
       ],
       "acceptance": [
-        "Create MPOS Observe backend matrix for vectorbt Qlib statsmodels and QuantLib;state production or readiness posture for each backend;state no-order-route guarantees and proof tests;clarify whether Qlib remains activation-ready or production-active;clarify whether QuantLib is default-dispatch separate governed path or deferred"
+        "Adding tw_price_daily requirement creates or verifies connector and schedule",
+        "Duplicate ticks do not create duplicate records",
+        "Missing connector or schedule is repaired on next reconciliation"
       ],
       "next": "Assignment created",
-      "last_update": "2026-06-09T15:28:12Z",
-      "source_packet": "docs/04/pantheon_multi_persona_ooda_gap_dispatch_2026-06-09/MPOS_GAP_ASSESSMENT_AND_DISPATCH_2026-06-09.md",
-      "gap_ids": [
-        "G6"
+      "last_update": "2026-06-27T06:44:33Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
       ],
-      "dispatch_sprint": "2026-06-09-mpos-full-loop-gap-closure",
-      "task_class": "mpos_full_loop_gap_closure",
-      "auto_created_by": "dispatch_mpos_gap_closure_2026-06-09",
-      "auto_generated": true
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "source_ingestion"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "Persona.required_data_sources"
+      ],
+      "actual_state_sources": [
+        "source-ingest connector store",
+        "source-ingest schedule store"
+      ],
+      "wave_id": "Wave 1 Source Persona Search",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-SRC-003",
+      "title": "Harden source scheduler supervision",
+      "summary_zh": "讓 source scheduler 變成 required supervised worker，補 restart、readiness、missed tick metrics 與 DNS/worker 故障恢復。",
+      "phase": "Global Loop Autopilot / Wave 1 Source Persona Search",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-SRC-002"
+      ],
+      "artifacts": [
+        "docker-compose.yml",
+        "services/source_ingestion/scheduler_worker.py",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Source scheduler is supervised for required dev and staging truth",
+        "Restart recovers missed due schedules",
+        "Worker exposes last success last failure and missed tick metrics"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:34Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "source_ingestion"
+      ],
+      "current_maturity": "scheduled",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "source-ingest schedule store"
+      ],
+      "actual_state_sources": [
+        "scheduler worker health",
+        "source run records"
+      ],
+      "wave_id": "Wave 1 Source Persona Search",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-SRC-004",
+      "title": "Wire SourceHealth truth into persona panels",
+      "summary_zh": "讓 persona/BFF 面板讀 SourceHealth truth，而不是 twse/tpex/finmind 靜態 metadata label。",
+      "phase": "Global Loop Autopilot / Wave 1 Source Persona Search",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-SRC-002",
+        "LOOP-AUTO-SRC-003"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/control-plane/persona",
+        "services/source_ingestion",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Persona panel shows connector schedule last fetch last push and failure reason",
+        "FinMind payload-push sources report truthful non-static health",
+        "Static source labels are visibly not live health"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:35Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "source_ingestion",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "proven-live",
+      "desired_state_sources": [
+        "Persona.required_data_sources"
+      ],
+      "actual_state_sources": [
+        "SourceHealth",
+        "BFF source connector read model"
+      ],
+      "wave_id": "Wave 1 Source Persona Search",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-SRC-005",
+      "title": "Connect source completion to search index refresh truth",
+      "summary_zh": "把 source run completion 與 search index refresh/materialization 串成可觀測路徑，避免 search scheduler optional profile 造成假活性。",
+      "phase": "Global Loop Autopilot / Wave 1 Source Persona Search",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-SRC-003"
+      ],
+      "artifacts": [
+        "services/search",
+        "services/source_ingestion",
+        "docker-compose.yml",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Completed source records trigger or verify search refresh",
+        "Search materialization has supervised scheduler or event-driven path",
+        "BFF can report source-to-search freshness truth"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:36Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "source_ingestion",
+        "strategy_distillation"
+      ],
+      "current_maturity": "scheduled",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "completed SourceRecord"
+      ],
+      "actual_state_sources": [
+        "search index refresh status",
+        "search materialization records"
+      ],
+      "wave_id": "Wave 1 Source Persona Search",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-RT-001",
+      "title": "Define runtime fleet desired-state query",
+      "summary_zh": "定義 runtime fleet reconciler 要消費的 active paper/canary RuntimeBinding desired-state query 與 policy envelope。",
+      "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-000"
+      ],
+      "artifacts": [
+        "services/runtime-manager",
+        "docs/deployment/runtime-telemetry-hardening-2026-06-06.md",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Active runtime bindings are queryable with stage and policy envelope",
+        "Retired paused and blocked bindings are excluded or explicitly marked",
+        "Query is stable for fleet reconciliation and tests"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:37Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "capital_pool_execution"
+      ],
+      "current_maturity": "manual",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "RuntimeBinding active set"
+      ],
+      "actual_state_sources": [
+        "runtime-manager binding store"
+      ],
+      "wave_id": "Wave 2 Runtime Fleet",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-RT-002",
+      "title": "Implement managed paper runtime fleet reconciler",
+      "summary_zh": "實作 active paper RuntimeBinding 到 exactly-one supervised worker 的 fleet reconciler。",
+      "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-RT-001"
+      ],
+      "artifacts": [
+        "services/execution",
+        "services/runtime-manager",
+        "docker-compose.yml",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Stack restart recreates workers for all active paper bindings",
+        "Killing one worker restarts only that worker",
+        "Paused or retired binding stops its worker"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:38Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "capital_pool_execution"
+      ],
+      "current_maturity": "manual",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "active RuntimeBinding"
+      ],
+      "actual_state_sources": [
+        "managed worker processes",
+        "runtime heartbeat"
+      ],
+      "wave_id": "Wave 2 Runtime Fleet",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-RT-003",
+      "title": "Add runtime session reaper and restart alignment",
+      "summary_zh": "清理 stale paper monitoring sessions，讓 worker restart 建立 fresh session，不再用 ended_at=null 當 liveness proof。",
+      "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-RT-002"
+      ],
+      "artifacts": [
+        "services/runtime-manager",
+        "services/control-plane/bff",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Stale monitoring sessions are automatically ended",
+        "Restarted workers create fresh sessions",
+        "BFF surfaces session staleness and terminal reason"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:39Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "capital_pool_execution",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "manual",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "runtime heartbeat freshness"
+      ],
+      "actual_state_sources": [
+        "monitoring session store",
+        "BFF runtime board"
+      ],
+      "wave_id": "Wave 2 Runtime Fleet",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-RT-004",
+      "title": "Add runtime-aware signal isolation",
+      "summary_zh": "把 paper runtime signal consumption 依 runtime 或 binding identity 隔離，移除 shared queue blind consumption 風險。",
+      "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+      "owner": "Gemini2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-RT-002"
+      ],
+      "artifacts": [
+        "services/execution",
+        "services/runtime-manager",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Multiple runtime consumers cannot consume each others signals",
+        "Mismatched runtime persona or capital-pool signals are rejected",
+        "Dead-letter or requeue behavior is tested"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:40Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "capital_pool_execution"
+      ],
+      "current_maturity": "manual",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "runtime signal envelope"
+      ],
+      "actual_state_sources": [
+        "runtime-specific queue",
+        "signal DLQ"
+      ],
+      "wave_id": "Wave 2 Runtime Fleet",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-RT-005",
+      "title": "Produce runtime fleet evidence packet",
+      "summary_zh": "產出 stack restart、kill-one-worker、retire-binding、heartbeat、signal isolation 的 runtime fleet evidence packet。",
+      "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-RT-002",
+        "LOOP-AUTO-RT-003",
+        "LOOP-AUTO-RT-004"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence",
+        "docs/deployment/runtime-telemetry-hardening-2026-06-06.md"
+      ],
+      "acceptance": [
+        "Evidence proves stack restart recovery",
+        "Evidence proves killed worker recovery",
+        "Evidence proves retire-binding stop and signal isolation"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:42Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "capital_pool_execution"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "proven-live",
+      "desired_state_sources": [
+        "runtime fleet acceptance criteria"
+      ],
+      "actual_state_sources": [
+        "runtime evidence packet"
+      ],
+      "wave_id": "Wave 2 Runtime Fleet",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-DEP-001",
+      "title": "Add deployment saga outbox consumer",
+      "summary_zh": "新增 durable deployment saga outbox consumer，讓 approved DeploymentPlan 不再需要手動 endpoint stepping。",
+      "phase": "Global Loop Autopilot / Wave 3 Deployment Saga",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-000"
+      ],
+      "artifacts": [
+        "services/deployment",
+        "docker-compose.yml",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Deployment outbox events are consumed durably",
+        "Duplicate outbox events are idempotent",
+        "Consumer exposes health last success and last failure"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:43Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "promotion_deployment"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "DeploymentPlan approved outbox"
+      ],
+      "actual_state_sources": [
+        "deployment saga state",
+        "worker inbox receipts"
+      ],
+      "wave_id": "Wave 3 Deployment Saga",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-DEP-002",
+      "title": "Add runtime-manager dispatch adapter",
+      "summary_zh": "新增 idempotent plan-to-binding adapter，讓 deployment saga 能安全呼叫 runtime-manager 建立或驗證 RuntimeBinding。",
+      "phase": "Global Loop Autopilot / Wave 3 Deployment Saga",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-DEP-001",
+        "LOOP-AUTO-RT-001"
+      ],
+      "artifacts": [
+        "services/deployment",
+        "services/runtime-manager",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Approved immutable plan dispatch creates or verifies one binding",
+        "Duplicate dispatch does not duplicate bindings",
+        "Runtime-manager failures return retryable or terminal saga state"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:44Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "promotion_deployment",
+        "capital_pool_execution"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "approved DeploymentPlan"
+      ],
+      "actual_state_sources": [
+        "RuntimeBinding",
+        "deployment saga state"
+      ],
+      "wave_id": "Wave 3 Deployment Saga",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-DEP-003",
+      "title": "Add deployment saga progress feedback and DLQ",
+      "summary_zh": "補 saga status updates、retry policy、blocked reason 與 DLQ replay，讓 deployment failure 不再消失在 outbox。",
+      "phase": "Global Loop Autopilot / Wave 3 Deployment Saga",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-DEP-001",
+        "LOOP-AUTO-DEP-002"
+      ],
+      "artifacts": [
+        "services/deployment",
+        "services/control-plane/bff",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Saga exposes pending running blocked failed and completed progress",
+        "DLQ replay is idempotent",
+        "Operator can see blocked reason and retry state"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:45Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "promotion_deployment"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "deployment saga outbox"
+      ],
+      "actual_state_sources": [
+        "saga progress store",
+        "DLQ"
+      ],
+      "wave_id": "Wave 3 Deployment Saga",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-DEP-004",
+      "title": "Split promotion and deployment BFF truth by stage",
+      "summary_zh": "讓 BFF 明確分開 approval、plan、saga、binding、runtime fleet 狀態，避免單一綠燈掩蓋某段未執行。",
+      "phase": "Global Loop Autopilot / Wave 3 Deployment Saga",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-DEP-003"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/deployment",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "BFF shows approval plan saga binding and runtime fleet stages separately",
+        "Failure stage is visible to operator",
+        "Panel does not infer runtime health from deployment metadata"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:46Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "promotion_deployment",
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "proven-live",
+      "desired_state_sources": [
+        "deployment saga state"
+      ],
+      "actual_state_sources": [
+        "BFF deployment read model",
+        "RuntimeBinding projection"
+      ],
+      "wave_id": "Wave 3 Deployment Saga",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-TEL-001",
+      "title": "Audit telemetry readiness and writer durability",
+      "summary_zh": "審計 telemetry readiness、canonical table bootstrap、writer metrics、DLQ 與 replay semantics，作為 reconciliation autopilot 前置。",
+      "phase": "Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-000"
+      ],
+      "artifacts": [
+        "services/telemetry",
+        "scripts/db_migrate.sh",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Telemetry ready fails when canonical table is missing",
+        "Writer metrics expose failure DLQ and freshness",
+        "DLQ replay is idempotent by event id"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:47Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "telemetry schema policy"
+      ],
+      "actual_state_sources": [
+        "telemetry_events",
+        "writer metrics",
+        "DLQ"
+      ],
+      "wave_id": "Wave 4 Telemetry Reconciliation Incident",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-TEL-002",
+      "title": "Add scheduled reconciliation worker",
+      "summary_zh": "新增 scheduled reconciliation worker，從 telemetry truth 定期對 binding/run 狀態做 reconciliation。",
+      "phase": "Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-TEL-001",
+        "LOOP-AUTO-RT-002"
+      ],
+      "artifacts": [
+        "services/reconciliation-drift",
+        "services/telemetry",
+        "docker-compose.yml",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Reconciliation runs from schedule without manual POST",
+        "Duplicate ticks do not duplicate reconciliation records",
+        "Worker links telemetry binding and runtime identifiers"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:48Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "scheduled",
+      "desired_state_sources": [
+        "runtime telemetry projection"
+      ],
+      "actual_state_sources": [
+        "ReconciliationRecord",
+        "DriftReport"
+      ],
+      "wave_id": "Wave 4 Telemetry Reconciliation Incident",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-TEL-003",
+      "title": "Add incident-triggered reconciliation listener",
+      "summary_zh": "新增 anomaly/incident-trigger listener，讓 heartbeat loss、order rejection spike 等事件立即觸發 reconciliation。",
+      "phase": "Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-TEL-002"
+      ],
+      "artifacts": [
+        "services/reconciliation-drift",
+        "services/telemetry",
+        "services/incidents",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Runtime anomaly triggers reconciliation without manual POST",
+        "Listener is idempotent for duplicate anomaly events",
+        "Trigger path records source event and reason"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:49Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "telemetry anomaly event"
+      ],
+      "actual_state_sources": [
+        "reconciliation evaluation",
+        "incident request"
+      ],
+      "wave_id": "Wave 4 Telemetry Reconciliation Incident",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-TEL-004",
+      "title": "Classify drift reports into incidents with dedupe",
+      "summary_zh": "把 drift report threshold breach 自動轉成 IncidentCase create/update，並依 binding/runtime/incident cluster 去重。",
+      "phase": "Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-TEL-002",
+        "LOOP-AUTO-TEL-003"
+      ],
+      "artifacts": [
+        "services/reconciliation-drift",
+        "services/incidents",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Threshold breach opens or updates one incident",
+        "Duplicate reconciliation does not duplicate incidents",
+        "Incident links telemetry event ids binding id runtime id and reconciliation ids"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:50Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "DriftReport"
+      ],
+      "actual_state_sources": [
+        "IncidentCase"
+      ],
+      "wave_id": "Wave 4 Telemetry Reconciliation Incident",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-TEL-005",
+      "title": "Add telemetry incident replay and operator evidence",
+      "summary_zh": "補 order rejection spike、heartbeat loss、PnL drift、recovery 的 replay suite 與 operator evidence。",
+      "phase": "Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident",
+      "owner": "Gemini2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-TEL-004"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence",
+        "scripts",
+        "services/reconciliation-drift",
+        "services/incidents"
+      ],
+      "acceptance": [
+        "Replay proves order rejection spike opens incident",
+        "Replay proves heartbeat loss opens incident",
+        "BFF incident and runtime panels agree on authoritative projection"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:51Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "proven-live",
+      "desired_state_sources": [
+        "telemetry replay corpus"
+      ],
+      "actual_state_sources": [
+        "operator evidence packet"
+      ],
+      "wave_id": "Wave 4 Telemetry Reconciliation Incident",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-EVO-001",
+      "title": "Create postmortem drafts from resolved incidents",
+      "summary_zh": "新增 incident-to-postmortem draft worker，讓 resolved incident 不再掉進手動 backlog。",
+      "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-TEL-004"
+      ],
+      "artifacts": [
+        "services/incidents",
+        "services/postmortems",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Resolved incident creates or updates a postmortem draft",
+        "Draft links telemetry reconciliation and incident evidence",
+        "Duplicate resolved events do not create duplicate drafts"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:53Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "evolution"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "resolved IncidentCase"
+      ],
+      "actual_state_sources": [
+        "Postmortem draft"
+      ],
+      "wave_id": "Wave 5 Postmortem Evolution",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-EVO-002",
+      "title": "Bridge postmortems into evolution proposals",
+      "summary_zh": "新增 postmortem-to-evolution proposal bridge，讓 published postmortem 可以產生 exactly-one EvolutionDecision proposal。",
+      "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-EVO-001"
+      ],
+      "artifacts": [
+        "services/postmortems",
+        "services/evolution",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Published postmortem creates one evolution proposal per target and incident cluster",
+        "Duplicate publish events are idempotent",
+        "Proposal carries evidence links and review gate state"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:54Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "evolution"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "published Postmortem"
+      ],
+      "actual_state_sources": [
+        "EvolutionDecision proposed"
+      ],
+      "wave_id": "Wave 5 Postmortem Evolution",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-EVO-003",
+      "title": "Add evolution daily sweep worker",
+      "summary_zh": "新增 threshold/cooldown governed evolution daily sweep，補 missing decisions 並避免 active-decision 衝突。",
+      "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-EVO-002"
+      ],
+      "artifacts": [
+        "services/evolution",
+        "docker-compose.yml",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Daily sweep proposes missing decisions under threshold policy",
+        "Cooldown and active decision lock are enforced",
+        "Sweep exposes last success last failure and proposal count"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:55Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "evolution"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "scheduled",
+      "desired_state_sources": [
+        "evolution thresholds",
+        "drift snapshots",
+        "postmortem evidence"
+      ],
+      "actual_state_sources": [
+        "EvolutionDecision"
+      ],
+      "wave_id": "Wave 5 Postmortem Evolution",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-EVO-004",
+      "title": "Dispatch approved evolution actions through gates",
+      "summary_zh": "把 approved EvolutionDecision action 透過 gated research/deployment/runtime command paths dispatch，不允許直接 production mutation。",
+      "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-EVO-002",
+        "LOOP-AUTO-DEP-001"
+      ],
+      "artifacts": [
+        "services/evolution",
+        "services/deployment",
+        "services/runtime-manager",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Approved action dispatches only through allowed gated path",
+        "Production-affecting mutation requires correct approval gate",
+        "Dispatch result is visible in EvolutionDecision follow-through"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:56Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "evolution",
+        "promotion_deployment"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "approved EvolutionDecision"
+      ],
+      "actual_state_sources": [
+        "research job",
+        "deployment command",
+        "runtime command"
+      ],
+      "wave_id": "Wave 5 Postmortem Evolution",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-EVO-005",
+      "title": "Prove evolution rollback and follow-through",
+      "summary_zh": "產出 approved rollback/mitigation command 到 runtime-manager/deployment 的 follow-through evidence。",
+      "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+      "owner": "Gemini2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-EVO-004"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence",
+        "services/evolution",
+        "services/runtime-manager"
+      ],
+      "acceptance": [
+        "Evidence proves approved rollback command reaches runtime-manager or deployment",
+        "BFF shows proposed reviewed approved dispatched and executed stages",
+        "Failure path records blocked reason and retry state"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:58Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "evolution"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "proven-live",
+      "desired_state_sources": [
+        "approved evolution action"
+      ],
+      "actual_state_sources": [
+        "runtime-manager command",
+        "deployment saga",
+        "evidence packet"
+      ],
+      "wave_id": "Wave 5 Postmortem Evolution",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-KNOW-001",
+      "title": "Add source-to-strategy distillation worker",
+      "summary_zh": "新增 SourceRecord/evidence event 到 StrategySpec draft head 的 distillation worker。",
+      "phase": "Global Loop Autopilot / Wave 6 Knowledge Learning Consultation",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-SRC-005"
+      ],
+      "artifacts": [
+        "services/source_ingestion",
+        "services/strategy",
+        "services/research",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "New normalized sources enqueue distillation jobs",
+        "Distillation updates mutable draft only",
+        "Manual re-distill and catch-up paths are idempotent"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:44:59Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "strategy_distillation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "normalized SourceRecord"
+      ],
+      "actual_state_sources": [
+        "StrategySpec draft"
+      ],
+      "wave_id": "Wave 6 Knowledge Learning Consultation",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-KNOW-002",
+      "title": "Add alpha replication queue and revalidation worker",
+      "summary_zh": "新增 reviewed StrategySpec 到 replication queue 與 scheduled revalidation worker，讓 alpha replication 不停在手動 API。",
+      "phase": "Global Loop Autopilot / Wave 6 Knowledge Learning Consultation",
+      "owner": "Copilot",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-KNOW-001"
+      ],
+      "artifacts": [
+        "services/research",
+        "services/research-worker-gateway",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Reviewed strategy specs enter replication queue",
+        "Scheduled revalidation produces ExperimentRun records",
+        "Production adapters remain fail-closed unless explicitly approved"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:45:00Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "alpha_replication"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "scheduled",
+      "desired_state_sources": [
+        "reviewed StrategySpec"
+      ],
+      "actual_state_sources": [
+        "ExperimentRun",
+        "replication queue"
+      ],
+      "wave_id": "Wave 6 Knowledge Learning Consultation",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-KNOW-003",
+      "title": "Add persona teaching async preview and eval worker",
+      "summary_zh": "補 persona teaching async preview/eval worker，讓 teaching commit 前必須有 evaluation proof。",
+      "phase": "Global Loop Autopilot / Wave 6 Knowledge Learning Consultation",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-SRC-004"
+      ],
+      "artifacts": [
+        "services/training-session",
+        "services/control-plane/persona",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Teaching sessions run async preview and evaluation",
+        "Persona-affecting commit is blocked without eval proof",
+        "Commit records lineage audit and governance gate state"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:45:01Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "persona_teaching"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "TeachingSession",
+        "TeachingEvent"
+      ],
+      "actual_state_sources": [
+        "evaluation result",
+        "persona patch commit"
+      ],
+      "wave_id": "Wave 6 Knowledge Learning Consultation",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-KNOW-004",
+      "title": "Extract Agora interaction evidence into datasets",
+      "summary_zh": "把 Agora ask、feedback、journal、note、insight、training example 路由成 governed learning datasets，不碰 runtime authority。",
+      "phase": "Global Loop Autopilot / Wave 6 Knowledge Learning Consultation",
+      "owner": "Copilot",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-KNOW-003"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/research",
+        "services/training-session",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Interaction evidence is routed into Observe or Learn datasets",
+        "Dataset extraction is idempotent",
+        "Evidence never promotes artifact or mutates running runtime directly"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:45:03Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "agora_interaction_evidence"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "AgoraInteractionEvidence"
+      ],
+      "actual_state_sources": [
+        "learning dataset",
+        "handoff record"
+      ],
+      "wave_id": "Wave 6 Knowledge Learning Consultation",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-KNOW-005",
+      "title": "Add human imitation and shadow evaluation scheduler",
+      "summary_zh": "新增 trace dataset 到 imitation/shadow eval 的 scheduled loop，產生 gated candidates 而不直接影響 running artifact。",
+      "phase": "Global Loop Autopilot / Wave 6 Knowledge Learning Consultation",
+      "owner": "Gemini",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-KNOW-004",
+        "LOOP-AUTO-TEL-005"
+      ],
+      "artifacts": [
+        "services/policy-learning",
+        "services/research-worker-gateway",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Trace datasets run imitation or shadow eval on schedule",
+        "Candidates require experiment approval and deployment gates",
+        "Production training remains fail-closed until explicitly activated"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:45:04Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "human_imitation_shadow_evaluation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "scheduled",
+      "desired_state_sources": [
+        "learning dataset",
+        "telemetry replay corpus"
+      ],
+      "actual_state_sources": [
+        "ShadowImitationCandidate",
+        "ExperimentRun"
+      ],
+      "wave_id": "Wave 6 Knowledge Learning Consultation",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-KNOW-006",
+      "title": "Add consultation workflow executor",
+      "summary_zh": "新增 durable consultation committee/red-team workflow executor，消費 handoff/outbox 並產生 memo/gate handoff。",
+      "phase": "Global Loop Autopilot / Wave 6 Knowledge Learning Consultation",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-KNOW-001"
+      ],
+      "artifacts": [
+        "services/consultation",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Committee and red-team workflow executes from ConsultRequest",
+        "Memo generation and governance handoff are durable",
+        "Handoffs are consumed exactly once or reported blocked"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:45:06Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "consultation"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "ConsultRequest",
+        "ConsultPolicy"
+      ],
+      "actual_state_sources": [
+        "ConsultMemo",
+        "governance handoff",
+        "consultation outbox"
+      ],
+      "wave_id": "Wave 6 Knowledge Learning Consultation",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-BFF-001",
+      "title": "Add loop health read model",
+      "summary_zh": "新增 BFF/operator loop health read model，列出 maturity、controller health、last success、last failure 與 evidence packet。",
+      "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "Operator can list all loops and maturity state",
+        "Payload includes controller health last success last failure and evidence",
+        "Payload distinguishes seed snapshot registry scheduled and live truth"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:45:07Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "bff_health_monitoring",
+        "all"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "loop inventory read model"
+      ],
+      "actual_state_sources": [
+        "BFF operator payload"
+      ],
+      "wave_id": "Wave 7 BFF Operator Truth",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-BFF-002",
+      "title": "Add BFF downstream health monitor",
+      "summary_zh": "新增 continuous BFF/downstream health monitor，把 probe 結果寫進 telemetry/incident pipeline。",
+      "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+      "owner": "Gemini2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-BFF-001",
+        "LOOP-AUTO-TEL-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "services/telemetry",
+        "services/incidents",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "BFF downstream degradation emits telemetry",
+        "Health monitor can open or update incident for sustained failure",
+        "BFF degraded mode does not affect active runtimes"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:45:08Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "bff_health_monitoring"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "downstream health policy"
+      ],
+      "actual_state_sources": [
+        "BFF health metrics",
+        "TelemetryEvent",
+        "IncidentCase"
+      ],
+      "wave_id": "Wave 7 BFF Operator Truth",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-BFF-003",
+      "title": "Label seed snapshot registry scheduled and live truth",
+      "summary_zh": "在 operator panels 明確標示 seed、fixture、snapshot、registry、scheduled、live truth，避免 demo fixture 被看成真實 loop。",
+      "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-BFF-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff",
+        "execute-plans",
+        "docs/deployment/evidence"
+      ],
+      "acceptance": [
+        "No panel displays seed or fixture as live proof",
+        "Registry metadata and live truth are labeled separately",
+        "Degraded truth source is visible in operator payload"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:45:09Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "bff_health_monitoring",
+        "all"
+      ],
+      "current_maturity": "api-only",
+      "target_maturity": "reconciled",
+      "desired_state_sources": [
+        "BFF truth contract"
+      ],
+      "actual_state_sources": [
+        "operator panels",
+        "BFF read models"
+      ],
+      "wave_id": "Wave 7 BFF Operator Truth",
+      "mutates_canonical": true
+    },
+    {
+      "id": "LOOP-AUTO-BFF-004",
+      "title": "Run cross-loop operator drills",
+      "summary_zh": "執行 source-to-health 與 runtime-to-incident-to-evolution-proposal 的 cross-loop operator drills，作為 autopilot wave closeout。",
+      "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-AUTO-SRC-004",
+        "LOOP-AUTO-RT-005",
+        "LOOP-AUTO-DEP-004",
+        "LOOP-AUTO-TEL-005",
+        "LOOP-AUTO-EVO-005",
+        "LOOP-AUTO-KNOW-006",
+        "LOOP-AUTO-BFF-003"
+      ],
+      "artifacts": [
+        "docs/deployment/evidence",
+        "services/control-plane/bff",
+        "scripts"
+      ],
+      "acceptance": [
+        "Drill proves one full source-to-health flow",
+        "Drill proves one runtime-to-incident-to-evolution-proposal flow",
+        "Final evidence states maturity reached and remaining blockers"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-27T06:45:10Z",
+      "task_class": "execution",
+      "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+      "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+      "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+      "proof_required": [
+        "unit tests",
+        "contract tests",
+        "local service smoke",
+        "restart or replay evidence when worker or runtime behavior changes"
+      ],
+      "non_goals": [
+        "No live-capital execution",
+        "No approval gate bypass",
+        "No panel-only closure",
+        "No seed fixture as live proof"
+      ],
+      "dispatch_rules": [
+        "idempotent duplicate ticks and duplicate events",
+        "operator-visible truth projection required",
+        "maturity cannot rise above collected evidence",
+        "repo workflow closure required before done"
+      ],
+      "loop_ids": [
+        "all"
+      ],
+      "current_maturity": "reconciled",
+      "target_maturity": "proven-live",
+      "desired_state_sources": [
+        "all prior LOOP-AUTO task evidence"
+      ],
+      "actual_state_sources": [
+        "cross-loop drill evidence"
+      ],
+      "wave_id": "Wave 7 BFF Operator Truth",
+      "mutates_canonical": true
     }
   ],
   "handoffs": [
@@ -483,6 +2523,8 @@
   "workload": {
     "Claude": 5,
     "Claude2": 5,
+    "Antigravity": 5,
+    "Antigravity2": 5,
     "Gemini": 5,
     "Gemini2": 5,
     "Codex": 35,
@@ -492,24 +2534,24 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 1,
+      "total": 6,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 6
     },
     "Claude2": {
-      "total": 1,
+      "total": 4,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 4
     },
-    "Gemini": {
+    "Antigravity": {
       "total": 0,
       "active": 0,
       "blocked": 0,
@@ -518,41 +2560,59 @@
       "review_approved": 0,
       "todo": 0
     },
-    "Gemini2": {
-      "total": 1,
+    "Antigravity2": {
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
+    },
+    "Gemini": {
+      "total": 4,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 4
+    },
+    "Gemini2": {
+      "total": 4,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 4
     },
     "Codex": {
-      "total": 1,
+      "total": 6,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 6
     },
     "Codex2": {
-      "total": 1,
+      "total": 7,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 7
     },
     "Copilot": {
-      "total": 2,
+      "total": 6,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 6
     },
     "Human/Ops": {
       "total": 0,
