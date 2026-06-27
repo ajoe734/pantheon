@@ -207,7 +207,7 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     assert tw["dataSourceStatus"]["provider_statuses"] == {
         "mops": "public_reference_unavailable",
         "shioaji": "read_ok",
-        "tej": "credential_unavailable",
+        "finmind": "read_unavailable",
         "tpex": "read_unavailable",
         "twse": "read_unavailable",
     }
@@ -223,7 +223,7 @@ def test_management_persona_fleet_alias_returns_ui_safe_rows() -> None:
     assert data_sources["shioaji"]["order_side_effects_allowed"] is False
     assert data_sources["twse"]["status"] == "read_unavailable"
     assert data_sources["tpex"]["status"] == "read_unavailable"
-    assert data_sources["tej"]["status"] == "credential_unavailable"
+    assert data_sources["finmind"]["status"] == "read_unavailable"
     assert tw["researchStatus"]["stage"] == "management_review_linked"
     assert tw["researchStatus"]["framework"] == "qlib"
     assert tw["researchStatus"]["artifact_id"] == "qlib-tw-cross-sectional-alpha-model-draft-v1"
@@ -358,3 +358,35 @@ def test_agora_and_ooda_routes_surface_market_persona_work() -> None:
     assert [item["packet_id"] for item in crypto_packets.json()["items"]] == [
         "ooda-crypto-paper-001"
     ]
+
+
+def test_overlay_live_finmind_health_flips_to_read_ok(monkeypatch):
+    dss = {
+        "state": "partial_readback",
+        "provider_statuses": {"finmind": "read_unavailable", "shioaji": "read_ok"},
+    }
+    sources = [
+        {"provider_key": "finmind", "status": "read_unavailable"},
+        {"provider_key": "shioaji", "status": "read_ok"},
+    ]
+    monkeypatch.setattr(
+        bff_main,
+        "_live_source_health_by_connector",
+        lambda: {"tw-finmind-datasets": {"status": "ok", "last_success_at": "2026-06-27T05:00:00Z", "row_count_last_run": 8}},
+    )
+    out_dss, out_sources = bff_main._overlay_live_finmind_health(dss, sources)
+    assert out_dss["provider_statuses"]["finmind"] == "read_ok"
+    assert out_dss["state"] == "live_partial_readback"
+    assert out_dss["finmind_live_row_count_last_run"] == 8
+    by_key = {s["provider_key"]: s for s in out_sources}
+    assert by_key["finmind"]["status"] == "read_ok"
+
+
+def test_overlay_live_finmind_health_noop_when_unavailable(monkeypatch):
+    dss = {"state": "partial_readback", "provider_statuses": {"finmind": "read_unavailable"}}
+    monkeypatch.setattr(bff_main, "_live_source_health_by_connector", lambda: {})
+    out_dss, _ = bff_main._overlay_live_finmind_health(
+        dss, [{"provider_key": "finmind", "status": "read_unavailable"}]
+    )
+    assert out_dss["provider_statuses"]["finmind"] == "read_unavailable"
+    assert out_dss["state"] == "partial_readback"

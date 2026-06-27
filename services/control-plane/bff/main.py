@@ -49440,6 +49440,62 @@ def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
     return _as_float(metrics.get("training_improvement_pct")) / 100.0
 
 
+_SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
+_SOURCE_HEALTH_OVERLAY_TTL = 60.0
+
+
+def _live_source_health_by_connector() -> Dict[str, Any]:
+    now = time.monotonic()
+    cached = _SOURCE_HEALTH_OVERLAY_CACHE.get("by_connector")
+    if cached is not None and (now - float(_SOURCE_HEALTH_OVERLAY_CACHE.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
+        return cached
+    by_conn: Dict[str, Any] = {}
+    try:
+        snapshot = read_store.get_source_health_usage_snapshot()
+        for source in (snapshot.get("sources") or []):
+            health = source.get("health") if isinstance(source.get("health"), dict) else {}
+            connector_id = str(health.get("source_id") or "")
+            if connector_id:
+                by_conn[connector_id] = health
+    except Exception:  # read-only enrichment must never break the fleet surface
+        by_conn = {}
+    _SOURCE_HEALTH_OVERLAY_CACHE["at"] = now
+    _SOURCE_HEALTH_OVERLAY_CACHE["by_connector"] = by_conn
+    return by_conn
+
+
+def _overlay_live_finmind_health(data_source_status, data_sources):
+    """Read-only overlay: flip the TW FinMind placeholder to live source-ingest health.
+
+    When source-ingest reports tw-finmind-datasets healthy, the persona panel's
+    finmind provider becomes read_ok with the live readback timestamp. No-ops
+    (keeps the static placeholder) when the snapshot is unavailable, so CI and
+    contract behavior are unchanged.
+    """
+    if not isinstance(data_source_status, dict):
+        return data_source_status, data_sources
+    provider_statuses = data_source_status.get("provider_statuses")
+    if not isinstance(provider_statuses, dict) or "finmind" not in provider_statuses:
+        return data_source_status, data_sources
+    health = _live_source_health_by_connector().get("tw-finmind-datasets")
+    if not isinstance(health, dict) or str(health.get("status") or "").lower() != "ok":
+        return data_source_status, data_sources
+    dss = json.loads(json.dumps(data_source_status))
+    dss["provider_statuses"]["finmind"] = "read_ok"
+    if dss.get("state") == "partial_readback":
+        dss["state"] = "live_partial_readback"
+    if health.get("last_success_at"):
+        dss["finmind_live_last_success_at"] = health.get("last_success_at")
+    if health.get("row_count_last_run") is not None:
+        dss["finmind_live_row_count_last_run"] = health.get("row_count_last_run")
+    srcs = json.loads(json.dumps(data_sources or []))
+    for source in srcs:
+        if isinstance(source, dict) and source.get("provider_key") == "finmind":
+            source["status"] = "read_ok"
+            source["reason"] = "live FinMind readback via source-ingest health snapshot"
+    return dss, srcs
+
+
 def _build_persona_health_items(
     snapshot_at: str,
     *,
@@ -49539,6 +49595,9 @@ def _build_persona_health_items(
             metadata.get("data_sources")
             if isinstance(metadata.get("data_sources"), list)
             else []
+        )
+        data_source_status, data_sources = _overlay_live_finmind_health(
+            data_source_status, data_sources
         )
         data_source_refs = (
             metadata.get("data_source_refs")

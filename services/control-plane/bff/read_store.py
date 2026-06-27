@@ -592,15 +592,15 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
                 reason="repo-local smoke has no public-reference readback",
             ),
             _provider_truth(
-                provider_key="tej",
-                provider="TEJ API",
+                provider_key="finmind",
+                provider="FinMind",
                 market="TW",
                 source_class="research_grade",
-                status="credential_unavailable",
-                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/tej.json",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/finmind.json",
                 order_capable_provider=False,
                 order_path="not_applicable",
-                reason="required repo-local TEJ credential env var is absent",
+                reason="live FinMind readback overlaid from source-ingest health when available",
             ),
         ]
         provider_statuses = {source["provider_key"]: source["status"] for source in sources}
@@ -617,8 +617,9 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
         data_source_status = {
             "state": "partial_readback",
             "summary": (
-                "Shioaji quote readback is present; TWSE, TPEx, MOPS, and TEJ "
-                "are explicit unavailable/credential-unavailable repo-local smoke evidence."
+                "Shioaji quote readback is present; TWSE, TPEx, MOPS, and FinMind "
+                "default to unavailable repo-local smoke evidence; FinMind flips to "
+                "read_ok when source-ingest reports live health."
             ),
             "provider_statuses": provider_statuses,
             "readback_refs": readback_refs,
