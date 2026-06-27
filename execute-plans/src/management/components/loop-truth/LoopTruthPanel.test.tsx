@@ -194,25 +194,25 @@ describe("LoopTruthPanel", () => {
     render(<LoopTruthPanel />);
 
     await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("truth-label-seed_fixture")).toHaveTextContent("Seed / fixture");
-    expect(screen.getByTestId("truth-label-snapshot_fallback")).toHaveTextContent("Snapshot fallback");
-    expect(screen.getByTestId("truth-label-registry_metadata")).toHaveTextContent("Registry metadata");
-    expect(screen.getByTestId("truth-label-scheduled_tick")).toHaveTextContent("Scheduled tick");
-    expect(screen.getByTestId("truth-label-reconciled_live_proof")).toHaveTextContent("Reconciled live truth");
-    expect(screen.getByText("Source: bff_composed")).toBeInTheDocument();
-    expect(screen.getByText("Degraded: 1")).toBeInTheDocument();
+    expect(screen.getByTestId("truth-label-seed_fixture").textContent).toContain("Seed / fixture");
+    expect(screen.getByTestId("truth-label-snapshot_fallback").textContent).toContain("Snapshot fallback");
+    expect(screen.getByTestId("truth-label-registry_metadata").textContent).toContain("Registry metadata");
+    expect(screen.getByTestId("truth-label-scheduled_tick").textContent).toContain("Scheduled tick");
+    expect(screen.getByTestId("truth-label-reconciled_live_proof").textContent).toContain("Reconciled live truth");
+    expect(screen.getByText("Source: bff_composed")).toBeTruthy();
+    expect(screen.getByText("Degraded: 1")).toBeTruthy();
 
     const snapshotRow = screen.getByTestId("loop-truth-row-bff_health_monitoring");
-    expect(within(snapshotRow).getByTestId("operator-truth-bff_health_monitoring")).toHaveTextContent("Snapshot fallback");
-    expect(within(snapshotRow).getByTestId("live-proof-bff_health_monitoring")).toHaveTextContent("No live proof");
-    expect(within(snapshotRow).getByTestId("degraded-reason-bff_health_monitoring")).toHaveTextContent(
+    expect(within(snapshotRow).getByTestId("operator-truth-bff_health_monitoring").textContent).toContain("Snapshot fallback");
+    expect(within(snapshotRow).getByTestId("live-proof-bff_health_monitoring").textContent).toContain("No live proof");
+    expect(within(snapshotRow).getByTestId("degraded-reason-bff_health_monitoring").textContent).toContain(
       "Local snapshot fallback is not live proof.",
     );
-    expect(within(snapshotRow).getByText("Reconciled live truth: present")).toBeInTheDocument();
+    expect(within(snapshotRow).getByText("Reconciled live truth: present")).toBeTruthy();
 
     const liveRow = screen.getByTestId("loop-truth-row-source_ingestion");
-    expect(within(liveRow).getByTestId("operator-truth-source_ingestion")).toHaveTextContent("Reconciled live truth");
-    expect(within(liveRow).getByTestId("live-proof-source_ingestion")).toHaveTextContent("Live proof");
-    expect(within(liveRow).queryByTestId("degraded-reason-source_ingestion")).not.toBeInTheDocument();
+    expect(within(liveRow).getByTestId("operator-truth-source_ingestion").textContent).toContain("Reconciled live truth");
+    expect(within(liveRow).getByTestId("live-proof-source_ingestion").textContent).toContain("Live proof");
+    expect(within(liveRow).queryByTestId("degraded-reason-source_ingestion")).toBeNull();
   });
 });
