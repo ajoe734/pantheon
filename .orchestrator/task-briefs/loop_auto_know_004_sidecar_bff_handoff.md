@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare LOOP-AUTO-KNOW-004 BFF and frontend handoff packet
-- Status: review_approved
+- Status: in_progress
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Support-only BFF/frontend handoff packet approved for parent owner absorption. Sidecar artifact covers: current Agora BFF write/read surface inventory, BFF query gap matrix (6 gaps), suggested extraction provenance schema, extraction health projection, operator journey, frontend handoff rules, parent verification test cases, and clear non-goals. No canonical truth or runtime changes introduced.
+- Next: Owner closeout: PR #2466 merged; committing task brief update and finalizing task.
 
 ## Summary
 平行支援 LOOP-AUTO-KNOW-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
