@@ -56,6 +56,10 @@ _TERMINAL_KEYWORDS = (
     "not a valid DeploymentMode",
     "is required when rollback_parent",
     "activation is blocked",
+    # Single-runtime rule violation from RuntimeBindingStore.create() in local mode.
+    # Retrying without retiring the existing binding will always fail.
+    "single-runtime rule violation",
+    "retire the existing binding",
 )
 
 

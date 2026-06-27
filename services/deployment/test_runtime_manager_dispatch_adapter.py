@@ -319,6 +319,42 @@ class TestErrorClassification:
 
         assert result.outcome == DispatchOutcome.RETRYABLE_ERROR
 
+    def test_single_runtime_conflict_from_local_mode_is_terminal(self):
+        # Regression: RuntimeBindingError for single-runtime rule violations raised by
+        # the local (in-process) RuntimeManagerService path must be terminal, not retryable.
+        # Retrying without retiring the existing binding will always fail.
+        single_runtime_msg = (
+            "Single-runtime rule violation: capital pool 'pool-paper-001' "
+            "already has an active RuntimeBinding ('rb-existing'). "
+            "Retire the existing binding before creating a new one."
+        )
+        client = _make_client(deploy_raise=ValueError(single_runtime_msg))
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR, (
+            "Single-runtime conflict must be classified terminal, not retryable"
+        )
+        assert result.error_code == "RUNTIME_MANAGER_ERROR"
+        assert "single-runtime rule violation" in (result.error_message or "").lower()
+
+    def test_single_runtime_conflict_retire_message_is_terminal(self):
+        # Also terminal when the shorter retire-path phrase appears (e.g. in future messages).
+        retire_msg = "Retire the existing binding before creating a new one."
+        client = _make_client(deploy_raise=ValueError(retire_msg))
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+
     def test_terminal_local_error_contains_pre_condition_message(self):
         exc = RuntimeManagerClientError("Deploy is blocked until loader checks are passed")
         client = _make_client(deploy_raise=exc)
