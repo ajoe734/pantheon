@@ -63,6 +63,7 @@ from .connectors import (
     AuthType,
     ConnectorMode,
     ConnectorStatus,
+    IngestEvent,
     SourceConnector,
     SourceEvidenceError,
     SourceRecord,
@@ -1076,6 +1077,10 @@ def _run_date(run: Any) -> str:
     return _run_finished_at_iso(run)[:10]
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _record_ingest_usage(connector_id: str, run: Any) -> None:
     date = _run_date(run)
     existing = source_usage_store.get(date, connector_id)
@@ -1176,7 +1181,11 @@ def _update_source_health_and_usage(
     _record_ingest_usage(connector.connector_id, result.run)
 
 
-def _result_payload(result: Any, evidence_refs: dict[str, Any] | None = None) -> dict[str, Any]:
+def _result_payload(
+    result: Any,
+    evidence_refs: dict[str, Any] | None = None,
+    source_search_refresh: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "run": result.run.to_dict(),
         "watermark": result.watermark.to_dict() if result.watermark else None,
@@ -1189,6 +1198,7 @@ def _result_payload(result: Any, evidence_refs: dict[str, Any] | None = None) ->
             "knowledge_object_ids": [],
         },
         "storage_refs": (evidence_refs or {}).get("storage_refs"),
+        "source_search_refresh": source_search_refresh,
         "dlq_entries": [entry.to_dict() for entry in result.dlq_entries],
         "audit_actions": [action.to_dict() for action in result.audit_actions],
         "frontier_id": getattr(result, "frontier_id", None),
@@ -1202,7 +1212,7 @@ def _run_job(
     trigger_type: str,
     fetch_batch: Any,
     frontier_id: str | None = None,
-) -> tuple[Any, dict[str, Any]]:
+) -> tuple[Any, dict[str, Any], dict[str, Any] | None]:
     _assert_connector_lifecycle_allows_run(connector)
     result = scheduler.run_once(
         connector_id=connector.connector_id,
@@ -1216,9 +1226,18 @@ def _run_job(
     evidence_refs = _persist_source_evidence_refs(result, storage_refs=storage_refs)
     evidence_refs["storage_refs"] = storage_refs
     _update_source_health_and_usage(connector=connector, result=result, storage_refs=storage_refs)
+    source_search_refresh: dict[str, Any] | None = None
     if result.run.status.value == "completed":
-        _notify_search_index_refresh(result.run.ingest_run_id)
-    return result, evidence_refs
+        source_search_refresh = _notify_search_index_refresh(
+            result.run.ingest_run_id,
+            connector_id=connector.connector_id,
+            source_type=connector.source_type.value,
+            trace_id=result.run.trace_id,
+            normalized_count=result.run.normalized_count,
+            evidence_refs=evidence_refs,
+        )
+        _record_search_refresh_event(result.run, source_search_refresh)
+    return result, evidence_refs, source_search_refresh
 
 
 def _run_ingest_request(request: TriggerIngestJobRequest) -> dict[str, Any]:
@@ -1240,35 +1259,119 @@ def _run_ingest_request(request: TriggerIngestJobRequest) -> dict[str, Any]:
             fetch_batch = _inline_fetch(records, request.next_watermark)
         else:
             fetch_batch = _configured_fetch(connector.connector_id, trace_id=request.trace_id)
-        result, evidence_refs = _run_job(
+        result, evidence_refs, source_search_refresh = _run_job(
             connector=connector,
             trace_id=request.trace_id,
             trigger_type=request.trigger_type,
             fetch_batch=fetch_batch,
         )
-        return _result_payload(result, evidence_refs)
+        return _result_payload(result, evidence_refs, source_search_refresh)
     except (EvidenceValidationError, SourceEvidenceError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def _notify_search_index_refresh(ingest_run_id: str) -> None:
-    """Fire-and-forget: POST to search service to trigger incremental index refresh."""
+def _search_refresh_event_summary(refresh: dict[str, Any]) -> dict[str, Any]:
+    search_service = refresh.get("search_service") if isinstance(refresh.get("search_service"), dict) else {}
+    return {
+        "schema_version": "source_search_refresh_observed.v1",
+        "status": refresh.get("status"),
+        "configured": bool(refresh.get("configured")),
+        "ingest_run_id": refresh.get("ingest_run_id"),
+        "attempted_at": refresh.get("attempted_at"),
+        "search_url": refresh.get("search_url"),
+        "http_status": refresh.get("http_status"),
+        "pipeline_run_id": search_service.get("pipeline_run_id"),
+        "freshness_status": search_service.get("freshness_status"),
+        "freshness_within_sla": search_service.get("freshness_within_sla"),
+        "materialized": search_service.get("materialized"),
+        "materialized_matches_completion": search_service.get("materialized_matches_completion"),
+        "error": refresh.get("error"),
+    }
+
+
+def _record_search_refresh_event(run: Any, refresh: dict[str, Any]) -> None:
+    summary = _search_refresh_event_summary(refresh)
+    run.events.append(
+        IngestEvent(
+            event_type="SearchIndexRefreshObserved",
+            ingest_run_id=run.ingest_run_id,
+            status=run.status,
+            trace_id=run.trace_id,
+            message=json.dumps(summary, sort_keys=True, separators=(",", ":")),
+        )
+    )
+    store.upsert_run(run)
+
+
+def _notify_search_index_refresh(
+    ingest_run_id: str,
+    *,
+    connector_id: str | None = None,
+    source_type: str | None = None,
+    trace_id: str | None = None,
+    normalized_count: int = 0,
+    evidence_refs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """POST source completion to search service and return a compact observable summary."""
+    attempted_at = _utc_now_iso()
+    summary: dict[str, Any] = {
+        "schema_version": "source_search_refresh_notification.v1",
+        "ingest_run_id": ingest_run_id,
+        "configured": bool(SEARCH_INGEST_NOTIFY_URL),
+        "status": "not_configured",
+        "attempted_at": attempted_at,
+        "search_url": SEARCH_INGEST_NOTIFY_URL or None,
+        "search_service": None,
+    }
     if not SEARCH_INGEST_NOTIFY_URL:
-        return
+        return summary
+    evidence_refs = evidence_refs or {}
     try:
         payload = json.dumps(
-            {"triggered_by": "ingest_completion", "trigger_ref": ingest_run_id},
+            {
+                "ingest_run_id": ingest_run_id,
+                "connector_id": connector_id,
+                "source_type": source_type,
+                "trace_id": trace_id,
+                "normalized_count": normalized_count,
+                "source_ids": list(evidence_refs.get("source_ids") or []),
+                "evidence_bundle_id": evidence_refs.get("evidence_bundle_id"),
+                "knowledge_object_ids": list(evidence_refs.get("knowledge_object_ids") or []),
+                "materialize": True,
+            },
             separators=(",", ":"),
         ).encode("utf-8")
         req = urllib.request.Request(
-            f"{SEARCH_INGEST_NOTIFY_URL}/api/search/index/refresh",
+            f"{SEARCH_INGEST_NOTIFY_URL}/api/search/index/source-completions",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        urllib.request.urlopen(req, timeout=2)  # noqa: S310
-    except Exception:
-        pass  # non-blocking; search freshness is eventually consistent
+        with urllib.request.urlopen(req, timeout=5) as response:  # noqa: S310
+            body = response.read().decode("utf-8")
+            search_payload = json.loads(body) if body else {}
+        truth = search_payload.get("truth") if isinstance(search_payload, dict) else {}
+        if not isinstance(truth, dict):
+            truth = {}
+        summary.update(
+            {
+                "status": "refreshed" if truth.get("index_refreshed") else "accepted",
+                "http_status": response.getcode(),
+                "search_service": {
+                    "schema_version": "source_search_refresh_service_summary.v1",
+                    "pipeline_run_id": truth.get("pipeline_run_id"),
+                    "freshness_status": truth.get("freshness_status"),
+                    "freshness_within_sla": truth.get("freshness_within_sla"),
+                    "materialized": truth.get("materialized"),
+                    "materialized_at": truth.get("materialized_at"),
+                    "materialized_matches_completion": truth.get("materialized_matches_completion"),
+                },
+            }
+        )
+        return summary
+    except Exception as exc:  # noqa: BLE001 - ingest completion must remain non-blocking.
+        summary.update({"status": "notify_failed", "error": str(exc)[:300]})
+        return summary
 
 
 def _result_error(result: Any) -> str:
@@ -1277,7 +1380,7 @@ def _result_error(result: Any) -> str:
     return f"source ingest run ended with status={result.run.status.value}"
 
 
-def _run_frontier_item(item: Any) -> tuple[Any, dict[str, Any], Any]:
+def _run_frontier_item(item: Any) -> tuple[Any, dict[str, Any], Any, dict[str, Any] | None]:
     config = connector_store.get_config(item.connector_id)
     if config is None:
         updated = store.fail_frontier(
@@ -1288,7 +1391,7 @@ def _run_frontier_item(item: Any) -> tuple[Any, dict[str, Any], Any]:
         raise SourceEvidenceError(f"Connector fetch is not configured: {item.connector_id}; frontier={updated.status}")
     connector = _register_or_validate_connector(config.connector)
     try:
-        result, evidence_refs = _run_job(
+        result, evidence_refs, source_search_refresh = _run_job(
             connector=connector,
             trace_id=item.trace_id or f"frontier-{item.frontier_id}",
             trigger_type=item.trigger_type,
@@ -1316,7 +1419,7 @@ def _run_frontier_item(item: Any) -> tuple[Any, dict[str, Any], Any]:
             backoff_seconds=FRONTIER_BACKOFF_SECONDS,
             ingest_run_id=result.run.ingest_run_id,
         )
-    return result, evidence_refs, updated
+    return result, evidence_refs, updated, source_search_refresh
 
 
 def _replay_source_event(event: Any) -> str:
@@ -1329,7 +1432,7 @@ def _replay_source_event(event: Any) -> str:
     if frontier_id:
         store.replay_frontier(frontier_id, trace_id=event.trace_id)
         item = store.claim_frontier(frontier_id)
-        result, _evidence_refs, updated = _run_frontier_item(item)
+        result, _evidence_refs, updated, _source_search_refresh = _run_frontier_item(item)
         if result.run.status.value != "completed":
             raise SourceEvidenceError(
                 f"DLQ replay did not complete frontier {frontier_id}: run={result.run.status.value} frontier={updated.status}"
@@ -1339,7 +1442,7 @@ def _replay_source_event(event: Any) -> str:
     if config is None:
         raise SourceEvidenceError(f"Connector fetch is not configured: {connector_id}")
     connector = _register_or_validate_connector(config.connector)
-    result, _evidence_refs = _run_job(
+    result, _evidence_refs, _source_search_refresh = _run_job(
         connector=connector,
         trace_id=event.trace_id,
         trigger_type="dlq_replay",
@@ -1655,8 +1758,8 @@ def replay_frontier(frontier_id: str, request: ReplayFrontierRequest | None = No
         trace_id = request.trace_id if request and request.trace_id else f"frontier-replay-{frontier_id}"
         store.replay_frontier(frontier_id, trace_id=trace_id)
         item = store.claim_frontier(frontier_id)
-        result, evidence_refs, frontier = _run_frontier_item(item)
-        return {**_result_payload(result, evidence_refs), "frontier": frontier.to_dict()}
+        result, evidence_refs, frontier, source_search_refresh = _run_frontier_item(item)
+        return {**_result_payload(result, evidence_refs, source_search_refresh), "frontier": frontier.to_dict()}
     except (EvidenceValidationError, SourceEvidenceError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1813,12 +1916,13 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
     claimed = store.claim_due_frontier(limit=max_concurrency, now=now_iso)
     for frontier in claimed:
         try:
-            result, evidence_refs, updated_frontier = _run_frontier_item(frontier)
+            result, evidence_refs, updated_frontier, source_search_refresh = _run_frontier_item(frontier)
             payload = {
                 "connector_id": frontier.connector_id,
                 "frontier": updated_frontier.to_dict(),
                 "run": result.run.to_dict(),
                 "evidence_refs": evidence_refs,
+                "source_search_refresh": source_search_refresh,
             }
             if result.run.status.value == "failed":
                 failed.append({**payload, "error": _result_error(result)})

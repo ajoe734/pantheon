@@ -152,7 +152,7 @@ services:
       # Dev rollback defaults to JSONL; staging/prod select postgres via env.
       SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-jsonl}
       SOURCE_INGEST_EVIDENCE_DSN: ${SOURCE_INGEST_EVIDENCE_DSN:-}
-      # Notify search service after completed ingest runs (incremental index refresh trigger).
+      # Notify search service after completed ingest runs (event-driven refresh/materialization truth).
       SEARCH_INGEST_NOTIFY_URL: ${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}
     volumes:
       - source-ingest-data:/data/source-ingest
@@ -211,6 +211,7 @@ services:
       PORT: "8098"
       SEARCH_DATA_DIR: /data/search
       SEARCH_INDEX_STORE_PATH: /data/search/search-index.jsonl
+      SEARCH_MATERIALIZE_STORE_PATH: /data/search/search-materialize.jsonl
       SEARCH_PIPELINE_STORE_PATH: /data/search/search-pipeline.jsonl
       SEARCH_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       SEARCH_FRESHNESS_SLA_SECONDS: ${SEARCH_FRESHNESS_SLA_SECONDS:-3600}

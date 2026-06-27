@@ -215,7 +215,25 @@ def main() -> int:
         feed_server.shutdown()
         feed_server.server_close()
     feed_run_id = feed_run["run"]["ingest_run_id"]
+    refresh_summary = feed_run.get("source_search_refresh") or {}
+    refresh_service = refresh_summary.get("search_service") or {}
+    if (
+        refresh_summary.get("status") != "refreshed"
+        or refresh_service.get("materialized_matches_completion") is not True
+        or not refresh_service.get("pipeline_run_id")
+    ):
+        raise RuntimeError(f"source-ingest did not observe search refresh/materialization truth: {feed_run}")
     print("ok  guarded external_feed fetched through allowed_url_prefixes")
+
+    status, completion_truth = _request_json("GET", f"{SEARCH_URL}/api/search/index/source-completions/{feed_run_id}")
+    truth = completion_truth.get("truth") or {}
+    if (
+        status != 200
+        or truth.get("index_refreshed") is not True
+        or truth.get("materialized_matches_completion") is not True
+    ):
+        raise RuntimeError(f"search did not replay source-completion truth: {status} {completion_truth}")
+    print("ok  search replayed source-completion refresh/materialization truth")
 
     status, pipeline_runs = _request_json("GET", f"{SEARCH_URL}/api/search/index/pipeline-runs?limit=20")
     if status != 200 or not any(run.get("trigger_ref") == feed_run_id for run in pipeline_runs.get("runs", [])):
