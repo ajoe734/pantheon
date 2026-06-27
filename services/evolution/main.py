@@ -132,10 +132,29 @@ incident_store = IncidentStore(
 )
 controller = EvolutionController()
 evaluator = ThresholdEvaluator()
+
+# ---------------------------------------------------------------------------
+# Sweep state — updated on every POST /api/evolution/daily-sweep call.
+# Exposed via GET /api/evolution/sweep-status and the /livez health metrics.
+# ---------------------------------------------------------------------------
+_sweep_state: Dict[str, Any] = {
+    "last_success_at": None,
+    "last_success_proposal_count": None,
+    "last_failure_at": None,
+    "last_failure_reason": None,
+    "total_sweeps_run": 0,
+    "total_proposals_created": 0,
+}
+
 register_fastapi_health_routes(
     app,
     "evolution",
-    metrics=lambda: {"decision_count": len(store.list_all())},
+    metrics=lambda: {
+        "decision_count": len(store.list_all()),
+        "sweep_last_success_at": _sweep_state["last_success_at"],
+        "sweep_last_failure_at": _sweep_state["last_failure_at"],
+        "sweep_total_proposals_created": _sweep_state["total_proposals_created"],
+    },
     details=lambda: {
         "evolution_data_dir": EVOLUTION_DATA_DIR,
         "incident_data_dir": INCIDENT_DATA_DIR,
@@ -656,7 +675,13 @@ def daily_sweep(body: DailySweepRequest):
     The sweep is proposal-only: it reads IncidentCase evidence, derives
     EvolutionDecision proposals, and relies on the existing single-active-rule
     to block repeated triggers while cooldown/observation is active.
+
+    Sweep outcomes are recorded in the module-level ``_sweep_state`` so
+    ``GET /api/evolution/sweep-status`` and the health metrics can surface
+    last success, last failure, and cumulative proposal count without a
+    persistent store.
     """
+    now_str = _format_rfc3339(datetime.now(timezone.utc))
     try:
         result = run_daily_sweep(
             incident_store=incident_store,
@@ -668,8 +693,49 @@ def daily_sweep(body: DailySweepRequest):
             evaluator=evaluator,
         )
     except ValueError as exc:
+        _sweep_state["last_failure_at"] = now_str
+        _sweep_state["last_failure_reason"] = str(exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _sweep_state["last_success_at"] = now_str
+    _sweep_state["last_success_proposal_count"] = result.created_decisions
+    _sweep_state["total_sweeps_run"] = _sweep_state["total_sweeps_run"] + 1
+    _sweep_state["total_proposals_created"] = (
+        _sweep_state["total_proposals_created"] + result.created_decisions
+    )
+    log.info(
+        "evolution.daily_sweep sweep_id=%s created=%d blocked=%d scanned=%d",
+        body.sweep_id,
+        result.created_decisions,
+        result.cooldown_blocked,
+        result.scanned_incidents,
+    )
     return result.to_dict()
+
+
+@app.get("/api/evolution/sweep-status")
+def sweep_status():
+    """
+    Return the current daily-sweep worker status.
+
+    Reports last success timestamp, last failure timestamp, last success
+    proposal count, total sweeps run this process lifetime, and total
+    cumulative proposals created.  Values are in-memory only and reset on
+    service restart; they are sufficient for operator liveness checks.
+    """
+    return {
+        "last_success_at": _sweep_state["last_success_at"],
+        "last_success_proposal_count": _sweep_state["last_success_proposal_count"],
+        "last_failure_at": _sweep_state["last_failure_at"],
+        "last_failure_reason": _sweep_state["last_failure_reason"],
+        "total_sweeps_run": _sweep_state["total_sweeps_run"],
+        "total_proposals_created": _sweep_state["total_proposals_created"],
+        "scheduler_attach": {
+            "route": "POST /api/evolution/daily-sweep",
+            "worker_module": "services.evolution.scheduler_worker",
+            "compose_service": "evolution-daily-sweep-scheduler",
+            "compose_profile": "evolution-daily-sweep-scheduler",
+        },
+    }
 
 
 # --- List / filter -----------------------------------------------------------
