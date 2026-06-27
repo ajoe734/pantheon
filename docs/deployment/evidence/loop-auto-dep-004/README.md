@@ -40,7 +40,8 @@ Result: `2 passed, 4 warnings in 4.24s`.
 pytest services/control-plane/bff/test_loop_auto_dep004_stage_truth.py services/control-plane/bff/test_read_store_deployment.py services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py services/control-plane/bff/test_bff_runtimes_contract.py services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py -q
 ```
 
-Result: `47 passed, 16 warnings in 20.78s`.
+Result: `47 passed, 16 warnings in 20.78s`; post-rebase rerun on
+`origin/dev` also passed with `47 passed, 16 warnings in 19.21s`.
 
 Additional non-blocking observation:
 
