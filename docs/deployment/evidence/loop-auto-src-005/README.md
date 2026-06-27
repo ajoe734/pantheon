@@ -17,6 +17,14 @@ Task: Connect source completion to search index refresh truth.
 - Existing BFF search ops can report this truth through search freshness,
   pipeline runs, and materialized index readback over `PANTHEON_SEARCH_API_URL`.
 
+## Review And Closeout
+
+- Codex review approved the delivered source-to-search truth path and returned
+  the task to owner Codex2 for final task PR closeout.
+- Closeout only aligns task lifecycle, evidence, and publication metadata. It
+  does not change BFF route contracts, scheduler tick semantics, connector
+  policy, durable repository backends, approval gates, or live-capital behavior.
+
 ## Verification
 
 Run on 2026-06-27 from `task/LOOP-AUTO-SRC-005`:
