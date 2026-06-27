@@ -11,6 +11,15 @@ import sys
 import urllib.error
 import urllib.request
 import uuid
+
+try:  # Taiwan symbol normalization lives at the shioaji adapter boundary
+    from ..shioaji_adapter import normalize_taiwan_symbol
+except Exception:  # pragma: no cover - fallback if package path differs at runtime
+    def normalize_taiwan_symbol(symbol, venue=None):  # type: ignore[misc]
+        s = str(symbol).strip().upper()
+        ticker = s.rsplit(".", 1)[0] if "." in s else s
+        suffix = s.rsplit(".", 1)[1] if "." in s else "TW"
+        return ticker, {"TPEX": "OTC", "TWO": "OTC"}.get(suffix, "TSE")
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -230,6 +239,115 @@ class PaperExecutionAlgorithm:
 
     def ClearCurrentSignalContext(self) -> None:  # noqa: N802
         self._current_signal_metadata = {}
+
+    def SubmitTaiwanBrokerOrder(  # noqa: N802
+        self,
+        symbol: str,
+        *,
+        signal_id: str,
+        side: str,
+        quantity: float,
+        quantity_type: str,
+        action: str,
+        order_type: str = "MARKET",
+        limit_price: float | None = None,
+    ) -> None:
+        """Place a Taiwan paper order via the broker sidecar and record the fill.
+
+        Taiwan venues are excluded from LEAN Symbol.Create(); execution is
+        delegated here to the paper broker (Shioaji sandbox boundary). The fill
+        is published on the same telemetry path as LEAN fills, tagged with the
+        broker order id under shioaji_trade_id.
+        """
+        native, exchange = normalize_taiwan_symbol(symbol)
+        base_metadata = {
+            "signal_id": signal_id,
+            "adapter": "shioaji",
+            "broker": "shioaji_paper",
+            "venue": "shioaji_paper",
+            "exchange": exchange,
+            "contract_symbol": native,
+            "sec_type": "equity",
+            "currency": "TWD",
+            "side": side,
+        }
+        if quantity_type != "SHARES":
+            self._publish(
+                "order_rejection", str(symbol), 0.0, action,
+                broker_submission_status="tw_unsupported_quantity_type",
+                submitted_to_broker=False,
+                metadata={**base_metadata, "rejected_order_count": 1,
+                          "quantity_type": quantity_type},
+            )
+            log.warning("[%s] TW order rejected: unsupported quantity_type=%s", signal_id, quantity_type)
+            return
+
+        qty = abs(float(quantity))
+        broker_url = os.getenv("PANTHEON_BROKER_PAPER_URL", "http://broker:8102").rstrip("/")
+        payload = {
+            "capital_pool_id": os.getenv("PANTHEON_CAPITAL_POOL_ID", "") or self._taiwan_capital_pool_id(),
+            "strategy_id": os.getenv("PANTHEON_STRATEGY_ID", "") or "strategy-tw-session-momentum",
+            "symbol": native,
+            "qty": qty,
+            "side": side,
+            "order_type": str(order_type or "MARKET").lower(),
+        }
+        if limit_price is not None:
+            payload["limit_price"] = float(limit_price)
+        try:
+            order = self._post_broker_paper_order(broker_url, payload)
+        except Exception as exc:
+            self._publish(
+                "order_rejection", str(symbol), 0.0, action,
+                broker_submission_status="taiwan_broker_error",
+                submitted_to_broker=True,
+                metadata={**base_metadata, "rejected_order_count": 1,
+                          "execution_error_message": str(exc)},
+            )
+            log.error("[%s] TW broker order failed for %s: %s", signal_id, symbol, exc)
+            return
+
+        fill_price = float(order.get("fill_price") or 0.0)
+        fill_qty = float(order.get("fill_qty") or qty)
+        order_id = str(order.get("order_id") or "")
+        if fill_price > 0:
+            self.SetSecurityPrice(str(symbol), fill_price)
+        holding = self._holding(str(symbol))
+        holding.Quantity += fill_qty if side == "buy" else -fill_qty
+        self._publish(
+            "paper_fill_simulated", str(symbol), fill_qty, action,
+            broker_submission_status="filled",
+            submitted_to_broker=True,
+            metadata={**base_metadata, "broker_order_id": order_id,
+                      "shioaji_trade_id": order_id},
+        )
+        log.info("[%s] TW paper fill %s %s %.0f @ %.4f (order=%s)",
+                 signal_id, side, native, fill_qty, fill_price, order_id)
+
+    def _taiwan_capital_pool_id(self) -> str:
+        binding = getattr(self, "_cached_binding", None) or {}
+        return str(binding.get("capital_pool_id") or "pool-tw-equity-paper")
+
+    @staticmethod
+    def _post_broker_paper_order(broker_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            broker_url + "/api/broker/paper/orders",
+            data=data,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            timeout = int(os.getenv("PANTHEON_BROKER_TIMEOUT_SECONDS", "5"))
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "ignore")[:300]
+            raise RuntimeError(f"broker HTTP {exc.code}: {detail}") from exc
+        order = body.get("order")
+        if not isinstance(order, dict):
+            raise RuntimeError(f"broker response missing order: {str(body)[:200]}")
+        return order
 
     def _publish(
         self,

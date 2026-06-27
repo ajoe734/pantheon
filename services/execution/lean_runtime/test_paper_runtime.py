@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
-from services.execution.lean_runtime.paper_runtime import _Handler, PaperRuntimeService, RuntimeTelemetryEmitter
+from services.execution.lean_runtime.paper_runtime import _Handler, PaperRuntimeService, RuntimeTelemetryEmitter, PaperExecutionAlgorithm, OrderEvent
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 
@@ -841,5 +841,62 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertAlmostEqual(tp_leg["limit_price"], 105.0, places=4)
 
 
+class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
+    def _algo(self):
+        events = []
+        algo = PaperExecutionAlgorithm(event_sink=events.append)
+        return algo, events
+
+    def test_taiwan_paper_fill_published_with_shioaji_trade_id(self):
+        algo, events = self._algo()
+        fake_order = {"order_id": "ord-tw-1", "fill_price": 2340.0, "fill_qty": 1, "side": "sell"}
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order",
+                          staticmethod(lambda url, payload: fake_order)):
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW", signal_id="s1", side="sell", quantity=1,
+                quantity_type="SHARES", action="SELL", order_type="MARKET",
+            )
+        self.assertEqual(len(events), 1)
+        ev = events[0]
+        self.assertEqual(ev.event_type, "paper_fill_simulated")
+        self.assertEqual(ev.symbol, "2330.TW")
+        self.assertEqual(ev.fill_price, 2340.0)
+        self.assertTrue(ev.submitted_to_broker)
+        self.assertEqual(ev.broker_submission_status, "filled")
+        self.assertEqual(ev.metadata["shioaji_trade_id"], "ord-tw-1")
+        self.assertEqual(ev.metadata["broker_order_id"], "ord-tw-1")
+        self.assertEqual(ev.metadata["adapter"], "shioaji")
+        self.assertEqual(ev.metadata["currency"], "TWD")
+        self.assertEqual(ev.metadata["exchange"], "TSE")
+        self.assertEqual(algo._holding("2330.TW").Quantity, -1)
+
+    def test_taiwan_broker_error_records_rejection(self):
+        algo, events = self._algo()
+        def boom(url, payload):
+            raise RuntimeError("broker HTTP 403: disabled")
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order",
+                          staticmethod(boom)):
+            algo.SubmitTaiwanBrokerOrder(
+                "2330.TW", signal_id="s2", side="sell", quantity=1,
+                quantity_type="SHARES", action="SELL",
+            )
+        self.assertEqual(len(events), 1)
+        ev = events[0]
+        self.assertEqual(ev.event_type, "order_rejection")
+        self.assertEqual(ev.broker_submission_status, "taiwan_broker_error")
+        self.assertIn("broker HTTP 403", ev.metadata["execution_error_message"])
+
+    def test_taiwan_rejects_non_shares_quantity_type(self):
+        algo, events = self._algo()
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW", signal_id="s3", side="buy", quantity=0.1,
+            quantity_type="PERCENT_PORTFOLIO", action="BUY",
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertEqual(events[0].broker_submission_status, "tw_unsupported_quantity_type")
+
+
 if __name__ == "__main__":
+
     unittest.main()
