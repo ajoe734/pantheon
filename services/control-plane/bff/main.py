@@ -44986,6 +44986,50 @@ def _deployment_stage_truth_surfaces(
     return surfaces
 
 
+def _deployment_stage_truth_collection_surfaces(
+    stage_truths: Sequence[Dict[str, Dict[str, Any]]],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Dict[str, Any]]:
+    collected = [
+        _deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at)
+        for stage_truth in stage_truths
+        if stage_truth
+    ]
+    if not collected:
+        return {}
+    if len(collected) == 1:
+        return collected[0]
+
+    surfaces: Dict[str, Dict[str, Any]] = {}
+    for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER:
+        surface_key = f"{stage}_stage"
+        stage_label = stage.replace("_", " ")
+        surfaces[surface_key] = _aggregate_group_surface(
+            surface_key,
+            [item[surface_key] for item in collected],
+            snapshot_at=snapshot_at,
+            unavailable_message=(
+                f"{stage_label} stage truth is unavailable across listed deployment plans."
+            ),
+            degraded_message=(
+                f"{stage_label} stage truth is degraded for one or more listed deployment plans."
+            ),
+        )
+
+    surfaces["deployment_stage_truth"] = _aggregate_group_surface(
+        "deployment_stage_truth",
+        [surfaces[f"{stage}_stage"] for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER],
+        snapshot_at=snapshot_at,
+        unavailable_message="Deployment stage truth is unavailable.",
+        degraded_message=(
+            "Deployment stage truth is degraded because one or more stages need "
+            "evidence or attention."
+        ),
+    )
+    return surfaces
+
+
 def _deployment_plan_with_stage_truth(
     plan: Dict[str, Any],
     *,
@@ -45027,7 +45071,10 @@ async def bff_list_deployments(
 
     meta = _snapshot_meta(snapshot_at)
     stage_surfaces = (
-        _deployment_stage_truth_surfaces(plans[0]["stage_truth"], snapshot_at=snapshot_at)
+        _deployment_stage_truth_collection_surfaces(
+            [plan["stage_truth"] for plan in plans],
+            snapshot_at=snapshot_at,
+        )
         if plans
         else {}
     )
