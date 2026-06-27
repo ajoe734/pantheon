@@ -61,11 +61,17 @@ python3 -m pytest -q services/control-plane/bff/test_pathreon_market_persona_fle
 
 Result: `62 passed, 8 warnings in 25.06s`.
 
+Revalidated after rebasing onto `origin/dev`:
+`62 passed, 8 warnings in 22.13s`.
+
 ```bash
 python3 -m pytest -q services/control-plane/bff/smoke_test.py
 ```
 
 Result: `25 passed, 4 warnings in 7.88s`.
+
+Revalidated after rebasing onto `origin/dev`:
+`25 passed, 4 warnings in 10.45s`.
 
 ## Maturity Boundary
 
