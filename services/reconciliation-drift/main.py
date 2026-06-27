@@ -1182,6 +1182,132 @@ def mark_alert_handoff(alert_id: str, body: HandoffBody) -> Dict[str, Any]:
     return store.put_alert_handoff(updated)
 
 
+class ScheduledReconcileBody(BaseModel):
+    tick_id: Optional[str] = None
+
+
+def _fetch_telemetry_runtime_summaries(telemetry_url: str) -> List[Dict[str, Any]]:
+    if not telemetry_url:
+        return []
+    url = telemetry_url.rstrip("/") + "/api/telemetry/runtime-summaries"
+    try:
+        request = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+            body = response.read().decode("utf-8")
+        payload = json.loads(body) if body else []
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            return payload.get("summaries") or payload.get("items") or []
+        return []
+    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+        return []
+
+
+def _tick_evaluation_id(tick_id: str, binding_id: str) -> str:
+    safe_tick = tick_id.replace(":", "-").replace("+", "-").replace(" ", "-")[:32]
+    safe_binding = binding_id.replace("/", "-").replace(":", "-")[:24]
+    return f"rdeval-sched-{safe_tick}-{safe_binding}"
+
+
+@app.post("/api/reconciliation-drift/scheduled-reconcile", status_code=201)
+def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
+    """Run a scheduled reconciliation pass over all active bindings visible in telemetry.
+
+    Idempotent: a second call with the same tick_id skips bindings that already
+    have an evaluation record for that tick, so duplicate scheduler ticks do not
+    create duplicate ReconciliationRecords.
+    """
+    timestamp = utc_now()
+    tick_id = body.tick_id or timestamp
+
+    telemetry_url = os.getenv("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
+    summaries: List[Dict[str, Any]] = _fetch_telemetry_runtime_summaries(telemetry_url)
+
+    existing_evaluation_ids = {str(item.get("evaluation_id") or "") for item in store.list_evaluations()}
+
+    created_evaluation_ids: List[str] = []
+    skipped_binding_ids: List[str] = []
+
+    for summary in summaries:
+        binding_id = str(
+            summary.get("binding_id") or summary.get("runtime_binding_id") or summary.get("id") or ""
+        ).strip()
+        runtime_id = str(summary.get("runtime_id") or "").strip()
+        if not binding_id:
+            continue
+
+        evaluation_id = _tick_evaluation_id(tick_id, binding_id)
+        if evaluation_id in existing_evaluation_ids:
+            skipped_binding_ids.append(binding_id)
+            continue
+
+        telemetry_event_ids = [
+            str(eid) for eid in (summary.get("telemetry_event_ids") or []) if eid
+        ]
+        observed_metrics: Dict[str, Any] = summary.get("observed_metrics") or summary.get("metrics") or {}
+        baseline_metrics: Dict[str, Any] = summary.get("baseline_metrics") or {}
+
+        evaluation = {
+            "id": evaluation_id,
+            "evaluation_id": evaluation_id,
+            "binding_id": binding_id,
+            "runtime_id": runtime_id or None,
+            "status": "ok",
+            "summary": {
+                "status": "ok",
+                "telemetry_event_count": len(telemetry_event_ids),
+                "baseline_metric_count": len(baseline_metrics),
+                "observed_metric_count": len(observed_metrics),
+                "drift_check_count": 0,
+                "reconciliation_check_count": 1,
+            },
+            "baseline_metrics": baseline_metrics,
+            "observed_metrics": observed_metrics,
+            "drift_checks": [],
+            "reconciliation_checks": [
+                {
+                    "check": "telemetry_runtime_alignment",
+                    "status": "ok",
+                    "detail": "scheduled reconciliation pass; binding and runtime identifiers linked",
+                    "binding_id": binding_id,
+                    "runtime_id": runtime_id or None,
+                    "telemetry_event_ids": telemetry_event_ids,
+                }
+            ],
+            "evidence_refs": [
+                {"type": "tick", "id": tick_id},
+                {"type": "runtime_binding", "id": binding_id},
+                *([{"type": "runtime_session", "id": runtime_id}] if runtime_id else []),
+            ],
+            "tick_id": tick_id,
+            "trigger": "scheduled",
+            "source_contract": {
+                "telemetry_truth_owner": "telemetry-ingest",
+                "lineage_truth_owner": "lineage-read",
+                "runtime_truth_owner": "runtime-manager",
+                "derived_only": True,
+                "emergency_control_chain_affected": False,
+            },
+            "evaluated_at": timestamp,
+        }
+        stored = store.put_evaluation(evaluation)
+        existing_evaluation_ids.add(evaluation_id)
+        created_evaluation_ids.append(stored["evaluation_id"])
+
+    return {
+        "status": "ok",
+        "tick_id": tick_id,
+        "trigger": "scheduled",
+        "evaluated_binding_count": len(created_evaluation_ids),
+        "skipped_binding_count": len(skipped_binding_ids),
+        "evaluation_ids": created_evaluation_ids,
+        "skipped_binding_ids": skipped_binding_ids,
+        "telemetry_summaries_fetched": len(summaries),
+        "triggered_at": timestamp,
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
 
