@@ -20,6 +20,7 @@ import sys
 import threading
 import types
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -224,7 +225,9 @@ class TestMainRoutes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._old_runtime_manager_url = os.environ.get("PANTHEON_RUNTIME_MANAGER_URL")
+        cls._old_telemetry_db_dsn = os.environ.get("TELEMETRY_DB_DSN")
         os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = "http://runtime-manager.test"
+        os.environ.pop("TELEMETRY_DB_DSN", None)
 
         # Start a dedicated asyncio event loop in a daemon thread so the
         # TelemetryIngestService batch writer can run during the test.
@@ -273,6 +276,10 @@ class TestMainRoutes(unittest.TestCase):
             os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
         else:
             os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = cls._old_runtime_manager_url
+        if cls._old_telemetry_db_dsn is None:
+            os.environ.pop("TELEMETRY_DB_DSN", None)
+        else:
+            os.environ["TELEMETRY_DB_DSN"] = cls._old_telemetry_db_dsn
 
     # --- health ---
 
@@ -298,12 +305,48 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         payload = resp.get_json()
         self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["dependencies"]["canonical_telemetry_table"]["status"], "ok")
+        self.assertEqual(payload["dependencies"]["canonical_telemetry_table"]["backend"], "memory")
         self.assertEqual(payload["dependencies"]["telemetry_writer"]["status"], "ok")
         self.assertTrue(payload["dependencies"]["telemetry_writer"]["running"])
+        self.assertIn("last_successful_write_at", payload["dependencies"]["telemetry_writer"])
+        self.assertIn("failure_dlq_entries", payload["dependencies"]["telemetry_writer"])
         self.assertEqual(payload["dependencies"]["dead_letter_queue"]["status"], "ok")
         self.assertIn("writer_total_written", payload["metrics"])
+        self.assertIn("writer_failure_dlq_entries", payload["metrics"])
+        self.assertIn("writer_seconds_since_last_successful_write", payload["metrics"])
         self.assertIn("dlq_memory_entries", payload["metrics"])
         self.assertIn("startup_dlq_loaded", payload["metrics"])
+
+    def test_readyz_fails_when_canonical_table_missing(self):
+        class _MissingTableConnection:
+            async def fetchval(self, _query, table):
+                self.table = table
+                return None
+
+            async def fetch(self, *_args):
+                return []
+
+            async def close(self):
+                self.closed = True
+
+        async def connect(dsn, timeout=None):
+            self.assertEqual(dsn, "postgresql://example/db")
+            self.assertEqual(timeout, 2.0)
+            return _MissingTableConnection()
+
+        fake_asyncpg = types.SimpleNamespace(connect=connect)
+        with patch.dict(os.environ, {"TELEMETRY_DB_DSN": "postgresql://example/db"}):
+            with patch.dict(sys.modules, {"asyncpg": fake_asyncpg}):
+                resp = self.client.get("/readyz")
+
+        self.assertEqual(resp.status_code, 503)
+        payload = resp.get_json()
+        dependency = payload["dependencies"]["canonical_telemetry_table"]
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(dependency["status"], "error")
+        self.assertFalse(dependency["table_exists"])
+        self.assertIn("scripts/db_migrate.sh", dependency["message"])
 
     def test_replay_route_replays_write_failure_entry(self):
         _main._svc._dlq.reject(
