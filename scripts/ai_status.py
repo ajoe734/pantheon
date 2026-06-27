@@ -3955,6 +3955,10 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
     if task.get("status") != "review_approved":
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
+    # Allow owner to supply review evidence at done time when reviewer did not set it.
+    done_review_file = os.environ.get("REVIEW_FILE", "").strip()
+    if done_review_file and not task.get("review_file"):
+        task["review_file"] = done_review_file
     validate_loop_completion_claim(task)
     timestamp = iso_now()
     delivery = collect_done_delivery_metadata(task, actor)
