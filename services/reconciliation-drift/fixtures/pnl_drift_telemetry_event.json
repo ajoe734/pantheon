@@ -1,0 +1,44 @@
+{
+  "event_id": "evt-tel005-pnl-drift-001",
+  "event_type": "runtime.telemetry.metric_window",
+  "generated_at": "2026-06-27T12:00:00Z",
+  "deployment_stage": "paper",
+  "binding_id": "rtb-tel005-paper-001",
+  "runtime_id": "runtime-tel005-001",
+  "deployment_plan_id": "plan-tel005-001",
+  "artifact_id": "artifact-tel005-001",
+  "artifact_version": "1.0.0",
+  "capital_pool_id": "pool-tel005-001",
+  "persona_capital_binding_id": "pcb-tel005-001",
+  "trace_id": "trace-tel005-pnl-drift-001",
+  "baseline_ref": "paper-baseline-tel005-001",
+  "current_ref": "paper-window-tel005-20260627",
+  "incident_cluster_id": "drift:pnl",
+  "metrics": {
+    "pnl": 18.0,
+    "avg_slippage_bps": 3.1,
+    "max_drawdown": 0.18
+  },
+  "baseline_metrics": {
+    "pnl": 100.0,
+    "avg_slippage_bps": 2.0,
+    "max_drawdown": 0.08
+  },
+  "thresholds": {
+    "pnl": {
+      "warning_relative_delta": 0.2,
+      "critical_relative_delta": 0.5
+    },
+    "avg_slippage_bps": {
+      "warning_relative_delta": 0.3,
+      "critical_relative_delta": 0.6
+    },
+    "max_drawdown": {
+      "warning_relative_delta": 0.2,
+      "critical_relative_delta": 0.5
+    }
+  },
+  "evidence_refs": [
+    "fixture:services/reconciliation-drift/fixtures/pnl_drift_telemetry_event.json"
+  ]
+}
