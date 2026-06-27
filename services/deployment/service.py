@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
@@ -65,7 +66,10 @@ from deployment_saga import (  # type: ignore
     DeploymentSagaError,
     DeploymentSagaStore,
     InboxReceipt,
+    OutboxStatus,
     OutboxRecord,
+    ReceiptStatus,
+    SagaStatus,
 )
 from persona_capital_binding import (  # type: ignore
     PersonaCapitalBinding,
@@ -83,6 +87,9 @@ try:
         DeploymentScaleBody,
         DeploymentPlanSummary,
         DeploymentProjectionReadModelResponse,
+        DeploymentOutboxRetryStateBody,
+        DeploymentSagaProgressBody,
+        DeploymentSagaRetryPolicyBody,
         DeploymentSagaBody,
         DeploymentSagaBootstrapBody,
         DispatchDeploymentPlanRequest,
@@ -93,8 +100,12 @@ try:
         PoolCompatibilityResponse,
         PlanStatusBody,
         RecordBindingCreatedRequest,
+        RecordOutboxFailureRequest,
         RecordRuntimeActiveRequest,
         RecordSagaFailureRequest,
+        ReplayOutboxEventRequest,
+        ReplayOutboxEventResponse,
+        SagaProgressStatusBody,
         StagePlannerCheckRequest,
         StagePlannerCheckResponse,
         StrategyReadModelResponse,
@@ -112,6 +123,9 @@ except ImportError:
         DeploymentScaleBody,
         DeploymentPlanSummary,
         DeploymentProjectionReadModelResponse,
+        DeploymentOutboxRetryStateBody,
+        DeploymentSagaProgressBody,
+        DeploymentSagaRetryPolicyBody,
         DeploymentSagaBody,
         DeploymentSagaBootstrapBody,
         DispatchDeploymentPlanRequest,
@@ -122,8 +136,12 @@ except ImportError:
         PoolCompatibilityResponse,
         PlanStatusBody,
         RecordBindingCreatedRequest,
+        RecordOutboxFailureRequest,
         RecordRuntimeActiveRequest,
         RecordSagaFailureRequest,
+        ReplayOutboxEventRequest,
+        ReplayOutboxEventResponse,
+        SagaProgressStatusBody,
         StagePlannerCheckRequest,
         StagePlannerCheckResponse,
         StrategyReadModelResponse,
@@ -135,6 +153,8 @@ log = logging.getLogger(__name__)
 
 _DEPLOYMENT_FOUNDATION_POLICY_VERSION = "deployment.dispatch.v1"
 _DEPLOYMENT_FOUNDATION_ROUTE = "deployment.plan.dispatch"
+_OUTBOX_DEFAULT_MAX_ATTEMPTS = 3
+_OUTBOX_DEFAULT_RETRY_DELAY_SECONDS = 30
 
 
 def _iso_sort_key(plan: DeploymentPlan) -> str:
@@ -564,6 +584,11 @@ class DeploymentProjectionReadModelService:
         runtime_id = _runtime_id(runtime_binding)
         runtime_status = _runtime_status(runtime_binding)
         saga_status = _enum_value(deployment_saga.status) if deployment_saga else None
+        saga_progress = (
+            _saga_progress_body(deployment_saga, self.saga_store.outbox_records())
+            if deployment_saga
+            else None
+        )
         lifecycle_state = _projection_lifecycle_state(
             plan_status=plan_status,
             runtime_status=runtime_status,
@@ -579,6 +604,13 @@ class DeploymentProjectionReadModelService:
         }
         if projection_error:
             summary["execution_projection_error"] = projection_error
+        if saga_progress is not None:
+            summary["saga_progress_status"] = saga_progress.progress_status.value
+            summary["blocked_reason"] = saga_progress.blocked_reason
+            summary["retry_state"] = [
+                item.model_dump(mode="json", exclude_none=True)
+                for item in saga_progress.retry_state
+            ]
 
         return DeploymentProjectionReadModelResponse(
             plan_id=plan.plan_id,
@@ -599,6 +631,7 @@ class DeploymentProjectionReadModelService:
             runtime_status=runtime_status,
             deployment_saga_id=deployment_saga.saga_id if deployment_saga else None,
             deployment_saga_status=saga_status,
+            deployment_saga_progress=saga_progress,
             lifecycle_state=lifecycle_state,
             source_status=source_status,
             summary=summary,
@@ -896,6 +929,23 @@ class DeploymentOrchestrationService:
             raise DeploymentSagaError(f"DeploymentSaga '{saga_id}' not found")
         return saga
 
+    def get_saga_progress(self, saga_id: str) -> DeploymentSagaProgressBody:
+        saga = self.get_saga(saga_id)
+        return _saga_progress_body(
+            saga,
+            self.saga_store.outbox_records(),
+        )
+
+    def get_plan_saga_progress(self, plan_id: str) -> DeploymentSagaProgressBody:
+        sagas = [saga for saga in self.saga_store.list_all() if saga.plan_id == plan_id]
+        if not sagas:
+            raise DeploymentSagaError(f"DeploymentSaga for plan '{plan_id}' not found")
+        saga = sorted(sagas, key=lambda item: (item.updated_at, item.created_at), reverse=True)[0]
+        return _saga_progress_body(
+            saga,
+            self.saga_store.outbox_records(),
+        )
+
     def record_binding_created(
         self,
         saga_id: str,
@@ -961,8 +1011,9 @@ class DeploymentOrchestrationService:
         *,
         owner_service: str | None = None,
         aggregate_id: str | None = None,
+        status: str | None = None,
     ) -> list[OutboxRecord]:
-        records = self.saga_store.pending_outbox()
+        records = self.saga_store.outbox_records(status=status)
         if owner_service:
             records = [record for record in records if record.owner_service == owner_service]
         if aggregate_id:
@@ -992,7 +1043,41 @@ class DeploymentOrchestrationService:
         event = self._find_outbox_event_by_event_id(event_id)
         if event is None:
             raise DeploymentSagaError(f"Outbox event '{event_id}' not found")
-        return self.saga_store.consume_event(consumer_name, event.event)
+        if OutboxStatus(event.status) == OutboxStatus.DEAD_LETTERED:
+            raise DeploymentSagaError(
+                f"Outbox event '{event_id}' is dead-lettered; replay it before consuming."
+            )
+        receipt = self.saga_store.consume_event(consumer_name, event.event)
+        if ReceiptStatus(receipt.status) in {ReceiptStatus.APPLIED, ReceiptStatus.DUPLICATE}:
+            self.saga_store.mark_outbox_published(event_id)
+        return receipt
+
+    def record_outbox_failure(
+        self,
+        event_id: str,
+        request: RecordOutboxFailureRequest,
+    ) -> OutboxRecord:
+        max_attempts = request.max_attempts or _OUTBOX_DEFAULT_MAX_ATTEMPTS
+        retry_delay_seconds = (
+            request.retry_delay_seconds
+            if request.retry_delay_seconds is not None
+            else _OUTBOX_DEFAULT_RETRY_DELAY_SECONDS
+        )
+        return self.saga_store.record_outbox_failure(
+            event_id,
+            reason=request.reason,
+            consumer_name=request.consumer_name,
+            retryable=request.retryable,
+            max_attempts=max_attempts,
+            retry_delay_seconds=retry_delay_seconds,
+        )
+
+    def replay_outbox_event(
+        self,
+        event_id: str,
+        request: ReplayOutboxEventRequest,
+    ) -> tuple[OutboxRecord, bool]:
+        return self.saga_store.replay_outbox_event(event_id, reason=request.reason)
 
     def _mark_plan_binding_created(
         self,
@@ -1109,13 +1194,13 @@ class DeploymentOrchestrationService:
         )
 
     def _find_outbox_event(self, saga_id: str, *, sequence_no: int) -> OutboxRecord | None:
-        for record in self.saga_store.pending_outbox():
+        for record in self.saga_store.outbox_records():
             if record.event.aggregate_id == saga_id and record.event.sequence_no == sequence_no:
                 return record
         return None
 
     def _find_outbox_event_by_event_id(self, event_id: str) -> OutboxRecord | None:
-        for record in self.saga_store.pending_outbox():
+        for record in self.saga_store.outbox_records():
             if record.event.event_id == event_id:
                 return record
         return None
@@ -1555,6 +1640,99 @@ def _bootstrap_body(bootstrap: DeploymentSagaBootstrap) -> DeploymentSagaBootstr
     )
 
 
+def _retry_policy_body(records: list[OutboxRecord]) -> DeploymentSagaRetryPolicyBody:
+    policies = [
+        record.retry_policy
+        for record in records
+        if isinstance(record.retry_policy, dict)
+    ]
+    if policies:
+        policy = policies[-1]
+        return DeploymentSagaRetryPolicyBody(
+            max_attempts=int(policy.get("max_attempts") or _OUTBOX_DEFAULT_MAX_ATTEMPTS),
+            retry_delay_seconds=int(policy.get("retry_delay_seconds") or 0),
+            retryable=bool(policy.get("retryable", True)),
+        )
+    return DeploymentSagaRetryPolicyBody(
+        max_attempts=_OUTBOX_DEFAULT_MAX_ATTEMPTS,
+        retry_delay_seconds=_OUTBOX_DEFAULT_RETRY_DELAY_SECONDS,
+        retryable=True,
+    )
+
+
+def _retry_state_body(record: OutboxRecord) -> DeploymentOutboxRetryStateBody:
+    return DeploymentOutboxRetryStateBody(
+        event_id=record.event.event_id,
+        event_type=record.event.event_type,
+        sequence_no=record.event.sequence_no,
+        status=_enum_value(record.status),
+        delivery_attempts=record.delivery_attempts,
+        replay_count=record.replay_count,
+        published_at=record.published_at,
+        last_error=record.last_error,
+        last_attempt_at=record.last_attempt_at,
+        next_retry_at=record.next_retry_at,
+        blocked_reason=record.blocked_reason,
+        dlq_at=record.dlq_at,
+        last_replayed_at=record.last_replayed_at,
+        retry_policy=record.retry_policy,
+    )
+
+
+def _saga_progress_status(saga: DeploymentSaga, records: list[OutboxRecord]) -> SagaProgressStatusBody:
+    saga_status = SagaStatus(saga.status)
+    if saga_status == SagaStatus.COMPLETED:
+        return SagaProgressStatusBody.COMPLETED
+    if saga_status in {SagaStatus.FAILED, SagaStatus.ABORTED}:
+        return SagaProgressStatusBody.FAILED
+    if any(OutboxStatus(record.status) == OutboxStatus.DEAD_LETTERED for record in records):
+        return SagaProgressStatusBody.BLOCKED
+    if saga_status == SagaStatus.AWAITING_BINDING and saga.last_sequence_no <= 1:
+        return SagaProgressStatusBody.PENDING
+    return SagaProgressStatusBody.RUNNING
+
+
+def _saga_progress_body(
+    saga: DeploymentSaga,
+    outbox_records: list[OutboxRecord],
+) -> DeploymentSagaProgressBody:
+    records = [
+        record
+        for record in outbox_records
+        if record.event.aggregate_id == saga.saga_id
+    ]
+    retry_state = [_retry_state_body(record) for record in records]
+    dlq_records = [
+        record
+        for record in records
+        if OutboxStatus(record.status) == OutboxStatus.DEAD_LETTERED
+    ]
+    blocked_reason = None
+    if dlq_records:
+        blocked = sorted(dlq_records, key=lambda item: item.event.sequence_no)[-1]
+        blocked_reason = blocked.blocked_reason or blocked.last_error
+    elif saga.failure_reason:
+        blocked_reason = saga.failure_reason
+
+    return DeploymentSagaProgressBody(
+        saga_id=saga.saga_id,
+        plan_id=saga.plan_id,
+        progress_status=_saga_progress_status(saga, records),
+        saga_status=_enum_value(saga.status),
+        current_step=_enum_value(saga.current_step),
+        blocked_reason=blocked_reason,
+        retry_policy=_retry_policy_body(records),
+        retry_state=retry_state,
+        completed_steps=[_enum_value(item.step) for item in saga.history],
+        pending_event_count=sum(
+            1
+            for record in records
+            if OutboxStatus(record.status) == OutboxStatus.PENDING
+        ),
+        dlq_count=len(dlq_records),
+    )
+
+
 def _execution_context_for_stage(target_stage: DeploymentStage | str) -> str:
     stage = DeploymentStage(target_stage)
     if stage == DeploymentStage.PAPER:
@@ -1775,6 +1953,28 @@ async def get_deployment_saga(saga_id: str):
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+@app.get(
+    "/api/deployment/sagas/{saga_id}/progress",
+    response_model=DeploymentSagaProgressBody,
+)
+async def get_deployment_saga_progress(saga_id: str):
+    try:
+        return orchestration_service.get_saga_progress(saga_id)
+    except DeploymentSagaError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get(
+    "/api/deployment/plans/{plan_id}/saga-progress",
+    response_model=DeploymentSagaProgressBody,
+)
+async def get_deployment_plan_saga_progress(plan_id: str):
+    try:
+        return orchestration_service.get_plan_saga_progress(plan_id)
+    except DeploymentSagaError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 @app.post("/api/deployment/sagas/{saga_id}/binding-created", response_model=OutboxRecordBody)
 async def record_saga_binding_created(saga_id: str, body: RecordBindingCreatedRequest):
     try:
@@ -1822,12 +2022,41 @@ async def finalize_saga_compensation(saga_id: str, body: FinalizeCompensationReq
 async def list_deployment_outbox(
     owner_service: str | None = Query(default=None),
     aggregate_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
 ):
     records = orchestration_service.list_outbox(
         owner_service=owner_service,
         aggregate_id=aggregate_id,
+        status=status,
     )
     return [_outbox_body(record) for record in records]
+
+
+@app.post(
+    "/api/deployment/outbox/{event_id}/failure",
+    response_model=OutboxRecordBody,
+)
+async def record_deployment_outbox_failure(event_id: str, body: RecordOutboxFailureRequest):
+    try:
+        return _outbox_body(orchestration_service.record_outbox_failure(event_id, body))
+    except DeploymentSagaError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+
+@app.post(
+    "/api/deployment/outbox/{event_id}/replay",
+    response_model=ReplayOutboxEventResponse,
+)
+async def replay_deployment_outbox_event(event_id: str, body: ReplayOutboxEventRequest):
+    try:
+        event, replayed = orchestration_service.replay_outbox_event(event_id, body)
+        return ReplayOutboxEventResponse(event=_outbox_body(event), replayed=replayed)
+    except DeploymentSagaError as exc:
+        message = str(exc)
+        status_code = 404 if "not found" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
 
 
 @app.post("/api/deployment/outbox/{event_id}/consume", response_model=InboxReceiptBody)
