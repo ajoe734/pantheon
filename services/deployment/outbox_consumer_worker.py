@@ -98,10 +98,15 @@ def run_poll(
                 consumer_name=consumer_name,
                 timeout_seconds=timeout_seconds,
             )
-            if receipt.get("status") == "duplicate":
+            receipt_status = receipt.get("status")
+            if receipt_status == "duplicate":
                 duplicates += 1
-            else:
+            elif receipt_status == "applied":
                 consumed += 1
+            else:
+                errors.append(
+                    f"event_id={event_id} unexpected_receipt_status={receipt_status!r}"
+                )
         except urllib.error.HTTPError as exc:
             errors.append(f"event_id={event_id} http_error={exc.code} {exc.reason}")
         except Exception as exc:  # noqa: BLE001

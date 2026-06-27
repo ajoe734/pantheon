@@ -13,7 +13,7 @@ transitions advance without manual endpoint stepping.
 ## Delivered Artifacts
 
 - `services/deployment/outbox_consumer_worker.py` — durable poll-based outbox consumer
-- `services/deployment/test_outbox_consumer_worker.py` — 18 unit tests
+- `services/deployment/test_outbox_consumer_worker.py` — 19 unit tests
 - `docker-compose.yml` — `deployment-outbox-consumer` service stanza (profile-gated)
 
 ## Acceptance Criteria Coverage
@@ -35,13 +35,13 @@ pytest services/deployment/test_outbox_consumer_worker.py -v
 Result:
 
 ```
-18 passed in 2.31s
+19 passed in 2.11s
 ```
 
 Test classes:
 - `TestFetchPendingOutbox` — polls outbox with `status=pending` filter
 - `TestConsumeEvent` — applied and duplicate receipts, URL correctness
-- `TestRunPoll` — 0 events, new events, duplicates, partial errors, missing event_id
+- `TestRunPoll` — 0 events, new events, duplicates, out-of-order receipts, partial errors, missing event_id
 - `TestWriteHealth` — health file write and silent failure
 - `TestMain` — max_ticks termination, last_success/failure health state, health file written
 
