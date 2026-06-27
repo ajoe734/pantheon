@@ -127,6 +127,17 @@ GET /api/v1/runtimes/{runtime_id}/status                    # observe stale hear
 | Deployment stage split | Stage fields in runtime/deployment surfaces | Drill 2 | LOOP-AUTO-DEP-004 |
 | Evolution follow-through fields | `dispatched_at`, `execution_result` in EV-02 | Drill 2 | LOOP-AUTO-EVO-005 |
 
+### 3.4 Additional Filter Field Gaps (Identified by Reviewer — Must Resolve Before Drills)
+
+The drill query sequences in Section 4 assume filter parameters that are **not** in the current `BFF_API_CONTRACT.md` allowlists. Claude2 must verify or add these before running BFF-004 drills.
+
+| Drill step | Route | Filter used | Current BFF_API_CONTRACT.md allowlist | Gap |
+|---|---|---|---|---|
+| Drill 2 Step 3 | `GET /api/v1/incidents` (IN-01) | `?runtime_id=` | `status`, `severity`, `affected_pool_id` | `runtime_id` filter missing |
+| Drill 2 Step 5 | `GET /api/v1/evolution-decisions` (EV-01) | `?incident_id=` | `action_type`, `risk_level`, `status`, `page_token`, `page_size` | `incident_id` filter missing |
+
+**Recommended resolution:** Add `runtime_id` to IN-01 and `incident_id` to EV-01 under LOOP-AUTO-DEP-004 scope, or open a narrow `LOOP-AUTO-BFF-004-FILTER-GAP` task if LOOP-AUTO-DEP-004 scope is already locked. Without these filters, Drill 2 Steps 3 and 5 cannot be executed as written — the operator would need to manually scan full lists and match by id.
+
 ---
 
 ## 4. Operator Journey Specifications
@@ -386,3 +397,4 @@ This packet is a support artifact only. It:
 | Date | Author | Change |
 |---|---|---|
 | 2026-06-27 | Claude | Initial BFF handoff packet created (sidecar dispatch owned_ready_dispatch) |
+| 2026-06-27 | Claude | Closeout update: added Section 3.4 with IN-01 `runtime_id` and EV-01 `incident_id` filter gaps, per Claude2 reviewer findings |
