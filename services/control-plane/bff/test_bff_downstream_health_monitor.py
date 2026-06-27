@@ -433,13 +433,9 @@ class TestIncidentOpen:
             return True, 201
 
         with patch("downstream_health_monitor._post_json", side_effect=mock_post_json):
-            # _handle_probe_result checks threshold before calling _open_or_update_incident_sync
-            # directly calling _open_or_update_incident_sync would open the incident
-            # this tests the threshold guard in _handle_probe_result
-            pass
+            _run(monitor._handle_probe_result(result))
 
-        # Not calling _open_or_update_incident_sync directly; threshold check is in _handle_probe_result
-        # The monitor only opens incidents when consecutive_failures >= threshold
+        assert "telemetry" not in monitor._open_incident_ids
         assert len(captured) == 0
 
 

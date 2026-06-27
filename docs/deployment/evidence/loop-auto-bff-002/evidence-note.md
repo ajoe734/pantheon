@@ -1,9 +1,9 @@
 # LOOP-AUTO-BFF-002 Evidence Note
 ## Task: Add BFF downstream health monitor
 
-**Owner:** Claude  
-**Reviewer:** Codex  
-**Status:** implementation complete, pending review  
+**Owner:** Claude
+**Reviewer:** Codex
+**Status:** implementation complete, pending review
 **Date:** 2026-06-27
 
 ---
@@ -59,10 +59,10 @@ Implemented a continuous BFF downstream health monitor (`services/control-plane/
 ```
 $ cd services/control-plane/bff
 $ python3 -m pytest test_bff_downstream_health_monitor.py -q
-26 passed, 20 warnings in 19.76s
+26 passed, 20 warnings in 36.12s
 
 $ python3 -m pytest test_bff_v5_loop_sentinel_contract.py test_loop_health_read_model_contract.py test_loop_inventory_read_model_contract.py test_pkt011_health_status_board_contract.py test_pkt013_operator_home_contract.py -q
-32 passed, 12 warnings in ~30s
+33 passed, 20 warnings in 45.10s
 ```
 
 No regressions in existing health status board, loop health read model, or operator home tests.

@@ -356,12 +356,12 @@ class DownstreamHealthMonitor:
         elif result.ok and result.target_name in self._open_incident_ids:
             # Service recovered — clear local incident tracking (incident stays open
             # in the incidents service; resolution requires operator action per policy)
-            del self._open_incident_ids[result.target_name]
+            incident_id = self._open_incident_ids.pop(result.target_name)
             log.info(
                 "DownstreamHealthMonitor: %s recovered after sustained failure; "
                 "incident %s remains open for operator review",
                 result.target_name,
-                self._open_incident_ids.get(result.target_name, "unknown"),
+                incident_id,
             )
 
     def _emit_telemetry_sync(self, result: DownstreamProbeResult) -> None:
