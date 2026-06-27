@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-BFF-001",
+  "archived_at": "2026-06-27T13:57:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-BFF-001",
+    "title": "Add loop health read model",
+    "summary_zh": "新增 BFF/operator loop health read model，列出 maturity、controller health、last success、last failure 與 evidence packet。",
+    "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Operator can list all loops and maturity state",
+      "Payload includes controller health last success last failure and evidence",
+      "Payload distinguishes seed snapshot registry scheduled and live truth"
+    ],
+    "next": "Closed after PR #2423 merged to dev at 56575b8c4423d672e6d3aedb78f4688e6d2cfcb1; verified loop health contract and route guard suites passed locally.",
+    "last_update": "2026-06-27T13:57:52Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "bff_health_monitoring",
+      "all"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "loop inventory read model"
+    ],
+    "actual_state_sources": [
+      "BFF operator payload"
+    ],
+    "wave_id": "Wave 7 BFF Operator Truth",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：三項驗收標準均已滿足",
+      "truth-label safety guard 正確防止 registry/snapshot 資料誤標為 live",
+      "回傳 Codex 進行 closeout"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-bff-001/review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T13:57:52Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-bff-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-BFF-001",
+      "git_clean_required": false,
+      "commit": "56575b8c4423d672e6d3aedb78f4688e6d2cfcb1",
+      "commit_subject": "Merge pull request #2423 from ajoe734/task/LOOP-AUTO-BFF-001",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "LOOP-AUTO-BFF-001": "add loop health read model"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-BFF-001",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fb9f33db6c041d87c64205f59af797dfdd3e1618",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-BFF-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Please review merged PR #2423 for LOOP-AUTO-BFF-001. Delivered /bff/v5/loop-health list/detail, optional PANTHEON_BFF_LOOP_HEALTH_STORE overlay, truth labels for seed/snapshot/registry/scheduled/live, and evidence docs. Merged into dev at 56575b8c4423d672e6d3aedb78f4688e6d2cfcb1; task commit 3d4ff06922130781b4472fb6caf47c8a4fbda381. Local validation: 12 selected pytest checks passed and TestClient smoke returned 200 12 degraded plus 200 source_ingestion registry_metadata.",
+      "status": "done",
+      "created_at": "2026-06-27T13:50:24Z",
+      "resolved_at": "2026-06-27T13:53:02Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all three acceptance criteria met. Loop health read model correctly labels seed/snapshot/registry/scheduled/live truth without raising any maturity claims. Safety guard on accepted_as_live confirmed. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-27T13:53:02Z",
+      "resolved_at": "2026-06-27T13:57:53Z"
+    }
+  ],
+  "blockers": []
+}

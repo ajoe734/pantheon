@@ -71,6 +71,17 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
     assert payload["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
     assert payload["meta"]["surfaces"]["loop_health"]["truth_level"] == "registry_metadata"
     assert payload["meta"]["surfaces"]["loop_health_snapshots"]["source"] == "missing"
+    assert payload["meta"]["truth_labels"]["seed_fixture"]["label"] == "Seed / fixture"
+    assert payload["meta"]["truth_labels"]["snapshot_fallback"]["source_type"] == "snapshot"
+    assert payload["meta"]["truth_labels"]["registry_metadata"]["source_type"] == "registry"
+    assert payload["meta"]["truth_labels"]["scheduled_tick"]["label"] == "Scheduled tick"
+    assert payload["meta"]["truth_labels"]["reconciled_live_proof"]["source_type"] == "live_truth"
+    assert payload["meta"]["truth_source_policy"]["non_live_source_types"] == [
+        "seed_fixture",
+        "snapshot",
+        "registry",
+        "scheduled",
+    ]
 
     source_loop = next(item for item in payload["items"] if item["loop_id"] == "source_ingestion")
     assert source_loop["current_maturity"] == "api-only"
@@ -83,7 +94,14 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
     assert packet["highest_truth_level"] == "registry_metadata"
     assert packet["accepted_live_liveness"] is False
     assert packet["can_claim_reconciled"] is False
+    assert packet["operator_truth"]["truth_level"] == "registry_metadata"
+    assert packet["operator_truth"]["label"] == "Registry metadata"
+    assert packet["operator_truth"]["source_type"] == "registry"
+    assert packet["operator_truth"]["accepted_as_live"] is False
+    assert packet["operator_truth"]["degraded"] is True
     assert _truth_source(packet, "seed_fixture")["source_type"] == "seed_fixture"
+    assert _truth_source(packet, "seed_fixture")["label"] == "Seed / fixture"
+    assert _truth_source(packet, "seed_fixture")["operator_visibility"] == "not_live_proof"
     assert _truth_source(packet, "snapshot_fallback")["source_type"] == "snapshot"
     assert _truth_source(packet, "snapshot_fallback")["status"] == "missing"
     assert _truth_source(packet, "registry_metadata")["status"] == "present"
@@ -137,6 +155,10 @@ def test_loop_health_service_store_overlays_controller_health_and_events(monkeyp
     assert data["evidence_packet"]["packet_id"] == "packet-source-ingestion-health-001"
     assert data["evidence_packet"]["highest_truth_level"] == "scheduled_tick"
     assert data["evidence_packet"]["accepted_live_liveness"] is False
+    assert data["evidence_packet"]["operator_truth"]["truth_level"] == "scheduled_tick"
+    assert data["evidence_packet"]["operator_truth"]["label"] == "Scheduled tick"
+    assert data["evidence_packet"]["operator_truth"]["source_type"] == "scheduled"
+    assert data["evidence_packet"]["operator_truth"]["is_live_truth"] is False
     assert _truth_source(data["evidence_packet"], "scheduled_tick")["status"] == "present"
 
 
@@ -165,9 +187,49 @@ def test_loop_health_local_snapshot_is_labeled_snapshot_not_live(monkeypatch) ->
     assert _truth_source(packet, "snapshot_fallback")["status"] == "present"
     assert _truth_source(packet, "snapshot_fallback")["source_type"] == "snapshot"
     assert packet["highest_truth_level"] == "reconciled_live_proof"
+    assert packet["operator_truth"]["truth_level"] == "snapshot_fallback"
+    assert packet["operator_truth"]["label"] == "Snapshot fallback"
+    assert packet["operator_truth"]["source_type"] == "snapshot"
+    assert packet["operator_truth"]["highest_available_truth_level"] == "reconciled_live_proof"
     assert packet["accepted_live_liveness"] is False
     assert packet["can_claim_reconciled"] is False
     assert data["live_status"]["has_live_evidence"] is False
+    assert data["live_status"]["operator_truth"]["accepted_as_live"] is False
+
+
+def test_loop_health_service_store_live_truth_is_separate_from_registry(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    loop_health_store = {
+        "bff_health_monitoring": {
+            "loop_id": "bff_health_monitoring",
+            "truth_level": "reconciled_live_proof",
+            "truth_status": "present",
+            "truth_note": "BFF health controller reconciled desired and actual state.",
+            "controller_health": {
+                "status": "healthy",
+                "controller_name": "bff-health-reconciler",
+                "last_heartbeat_at": "2026-06-27T06:20:00Z",
+            },
+            "evidence_packet": {
+                "packet_id": "packet-bff-health-live-001",
+                "refs": ["docs/deployment/evidence/loop-auto-bff-003/live-truth.json"],
+            },
+        }
+    }
+    with _loop_health_client(loop_health_store=loop_health_store) as client:
+        response = client.get("/bff/v5/loop-health/bff_health_monitoring", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    packet = response.json()["data"]["evidence_packet"]
+    assert packet["highest_truth_level"] == "reconciled_live_proof"
+    assert packet["accepted_live_liveness"] is True
+    assert packet["operator_truth"]["truth_level"] == "reconciled_live_proof"
+    assert packet["operator_truth"]["label"] == "Reconciled live truth"
+    assert packet["operator_truth"]["source_type"] == "live_truth"
+    assert packet["operator_truth"]["accepted_as_live"] is True
+    assert packet["operator_truth"]["degraded"] is False
+    assert _truth_source(packet, "registry_metadata")["source_type"] == "registry"
+    assert _truth_source(packet, "reconciled_live_proof")["source_type"] == "live_truth"
 
 
 def test_loop_health_detail_unknown_id_is_404(monkeypatch) -> None:
