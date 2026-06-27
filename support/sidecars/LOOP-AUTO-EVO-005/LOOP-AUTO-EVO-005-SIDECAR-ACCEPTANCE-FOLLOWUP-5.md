@@ -1,13 +1,13 @@
 # Acceptance Packet Follow-up 5: LOOP-AUTO-EVO-005
 
-**Sidecar kind:** `acceptance_packet`  
-**Sidecar task:** `LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-5`  
-**Parent task:** `LOOP-AUTO-EVO-005` - Prove evolution rollback and follow-through  
-**Parent owner:** Claude2  
-**Parent reviewer:** Claude  
-**Sidecar owner:** Codex  
-**Sidecar reviewer:** Claude2  
-**Date:** 2026-06-27  
+**Sidecar kind:** `acceptance_packet`
+**Sidecar task:** `LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-5`
+**Parent task:** `LOOP-AUTO-EVO-005` - Prove evolution rollback and follow-through
+**Parent owner:** Claude2
+**Parent reviewer:** Claude
+**Sidecar owner:** Codex
+**Sidecar reviewer:** Claude2
+**Date:** 2026-06-27
 **Packet status:** complete - ready for Claude2 review
 
 > **Scope constraint:** support artifact only. This packet does not edit
