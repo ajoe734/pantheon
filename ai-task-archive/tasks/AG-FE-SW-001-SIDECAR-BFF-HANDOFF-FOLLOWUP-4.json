@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-06-22T09:02:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare AG-FE-SW-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-SW-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 2",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-ID-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only AG-FE-SW-001 parent branch gap ledger merged via PR #2236 at 94d73eddde38376821df32b28d468970b3f1dda2. Task commits 5d100d95 and 0437e1f4 preserve only support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md; no canonical truth, runtime, schema, registry/governance, or execute-plans frontend files changed. Validation: artifact ASCII clean, git diff --check clean, PR CI Commit trailers/Runtime mirror guard/Smoke acceptance all passed, prior focused BFF pytest 81 passed in 247.10s.",
+    "last_update": "2026-06-22T09:02:21Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-SW-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up packet approved: AG-FE-SW-001 parent branch gap ledger documents the active execute-plans skeleton, runtime-live BFF surface, blocking client/page mismatches, duplicate /agora route risk, and stop lines without canonical/runtime/schema/frontend changes."
+    ],
+    "review_file": "support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T09:02:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-001-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "0437e1f45356a74034ecdcf60b2cafecb0dd791d",
+      "commit_subject": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4: refresh base",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only AG-FE-SW-001 follow-up packet base metadata.",
+        "Not changing": "canonical truth, OpenAPI/schema files, BFF runtime, route registry, governance/runtime code, or execute-plans frontend source.",
+        "Composes with": "AG-FE-SW-001 parent branch review and Claude absorption decision.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+        "Reviewer": "Claude",
+        "Verified": "ASCII scan no output; new-file whitespace check no output; rebase surface check found no changes to inspected Agora BFF/router/schema/test files since the original packet inspection; prior focused pytest 81 passed in 247.10s"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f9ab6ebc39fd65c263e566f2c5d6e14e352e9488",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only AG-FE-SW-001 parent branch gap ledger is ready for review. Artifact: support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md. PR: https://github.com/ajoe734/pantheon/pull/2236. Scope stayed support-only; no canonical/runtime/schema/execute-plans changes. Validation: ASCII scan clean; new-file whitespace check clean; focused BFF tests passed (81).",
+      "status": "done",
+      "created_at": "2026-06-22T08:57:11Z",
+      "resolved_at": "2026-06-22T08:59:00Z"
+    },
+    {
+      "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-FE-SW-001 parent branch gap ledger approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T08:59:00Z",
+      "resolved_at": "2026-06-22T09:02:24Z"
+    }
+  ],
+  "blockers": []
+}

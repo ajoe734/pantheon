@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+  "archived_at": "2026-06-22T11:28:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+    "title": "Prepare AG-FE-RS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 3",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-SW-002",
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar BFF handoff packet for AG-FE-RS-001 follow-up 15 reviewed and approved by Claude, PR #2256 merged to dev. Packet records AG-FE-SW-002 done delta (stream-card ResearchPlanCard+ConsultResultCard added), clarifies stream-vs-route-backed boundary, notes parent in_progress on ResearchRunCard+BacktestResultCard+research.ts, preserves Agora BFF consultation 501 stop line and no-order/live-strict guardrails. No canonical truth changed.",
+    "last_update": "2026-06-22T11:28:23Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-RS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up packet approved: AG-FE-RS-001 follow-up 15 records AG-FE-SW-002 done delta (stream-card ResearchPlanCard+ConsultResultCard added to Pantheon dev), clarifies stream-vs-route-backed boundary, notes parent in_progress on ResearchRunCard+BacktestResultCard+research.ts, preserves Agora BFF consultation 501 stop line and no-order/live-strict guardrails, does not change canonical truth or runtime files."
+    ],
+    "review_file": "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T11:28:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-rs-001-sidecar-bff-handoff-followup-15",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "git_clean_required": false,
+      "commit": "a72a96f667cb96229ae3e3d6805f159607947b1c",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fdc658663205b01e93cd9b4e8f055722af402ec9",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Follow-up 15 packet written and PR #2256 open with auto-merge. Key delta since FU-14: AG-FE-SW-002 archived done (stream-card ResearchPlanCard+ConsultResultCard added to Pantheon dev); AG-FE-RS-001 parent now in_progress on ResearchRunCard+BacktestResultCard+research.ts; stream-vs-route-backed boundary documented; Agora BFF consultation 501 stop line preserved.",
+      "status": "done",
+      "created_at": "2026-06-22T11:21:30Z",
+      "resolved_at": "2026-06-22T11:24:04Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-15",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only AG-FE-RS-001 follow-up 15 approved for parent owner intake.",
+      "status": "done",
+      "created_at": "2026-06-22T11:24:04Z",
+      "resolved_at": "2026-06-22T11:28:24Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31",
+  "archived_at": "2026-06-24T14:52:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31",
+    "title": "Prepare AG-FE-SW-002-R2 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-FE-SW-002-R2，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Redo-after-pathfix",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "FU-31 packet done: eleventh consecutive >24h-band packet, ~38s dispatch gap (new chain record), PR #2345 merged. Escalation notice updated (~37h29m elapsed, ~13h29m past 24h threshold). Loop halt reiterated. Single-action brief unchanged.",
+    "last_update": "2026-06-24T14:52:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-SW-002-R2",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-24T14:52:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-002-r2-sidecar-acceptance-followup-31",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31",
+      "git_clean_required": false,
+      "commit": "13b442de2715f1266630252058ffe8238621715a",
+      "commit_subject": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31: finalize packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Dispatch at 2026-06-24T14": "44:03Z (~38s after FU-30 archived — new shortest",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31",
+        "Reviewer": "Codex",
+        "Verified": "support artifact only; no runtime changes"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7d0b16214439a73991728bf00c0495b4f15ddb9d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "FU-31 packet complete and PR #2345 merged. Eleventh consecutive >24h-band packet (~38s dispatch gap — new chain record; ~37h29m elapsed; 24h threshold CROSSED ~13h29m ago). Please review and approve.",
+      "status": "done",
+      "created_at": "2026-06-24T14:52:05Z",
+      "resolved_at": "2026-06-24T14:52:20Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-31",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: followup-31 packet provides cadence-continued note with new-record-dispatch annotation (~38s from FU-30 archive to FU-31 dispatch — new shortest FU->FU gap in chain, surpassing prior ~19s record at FU-25->FU-26; no intervening commits on origin/dev; FU-30 had 2-PR production #2343/#2344 in ~8m anchor-to-final-merge), escalation window advance (~37h29m elapsed), eleventh consecutive >24h-band notice (~13h29m past 24h threshold), Human/Ops escalation continues to be warranted, reiterated supervisor loop halt recommendation, and single-action brief unchanged from FU7-FU30.",
+      "status": "done",
+      "created_at": "2026-06-24T14:52:20Z",
+      "resolved_at": "2026-06-24T14:52:30Z"
+    }
+  ],
+  "blockers": []
+}

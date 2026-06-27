@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-06-22T09:40:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare AG-FE-SW-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-SW-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 2",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-ID-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only AG-FE-SW-001 cross-repo BFF/frontend handoff follow-up merged via PR #2242 at 1f312800924886dea37d5037e218ad899985acf8 and closed for parent owner absorption.",
+    "last_update": "2026-06-22T09:40:57Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-SW-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up packet approved: it distinguishes merged Pantheon PR #2235, unmerged Pantheon branch 1bde7a60, and unchanged execute-plans PR #69; preserves runtime stop lines for readiness/cards/ETag writes; and lists the remaining parent source corrections without canonical/runtime/schema/frontend source changes."
+    ],
+    "review_file": "support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T09:40:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-001-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "1f312800924886dea37d5037e218ad899985acf8",
+      "commit_subject": "Merge pull request #2242 from ajoe734/task/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6": "add packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1f312800924886dea37d5037e218ad899985acf8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only follow-up BFF/frontend handoff packet is ready for review. Artifact: support/sidecars/AG-FE-SW-001/AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md. Commit: 9cd3ed10f19a6a15ff9af79580c4f9f56e0ccbd3. PR: https://github.com/ajoe734/pantheon/pull/2242 merged into dev at 1f312800924886dea37d5037e218ad899985acf8 with required checks green. Scope stayed support-only; no canonical/runtime/schema/execute-plans source changes. Validation: ASCII scan clean; new-file whitespace check clean; status/PR/ref readbacks recorded in packet.",
+      "status": "done",
+      "created_at": "2026-06-22T09:37:10Z",
+      "resolved_at": "2026-06-22T09:38:45Z"
+    },
+    {
+      "task_id": "AG-FE-SW-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-FE-SW-001 cross-repo BFF/frontend handoff follow-up approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-06-22T09:38:45Z",
+      "resolved_at": "2026-06-22T09:40:58Z"
+    }
+  ],
+  "blockers": []
+}

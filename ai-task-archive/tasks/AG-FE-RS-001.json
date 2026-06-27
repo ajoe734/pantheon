@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-RS-001",
+  "archived_at": "2026-06-22T12:30:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-RS-001",
+    "title": "Research plan/run/consult/backtest cards",
+    "summary_zh": "依 SD §11.2 做策略工坊的 ResearchPlanCard/ResearchRunCard/ConsultResultCard/BacktestResultCard,資料來自 AG-BE-RS-002 投影與 §7.4 backtest comparison 欄位;走 BFF client research.ts(live strict,禁止頁面直接 fetch)。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。 【UI 一律照設計稿,不要自己發想】凡與畫面有關(頁面、route、layout、component、widget、chart、互動、文案、樣式)必須嚴格依 SD §9/§10/§11/§12/§23 的 IA/版面/元件規格、design-closure A3 widget_registry/chart grammar,以及 V10/V11 視覺參考實作;沿用既有 design tokens 與共用元件,不得自創畫面、元件、版面、route 或自由發揮樣式。設計稿沒涵蓋到的畫面或互動,先開 blocker 問清楚再做。",
+    "phase": "EPIC AGORA-FE / Phase 3",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-SW-002",
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/components/ResearchRunCard.tsx",
+      "execute-plans/src/agora/components/BacktestResultCard.tsx",
+      "execute-plans/src/lib/bff-v1/agora/research.ts"
+    ],
+    "acceptance": [
+      "四種研究卡由 BFF 投影驅動且欄位對齊 §7.3/§7.4;live strict 無 fallback;附 UI 測試;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "ResearchRunCard, BacktestResultCard, and research BFF client delivered; Codex approved (Vitest 70/70, build:agora, contract:drift passed); PR #2264 merged into dev.",
+    "last_update": "2026-06-22T12:30:07Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "review_notes_zh": [
+      "Codex review approved: renderer wiring, card payloads, and research BFF client align with v4 workshop_card schema and v1.3 OpenAPI. Task-scoped Vitest 70/70, build:agora, and contract:drift passed. Full npm test has unrelated existing management/platform failures; owner closeout must open PR and refresh branch against origin/dev before done."
+    ],
+    "review_file": ".orchestrator/reviews/AG-FE-RS-001-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T12:30:07Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-rs-001",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "task/AG-FE-RS-001",
+      "git_clean_required": false,
+      "commit": "99e226ffbfd79208c3914b930ad966335097ad42",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-RS-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-RS-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5e9443297b250d298b5398f4aca52a8fe39fb479",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-RS-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Anchor commit 03f7e904. Delivered: ResearchRunCard.tsx (research_progress), BacktestResultCard.tsx (research_result), research.ts BFF client. All 43 new tests pass. Components field-for-field aligned with v4 workshop_card.schema.json. Backend mode always visibly labeled per B6/B10. WorkshopCardRenderer wiring NOT included (standalone-only per task scope). Reviewer: please verify v4 schema alignment and B6/B10 compliance.",
+      "status": "done",
+      "created_at": "2026-06-22T11:27:56Z",
+      "resolved_at": "2026-06-22T11:43:15Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Reviewer reopened: research.ts mutating methods omit required X-Request-Id from agora_v1_3 OpenAPI (create/approve/cancel/dispatch/cancel-run), and ResearchCommandResponse invents ok/request_id/idempotency_key instead of CommandResponse status/data/meta. Focused tests, build:agora, and contract:drift passed; full npm test still has unrelated existing management/BFF failures. Please fix and hand back.",
+      "status": "done",
+      "created_at": "2026-06-22T11:43:15Z",
+      "resolved_at": "2026-06-22T11:43:15Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Fixed both reviewer issues: (1) ResearchCommandResponse replaced with CommandResponse {status,data,meta} matching agora_v1_3 OpenAPI schema; (2) X-Request-Id header (requestId option) added to all 5 mutating methods (create/approve/cancel/dispatch/cancel-run). Added 22 focused tests. Verified: vitest 22/22, build:agora clean, contract:drift pass. Commit: daa2b971",
+      "status": "done",
+      "created_at": "2026-06-22T11:51:09Z",
+      "resolved_at": "2026-06-22T11:55:14Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: ResearchRunCard and BacktestResultCard are added/tested but never wired into WorkshopCardRenderer; research_progress/research_result still render old inline ResearchProgressCard/ResearchResultCard, so actual workshop UI does not use the delivered cards. Please import/wire the new components in WorkshopCardRenderer and add renderer-level tests proving research_progress -> ResearchRunCard and research_result -> BacktestResultCard. Reviewer validation run: npm test -- ResearchRunCard.test.tsx BacktestResultCard.test.tsx research.test.ts (65 passed); npm run build:agora (passed); npm run contract:drift (passed).",
+      "status": "done",
+      "created_at": "2026-06-22T11:55:14Z",
+      "resolved_at": "2026-06-22T11:55:14Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewer changes addressed: WorkshopCardRenderer now routes research_progress -> ResearchRunCard and research_result -> BacktestResultCard (removed inline duplicates). Added WorkshopCardRenderer.test.tsx with 5 renderer-level wiring tests. All 48 tests pass, build:agora passed, contract:drift passed. Commit 92cb60f4.",
+      "status": "done",
+      "created_at": "2026-06-22T12:00:26Z",
+      "resolved_at": "2026-06-22T12:06:14Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex review approved; owner Claude to finalize, open PR, refresh branch against origin/dev, and merge before done.",
+      "status": "done",
+      "created_at": "2026-06-22T12:06:14Z",
+      "resolved_at": "2026-06-22T12:30:08Z"
+    }
+  ],
+  "blockers": []
+}

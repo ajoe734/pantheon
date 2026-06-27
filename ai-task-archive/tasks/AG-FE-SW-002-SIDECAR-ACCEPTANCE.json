@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-002-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-22T10:38:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-002-SIDECAR-ACCEPTANCE",
+    "title": "Prepare AG-FE-SW-002 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-FE-SW-002，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 2",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-SW-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-SW-002/AG-FE-SW-002-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Done: support-only AG-FE-SW-002 acceptance packet approved by Claude; initial packet merged in PR #2250 at 6c79731763a2b3cf04bd3ac05f222fde07b4a78b; closeout evidence merged in PR #2251 at 2d21e031d1a2d72109876ad9169ab4a9c6b68946; validation: git diff --check -- support/sidecars/AG-FE-SW-002/AG-FE-SW-002-SIDECAR-ACCEPTANCE.md; GitHub checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance.",
+    "last_update": "2026-06-22T10:38:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-SW-002",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：v1.3 WorkshopCard 12 種 card_type 枚舉核實正確，無 evidence_summary/backtest_result 漂移；SSE 合約欄位、completeness rail display-state 與 grade-enum 邊界區分正確；dependency 狀態和 support-only 邊界符合要求。",
+      "後續追蹤：EvidenceSummary/BacktestResult 如需獨立 card type 請開 blocker/contract follow-up。"
+    ],
+    "review_file": "support/sidecars/AG-FE-SW-002/AG-FE-SW-002-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T10:38:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-002-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-SW-002-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "35c433633688d351b0f6964f79205e33235597c4",
+      "commit_subject": "AG-FE-SW-002-SIDECAR-ACCEPTANCE: record closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only closeout state in the AG-FE-SW-002 acceptance packet.",
+        "Not changing": "L1 canonical truth, OpenAPI/schema truth, BFF runtime, frontend runtime, registry, governance, or execute-plans source.",
+        "Composes with": "initial reviewed packet delivery in PR #2250 and parent AG-FE-SW-002 implementation/review flow.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-SW-002-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- support/sidecars/AG-FE-SW-002/AG-FE-SW-002-SIDECAR-ACCEPTANCE.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-002-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2d21e031d1a2d72109876ad9169ab4a9c6b68946",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-002-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only acceptance packet is merged via PR #2250 (merge 6c79731763a2b3cf04bd3ac05f222fde07b4a78b). Please review support/sidecars/AG-FE-SW-002/AG-FE-SW-002-SIDECAR-ACCEPTANCE.md for v1.3 WorkshopCard/SSE contract accuracy, dependency state, completeness rail state-map boundary, and the EvidenceSummary/BacktestResult enum-drift guardrail.",
+      "status": "done",
+      "created_at": "2026-06-22T10:30:03Z",
+      "resolved_at": "2026-06-22T10:32:04Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: AG-FE-SW-002 acceptance packet captures v1.3 workshop card/SSE contracts, dependency state, completeness rail state-map boundary, no invented card enums, and support-only scope.",
+      "status": "done",
+      "created_at": "2026-06-22T10:32:04Z",
+      "resolved_at": "2026-06-22T10:38:06Z"
+    }
+  ],
+  "blockers": []
+}
