@@ -135,6 +135,11 @@ from source_search_ops_client import (
     SourceIngestCommandClient,
     SourceSearchOpsClientError,
 )
+from loop_inventory import (
+    get_loop_inventory_entry,
+    list_loop_inventory_entries,
+    loop_inventory_meta,
+)
 from read_store import ReadSurfaceStore, redact_evidence_refs
 from settings_store import SettingsStore
 
@@ -47957,6 +47962,58 @@ async def bff_v5_sentinel_findings_list(
     src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
     source = None if available else "missing"
     return _sem_final_list_response(records, dataset=src_dataset, surface_key="sentinel_findings", source=source)
+
+
+# -- V5 Loop inventory -------------------------------------------------------
+
+def _loop_inventory_response_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
+    meta = dict(payload.get("meta") or {})
+    surfaces = meta.setdefault("surfaces", {})
+    surface = surfaces.setdefault("loop_inventory", {})
+    surface.update(
+        {
+            "truth_level": "registry_metadata",
+            "registry_ref": "docs/deployment/loop-catalog.registry.json",
+            "note": "Static loop catalog read model; live_status is false unless live evidence is present.",
+        }
+    )
+    meta["catalog"] = loop_inventory_meta()
+    payload["meta"] = meta
+    return payload
+
+
+@app.get("/bff/v5/loop-inventory")
+async def bff_v5_loop_inventory(
+    authorization: Optional[str] = Header(default=None),
+):
+    """List the current SA-21 loop inventory from the static loop catalog registry."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    records = list_loop_inventory_entries()
+    payload = _sem_final_list_response(
+        records,
+        dataset="loop_inventory",
+        surface_key="loop_inventory",
+        source="bff_local_registry",
+    )
+    return _loop_inventory_response_meta(payload)
+
+
+@app.get("/bff/v5/loop-inventory/{loop_id}")
+async def bff_v5_loop_inventory_detail(
+    loop_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Get one loop from the current SA-21 inventory read model."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    payload = _sem_final_registry_detail(
+        get_loop_inventory_entry(loop_id),
+        entity_id=loop_id,
+        label="Loop inventory entry",
+        surface_key="loop_inventory",
+    )
+    return _loop_inventory_response_meta(payload)
 
 
 # -- V5 Loop-runs ------------------------------------------------------------

@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-001",
+  "archived_at": "2026-06-27T13:32:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-001",
+    "title": "Publish current loop inventory read model",
+    "summary_zh": "把 SA-21 inventory 發布成 BFF/operator 可讀的 read model，讓每條 loop 的 maturity 與 evidence 狀態不再只藏在文件裡。",
+    "phase": "Global Loop Autopilot / Wave 0 Inventory Substrate",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-000"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "docs/deployment/evidence",
+      "ai-status.json"
+    ],
+    "acceptance": [
+      "Loop inventory is queryable by operator surfaces",
+      "Read model includes current maturity target maturity owner and evidence",
+      "Read model does not mark any loop live without evidence"
+    ],
+    "next": "PR #2409 merged as c439af2b; focused loop inventory suite passed 13 tests after dev refresh; read model published with live-status guard.",
+    "last_update": "2026-06-27T13:32:30Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "all"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "SA-21 loop table"
+    ],
+    "actual_state_sources": [
+      "loop catalog read model"
+    ],
+    "wave_id": "Wave 0 Inventory Substrate",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Claude approved LOOP-AUTO-001 on 2026-06-27: 13 focused tests passed, live_status guard verified, read model boundary correct; owner refreshed PR #2409 before done."
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-001/review_loop_auto_001_claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T13:32:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-001",
+      "git_clean_required": false,
+      "commit": "a453caf8bb6170152607ea4d2586871930d4080d",
+      "commit_subject": "LOOP-AUTO-001: update closeout refresh note",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "LOOP-AUTO-001 task evidence note.",
+        "Not changing": "BFF loop inventory behavior, catalog data, or reviewer approval artifact.",
+        "Composes with": "refreshed PR #2409 branch after merging origin/dev.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOOP-AUTO-001",
+        "Reviewer": "Claude",
+        "Verified": "pytest focused loop catalog and BFF loop inventory route suite (13 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c439af2bb49a04dd228f7972219b3f65633a88ef",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-001 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:29Z",
+      "resolved_at": "2026-06-27T12:58:41Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for review: PR #2409 publishes GET /bff/v5/loop-inventory and detail route from docs/deployment/loop-catalog.registry.json; local validation: pytest focused loop catalog/BFF route suite => 13 passed; branch c55bf1d7 is merged with latest origin/dev and auto-merge is enabled pending GitHub checks/review.",
+      "status": "done",
+      "created_at": "2026-06-27T13:22:50Z",
+      "resolved_at": "2026-06-27T13:25:52Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: 13 tests pass, live_status guard verified, read model boundary correct. PR #2409 is BEHIND — owner must refresh branch before merge and done.",
+      "status": "done",
+      "created_at": "2026-06-27T13:25:52Z",
+      "resolved_at": "2026-06-27T13:32:31Z"
+    }
+  ],
+  "blockers": []
+}

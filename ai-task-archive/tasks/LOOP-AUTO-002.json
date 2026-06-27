@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-002",
+  "archived_at": "2026-06-27T13:28:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-002",
+    "title": "Add completion guardrails for loop claims",
+    "summary_zh": "新增完成宣告 guardrail，阻止 worker 只靠 route、seed、fixture 或 panel copy 宣稱 loop 已完成。",
+    "phase": "Global Loop Autopilot / Wave 0 Inventory Substrate",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-000"
+    ],
+    "artifacts": [
+      "scripts",
+      "docs/conventions",
+      "ai-status.json"
+    ],
+    "acceptance": [
+      "Done claims require controller liveness and evidence fields",
+      "Panel-only closure is rejected or flagged",
+      "Guardrail is documented for supervisor and auto-worker dispatch"
+    ],
+    "next": "Guardrail deliverables merged via PR #2412 and #2417: validate_loop_completion_claim gate in ai_status.py (with owner REVIEW_FILE support at done time), loop_done_guardrail.py audit tool, LOOP_COMPLETION_GUARDRAILS.md policy doc, 26 unit tests pass, evidence file in docs/deployment/evidence/loop-auto-002/README.md.",
+    "last_update": "2026-06-27T13:28:07Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "all"
+    ],
+    "current_maturity": "manual",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "SA-21 dispatch rules"
+    ],
+    "actual_state_sources": [
+      "task closeout metadata",
+      "commit trailers",
+      "evidence packet"
+    ],
+    "wave_id": "Wave 0 Inventory Substrate",
+    "mutates_canonical": true,
+    "review_file": "docs/deployment/evidence/loop-auto-002/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T13:28:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-002",
+      "git_clean_required": false,
+      "commit": "5c1a6480a4a6029b01f8983eebbb2b673ec24213",
+      "commit_subject": "LOOP-AUTO-002: add owner-side REVIEW_FILE support and evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "scripts/ai_status.py (command_done REVIEW_FILE patch),",
+        "Not changing": "validate_loop_completion_claim logic or approval flow.",
+        "Composes with": "ef5ccba0 (original guardrail implementation).",
+        "Verified": "python3 -m pytest scripts/test_loop_done_guardrail.py (26 passed)",
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-AUTO-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1c8edbfaca826e08ad76a9120b434625067b591a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All three acceptance criteria addressed: (1) validate_loop_completion_claim() in command_done requires review_file and checks proof_required for loop tasks; (2) panel-only and fixture-only closures are rejected with descriptive SystemExit messages; (3) LOOP_COMPLETION_GUARDRAILS.md documents the policy for supervisor and auto-worker dispatch. 26 new tests + 59 existing tests green.",
+      "status": "done",
+      "created_at": "2026-06-27T13:04:57Z",
+      "resolved_at": "2026-06-27T13:08:20Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review passed; evidence gate verified",
+      "status": "done",
+      "created_at": "2026-06-27T13:08:20Z",
+      "resolved_at": "2026-06-27T13:28:08Z"
+    }
+  ],
+  "blockers": []
+}
