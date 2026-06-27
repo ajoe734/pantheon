@@ -40,7 +40,15 @@ def _first_existing(paths: List[Path]) -> Optional[Path]:
 
 def _record_key(record: Dict[str, Any], candidates: List[str]) -> Optional[str]:
     for key in candidates:
-        value = record.get(key)
+        if "." in key:
+            value: Any = record
+            for part in key.split("."):
+                if not isinstance(value, dict):
+                    value = None
+                    break
+                value = value.get(part)
+        else:
+            value = record.get(key)
         if value not in (None, ""):
             return str(value)
     return None
@@ -2117,6 +2125,15 @@ def _records_from_http_payload(payload: Any, *, list_key: Optional[str]) -> Any:
     return payload
 
 
+def _records_from_envelope(payload: Any, spec: Dict[str, Any]) -> Any:
+    envelope_key = str(spec.get("envelope_key") or "").strip()
+    if envelope_key and isinstance(payload, dict):
+        nested = payload.get(envelope_key)
+        if nested is not None:
+            return nested
+    return payload
+
+
 class CanonicalSnapshotAdapter:
     """Best-effort adapter over canonical governance/runtime JSON snapshots.
 
@@ -2133,6 +2150,22 @@ class CanonicalSnapshotAdapter:
             "filenames": ("deployment_plans.json",),
             "keys": ["plan_id", "id"],
             "snapshot_key": "deployment_plans",
+        },
+        "deployment_sagas": {
+            "env": "PANTHEON_BFF_DEPLOYMENT_SAGA_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR",),
+            "filenames": ("deployment_sagas.json",),
+            "keys": ["saga_id", "id"],
+            "snapshot_key": "deployment_sagas",
+            "envelope_key": "sagas",
+        },
+        "deployment_saga_outbox": {
+            "env": "PANTHEON_BFF_DEPLOYMENT_SAGA_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR",),
+            "filenames": ("deployment_sagas.json",),
+            "keys": ["event.event_id", "event_id", "id"],
+            "snapshot_key": "deployment_saga_outbox",
+            "envelope_key": "outbox",
         },
         "approval_decisions": {
             "env": "PANTHEON_BFF_APPROVAL_DECISION_STORE",
@@ -2326,6 +2359,7 @@ class CanonicalSnapshotAdapter:
                         return True, self._cache.get(dataset, {})
                     text = explicit_path.read_text(encoding="utf-8").strip()
                     payload = json.loads(text) if text else {}
+                    payload = _records_from_envelope(payload, spec)
                     normalized = _normalize_records(payload, spec["keys"])
                     self._cache[dataset] = normalized
                     self._cache_meta[dataset] = (cache_key, stat)
@@ -2345,6 +2379,7 @@ class CanonicalSnapshotAdapter:
 
             text = path.read_text(encoding="utf-8").strip()
             payload = json.loads(text) if text else {}
+            payload = _records_from_envelope(payload, self._DATASETS[dataset])
             normalized = _normalize_records(payload, self._DATASETS[dataset]["keys"])
             self._cache[dataset] = normalized
             self._cache_meta[dataset] = (cache_key, stat)
@@ -10124,11 +10159,12 @@ class ReadSurfaceStore:
     def _project_canonical_deployment_plan(
         raw: Dict[str, Any],
         runtime_binding_id: Optional[str],
+        saga_progress: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         plan_id = str(raw.get("plan_id") or raw.get("id") or "")
         binding_id = raw.get("binding_id")
         binding_ids = [str(binding_id)] if binding_id else []
-        return {
+        projected = {
             "id": plan_id,
             "plan_id": plan_id,
             "stage": raw.get("target_stage") or raw.get("stage") or raw.get("current_stage"),
@@ -10158,6 +10194,15 @@ class ReadSurfaceStore:
                 )
             ),
         }
+        if saga_progress is not None:
+            projected["deployment_saga_id"] = saga_progress.get("saga_id")
+            projected["deployment_saga_status"] = saga_progress.get("saga_status")
+            projected["saga_progress"] = json.loads(json.dumps(saga_progress))
+            projected["saga_progress_status"] = saga_progress.get("progress_status")
+            projected["blocked_reason"] = saga_progress.get("blocked_reason")
+            projected["retry_state"] = json.loads(json.dumps(saga_progress.get("retry_state") or []))
+            projected["dlq_count"] = saga_progress.get("dlq_count", 0)
+        return projected
 
     @staticmethod
     def _project_canonical_approval_decision(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -10633,6 +10678,121 @@ class ReadSurfaceStore:
             bindings = [b for b in bindings if b.get("validity") == validity]
         return sorted(bindings, key=lambda x: x.get("id", ""))
 
+    def _deployment_saga_progress_for_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        available, sagas = self._canonical.list_records("deployment_sagas")
+        if not available:
+            return None
+        matches = [
+            saga
+            for saga in sagas
+            if str(saga.get("plan_id") or "") == plan_id
+        ]
+        if not matches:
+            return None
+        saga = sorted(
+            matches,
+            key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+            reverse=True,
+        )[0]
+        saga_id = str(saga.get("saga_id") or saga.get("id") or "")
+        outbox_available, outbox = self._canonical.list_records("deployment_saga_outbox")
+        saga_outbox = [
+            record
+            for record in (outbox if outbox_available else [])
+            if str((record.get("event") or {}).get("aggregate_id") or "") == saga_id
+        ]
+        return self._project_deployment_saga_progress(saga, saga_outbox)
+
+    @staticmethod
+    def _project_deployment_saga_progress(
+        saga: Dict[str, Any],
+        outbox: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        saga_status = str(saga.get("status") or "")
+        dlq_records = [
+            record
+            for record in outbox
+            if str(record.get("status") or "").lower() == "dead_lettered"
+        ]
+        if saga_status == "completed":
+            progress_status = "completed"
+        elif saga_status in {"failed", "aborted"}:
+            progress_status = "failed"
+        elif dlq_records:
+            progress_status = "blocked"
+        elif saga_status == "awaiting_binding" and int(saga.get("last_sequence_no") or 0) <= 1:
+            progress_status = "pending"
+        else:
+            progress_status = "running"
+
+        blocked_reason = None
+        if dlq_records:
+            blocked = sorted(
+                dlq_records,
+                key=lambda item: int((item.get("event") or {}).get("sequence_no") or 0),
+            )[-1]
+            blocked_reason = blocked.get("blocked_reason") or blocked.get("last_error")
+        elif saga.get("failure_reason"):
+            blocked_reason = saga.get("failure_reason")
+
+        retry_state = []
+        for record in sorted(
+            outbox,
+            key=lambda item: int((item.get("event") or {}).get("sequence_no") or 0),
+        ):
+            event = record.get("event") if isinstance(record.get("event"), dict) else {}
+            retry_state.append(
+                {
+                    "event_id": event.get("event_id"),
+                    "event_type": event.get("event_type"),
+                    "sequence_no": event.get("sequence_no"),
+                    "status": record.get("status"),
+                    "delivery_attempts": record.get("delivery_attempts", 0),
+                    "replay_count": record.get("replay_count", 0),
+                    "last_error": record.get("last_error"),
+                    "last_attempt_at": record.get("last_attempt_at"),
+                    "next_retry_at": record.get("next_retry_at"),
+                    "blocked_reason": record.get("blocked_reason"),
+                    "dlq_at": record.get("dlq_at"),
+                    "last_replayed_at": record.get("last_replayed_at"),
+                    "retry_policy": json.loads(json.dumps(record.get("retry_policy") or {})),
+                }
+            )
+
+        latest_policy = next(
+            (
+                item.get("retry_policy")
+                for item in reversed(retry_state)
+                if isinstance(item.get("retry_policy"), dict) and item.get("retry_policy")
+            ),
+            {},
+        )
+        return {
+            "saga_id": saga.get("saga_id") or saga.get("id"),
+            "plan_id": saga.get("plan_id"),
+            "progress_status": progress_status,
+            "saga_status": saga_status,
+            "current_step": saga.get("current_step"),
+            "blocked_reason": blocked_reason,
+            "retry_policy": {
+                "max_attempts": int(latest_policy.get("max_attempts") or 3),
+                "retry_delay_seconds": int(latest_policy.get("retry_delay_seconds") or 0),
+                "retryable": bool(latest_policy.get("retryable", True)),
+            },
+            "retry_state": retry_state,
+            "completed_steps": [
+                str(item.get("step"))
+                for item in saga.get("history", [])
+                if isinstance(item, dict) and item.get("step")
+            ],
+            "pending_event_count": sum(
+                1
+                for record in outbox
+                if str(record.get("status") or "").lower() == "pending"
+            ),
+            "dlq_count": len(dlq_records),
+        }
+
     def list_deployment_plans(
         self,
         status: Optional[str] = None,
@@ -10655,7 +10815,13 @@ class ReadSurfaceStore:
                 runtime_binding_id = None
                 if runtime_binding:
                     runtime_binding_id = str(runtime_binding.get("binding_id") or runtime_binding.get("id") or "")
-                plans.append(self._project_canonical_deployment_plan(raw, runtime_binding_id))
+                plans.append(
+                    self._project_canonical_deployment_plan(
+                        raw,
+                        runtime_binding_id,
+                        saga_progress=self._deployment_saga_progress_for_plan(plan_id),
+                    )
+                )
         else:
             plans = list((self._local_fallback("deployment_plans") or {}).values())
         local_plans = self._local_overlay_records("deployment_plans")
@@ -10882,7 +11048,11 @@ class ReadSurfaceStore:
             runtime_binding_id = None
             if runtime_binding:
                 runtime_binding_id = str(runtime_binding.get("binding_id") or runtime_binding.get("id") or "")
-            return self._project_canonical_deployment_plan(raw, runtime_binding_id or None)
+            return self._project_canonical_deployment_plan(
+                raw,
+                runtime_binding_id or None,
+                saga_progress=self._deployment_saga_progress_for_plan(plan_id),
+            )
         return (self._local_fallback("deployment_plans") or {}).get(plan_id)
 
     def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:

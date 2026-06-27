@@ -203,6 +203,15 @@ class OutboxStatusBody(str, Enum):
     PENDING = "pending"
     PUBLISHED = "published"
     FAILED = "failed"
+    DEAD_LETTERED = "dead_lettered"
+
+
+class SagaProgressStatusBody(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+    COMPLETED = "completed"
 
 
 class ReceiptStatusBody(str, Enum):
@@ -246,8 +255,15 @@ class OutboxRecordBody(BaseModel):
     event: SagaEventEnvelopeBody
     status: OutboxStatusBody
     delivery_attempts: int
+    replay_count: int = 0
     published_at: Optional[str] = None
     last_error: Optional[str] = None
+    last_attempt_at: Optional[str] = None
+    next_retry_at: Optional[str] = None
+    blocked_reason: Optional[str] = None
+    dlq_at: Optional[str] = None
+    last_replayed_at: Optional[str] = None
+    retry_policy: Optional[Dict[str, Any]] = None
 
 
 class InboxReceiptBody(BaseModel):
@@ -302,6 +318,43 @@ class DeploymentSagaBody(BaseModel):
     history: List[SagaStepRecordBody] = Field(default_factory=list)
 
 
+class DeploymentSagaRetryPolicyBody(BaseModel):
+    max_attempts: int
+    retry_delay_seconds: int = 0
+    retryable: bool = True
+
+
+class DeploymentOutboxRetryStateBody(BaseModel):
+    event_id: str
+    event_type: str
+    sequence_no: int
+    status: OutboxStatusBody
+    delivery_attempts: int
+    replay_count: int = 0
+    published_at: Optional[str] = None
+    last_error: Optional[str] = None
+    last_attempt_at: Optional[str] = None
+    next_retry_at: Optional[str] = None
+    blocked_reason: Optional[str] = None
+    dlq_at: Optional[str] = None
+    last_replayed_at: Optional[str] = None
+    retry_policy: Optional[Dict[str, Any]] = None
+
+
+class DeploymentSagaProgressBody(BaseModel):
+    saga_id: str
+    plan_id: str
+    progress_status: SagaProgressStatusBody
+    saga_status: SagaStatusBody
+    current_step: SagaStepBody
+    blocked_reason: Optional[str] = None
+    retry_policy: DeploymentSagaRetryPolicyBody
+    retry_state: List[DeploymentOutboxRetryStateBody] = Field(default_factory=list)
+    completed_steps: List[str] = Field(default_factory=list)
+    pending_event_count: int = 0
+    dlq_count: int = 0
+
+
 class DeploymentSagaBootstrapBody(BaseModel):
     saga: DeploymentSagaBody
     outbox_event: OutboxRecordBody
@@ -334,6 +387,7 @@ class DeploymentProjectionReadModelResponse(BaseModel):
     runtime_status: Optional[str] = None
     deployment_saga_id: Optional[str] = None
     deployment_saga_status: Optional[str] = None
+    deployment_saga_progress: Optional[DeploymentSagaProgressBody] = None
     lifecycle_state: str
     source_status: Dict[str, str] = Field(default_factory=dict)
     summary: Dict[str, Any] = Field(default_factory=dict)
@@ -385,6 +439,23 @@ class RecordRuntimeActiveRequest(BaseModel):
 class RecordSagaFailureRequest(BaseModel):
     reason: str
     failed_step: Optional[SagaStepBody] = None
+
+
+class RecordOutboxFailureRequest(BaseModel):
+    consumer_name: str
+    reason: str
+    retryable: bool = True
+    max_attempts: Optional[int] = None
+    retry_delay_seconds: Optional[int] = None
+
+
+class ReplayOutboxEventRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class ReplayOutboxEventResponse(BaseModel):
+    event: OutboxRecordBody
+    replayed: bool
 
 
 class FinalizeCompensationRequest(BaseModel):

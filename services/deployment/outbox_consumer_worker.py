@@ -19,6 +19,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -69,23 +70,119 @@ def consume_event(
     return json.loads(body) if body else {}
 
 
+def record_delivery_failure(
+    *,
+    api_url: str,
+    event_id: str,
+    consumer_name: str,
+    reason: str,
+    retryable: bool,
+    max_attempts: int,
+    retry_delay_seconds: int,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Persist one failed delivery attempt into the deployment outbox record."""
+    url = api_url.rstrip("/") + f"/api/deployment/outbox/{event_id}/failure"
+    payload = json.dumps(
+        {
+            "consumer_name": consumer_name,
+            "reason": reason,
+            "retryable": retryable,
+            "max_attempts": max_attempts,
+            "retry_delay_seconds": retry_delay_seconds,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
+def _parse_rfc3339(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _retry_due(record: dict[str, Any]) -> bool:
+    next_retry = _parse_rfc3339(record.get("next_retry_at"))
+    if next_retry is None:
+        return True
+    return next_retry <= datetime.now(timezone.utc)
+
+
+def _http_error_retryable(exc: urllib.error.HTTPError) -> bool:
+    if exc.code in {408, 409, 425, 429}:
+        return True
+    return 500 <= exc.code <= 599
+
+
+def _record_failure_best_effort(
+    *,
+    api_url: str,
+    event_id: str,
+    consumer_name: str,
+    reason: str,
+    retryable: bool,
+    max_attempts: int,
+    retry_delay_seconds: int,
+    timeout_seconds: float,
+) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        return (
+            record_delivery_failure(
+                api_url=api_url,
+                event_id=event_id,
+                consumer_name=consumer_name,
+                reason=reason,
+                retryable=retryable,
+                max_attempts=max_attempts,
+                retry_delay_seconds=retry_delay_seconds,
+                timeout_seconds=timeout_seconds,
+            ),
+            None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, str(exc)
+
+
 def run_poll(
     *,
     api_url: str,
     consumer_name: str,
     timeout_seconds: float = 10.0,
+    record_failures: bool = False,
+    max_attempts: int = 3,
+    retry_delay_seconds: int = 30,
 ) -> dict[str, Any]:
     """
     Fetch pending outbox events and consume each one.
 
-    Returns a summary: events_found, consumed, duplicates, errors.
+    Returns a summary: events_found, consumed, duplicates, errors, retry_scheduled, dead_lettered.
     """
     events = fetch_pending_outbox(api_url=api_url, timeout_seconds=timeout_seconds)
     consumed = 0
     duplicates = 0
+    skipped_not_due = 0
+    retry_scheduled = 0
+    dead_lettered = 0
     errors: list[str] = []
 
     for record in events:
+        if not _retry_due(record):
+            skipped_not_due += 1
+            continue
         event = record.get("event", {})
         event_id = event.get("event_id", "")
         if not event_id:
@@ -108,14 +205,53 @@ def run_poll(
                     f"event_id={event_id} unexpected_receipt_status={receipt_status!r}"
                 )
         except urllib.error.HTTPError as exc:
-            errors.append(f"event_id={event_id} http_error={exc.code} {exc.reason}")
+            reason = f"event_id={event_id} http_error={exc.code} {exc.reason}"
+            errors.append(reason)
+            if record_failures:
+                failure_record, failure_error = _record_failure_best_effort(
+                    api_url=api_url,
+                    event_id=event_id,
+                    consumer_name=consumer_name,
+                    reason=reason,
+                    retryable=_http_error_retryable(exc),
+                    max_attempts=max_attempts,
+                    retry_delay_seconds=retry_delay_seconds,
+                    timeout_seconds=timeout_seconds,
+                )
+                if failure_error:
+                    errors.append(f"event_id={event_id} failure_record_error={failure_error}")
+                elif failure_record and failure_record.get("status") == "dead_lettered":
+                    dead_lettered += 1
+                else:
+                    retry_scheduled += 1
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"event_id={event_id} error={exc}")
+            reason = f"event_id={event_id} error={exc}"
+            errors.append(reason)
+            if record_failures:
+                failure_record, failure_error = _record_failure_best_effort(
+                    api_url=api_url,
+                    event_id=event_id,
+                    consumer_name=consumer_name,
+                    reason=reason,
+                    retryable=True,
+                    max_attempts=max_attempts,
+                    retry_delay_seconds=retry_delay_seconds,
+                    timeout_seconds=timeout_seconds,
+                )
+                if failure_error:
+                    errors.append(f"event_id={event_id} failure_record_error={failure_error}")
+                elif failure_record and failure_record.get("status") == "dead_lettered":
+                    dead_lettered += 1
+                else:
+                    retry_scheduled += 1
 
     return {
         "events_found": len(events),
         "consumed": consumed,
         "duplicates": duplicates,
+        "skipped_not_due": skipped_not_due,
+        "retry_scheduled": retry_scheduled,
+        "dead_lettered": dead_lettered,
         "errors": errors,
     }
 
@@ -134,6 +270,8 @@ def main() -> int:
     interval_seconds = _env_int("DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS", 10, minimum=1)
     max_ticks = _env_int("DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS", 0, minimum=0)
     timeout_seconds = float(os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_TIMEOUT_SECONDS", "10"))
+    max_attempts = _env_int("DEPLOYMENT_OUTBOX_CONSUMER_MAX_ATTEMPTS", 3, minimum=1)
+    retry_delay_seconds = _env_int("DEPLOYMENT_OUTBOX_CONSUMER_RETRY_DELAY_SECONDS", 30, minimum=0)
     health_file = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", "")
 
     health: dict[str, Any] = {
@@ -142,10 +280,16 @@ def main() -> int:
         "total_consumed": 0,
         "total_duplicates": 0,
         "total_errors": 0,
+        "total_retry_scheduled": 0,
+        "total_dead_lettered": 0,
         "ticks": 0,
         "last_success": None,
         "last_failure": None,
         "last_failure_reason": None,
+        "retry_policy": {
+            "max_attempts": max_attempts,
+            "retry_delay_seconds": retry_delay_seconds,
+        },
     }
 
     tick = 0
@@ -156,10 +300,15 @@ def main() -> int:
                 api_url=api_url,
                 consumer_name=consumer_name,
                 timeout_seconds=timeout_seconds,
+                record_failures=True,
+                max_attempts=max_attempts,
+                retry_delay_seconds=retry_delay_seconds,
             )
             health["ticks"] = tick
             health["total_consumed"] += result["consumed"]
             health["total_duplicates"] += result["duplicates"]
+            health["total_retry_scheduled"] += result["retry_scheduled"]
+            health["total_dead_lettered"] += result["dead_lettered"]
             if result["errors"]:
                 health["total_errors"] += len(result["errors"])
                 health["status"] = "degraded"
@@ -177,7 +326,15 @@ def main() -> int:
             health["status"] = "degraded"
             health["last_failure"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             health["last_failure_reason"] = str(exc)
-            result = {"events_found": 0, "consumed": 0, "duplicates": 0, "errors": [str(exc)]}
+            result = {
+                "events_found": 0,
+                "consumed": 0,
+                "duplicates": 0,
+                "skipped_not_due": 0,
+                "retry_scheduled": 0,
+                "dead_lettered": 0,
+                "errors": [str(exc)],
+            }
             if health_file:
                 _write_health(health_file, health)
 

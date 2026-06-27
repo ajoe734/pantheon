@@ -201,6 +201,9 @@ class TestRunPoll:
             "events_found": 0,
             "consumed": 0,
             "duplicates": 0,
+            "skipped_not_due": 0,
+            "retry_scheduled": 0,
+            "dead_lettered": 0,
             "errors": [],
         }
 
@@ -300,6 +303,78 @@ class TestRunPoll:
         assert result["errors"] != []
         assert "evt-err" in result["errors"][0]
 
+    def test_failed_delivery_can_be_persisted_for_retry(self, worker):
+        records = [_outbox_record("evt-retry")]
+
+        def _consume(**_kwargs):
+            raise RuntimeError("network timeout")
+
+        failure_record = _outbox_record("evt-retry")
+        failure_record["delivery_attempts"] = 1
+        failure_record["last_error"] = "event_id=evt-retry error=network timeout"
+        failure_record["status"] = "pending"
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=records),
+            patch.object(worker, "consume_event", side_effect=_consume),
+            patch.object(worker, "record_delivery_failure", return_value=failure_record) as mock_failure,
+        ):
+            result = worker.run_poll(
+                api_url="http://localhost:8095",
+                consumer_name="test-consumer",
+                record_failures=True,
+                max_attempts=3,
+                retry_delay_seconds=5,
+            )
+
+        assert result["retry_scheduled"] == 1
+        assert result["dead_lettered"] == 0
+        mock_failure.assert_called_once()
+        assert mock_failure.call_args.kwargs["max_attempts"] == 3
+        assert mock_failure.call_args.kwargs["retry_delay_seconds"] == 5
+
+    def test_failed_delivery_counts_dead_lettered_record(self, worker):
+        records = [_outbox_record("evt-dlq")]
+
+        def _consume(**_kwargs):
+            raise RuntimeError("terminal payload error")
+
+        failure_record = _outbox_record("evt-dlq")
+        failure_record["delivery_attempts"] = 3
+        failure_record["last_error"] = "event_id=evt-dlq error=terminal payload error"
+        failure_record["status"] = "dead_lettered"
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=records),
+            patch.object(worker, "consume_event", side_effect=_consume),
+            patch.object(worker, "record_delivery_failure", return_value=failure_record),
+        ):
+            result = worker.run_poll(
+                api_url="http://localhost:8095",
+                consumer_name="test-consumer",
+                record_failures=True,
+                max_attempts=3,
+                retry_delay_seconds=5,
+            )
+
+        assert result["retry_scheduled"] == 0
+        assert result["dead_lettered"] == 1
+
+    def test_pending_event_with_future_retry_is_skipped(self, worker):
+        record = _outbox_record("evt-wait")
+        record["next_retry_at"] = "2999-01-01T00:00:00Z"
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(worker, "consume_event") as mock_consume,
+        ):
+            result = worker.run_poll(
+                api_url="http://localhost:8095",
+                consumer_name="test-consumer",
+            )
+
+        assert result["skipped_not_due"] == 1
+        mock_consume.assert_not_called()
+
     def test_missing_event_id_recorded_as_error(self, worker):
         bad_record = {"event": {}, "status": "pending"}
         with patch.object(worker, "fetch_pending_outbox", return_value=[bad_record]):
@@ -390,6 +465,7 @@ class TestMain:
         with (
             patch.object(worker, "fetch_pending_outbox", return_value=records),
             patch.object(worker, "consume_event", side_effect=_failing_consume),
+            patch.object(worker, "record_delivery_failure", return_value={"status": "pending"}),
             patch("time.sleep"),
         ):
             worker.main()
