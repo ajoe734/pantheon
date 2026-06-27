@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude
 - Reviewer: Codex
-- Next: Review passed; evidence gate verified
+- Next: Supervisor resumed LOOP-AUTO-002 for finalize after successful dispatch.
 
 ## Summary
 新增完成宣告 guardrail，阻止 worker 只靠 route、seed、fixture 或 panel copy 宣稱 loop 已完成。
