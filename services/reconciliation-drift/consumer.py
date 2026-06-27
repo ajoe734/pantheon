@@ -251,6 +251,12 @@ def build_drift_report_from_event(
     runtime_id = str(normalized.get("runtime_id") or "").strip()
     scope_ref = binding_id or runtime_id or event_id or report_id
     deployment_stage = str(normalized.get("deployment_stage") or normalized.get("mode") or "").strip().lower() or None
+    deployment_plan_id = str(normalized.get("deployment_plan_id") or normalized.get("plan_id") or "").strip()
+    capital_pool_id = str(normalized.get("capital_pool_id") or "").strip()
+    persona_capital_binding_id = str(
+        normalized.get("persona_capital_binding_id") or normalized.get("persona_binding_id") or ""
+    ).strip()
+    trace_id = str(normalized.get("trace_id") or "").strip()
     baseline_ref = str(normalized.get("baseline_ref") or normalized.get("paper_baseline_ref") or "telemetry_fixture_baseline")
     current_ref = str(normalized.get("current_ref") or normalized.get("actual_ref") or event_id or report_id)
 
@@ -264,19 +270,33 @@ def build_drift_report_from_event(
     if artifact_id:
         artifact_ref = artifact_id if not artifact_version else f"{artifact_id}@{artifact_version}"
         evidence_refs.append(f"artifact:{artifact_ref}")
+    evidence_refs.append(f"drift_report:{report_id}")
+    evidence_refs.append(f"reconciliation_record:{recon_run_id}")
     for ref in normalized.get("evidence_refs") or []:
         if isinstance(ref, str):
             evidence_refs.append(ref)
+
+    cluster_id = str(normalized.get("incident_cluster_id") or "").strip()
+    if not cluster_id:
+        cluster_id = f"drift:{_safe_id(str(worst_check['metric']))}"
 
     return {
         "id": report_id,
         "drift_report_id": report_id,
         "recon_run_id": recon_run_id,
         "drift_type": _drift_type_for_metric(str(worst_check["metric"])),
+        "incident_cluster_id": cluster_id,
         "scope_ref": scope_ref,
         "binding_id": binding_id or None,
         "runtime_id": runtime_id or None,
         "deployment_stage": deployment_stage,
+        "deployment_plan_id": deployment_plan_id or None,
+        "capital_pool_id": capital_pool_id or None,
+        "persona_capital_binding_id": persona_capital_binding_id or None,
+        "artifact_id": artifact_id or None,
+        "artifact_version": artifact_version or None,
+        "trace_id": trace_id or None,
+        "telemetry_event_ids": [event_id] if event_id else [],
         "baseline_ref": baseline_ref,
         "current_ref": current_ref,
         "severity": severity,

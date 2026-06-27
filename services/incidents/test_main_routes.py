@@ -81,6 +81,40 @@ def _threshold_fixture():
     return json.loads(_THRESHOLD_FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
+def _drift_report_payload(**overrides):
+    payload = {
+        "drift_report_id": "drift-report-001",
+        "recon_run_id": "recon-run-001",
+        "incident_cluster_id": "drift:rolling_drawdown_multiple",
+        "drift_type": "pnl",
+        "status": "open",
+        "severity": "medium",
+        "scope_ref": "binding-drift-001",
+        "binding_id": "binding-drift-001",
+        "runtime_id": "runtime-drift-001",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-drift-001",
+        "capital_pool_id": "pool-drift-001",
+        "persona_capital_binding_id": "pcb-drift-001",
+        "artifact_id": "artifact-drift-001",
+        "artifact_version": "1.0.0",
+        "trace_id": "trace-drift-001",
+        "telemetry_event_ids": ["evt-drift-001"],
+        "metrics": {
+            "worst_metric": "rolling_drawdown_multiple",
+            "breached_metric_ids": ["rolling_drawdown_multiple"],
+        },
+        "evidence_refs": [
+            "telemetry_event:evt-drift-001",
+            "drift_report:drift-report-001",
+            "reconciliation_record:recon-run-001",
+        ],
+        "generated_at": "2026-06-27T15:00:00Z",
+    }
+    payload.update(overrides)
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -211,6 +245,53 @@ def test_consume_threshold_route_rejects_unbreached_threshold():
 
     assert r.status_code == 422
     assert store.get_incident("inc-unbreached-threshold") is None
+
+
+def test_consume_drift_report_route_creates_incident_case():
+    payload = _drift_report_payload()
+    r = client.post("/api/incidents/consume-drift-report", json={"drift_report": payload})
+
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["incident_id"].startswith("inc-drift-")
+    assert body["binding_id"] == "binding-drift-001"
+    assert body["runtime_id"] == "runtime-drift-001"
+    assert body["telemetry_event_ids"] == ["evt-drift-001"]
+    assert body["reconciliation_ids"] == ["drift-report-001", "recon-run-001"]
+    assert body["incident_cluster_id"] == "drift:rolling_drawdown_multiple"
+    assert len(store.list_incidents()) == 1
+
+
+def test_consume_drift_report_route_dedupes_by_binding_runtime_cluster():
+    first_payload = _drift_report_payload()
+    second_payload = _drift_report_payload(
+        drift_report_id="drift-report-002",
+        recon_run_id="recon-run-002",
+        severity="critical",
+        telemetry_event_ids=["evt-drift-002"],
+        evidence_refs=[
+            "telemetry_event:evt-drift-002",
+            "drift_report:drift-report-002",
+            "reconciliation_record:recon-run-002",
+        ],
+        generated_at="2026-06-27T15:05:00Z",
+    )
+
+    first = client.post("/api/incidents/consume-drift-report", json={"drift_report": first_payload})
+    second = client.post("/api/incidents/consume-drift-report", json={"drift_report": second_payload})
+
+    assert first.status_code == 201
+    assert second.status_code == 200, second.text
+    assert second.json()["incident_id"] == first.json()["incident_id"]
+    assert second.json()["severity"] == "critical"
+    assert second.json()["telemetry_event_ids"] == ["evt-drift-001", "evt-drift-002"]
+    assert second.json()["reconciliation_ids"] == [
+        "drift-report-001",
+        "recon-run-001",
+        "drift-report-002",
+        "recon-run-002",
+    ]
+    assert len(store.list_incidents()) == 1
 
 
 # ---------------------------------------------------------------------------
