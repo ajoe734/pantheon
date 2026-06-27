@@ -1,0 +1,701 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ajoe734/pantheon/docs/deployment/loop-catalog.schema.json",
+  "title": "Pantheon Loop Catalog",
+  "description": "Static machine-readable catalog for Pantheon loop desired state, actual state, ownership, maturity, target maturity, and evidence truth level.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "catalog_id",
+    "created_at",
+    "source_documents",
+    "catalog_decisions",
+    "maturity_levels",
+    "truth_levels",
+    "loops"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "loop_catalog.v1"
+    },
+    "catalog_id": {
+      "type": "string",
+      "pattern": "^global-loop-catalog-[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_documents": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "catalog_decisions": {
+      "$ref": "#/definitions/CatalogDecisions"
+    },
+    "maturity_levels": {
+      "type": "array",
+      "minItems": 5,
+      "items": {
+        "$ref": "#/definitions/MaturityLevelDefinition"
+      }
+    },
+    "truth_levels": {
+      "type": "array",
+      "minItems": 5,
+      "items": {
+        "$ref": "#/definitions/TruthLevelDefinition"
+      }
+    },
+    "loops": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/LoopCatalogEntry"
+      }
+    }
+  },
+  "definitions": {
+    "MaturityLevel": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "api-only",
+        "scheduled",
+        "reconciled",
+        "proven-live"
+      ]
+    },
+    "TruthLevel": {
+      "type": "string",
+      "enum": [
+        "seed_fixture",
+        "registry_metadata",
+        "scheduled_tick",
+        "reconciled_live_proof",
+        "proven_live_evidence"
+      ]
+    },
+    "EvidenceStatus": {
+      "type": "string",
+      "enum": [
+        "missing",
+        "planned",
+        "present",
+        "historical",
+        "not_applicable"
+      ]
+    },
+    "CatalogDecisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "placement",
+        "registry_artifact",
+        "read_model_followup_task",
+        "guardrail_followup_task",
+        "rationale"
+      ],
+      "properties": {
+        "placement": {
+          "type": "string",
+          "const": "static-json-first"
+        },
+        "registry_artifact": {
+          "type": "string",
+          "const": "docs/deployment/loop-catalog.registry.json"
+        },
+        "read_model_followup_task": {
+          "type": "string",
+          "const": "LOOP-AUTO-001"
+        },
+        "guardrail_followup_task": {
+          "type": "string",
+          "const": "LOOP-AUTO-002"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "MaturityLevelDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "rank",
+        "meaning",
+        "closure_evidence"
+      ],
+      "properties": {
+        "level": {
+          "$ref": "#/definitions/MaturityLevel"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "meaning": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closure_evidence": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "TruthLevelDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "rank",
+        "meaning"
+      ],
+      "properties": {
+        "level": {
+          "$ref": "#/definitions/TruthLevel"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "meaning": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "LoopCatalogEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "loop_id",
+        "name",
+        "policy_ref",
+        "owner",
+        "trigger_model",
+        "desired_state",
+        "actual_state",
+        "maturity",
+        "controller_contract",
+        "evidence_profile",
+        "execution_tasks"
+      ],
+      "properties": {
+        "loop_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policy_ref": {
+          "$ref": "#/definitions/PolicyRef"
+        },
+        "owner": {
+          "$ref": "#/definitions/LoopOwner"
+        },
+        "trigger_model": {
+          "$ref": "#/definitions/TriggerModel"
+        },
+        "desired_state": {
+          "$ref": "#/definitions/StateProbe"
+        },
+        "actual_state": {
+          "$ref": "#/definitions/StateProbe"
+        },
+        "maturity": {
+          "$ref": "#/definitions/MaturityState"
+        },
+        "controller_contract": {
+          "$ref": "#/definitions/ControllerContract"
+        },
+        "evidence_profile": {
+          "$ref": "#/definitions/EvidenceProfile"
+        },
+        "execution_tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/ExecutionTaskRef"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "maturity": {
+                "properties": {
+                  "current": {
+                    "const": "reconciled"
+                  }
+                },
+                "required": [
+                  "current"
+                ]
+              }
+            },
+            "required": [
+              "maturity"
+            ]
+          },
+          "then": {
+            "properties": {
+              "controller_contract": {
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "implemented",
+                      "proven_live"
+                    ]
+                  },
+                  "controller_name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "desired_state_query": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "actual_state_query": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "restart_behavior": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "liveness_metric": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "status",
+                  "controller_name",
+                  "desired_state_query",
+                  "actual_state_query",
+                  "restart_behavior",
+                  "liveness_metric"
+                ]
+              },
+              "evidence_profile": {
+                "properties": {
+                  "reconciled_live_proof": {
+                    "properties": {
+                      "status": {
+                        "const": "present"
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "maturity": {
+                "properties": {
+                  "current": {
+                    "const": "proven-live"
+                  }
+                },
+                "required": [
+                  "current"
+                ]
+              }
+            },
+            "required": [
+              "maturity"
+            ]
+          },
+          "then": {
+            "properties": {
+              "controller_contract": {
+                "properties": {
+                  "status": {
+                    "const": "proven_live"
+                  },
+                  "controller_name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "desired_state_query": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "actual_state_query": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "restart_behavior": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "liveness_metric": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "status",
+                  "controller_name",
+                  "desired_state_query",
+                  "actual_state_query",
+                  "restart_behavior",
+                  "liveness_metric"
+                ]
+              },
+              "evidence_profile": {
+                "properties": {
+                  "proven_live_evidence": {
+                    "properties": {
+                      "status": {
+                        "const": "present"
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PolicyRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document",
+        "section",
+        "section_title"
+      ],
+      "properties": {
+        "document": {
+          "type": "string",
+          "const": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md"
+        },
+        "section": {
+          "type": "string",
+          "pattern": "^3\\.[0-9]+$"
+        },
+        "section_title": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "LoopOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "domain",
+        "service_or_doc",
+        "authoritative_write_owner"
+      ],
+      "properties": {
+        "domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service_or_doc": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authoritative_write_owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "current_controller_owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TriggerModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary",
+        "secondary",
+        "continuous",
+        "output_artifacts",
+        "race_policy"
+      ],
+      "properties": {
+        "primary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "secondary": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "continuous": {
+          "type": "boolean"
+        },
+        "output_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "race_policy": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "StateProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "query",
+        "query_status"
+      ],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "query": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query_status": {
+          "type": "string",
+          "enum": [
+            "missing",
+            "planned",
+            "implemented",
+            "historical"
+          ]
+        }
+      }
+    },
+    "MaturityState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "current",
+        "target",
+        "rationale"
+      ],
+      "properties": {
+        "current": {
+          "$ref": "#/definitions/MaturityLevel"
+        },
+        "target": {
+          "$ref": "#/definitions/MaturityLevel"
+        },
+        "later_goal": {
+          "$ref": "#/definitions/MaturityLevel"
+        },
+        "intermediate": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/MaturityLevel"
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ControllerContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "controller_name",
+        "desired_state_query",
+        "actual_state_query",
+        "idempotency_key",
+        "duplicate_event_policy",
+        "restart_behavior",
+        "liveness_metric",
+        "operator_truth_projection"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_implemented",
+            "planned",
+            "implemented",
+            "proven_live"
+          ]
+        },
+        "controller_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "desired_state_query": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "actual_state_query": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "idempotency_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duplicate_event_policy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "restart_behavior": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "liveness_metric": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operator_truth_projection": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "EvidenceProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seed_fixture",
+        "registry_metadata",
+        "scheduled_tick",
+        "reconciled_live_proof",
+        "proven_live_evidence"
+      ],
+      "properties": {
+        "seed_fixture": {
+          "$ref": "#/definitions/EvidenceLevelRecord"
+        },
+        "registry_metadata": {
+          "$ref": "#/definitions/EvidenceLevelRecord"
+        },
+        "scheduled_tick": {
+          "$ref": "#/definitions/EvidenceLevelRecord"
+        },
+        "reconciled_live_proof": {
+          "$ref": "#/definitions/EvidenceLevelRecord"
+        },
+        "proven_live_evidence": {
+          "$ref": "#/definitions/EvidenceLevelRecord"
+        }
+      }
+    },
+    "EvidenceLevelRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "refs",
+        "note"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/definitions/EvidenceStatus"
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ExecutionTaskRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_id",
+        "role"
+      ],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "pattern": "^LOOP-AUTO(?:-[A-Z0-9]+)*-[0-9]{3}$"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "foundation",
+            "desired_state",
+            "controller",
+            "scheduler",
+            "truth_projection",
+            "evidence",
+            "guardrail"
+          ]
+        }
+      }
+    }
+  }
+}

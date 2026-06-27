@@ -1,0 +1,1480 @@
+{
+  "$schema": "./loop-catalog.schema.json",
+  "schema_version": "loop_catalog.v1",
+  "catalog_id": "global-loop-catalog-2026-06-27",
+  "created_at": "2026-06-27T00:00:00Z",
+  "source_documents": [
+    "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+    "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
+    "EXECUTION_PROOF_AND_MATURITY_LEVELS.md"
+  ],
+  "catalog_decisions": {
+    "placement": "static-json-first",
+    "registry_artifact": "docs/deployment/loop-catalog.registry.json",
+    "read_model_followup_task": "LOOP-AUTO-001",
+    "guardrail_followup_task": "LOOP-AUTO-002",
+    "rationale": "Wave 0 publishes a static JSON registry first so every later read model, guardrail, and controller can consume the same loop ids and maturity vocabulary without waiting for a new service owner."
+  },
+  "maturity_levels": [
+    {
+      "level": "manual",
+      "rank": 0,
+      "meaning": "Operators or developers must perform the next transition by hand.",
+      "closure_evidence": "Runbook or manual curl path only."
+    },
+    {
+      "level": "api-only",
+      "rank": 1,
+      "meaning": "Canonical API or store exists, but no durable worker or controller owns the transition.",
+      "closure_evidence": "Route tests or contract tests only."
+    },
+    {
+      "level": "scheduled",
+      "rank": 2,
+      "meaning": "A cron or scheduler calls something periodically, but it does not reconcile desired and actual state.",
+      "closure_evidence": "Scheduler tests and tick evidence."
+    },
+    {
+      "level": "reconciled",
+      "rank": 3,
+      "meaning": "An idempotent controller continuously compares desired state with actual state and repairs drift.",
+      "closure_evidence": "Controller tests, restart tests, drift repair proof, and metrics."
+    },
+    {
+      "level": "proven-live",
+      "rank": 4,
+      "meaning": "The reconciled loop has runtime evidence under the target deployment mode, including liveness, recovery, and operator-visible truth.",
+      "closure_evidence": "EP4 or EP5 style evidence packet, replay or readback, and failure recovery drill."
+    }
+  ],
+  "truth_levels": [
+    {
+      "level": "seed_fixture",
+      "rank": 0,
+      "meaning": "A seed, fixture, static label, or example payload exists; this is never loop liveness proof."
+    },
+    {
+      "level": "registry_metadata",
+      "rank": 1,
+      "meaning": "The loop is represented in a durable catalog or registry but may not have a running scheduler or reconciler."
+    },
+    {
+      "level": "scheduled_tick",
+      "rank": 2,
+      "meaning": "A scheduler or worker tick is observable, without proving drift repair."
+    },
+    {
+      "level": "reconciled_live_proof",
+      "rank": 3,
+      "meaning": "A controller has demonstrated desired-vs-actual reconciliation, duplicate safety, restart behavior, and operator-visible truth."
+    },
+    {
+      "level": "proven_live_evidence",
+      "rank": 4,
+      "meaning": "The reconciled loop has target-environment runtime evidence with liveness, recovery, and readback."
+    }
+  ],
+  "loops": [
+    {
+      "loop_id": "source_ingestion",
+      "name": "Source Ingestion",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.1",
+        "section_title": "Source Ingestion"
+      },
+      "owner": {
+        "domain": "source_ingestion",
+        "service_or_doc": "services/source_ingestion",
+        "authoritative_write_owner": "source-ingest connector and schedule stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "cron/scheduled",
+        "secondary": [
+          "manual trigger"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "SourceRecord"
+        ],
+        "race_policy": "Source records feed distillation and do not directly compete with other loops."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.1",
+          "Persona.required_data_sources planned by LOOP-AUTO-SRC-001",
+          "source connector policy registry"
+        ],
+        "query": "planned: list persona data requirements and connector policy candidates",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "source-ingest connector registry",
+          "source-ingest schedules",
+          "SourceHealth truth projection"
+        ],
+        "query": "planned: list connector registrations, schedules, last fetch, and last push per required source",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "later_goal": "proven-live",
+        "rationale": "Connector registry and schedule APIs exist, but persona requirements do not auto-register connectors or guarantee scheduler workers."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: persona_id + dataset_id + connector_id + schedule_cadence",
+        "duplicate_event_policy": "planned: duplicate ticks must verify existing connector and schedule records without creating duplicates",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-SRC-004 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Seed data is not accepted as source liveness proof."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable source_ingestion loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-SRC-003"
+          ],
+          "note": "Scheduler supervision remains follow-up work."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-SRC-002",
+            "LOOP-AUTO-SRC-004"
+          ],
+          "note": "Persona requirement to connector and schedule reconciliation remains follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Target-environment proof follows reconciler and operator truth work."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-SRC-001",
+          "role": "desired_state"
+        },
+        {
+          "task_id": "LOOP-AUTO-SRC-002",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-SRC-003",
+          "role": "scheduler"
+        },
+        {
+          "task_id": "LOOP-AUTO-SRC-004",
+          "role": "truth_projection"
+        },
+        {
+          "task_id": "LOOP-AUTO-SRC-005",
+          "role": "truth_projection"
+        }
+      ]
+    },
+    {
+      "loop_id": "strategy_distillation",
+      "name": "Strategy Distillation",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.2",
+        "section_title": "Strategy Distillation"
+      },
+      "owner": {
+        "domain": "research_control_plane",
+        "service_or_doc": "services/research",
+        "authoritative_write_owner": "strategy draft head writer",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "event-driven",
+        "secondary": [
+          "batch catch-up",
+          "manual re-distill",
+          "scheduled re-distill"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "StrategySpec draft"
+        ],
+        "race_policy": "Distillation writes mutable draft heads only; promotion consumes immutable approved artifacts."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.2",
+          "normalized SourceRecord stream"
+        ],
+        "query": "planned: list normalized SourceRecord evidence not reflected in current StrategySpec draft heads",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "StrategySpec draft heads",
+          "distillation job records"
+        ],
+        "query": "planned: list draft heads and distillation job completion per source evidence cluster",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "rationale": "Normalized source and strategy objects exist, but no durable event consumer owns source-to-draft updates."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: source_record_id + strategy_family + draft_head_version",
+        "duplicate_event_policy": "planned: duplicate source events must converge on one draft update or no-op",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-KNOW-001 plus LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Seed strategy examples do not prove source-to-draft automation."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable strategy_distillation loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "not_applicable",
+          "refs": [],
+          "note": "The primary policy trigger is event-driven; catch-up scheduling is secondary."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-KNOW-001"
+          ],
+          "note": "Durable source-to-strategy worker proof remains follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Cross-loop operator drill follows reconciler proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-KNOW-001",
+          "role": "controller"
+        }
+      ]
+    },
+    {
+      "loop_id": "alpha_replication",
+      "name": "Alpha Replication",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.3",
+        "section_title": "Alpha Replication"
+      },
+      "owner": {
+        "domain": "research_control_plane",
+        "service_or_doc": "services/research/experiments",
+        "authoritative_write_owner": "research task and experiment run stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "review-driven",
+        "secondary": [
+          "scheduled revalidation"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "ExperimentRun",
+          "alpha template validation"
+        ],
+        "race_policy": "Replication requires researcher, persona, or review decision before entering a queue."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.3",
+          "reviewed StrategySpec candidates"
+        ],
+        "query": "planned: list reviewed strategy specs requiring replication or scheduled revalidation",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "replication queue",
+          "ExperimentRun records",
+          "artifact writeback"
+        ],
+        "query": "planned: list queue state, latest run, and revalidation status per reviewed strategy",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "intermediate": [
+          "scheduled"
+        ],
+        "rationale": "Research task and artifact APIs exist, but durable replication queue ownership and revalidation are incomplete."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: strategy_spec_id + review_decision_id + replication_profile",
+        "duplicate_event_policy": "planned: duplicate review events must not enqueue duplicate replication work",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-KNOW-002 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Seed experiment records are not accepted as replication liveness."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable alpha_replication loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-KNOW-002"
+          ],
+          "note": "Scheduled revalidation remains follow-up work."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-KNOW-002"
+          ],
+          "note": "Queue and revalidation controller proof remains follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Cross-loop operator evidence follows controller proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-KNOW-002",
+          "role": "controller"
+        }
+      ]
+    },
+    {
+      "loop_id": "persona_teaching",
+      "name": "Persona Teaching",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.4",
+        "section_title": "Persona Teaching"
+      },
+      "owner": {
+        "domain": "persona_control_plane",
+        "service_or_doc": "services/training-session",
+        "authoritative_write_owner": "teaching session and persona mutation gate stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "user-driven",
+        "secondary": [
+          "async preview worker",
+          "async evaluation worker"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "TeachingSession",
+          "TeachingEvent",
+          "ConsultMemo"
+        ],
+        "race_policy": "Teaching results cannot affect persona behavior until evaluation and governance gates pass."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.4",
+          "teaching session commands"
+        ],
+        "query": "planned: list teaching sessions waiting for preview, evaluation, or gated commit",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "TeachingSession records",
+          "TeachingEvent records",
+          "persona mutation gate status"
+        ],
+        "query": "planned: list teaching workflow stage and persona-affecting commit status",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "rationale": "Teaching routes exist, but async evaluation and persona mutation gates are not owned by a durable worker."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: teaching_session_id + stage + expected_version",
+        "duplicate_event_policy": "planned: duplicate preview or eval ticks must reuse the same stage record or no-op",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-KNOW-003 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Teaching examples are not accepted as async evaluation liveness."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable persona_teaching loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "not_applicable",
+          "refs": [],
+          "note": "The policy trigger is user-driven with async workers, not a cron loop."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-KNOW-003"
+          ],
+          "note": "Async preview and evaluation worker proof remains follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Operator drill evidence follows reconciler proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-KNOW-003",
+          "role": "controller"
+        }
+      ]
+    },
+    {
+      "loop_id": "agora_interaction_evidence",
+      "name": "Agora Interaction Evidence",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.5",
+        "section_title": "Agora / Human Trader Interaction Evidence"
+      },
+      "owner": {
+        "domain": "agora_control_plane",
+        "service_or_doc": "services/control-plane/specs/agora",
+        "authoritative_write_owner": "Agora interaction evidence and governed dataset stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "command-driven",
+        "secondary": [
+          "provider-backed assistant response",
+          "dataset extraction",
+          "handoff creation"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "AgoraInteractionEvidence",
+          "session message",
+          "feedback event",
+          "training example",
+          "handoff"
+        ],
+        "race_policy": "Interaction evidence enters Observe or Learn datasets only and never directly mutates LEAN or running artifacts."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.5",
+          "Agora actions and feedback commands"
+        ],
+        "query": "planned: list captured interactions requiring dataset extraction, handoff creation, or learning-evidence routing",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "interaction evidence records",
+          "dataset extraction records",
+          "workflow handoff records"
+        ],
+        "query": "planned: list extraction and handoff status for each interaction evidence record",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "rationale": "Interaction capture exists, but dataset extraction and learning-evidence routing are not a governed background loop."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: interaction_id + extraction_kind + target_dataset",
+        "duplicate_event_policy": "planned: duplicate interaction events must not duplicate training examples or handoffs",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-KNOW-004 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Example Agora records are not accepted as extraction-loop proof."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable agora_interaction_evidence loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "not_applicable",
+          "refs": [],
+          "note": "The policy trigger is command-driven."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-KNOW-004"
+          ],
+          "note": "Governed dataset extraction worker proof remains follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Operator drill evidence follows reconciler proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-KNOW-004",
+          "role": "controller"
+        }
+      ]
+    },
+    {
+      "loop_id": "human_imitation_shadow_evaluation",
+      "name": "Human Imitation / Shadow Evaluation",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.6",
+        "section_title": "Human Imitation / Shadow Evaluation"
+      },
+      "owner": {
+        "domain": "policy_learning",
+        "service_or_doc": "services/policy-learning",
+        "authoritative_write_owner": "policy learning proposal and shadow candidate stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "batch/scheduled",
+        "secondary": [
+          "explicit evaluation command"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "imitation model weights",
+          "behavior policy",
+          "ShadowImitationCandidate"
+        ],
+        "race_policy": "Model updates do not affect running artifacts; shadow candidates require experiment, approval, and deployment gates."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.6",
+          "governed trace datasets",
+          "explicit evaluation commands"
+        ],
+        "query": "planned: list trace datasets due for imitation, shadow evaluation, or rapid eval",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "policy-learning jobs",
+          "shadow evaluation results",
+          "candidate proposal records"
+        ],
+        "query": "planned: list latest imitation and shadow eval result per governed dataset",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "intermediate": [
+          "scheduled"
+        ],
+        "rationale": "Policy-learning boundaries exist, but trace-to-dataset-to-eval-to-candidate flow is not scheduled or reconciled."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: dataset_version_id + evaluation_profile + candidate_policy",
+        "duplicate_event_policy": "planned: duplicate scheduled ticks must not create duplicate candidates for the same dataset version",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-KNOW-005 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Static traces are not accepted as scheduled imitation proof."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable human_imitation_shadow_evaluation loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-KNOW-005"
+          ],
+          "note": "Batch scheduler proof remains follow-up work."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-KNOW-005"
+          ],
+          "note": "Trace-to-eval-to-candidate reconciliation remains follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Operator drill evidence follows scheduled and reconciled proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-KNOW-005",
+          "role": "scheduler"
+        }
+      ]
+    },
+    {
+      "loop_id": "consultation",
+      "name": "Consultation",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.7",
+        "section_title": "Consultation"
+      },
+      "owner": {
+        "domain": "consultation",
+        "service_or_doc": "services/consultation",
+        "authoritative_write_owner": "consult request, memo, transcript, and handoff stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "on-demand event-driven",
+        "secondary": [
+          "committee async workflow",
+          "red-team async workflow"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "ConsultRequest",
+          "ConsultMemo",
+          "committee recommendation"
+        ],
+        "race_policy": "Consultation is pre-LEAN advisory or review-bound and does not directly trigger deploy."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.7",
+          "consult requests",
+          "committee and red-team workflow policies"
+        ],
+        "query": "planned: list consult requests waiting for participants, memo generation, or governance handoff",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "consult state records",
+          "transcript records",
+          "memo records",
+          "workflow handoffs"
+        ],
+        "query": "planned: list workflow stage and handoff consumption status per consult request",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "rationale": "Consultation state, transcript, memo, and outbox stores exist, but workflow execution and handoff consumption are not durable."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: consult_request_id + workflow_stage + participant_role",
+        "duplicate_event_policy": "planned: duplicate workflow events must not duplicate participant work or handoffs",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-KNOW-006 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Example consult records are not accepted as workflow execution proof."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable consultation loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "not_applicable",
+          "refs": [],
+          "note": "The primary trigger is on-demand event-driven."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-KNOW-006"
+          ],
+          "note": "Durable committee and red-team workflow proof remains follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Operator drill evidence follows reconciler proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-KNOW-006",
+          "role": "controller"
+        }
+      ]
+    },
+    {
+      "loop_id": "promotion_deployment",
+      "name": "Promotion / Deployment",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.8",
+        "section_title": "Promotion / Deployment"
+      },
+      "owner": {
+        "domain": "governance_deployment",
+        "service_or_doc": "services/control-plane/governance",
+        "authoritative_write_owner": "approval, deployment plan, saga, and runtime binding stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "command-driven async saga",
+        "secondary": [
+          "operator command",
+          "governance rule command"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "ApprovalDecision",
+          "DeploymentPlan",
+          "RuntimeBinding"
+        ],
+        "race_policy": "Deployment consumes immutable approved artifact snapshots only."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.8",
+          "approved immutable artifacts",
+          "DeploymentPlan records"
+        ],
+        "query": "planned: list approved deployment plans requiring saga dispatch into runtime-manager",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "deployment saga records",
+          "runtime-manager bindings",
+          "saga DLQ and retry state"
+        ],
+        "query": "planned: list saga progress, runtime binding status, and retry or DLQ reason per deployment plan",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "later_goal": "proven-live",
+        "rationale": "Approval, deployment plan, saga models, and runtime-manager authority exist, but no always-on saga dispatcher closes plan-to-binding feedback."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: deployment_plan_id + artifact_snapshot_id + target_stage",
+        "duplicate_event_policy": "planned: duplicate outbox events must not create duplicate runtime bindings",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-DEP-004 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Seed deployment plans are not accepted as saga dispatch proof."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable promotion_deployment loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "not_applicable",
+          "refs": [],
+          "note": "The policy trigger is explicit command-driven async saga."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-DEP-001",
+            "LOOP-AUTO-DEP-002",
+            "LOOP-AUTO-DEP-003",
+            "LOOP-AUTO-DEP-004"
+          ],
+          "note": "Deployment saga dispatcher, runtime-manager adapter, feedback, and truth split remain follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Target-environment evidence follows reconciled saga and runtime fleet proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-DEP-001",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-DEP-002",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-DEP-003",
+          "role": "evidence"
+        },
+        {
+          "task_id": "LOOP-AUTO-DEP-004",
+          "role": "truth_projection"
+        }
+      ]
+    },
+    {
+      "loop_id": "capital_pool_execution",
+      "name": "Capital Pool Execution",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.9",
+        "section_title": "Capital Pool Execution"
+      },
+      "owner": {
+        "domain": "runtime_manager",
+        "service_or_doc": "services/runtime-manager",
+        "authoritative_write_owner": "runtime binding and supervised runtime worker stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "continuous runtime loop",
+        "secondary": [
+          "active RuntimeBinding"
+        ],
+        "continuous": true,
+        "output_artifacts": [
+          "orders",
+          "fills",
+          "positions",
+          "runtime heartbeats"
+        ],
+        "race_policy": "Execution is isolated from persona discussion, governance approval, learning, and artifact synthesis paths."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.9",
+          "active paper and canary RuntimeBinding records",
+          "runtime policy envelopes"
+        ],
+        "query": "planned: list active runtime bindings and policy envelopes from runtime-manager",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "runtime worker process inventory",
+          "runtime sessions",
+          "heartbeats",
+          "telemetry"
+        ],
+        "query": "planned: list worker, session, heartbeat, and signal isolation status per active binding",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "manual",
+        "target": "reconciled",
+        "later_goal": "proven-live",
+        "rationale": "Runtime execution has historical governed-paper evidence, but active bindings are not guaranteed to reconcile into exactly one supervised worker with restart, stop, and signal isolation."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: runtime_binding_id + runtime_stage + policy_version",
+        "duplicate_event_policy": "planned: duplicate fleet ticks must converge to exactly one worker per active binding",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-RT-005 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Runtime fixtures do not prove currently supervised workers."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable capital_pool_execution loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "not_applicable",
+          "refs": [],
+          "note": "This is the only continuous loop in the L1 trigger policy."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-RT-001",
+            "LOOP-AUTO-RT-002",
+            "LOOP-AUTO-RT-003",
+            "LOOP-AUTO-RT-004",
+            "LOOP-AUTO-RT-005"
+          ],
+          "note": "Runtime fleet desired-state, exactly-one-worker reconciliation, session reaping, signal isolation, and evidence remain follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "historical",
+          "refs": [
+            "docs/deployment/ep4-evidence-packet.md",
+            "docs/deployment/ep5-002-runtime-manager-proof-packet.md"
+          ],
+          "note": "Historical paper evidence exists, but it does not raise current maturity without active reconciler proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-RT-001",
+          "role": "desired_state"
+        },
+        {
+          "task_id": "LOOP-AUTO-RT-002",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-RT-003",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-RT-004",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-RT-005",
+          "role": "evidence"
+        }
+      ]
+    },
+    {
+      "loop_id": "telemetry_reconciliation",
+      "name": "Telemetry / Reconciliation",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.10",
+        "section_title": "Telemetry / Reconciliation"
+      },
+      "owner": {
+        "domain": "telemetry_incident",
+        "service_or_doc": "services/telemetry",
+        "authoritative_write_owner": "telemetry, drift report, incident, and reconciliation stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "event-driven telemetry plus scheduled reconciliation",
+        "secondary": [
+          "incident-triggered reconciliation"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "TelemetryEvent",
+          "DriftReport",
+          "IncidentCase"
+        ],
+        "race_policy": "Reconciliation does not affect running runtime; it produces analysis and incident outcomes."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.10",
+          "runtime telemetry writer readiness",
+          "binding and runtime truth"
+        ],
+        "query": "planned: list bindings and telemetry streams due for reconciliation or incident-triggered analysis",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "TelemetryEvent records",
+          "DriftReport records",
+          "IncidentCase records",
+          "reconciliation worker state"
+        ],
+        "query": "planned: list latest telemetry, reconciliation, drift report, and incident linkage per binding/runtime",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "later_goal": "proven-live",
+        "rationale": "Telemetry ingest is mature, but reconciliation, drift report, incident creation, postmortem, and evolution handoff are not an automatic end-to-end chain."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: binding_id + runtime_id + telemetry_window + reconciliation_kind",
+        "duplicate_event_policy": "planned: duplicate telemetry and duplicate reconciliation ticks must not duplicate incidents",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-TEL-005 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Telemetry fixtures are not accepted as reconciliation-loop proof."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable telemetry_reconciliation loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-TEL-002"
+          ],
+          "note": "Scheduled reconciliation worker proof remains follow-up work."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-TEL-001",
+            "LOOP-AUTO-TEL-002",
+            "LOOP-AUTO-TEL-003",
+            "LOOP-AUTO-TEL-004",
+            "LOOP-AUTO-TEL-005"
+          ],
+          "note": "Readiness, scheduled reconciliation, incident listener, drift-to-incident, and replay evidence remain follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-TEL-005",
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Operator replay evidence follows reconciler proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-TEL-001",
+          "role": "guardrail"
+        },
+        {
+          "task_id": "LOOP-AUTO-TEL-002",
+          "role": "scheduler"
+        },
+        {
+          "task_id": "LOOP-AUTO-TEL-003",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-TEL-004",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-TEL-005",
+          "role": "evidence"
+        }
+      ]
+    },
+    {
+      "loop_id": "evolution",
+      "name": "Evolution",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.11",
+        "section_title": "Evolution"
+      },
+      "owner": {
+        "domain": "evolution",
+        "service_or_doc": "services/evolution",
+        "authoritative_write_owner": "EvolutionDecision and governed action dispatch stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "threshold-triggered plus daily sweep",
+        "secondary": [
+          "postmortem publication",
+          "cooldown-governed sweep"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "EvolutionDecision"
+        ],
+        "race_policy": "One active EvolutionDecision per target; new triggers merge or wait under cooldown policy."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.11",
+          "resolved incidents",
+          "published postmortems",
+          "threshold and cooldown policy"
+        ],
+        "query": "planned: list resolved incidents, postmortems, and thresholds requiring missing evolution proposals or dispatch",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "EvolutionDecision records",
+          "postmortem bridge records",
+          "approved action dispatch records"
+        ],
+        "query": "planned: list proposed, reviewed, approved, dispatched, and executed evolution stages per target",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "intermediate": [
+          "scheduled"
+        ],
+        "rationale": "Evolution decision lifecycle exists, but threshold sweeps, incident/postmortem proposal generation, and approved-action dispatch are incomplete."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: evolution_target_id + incident_cluster_id + observation_window",
+        "duplicate_event_policy": "planned: duplicate postmortem or sweep ticks must converge to one active decision per target",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-EVO-005 and LOOP-AUTO-BFF-001"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Seed evolution decisions are not accepted as proposal-loop proof."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable evolution loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-EVO-003"
+          ],
+          "note": "Daily sweep proof remains follow-up work."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-EVO-001",
+            "LOOP-AUTO-EVO-002",
+            "LOOP-AUTO-EVO-003",
+            "LOOP-AUTO-EVO-004",
+            "LOOP-AUTO-EVO-005"
+          ],
+          "note": "Incident-to-postmortem, postmortem-to-proposal, sweep, dispatch, and rollback follow-through proof remain follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-EVO-005",
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Target evidence follows governed dispatcher and operator drill proof."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-EVO-001",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-EVO-002",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-EVO-003",
+          "role": "scheduler"
+        },
+        {
+          "task_id": "LOOP-AUTO-EVO-004",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-EVO-005",
+          "role": "evidence"
+        }
+      ]
+    },
+    {
+      "loop_id": "bff_health_monitoring",
+      "name": "BFF Health Monitoring",
+      "policy_ref": {
+        "document": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+        "section": "3.12",
+        "section_title": "BFF Health Monitoring"
+      },
+      "owner": {
+        "domain": "bff",
+        "service_or_doc": "services/control-plane/bff",
+        "authoritative_write_owner": "BFF health metrics, telemetry, and incident signal stores",
+        "current_controller_owner": null
+      },
+      "trigger_model": {
+        "primary": "continuous health check",
+        "secondary": [
+          "downstream service error-rate event"
+        ],
+        "continuous": false,
+        "output_artifacts": [
+          "BFF health metrics",
+          "telemetry ingest",
+          "incident pipeline signals"
+        ],
+        "race_policy": "BFF degraded mode does not affect active runtimes."
+      },
+      "desired_state": {
+        "sources": [
+          "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md#3.12",
+          "BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md#section-7",
+          "downstream health contracts"
+        ],
+        "query": "planned: list required downstream probes, service-level objectives, and expected operator truth projections",
+        "query_status": "planned"
+      },
+      "actual_state": {
+        "sources": [
+          "BFF health read models",
+          "downstream probe results",
+          "telemetry events",
+          "incident signals"
+        ],
+        "query": "planned: list controller health, last success, last failure, downstream status, and evidence per loop",
+        "query_status": "planned"
+      },
+      "maturity": {
+        "current": "api-only",
+        "target": "reconciled",
+        "later_goal": "proven-live",
+        "rationale": "BFF aggregates health and read models, but no continuous monitor writes authoritative telemetry and incident signals for operator truth."
+      },
+      "controller_contract": {
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
+        "idempotency_key": "planned: probe_target + interval_window + failure_signature",
+        "duplicate_event_policy": "planned: duplicate probes must dedupe telemetry and incident signals by target and window",
+        "restart_behavior": null,
+        "liveness_metric": null,
+        "operator_truth_projection": "planned: LOOP-AUTO-BFF-001 through LOOP-AUTO-BFF-004"
+      },
+      "evidence_profile": {
+        "seed_fixture": {
+          "status": "missing",
+          "refs": [],
+          "note": "Panel fixtures are not accepted as downstream health proof."
+        },
+        "registry_metadata": {
+          "status": "present",
+          "refs": [
+            "docs/deployment/loop-catalog.registry.json"
+          ],
+          "note": "This catalog defines the stable bff_health_monitoring loop id and target."
+        },
+        "scheduled_tick": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-002"
+          ],
+          "note": "Continuous probe worker evidence remains follow-up work."
+        },
+        "reconciled_live_proof": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-001",
+            "LOOP-AUTO-BFF-002",
+            "LOOP-AUTO-BFF-003",
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Loop health read model, downstream monitor, truth labeling, and operator drills remain follow-up work."
+        },
+        "proven_live_evidence": {
+          "status": "planned",
+          "refs": [
+            "LOOP-AUTO-BFF-004"
+          ],
+          "note": "Cross-loop operator drills are the target proof path."
+        }
+      },
+      "execution_tasks": [
+        {
+          "task_id": "LOOP-AUTO-000",
+          "role": "foundation"
+        },
+        {
+          "task_id": "LOOP-AUTO-BFF-001",
+          "role": "truth_projection"
+        },
+        {
+          "task_id": "LOOP-AUTO-BFF-002",
+          "role": "controller"
+        },
+        {
+          "task_id": "LOOP-AUTO-BFF-003",
+          "role": "truth_projection"
+        },
+        {
+          "task_id": "LOOP-AUTO-BFF-004",
+          "role": "evidence"
+        }
+      ]
+    }
+  ]
+}
