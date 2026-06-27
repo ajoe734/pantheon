@@ -137,6 +137,7 @@ def simulate_paper_order(
     side: str,
     order_type: str = "market",
     limit_price: Optional[float] = None,
+    market_price: Optional[float] = None,
 ) -> PaperOrder:
     """Simulate a paper order fill synchronously.
 
@@ -155,7 +156,12 @@ def simulate_paper_order(
         raise SimulationError("INVALID_LIMIT_PRICE", "limit_price must be positive for limit orders")
 
     now = _utc_now_iso()
-    fill_price = limit_price if order_type == "limit" else 100.0
+    if order_type == "limit":
+        fill_price = limit_price
+    elif market_price is not None and market_price > 0:
+        fill_price = float(market_price)
+    else:
+        fill_price = 100.0
     return PaperOrder(
         order_id=uuid.uuid4().hex,
         capital_pool_id=capital_pool_id,
