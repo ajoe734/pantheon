@@ -129,10 +129,12 @@ def _assert_no_unrestricted_crawler() -> None:
     for entry in entries:
         fetch = entry.get("fetch_policy") or {}
         mode = fetch.get("mode")
-        if mode not in {None, "static_records", "external_feed"}:
+        if mode not in {None, "static_records", "external_feed", "provider_owned_adapter"}:
             raise RuntimeError(f"unexpected source fetch mode enabled: {entry}")
         if mode == "external_feed" and int(fetch.get("allowed_url_prefix_count") or 0) < 1:
             raise RuntimeError(f"external_feed lacks allowed_url_prefix guard: {entry}")
+        if mode == "provider_owned_adapter" and not str(fetch.get("adapter") or "").strip():
+            raise RuntimeError(f"provider_owned_adapter lacks explicit adapter guard: {entry}")
     print("ok  source registry has no unrestricted crawler mode")
 
 
