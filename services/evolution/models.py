@@ -94,6 +94,14 @@ class ProposeFromIncidentRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class ProposeFromPostmortemPublishedRequest(BaseModel):
+    postmortem_id: str
+    decision_id: Optional[str] = None
+    publish_event_id: Optional[str] = None
+    created_by_id: str = "postmortem-bridge"
+    created_by_role: str = "evolution_controller"
+
+
 # ---------------------------------------------------------------------------
 # Review / Approve / Reject / Execute / Cancel
 # ---------------------------------------------------------------------------

@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 
 # ---------------------------------------------------------------------------
@@ -86,6 +86,7 @@ from models import (  # type: ignore
     ExecuteRequest,
     ObservationWindowReportResponse,
     ProposeFromIncidentRequest,
+    ProposeFromPostmortemPublishedRequest,
     ProposeRequest,
     RejectRequest,
     RedeployFollowthroughRequest,
@@ -95,6 +96,10 @@ from models import (  # type: ignore
     ThresholdEvalResponse,
 )
 from sweep import run_daily_sweep  # type: ignore
+from postmortem_bridge import (  # type: ignore
+    PostmortemBridgeError,
+    build_published_postmortem_proposal_request,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -430,6 +435,40 @@ def _proposal_request_from_incident(body: ProposeFromIncidentRequest) -> Propose
     )
 
 
+def _find_postmortem_bridge_decision(
+    *,
+    postmortem: Postmortem,
+    bridge_key: str,
+    decision_id: str,
+) -> EvolutionDecision | None:
+    if postmortem.linked_evolution_decision_id:
+        linked = store.get(postmortem.linked_evolution_decision_id)
+        if linked is not None:
+            return linked
+    direct = store.get(decision_id)
+    if direct is not None:
+        return direct
+    for decision in store.list_all():
+        metadata = decision.metadata or {}
+        if metadata.get("postmortem_bridge_key") == bridge_key:
+            return decision
+    return None
+
+
+def _link_postmortem_to_decision(postmortem_id: str, decision_id: str) -> None:
+    try:
+        current = incident_store.get_postmortem(postmortem_id)
+        if current is not None and current.linked_evolution_decision_id != decision_id:
+            incident_store.link_evolution_decision(postmortem_id, decision_id)
+    except IncidentError as exc:
+        log.warning(
+            "evolution.postmortem_bridge: could not back-link postmortem %s -> decision %s: %s",
+            postmortem_id,
+            decision_id,
+            exc,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -545,6 +584,66 @@ def propose_from_incident(body: ProposeFromIncidentRequest):
     remain separate gated steps.
     """
     return propose(_proposal_request_from_incident(body))
+
+
+@app.post(
+    "/api/evolution/proposals/from-postmortem-published",
+    status_code=201,
+    response_model=DecisionResponse,
+)
+def propose_from_postmortem_published(
+    body: ProposeFromPostmortemPublishedRequest,
+    response: Response,
+):
+    """
+    Admit a published Postmortem event as exactly one EvolutionDecision proposal.
+
+    Idempotency is scoped to target type, target artifact id, and incident
+    cluster. Duplicate publish events return the existing proposal with HTTP
+    200. The created decision remains in ``proposed`` until normal review and
+    approval gates advance it.
+    """
+    postmortem = incident_store.get_postmortem(body.postmortem_id)
+    if postmortem is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Postmortem not found: {body.postmortem_id}",
+        )
+    incident = incident_store.get_incident(postmortem.incident_id)
+    if incident is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Postmortem {body.postmortem_id!r} references unavailable "
+                f"IncidentCase {postmortem.incident_id!r}"
+            ),
+        )
+    try:
+        proposal_payload = build_published_postmortem_proposal_request(
+            postmortem,
+            incident,
+            decision_id=body.decision_id,
+            publish_event_id=body.publish_event_id,
+            created_by_id=body.created_by_id,
+            created_by_role=body.created_by_role,
+        )
+    except PostmortemBridgeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    metadata = proposal_payload.get("metadata") or {}
+    bridge_key = str(metadata.get("postmortem_bridge_key") or "")
+    decision_id = str(proposal_payload["decision_id"])
+    existing = _find_postmortem_bridge_decision(
+        postmortem=postmortem,
+        bridge_key=bridge_key,
+        decision_id=decision_id,
+    )
+    if existing is not None:
+        _link_postmortem_to_decision(postmortem.postmortem_id, existing.decision_id)
+        response.status_code = 200
+        return _decision_to_response(existing)
+
+    return propose(ProposeRequest(**proposal_payload))
 
 
 # --- Daily sweep -------------------------------------------------------------
