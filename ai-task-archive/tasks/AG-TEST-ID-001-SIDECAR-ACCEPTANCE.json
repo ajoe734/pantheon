@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "task_id": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-22T09:10:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare AG-TEST-ID-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-TEST-ID-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-ID / Phase 1",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-ID-004",
+      "AG-FE-ID-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-TEST-ID-001/AG-TEST-ID-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet verified complete (XR-01..07, ISO-U01..08, ISO-M01..08, ISO-P01..06, EV-01..07). PRs #2231 and #2237 merged into dev. Branch HEAD is ancestor of origin/dev. Support-only boundary confirmed; no canonical truth modified.",
+    "last_update": "2026-06-22T09:10:10Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-TEST-ID-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Verified packet covers XR-01..07, ISO-U01..08, ISO-M01..08, ISO-P01..06, and EV-01..07.",
+      "Verified dependency map includes AG-BE-ID-004, AG-FE-ID-001, and root-level execute-plans/src/agora/ path for XR-05/F5.",
+      "Verified ISO-M05 no RuntimeBinding/capital/broker side-effect requirement, raw-content redaction checks, and F5 deferred target-state markers are explicit.",
+      "Verified scope remains support-only at commit 93e982cd; no canonical truth or runtime implementation files changed."
+    ],
+    "review_file": "support/sidecars/AG-TEST-ID-001/AG-TEST-ID-001-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T09:10:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-test-id-001-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "e046528cc5f8755f85f6051760e392ee23e3aa6e",
+      "commit_subject": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE: update brief for done closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": ".orchestrator/task-briefs/ag_test_id_001_sidecar_acceptance.md",
+        "Not changing": "support/sidecars/AG-TEST-ID-001/AG-TEST-ID-001-SIDECAR-ACCEPTANCE.md",
+        "Composes with": "dev (sidecar acceptance packet already in dev).",
+        "Verified": "git merge-base --is-ancestor HEAD origin/dev confirmed HEAD in dev;",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Codex"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2429b0337946032e4a468210c38659c57266217f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Acceptance packet complete. PR #2231 open with auto-merge. Please review: (1) all F2-F7 isolation IDs covered, (2) upstream dependency table accurate, (3) ISO-M05 no-broker-order negative assertion requirement documented, (4) F5 deferred items marked with dual-entry condition, (5) support-only boundary confirmed — no L1/runtime/registry changes. Artifact: support/sidecars/AG-TEST-ID-001/AG-TEST-ID-001-SIDECAR-ACCEPTANCE.md",
+      "status": "done",
+      "created_at": "2026-06-22T08:35:56Z",
+      "resolved_at": "2026-06-22T08:39:21Z"
+    },
+    {
+      "task_id": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: dependency map must include active parent dependencies AG-BE-ID-004 and AG-FE-ID-001/execute-plans surfaces; XR-05 verification must not point at nonexistent pantheon services/execute-plans path; packet should refresh stale pre-implementation gated wording now that parent AG-TEST-ID-001 PR #2230 is merged/in review.",
+      "status": "done",
+      "created_at": "2026-06-22T08:39:21Z",
+      "resolved_at": "2026-06-22T08:39:21Z"
+    },
+    {
+      "task_id": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Addressed all three reviewer change requests: (1) AG-BE-ID-004 (ContextBundle redaction / RAW_PRIVATE_CONTENT_FORBIDDEN / management_projection) and AG-FE-ID-001 (execute-plans Agora shell / BFF client facade) added to Section 2, dependency table, and Mermaid diagram; (2) XR-05 grep path corrected from nonexistent services/execute-plans/ to root-level execute-plans/src/agora/; (3) pre-implementation gated wording in §1 and §3A refreshed to reflect AG-TEST-ID-001 PR #2230 merged/in review — now framed as finalization checks, not start-gate preconditions. Commit: 61b63202. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-06-22T08:43:55Z",
+      "resolved_at": "2026-06-22T08:46:38Z"
+    },
+    {
+      "task_id": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: Section 3 still says 'Before the parent owner begins implementation'; update this remaining start-gate wording to finalization/closeout language so it aligns with §1 and §3A. Optional cleanup: sync packet header Status with the task's review-ready state before handoff.",
+      "status": "done",
+      "created_at": "2026-06-22T08:46:38Z",
+      "resolved_at": "2026-06-22T08:46:38Z"
+    },
+    {
+      "task_id": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Both reviewer change requests addressed (commit 93e982cd): §3 preamble changed from start-gate to finalization/closeout language; packet header Status updated to review-ready. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-06-22T08:49:25Z",
+      "resolved_at": "2026-06-22T08:56:49Z"
+    },
+    {
+      "task_id": "AG-TEST-ID-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: acceptance packet is support-only, covers F2-F7 assertions and dependency map, records ISO-M05/redaction/F5 deferred safety gates, and incorporates prior review fixes at commit 93e982cd. Returning to Claude for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T08:56:49Z",
+      "resolved_at": "2026-06-22T09:10:11Z"
+    }
+  ],
+  "blockers": []
+}

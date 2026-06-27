@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-003",
+  "archived_at": "2026-06-22T12:58:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-003",
+    "title": "Version comparison and readiness UI",
+    "summary_zh": "依 SD §7.4/§11.3/§6.4 實作 VersionCompareCard(多版本 diff + 預測效果)與 readiness UI(Preliminary / Full validation / Trading-room readiness 三 gate 的狀態與缺項),並把『加入交易作戰室』按鈕在未達 readiness 時 disable。資料來自 AG-BE-SW-002。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。 【UI 一律照設計稿,不要自己發想】凡與畫面有關(頁面、route、layout、component、widget、chart、互動、文案、樣式)必須嚴格依 SD §9/§10/§11/§12/§23 的 IA/版面/元件規格、design-closure A3 widget_registry/chart grammar,以及 V10/V11 視覺參考實作;沿用既有 design tokens 與共用元件,不得自創畫面、元件、版面、route 或自由發揮樣式。設計稿沒涵蓋到的畫面或互動,先開 blocker 問清楚再做。",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "phase": "EPIC AGORA-FE / Phase 2",
+    "depends_on": [
+      "AG-FE-SW-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "acceptance": [
+      "可比較策略版本與套用建議版本;三 readiness gate 狀態正確顯示;未達 readiness 時無法加入交易作戰室;附 UI 測試;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/components/VersionCompareCard.tsx",
+      "execute-plans/src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx"
+    ],
+    "auto_created_by": "dispatch_agora_phase2_workshop_2026-06-20",
+    "status": "done",
+    "last_update": "2026-06-22T12:58:43Z",
+    "next": "Closeout complete. VersionCompareCard, ReadinessGateCard, and StrategyWorkshopPage readiness surfaces delivered. PRs #2257 #2265 #2271 merged into dev (verified: git merge-base --is-ancestor HEAD origin/dev = true). 41 tests passed; build:agora passed (Codex review at PR #2265).",
+    "review_notes_zh": [
+      "Codex review approved PR #2265 at 41f5431f after checking VersionCompareCard tests and existing VersionCompareCard/ReadinessGateCard/StrategyWorkshopPage readiness surfaces against v4 Agora schemas.",
+      "Validation: npm ci; npx vitest run StrategyCompletenessRail.test.tsx StrategyWorkshopPage.test.tsx VersionCompareCard.test.tsx passed 3 files / 41 tests; npm run build:agora passed.",
+      "GitHub formal approve not submitted because gh authenticated user is PR author ajoe734; review evidence posted at PR #2265 issuecomment-4768202835. PR #2265 remains open/BEHIND dev and owner must update/merge before closeout done."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T12:58:43Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-003/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "task/AG-FE-SW-003",
+      "git_clean_required": false,
+      "commit": "12b9749ca3a710c31937c43875629cf9954e7dc3",
+      "commit_subject": "AG-FE-SW-003: closeout finalization",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": ".orchestrator/task-briefs/ag_fe_sw_003.md (task record)",
+        "Not changing": "canonical architecture docs, ai-status.json (updated by done)",
+        "Verified": "Codex review at PR #2265 — npm ci; npx vitest run",
+        "build": "agora passed.",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-FE-SW-003",
+        "Reviewer": "Codex"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implemented AG-FE-SW-003 per design-closure-round2 spec. PR #2257 open with auto-merge. Changes: (1) New VersionCompareCard.tsx — field/metric/risk/readiness diff display; predicted evidence class visually distinct from observed per A4/A5 spec; servant recommendation with trader-decides label. (2) WorkshopCardRenderer.tsx — import from new file, enhanced ReadinessGateCard shows per-gate missing requirements with hardness indicator. (3) StrategyWorkshopPage.tsx — Add-to-Trading-Room button disabled until highest_ready_gate==trading_room. Tests: 15 pass, build clean.",
+      "status": "done",
+      "created_at": "2026-06-22T11:24:36Z",
+      "resolved_at": "2026-06-22T11:44:43Z"
+    },
+    {
+      "task_id": "AG-FE-SW-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review not approved: PR #2257 has Codex findings in issuecomment-4767891898; fix candidate attribution in multi-version diffs, ready-state Trading Room CTA behavior, and version_compare summary rendering, then hand back to Codex.",
+      "status": "done",
+      "created_at": "2026-06-22T11:44:43Z",
+      "resolved_at": "2026-06-22T11:44:43Z"
+    },
+    {
+      "task_id": "AG-FE-SW-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Fixed all three Codex review findings from issuecomment-4767891898: (1) candidate attribution — diff rows now grouped by candidate_version_id with labelled headers when multiple candidates; (2) CTA behavior — button gated on onAddToTradingRoom prop presence, no longer active-with-no-handler; (3) summary rendering — card.summary now shown in custom shell. All 15 tests pass, build clean. Branch pushed: bc67acdf. Ready for re-review on PR #2257.",
+      "status": "done",
+      "created_at": "2026-06-22T11:50:36Z",
+      "resolved_at": "2026-06-22T11:51:00Z"
+    },
+    {
+      "task_id": "AG-FE-SW-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Fixed all three Codex review findings (issuecomment-4767891898): (1) candidate attribution with groupByCandidate + CandidateGroupHeader, (2) CTA gated on onAddToTradingRoom prop, (3) card.summary restored in custom shell. 15 tests pass, build clean. Push: bc67acdf. Re-review PR #2257.",
+      "status": "done",
+      "created_at": "2026-06-22T11:51:00Z",
+      "resolved_at": "2026-06-22T11:51:12Z"
+    },
+    {
+      "task_id": "AG-FE-SW-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Fixed all three Codex review findings (issuecomment-4767891898): (1) candidate attribution grouped by candidate_version_id with CandidateGroupHeader, (2) CTA now gated on onAddToTradingRoom prop so no active-but-no-op state, (3) card.summary restored in custom shell. 15 tests pass, build clean. Commit: bc67acdf on task/AG-FE-SW-003. Re-review PR 2257.",
+      "status": "done",
+      "created_at": "2026-06-22T11:51:12Z",
+      "resolved_at": "2026-06-22T11:56:47Z"
+    },
+    {
+      "task_id": "AG-FE-SW-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved by Codex on PR #2257 at bc67acdf; findings fixed and focused validation passed. Owner must update BEHIND branch, merge PR, then close out to done.",
+      "status": "done",
+      "created_at": "2026-06-22T11:56:47Z",
+      "resolved_at": "2026-06-22T12:01:10Z"
+    },
+    {
+      "task_id": "AG-FE-SW-003",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Implementation complete: VersionCompareCard (multi-version diff + evidence-class separation), ReadinessGateCard (3-gate status + missing items), StrategyWorkshopPage (trading-room button disabled when gate not ready). Added VersionCompareCard.test.tsx (26 tests). Total 41 Agora UI tests passing. PR #2257 (implementation) merged to dev; PR #2265 (tests) auto-merge enabled. Requesting final review before done.",
+      "status": "done",
+      "created_at": "2026-06-22T12:15:30Z",
+      "resolved_at": "2026-06-22T12:19:34Z"
+    },
+    {
+      "task_id": "AG-FE-SW-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved by Codex for PR #2265 at 41f5431f; focused Agora tests/build passed. Owner must update BEHIND branch, merge PR #2265, then run closeout to done.",
+      "status": "done",
+      "created_at": "2026-06-22T12:19:34Z",
+      "resolved_at": "2026-06-22T12:58:44Z"
+    }
+  ],
+  "blockers": []
+}

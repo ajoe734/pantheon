@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "task_id": "AG-E2E-TR-001",
+  "archived_at": "2026-06-22T14:01:38Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-E2E-TR-001",
+    "title": "Winner-branch strategy -> full trading room E2E",
+    "summary_zh": "依 SD §24.3 step 9-11 寫 winner-branch(賣家節點)策略→加入交易作戰室→產生/編輯/接受 dashboard recipe→產生交易事件與裝示的 E2E;斷言 governed intent(不下單)、widget 全來自 registry、score 用 A2 components。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。",
+    "phase": "EPIC AGORA-TR / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-TR-002",
+      "AG-FE-DB-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "services/control-plane/tests/agora/test_winner_branch_trading_room_e2e.py"
+    ],
+    "acceptance": [
+      "賣家節點策略可走完交易作戰室全流程;無直接下單;widget/score 對齊設計;E2E 綠燈收錄 CI;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "Closeout complete: winner-branch trading room E2E (steps 9-11) merged via PR #2276. All CI checks green. Tests: governed intent (no orders), widget registry assertions, A2 score components. Task brief synced. Sidecar acceptance merged in from dev.",
+    "last_update": "2026-06-22T14:01:38Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T14:01:38Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-e2e-tr-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-E2E-TR-001",
+      "git_clean_required": false,
+      "commit": "9826d485bf4de3f508f3acd0590c54d06453aadf",
+      "commit_subject": "AG-E2E-TR-001: merge dev (sidecar acceptance PRs) into task branch",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-E2E-TR-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-E2E-TR-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f7960192b39fbb3da04a58bcbe6dc0a8b90c7171",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-E2E-TR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by idle Claude; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-22T13:32:03Z",
+      "resolved_at": "2026-06-22T13:32:11Z"
+    },
+    {
+      "task_id": "AG-E2E-TR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implemented 72-test E2E file for winner-branch trading room steps 9-11. All tests pass (7.99s). Key assertions: (1) all widgets from A3 widget_registry.v1.json, (2) A2 positive components match spec exactly (8 components, weights sum=1.0, penalties≤0.50, score bands), (3) governed intent invariants (no broker order/RuntimeBinding/capital binding at any step), (4) canonical schemas for CandidatePool/DashboardRecipe/TradingEvent/TradingIntent, v1.3 schemas for TradingRoomAggregate/TradingDecisionEvent/GovernedHandoff. Commit: a54f2f38.",
+      "status": "done",
+      "created_at": "2026-06-22T13:42:02Z",
+      "resolved_at": "2026-06-22T13:45:07Z"
+    },
+    {
+      "task_id": "AG-E2E-TR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested: Step 10 widget coverage is not schema-faithful. The test claims widget_spec.schema.json is covered and that all fixtures validate field-by-field, but _make_widget_spec emits only widget_id/widget_type/data_source/phase/sensitivity/registry_version and is not validated. Probe result: design-closure widget_spec rejects it because title/query/chart_spec/interactions/can_export are missing; canonical services/control-plane/specs/agora/widget_spec rejects it because spec_version/created_at are missing and data_source is the wrong shape. Please either build valid A3 WidgetSpec fixtures and validate them against the design-closure schema/registry rules, or remove the invalid WidgetSpec fixture/claim and add an explicit recipe-widget-id-to-registered-widget-type assertion so DashboardRecipe cannot pass with unvalidated/invented widget specs.",
+      "status": "done",
+      "created_at": "2026-06-22T13:45:07Z",
+      "resolved_at": "2026-06-22T13:45:07Z"
+    },
+    {
+      "task_id": "AG-E2E-TR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Step 10 widget spec fix applied: dropped _make_widget_spec (invalid partial fixtures — missing spec_version/created_at for canonical schema, missing title/query/chart_spec/interactions/can_export for design-closure schema); test_all_widgets_in_recipe_come_from_registry now builds explicit widget_id→widget_type map from WINNER_BRANCH_WIDGET_TYPES and validates each recipe widget against widget_registry.v1.json. 72 tests pass (commit b7e44551). Please re-review.",
+      "status": "done",
+      "created_at": "2026-06-22T13:49:47Z",
+      "resolved_at": "2026-06-22T13:51:22Z"
+    },
+    {
+      "task_id": "AG-E2E-TR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: re-reviewed b7e44551; focused pytest passed (72 tests). Owner Claude should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T13:51:22Z",
+      "resolved_at": "2026-06-22T14:01:40Z"
+    }
+  ],
+  "blockers": []
+}
