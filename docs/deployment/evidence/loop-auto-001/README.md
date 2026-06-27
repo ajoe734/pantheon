@@ -34,3 +34,17 @@ pytest -q tests/test_loop_catalog_registry.py services/control-plane/bff/test_lo
 ```
 
 Result: `13 passed`.
+
+## Closeout Finalization
+
+On 2026-06-27, owner closeout refreshed `task/LOOP-AUTO-001` with
+`origin/dev` at `43625ced` after reviewer approval identified PR #2409 as
+behind the merge target.
+
+Verification rerun after the refresh:
+
+```bash
+pytest -q tests/test_loop_catalog_registry.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_contract_paths_are_registered services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_openapi_json_is_route_discoverable
+```
+
+Result: `13 passed`.
