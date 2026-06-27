@@ -54,6 +54,9 @@ pytest -q services/source_ingestion/tests/test_persona_source_reconciler.py serv
 
 Result: `54 passed in 39.75s`.
 
+Closeout revalidation after refreshing with `origin/dev` at `5f3a9aa3`:
+`54 passed in 18.71s`.
+
 ## Maturity Boundary
 
 This task does not raise `source_ingestion` maturity above `api-only`.
