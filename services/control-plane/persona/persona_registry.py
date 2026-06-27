@@ -12,6 +12,9 @@ Public API
 PersonaLifecycleState   — enum of valid persona lifecycle states
 SessionType             — enum of valid session types
 SessionStatus           — enum of valid session status values
+DataSourceCadence       — enum of valid data source cadences
+DataSourceClass         — enum of data source binding classes (live_push/live_pull/seed_only)
+RequiredDataSource      — immutable dataclass (first-class persona data requirement)
 Persona                 — immutable dataclass (registry object)
 SessionPersona          — immutable dataclass (session object)
 CapabilitySnapshot      — immutable dataclass (effective capabilities)
@@ -48,7 +51,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def utc_now() -> str:
@@ -109,6 +112,87 @@ class DeploymentStage(str, Enum):
     CANARY = "canary"
     LIVE = "live"
     FROZEN = "frozen"
+
+
+class DataSourceCadence(str, Enum):
+    REALTIME = "realtime"
+    MINUTELY = "minutely"
+    HOURLY = "hourly"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    ON_DEMAND = "on_demand"
+
+
+class DataSourceClass(str, Enum):
+    LIVE_PUSH = "live_push"
+    LIVE_PULL = "live_pull"
+    SEED_ONLY = "seed_only"
+
+    def is_live_binding(self) -> bool:
+        """Returns True only for source classes that constitute live data binding proof."""
+        return self in {DataSourceClass.LIVE_PUSH, DataSourceClass.LIVE_PULL}
+
+
+# ---------------------------------------------------------------------------
+# RequiredDataSource dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RequiredDataSource:
+    """
+    A first-class data requirement declared by a persona.
+
+    Fields
+    ------
+    dataset             : stable dataset identifier (e.g. tw_price_daily)
+    market              : market scope (e.g. TW, US)
+    cadence             : required delivery cadence
+    source_class        : LIVE_PUSH / LIVE_PULL require an approved active connector;
+                          SEED_ONLY is a label declaration — it must not be treated
+                          as live data source binding proof.
+    connector_candidates: ordered connector IDs the reconciler may use to satisfy
+                          this requirement
+    policy_gates        : gate identifiers that must pass before binding is active
+    """
+    dataset: str
+    market: str
+    cadence: str
+    source_class: str
+
+    connector_candidates: List[str] = field(default_factory=list)
+    policy_gates: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.dataset.strip():
+            raise PersonaRegistryError("RequiredDataSource.dataset must not be blank.")
+        if not self.market.strip():
+            raise PersonaRegistryError("RequiredDataSource.market must not be blank.")
+        try:
+            DataSourceCadence(self.cadence)
+        except ValueError:
+            raise PersonaRegistryError(
+                f"Invalid cadence: {self.cadence!r}. "
+                f"Must be one of {[e.value for e in DataSourceCadence]}."
+            )
+        try:
+            DataSourceClass(self.source_class)
+        except ValueError:
+            raise PersonaRegistryError(
+                f"Invalid source_class: {self.source_class!r}. "
+                f"Must be one of {[e.value for e in DataSourceClass]}."
+            )
+
+    def is_live_binding(self) -> bool:
+        """Returns True iff this entry constitutes live data source binding proof."""
+        return DataSourceClass(self.source_class).is_live_binding()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RequiredDataSource":
+        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        return cls(**{k: v for k, v in data.items() if k in known})
 
 
 # ---------------------------------------------------------------------------
@@ -180,20 +264,22 @@ class Persona:
 
     Fields
     ------
-    persona_id          : immutable unique identifier
-    name                : human-readable display name
-    mandate             : operating mandate (strategy scope and constraints)
-    lifecycle_state     : current governance lifecycle state
-    created_at          : creation timestamp (UTC ISO-8601)
-    strategy_family     : optional strategy family tag
-    workspace_ref       : reference to this persona's private workspace
-    tool_profile_id     : reference to the persona's tool profile
-    route_policy_id     : reference to the route policy document
-    consult_policy_id   : reference to the consult policy document
-    owner               : governance operator who owns this persona record
-    status              : administrative status (active/suspended/archived)
-    updated_at          : last update timestamp
-    metadata            : arbitrary governance metadata
+    persona_id              : immutable unique identifier
+    name                    : human-readable display name
+    mandate                 : operating mandate (strategy scope and constraints)
+    lifecycle_state         : current governance lifecycle state
+    created_at              : creation timestamp (UTC ISO-8601)
+    strategy_family         : optional strategy family tag
+    workspace_ref           : reference to this persona's private workspace
+    tool_profile_id         : reference to the persona's tool profile
+    route_policy_id         : reference to the route policy document
+    consult_policy_id       : reference to the consult policy document
+    owner                   : governance operator who owns this persona record
+    status                  : administrative status (active/suspended/archived)
+    updated_at              : last update timestamp
+    required_data_sources   : first-class data requirements for this persona;
+                              seed_only entries must not be used as live binding proof
+    metadata                : arbitrary governance metadata
     """
     persona_id: str
     name: str
@@ -209,6 +295,7 @@ class Persona:
     owner: Optional[str] = None
     status: str = "active"
     updated_at: Optional[str] = None
+    required_data_sources: List[RequiredDataSource] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -223,6 +310,23 @@ class Persona:
             raise PersonaRegistryError(
                 f"Invalid status: {self.status!r}. Must be active/suspended/archived."
             )
+        for rds in self.required_data_sources:
+            if not isinstance(rds, RequiredDataSource):
+                raise PersonaRegistryError(
+                    f"required_data_sources entries must be RequiredDataSource instances, "
+                    f"got {type(rds).__name__!r}."
+                )
+
+    def live_data_sources(self) -> List[RequiredDataSource]:
+        """Return only entries that constitute live data source binding proof."""
+        return [rds for rds in self.required_data_sources if rds.is_live_binding()]
+
+    def seed_only_sources(self) -> List[RequiredDataSource]:
+        """Return entries declared as seed labels (must not be used as live binding)."""
+        return [
+            rds for rds in self.required_data_sources
+            if rds.source_class == DataSourceClass.SEED_ONLY.value
+        ]
 
     def to_dict(self) -> Dict[str, Any]:
         d = {k: v for k, v in asdict(self).items() if v is not None and v != {}}
@@ -232,6 +336,11 @@ class Persona:
     def from_dict(cls, data: Dict[str, Any]) -> "Persona":
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         filtered = {k: v for k, v in data.items() if k in known}
+        if "required_data_sources" in filtered:
+            filtered["required_data_sources"] = [
+                RequiredDataSource.from_dict(rds) if isinstance(rds, dict) else rds
+                for rds in filtered["required_data_sources"]
+            ]
         return cls(**filtered)
 
 
