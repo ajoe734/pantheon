@@ -1380,6 +1380,20 @@ services:
       reconciliation-drift-svc:
         condition: service_healthy
 
+  reconciliation-drift-scheduler:
+    profiles: ["reconciliation-drift-scheduler"]
+    build:
+      context: .
+      dockerfile: services/reconciliation-drift/Dockerfile
+    command: ["python", "services/reconciliation-drift/scheduler_worker.py"]
+    environment:
+      RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
+      RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS:-300}
+      RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS:-0}
+    depends_on:
+      reconciliation-drift-svc:
+        condition: service_healthy
+
   research-worker-gateway-svc:
     build:
       context: .
