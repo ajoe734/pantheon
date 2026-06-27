@@ -198,11 +198,15 @@ class JsonlConfiguredConnectorStore:
 
     def upsert_config(self, connector: SourceConnector, fetch: Mapping[str, Any]) -> ConfiguredConnector:
         connector = validate_external_source_connector(connector)
-        normalized_fetch = self._validate_fetch_config(fetch)
+        normalized_fetch = self.normalize_fetch_config(fetch)
         config = ConfiguredConnector(connector=connector, fetch=normalized_fetch, updated_at=_utc_now())
         self._configs[connector.connector_id] = config
         self._append("connector_config", connector.connector_id, config.to_dict())
         return config
+
+    def normalize_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the persisted fetch contract without mutating the store."""
+        return self._validate_fetch_config(fetch)
 
     def get_config(self, connector_id: str) -> ConfiguredConnector | None:
         return self._configs.get(connector_id)

@@ -81,6 +81,7 @@ from .ingest_manager import IngestManager
 from .market_data_storage import MarketDataStorageWriter
 from .pg_store import build_source_evidence_repository
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
+from .persona_source_reconciler import SourceProvisioningReconciler
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
 from .source_health import (
     SourceHealth,
@@ -420,6 +421,12 @@ class SetConnectorLifecycleRequest(StrictBaseModel):
 
 class RunScheduledRequest(StrictBaseModel):
     max_concurrency: int | None = None
+
+
+class PersonaSourceProvisioningRequest(StrictBaseModel):
+    persona: dict[str, Any] | None = None
+    personas: list[dict[str, Any]] = Field(default_factory=list)
+    dry_run: bool = False
 
 
 class ReplayFrontierRequest(StrictBaseModel):
@@ -770,6 +777,43 @@ def _provider_example_payloads() -> list[dict[str, Any]]:
             }
         )
     return payloads
+
+
+def _source_provisioning_reconciler() -> SourceProvisioningReconciler:
+    return SourceProvisioningReconciler(
+        manager=manager,
+        connector_store=connector_store,
+        schedule_store=schedule_config_store,
+    )
+
+
+def _persona_source_provisioning_payload(request: PersonaSourceProvisioningRequest) -> dict[str, Any]:
+    personas = list(request.personas)
+    if request.persona is not None:
+        personas.insert(0, request.persona)
+    if not personas:
+        raise SourceEvidenceError("persona or personas is required")
+    reconciler = _source_provisioning_reconciler()
+    results = reconciler.reconcile_personas(personas, dry_run=request.dry_run)
+    summary = {
+        "persona_count": len(results),
+        "total": 0,
+        "satisfied": 0,
+        "mutated": 0,
+        "skipped": 0,
+        "conflicts": 0,
+        "unsupported": 0,
+    }
+    for result in results:
+        for key, value in result.summary.items():
+            summary[key] = int(summary.get(key, 0)) + int(value)
+    return {
+        "schema_version": "persona_source_provisioning_response.v1",
+        "controller": "persona_source_provisioning_reconciler",
+        "dry_run": request.dry_run,
+        "summary": summary,
+        "results": [result.to_dict() for result in results],
+    }
 
 
 def _connector_for_job(request: TriggerIngestJobRequest) -> SourceConnector:
@@ -1445,6 +1489,14 @@ def source_connector_registry() -> dict[str, Any]:
         "financial_data_source_catalog": financial_catalog,
         "active_universe_policy": financial_catalog["active_universe_policy"],
     }
+
+
+@app.post("/api/source-ingest/persona-source-provisioning/reconcile")
+def reconcile_persona_source_provisioning(request: PersonaSourceProvisioningRequest) -> dict[str, Any]:
+    try:
+        return _persona_source_provisioning_payload(request)
+    except SourceEvidenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/source-ingest/policy-registry")
