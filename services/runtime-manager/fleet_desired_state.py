@@ -45,6 +45,10 @@ FLEET_EXCLUDED_STATUSES: Dict[str, str] = {
 _QUERY_VERSION = "1"
 
 
+class FleetDesiredStateQueryError(ValueError):
+    """Raised when a desired-state query parameter is outside the contract."""
+
+
 # ---------------------------------------------------------------------------
 # Policy envelope
 # ---------------------------------------------------------------------------
@@ -285,6 +289,12 @@ def build_fleet_desired_state(
     -------
     FleetDesiredState with bindings (desired members) and excluded (non-members)
     """
+    if stage_filter is not None and stage_filter not in FLEET_MANAGED_STAGES:
+        allowed = ", ".join(sorted(FLEET_MANAGED_STAGES))
+        raise FleetDesiredStateQueryError(
+            f"stage_filter must be one of: {allowed}; got {stage_filter!r}"
+        )
+
     desired: List[DesiredFleetBinding] = []
     excluded: List[ExcludedBinding] = []
 

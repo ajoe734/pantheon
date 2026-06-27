@@ -339,7 +339,10 @@ def fleet_desired_state():
     pool_id          : optional; filter by capital_pool_id
     include_excluded : optional; "true" to include excluded bindings in response
     """
-    from fleet_desired_state import build_fleet_desired_state as _build
+    from fleet_desired_state import (
+        FleetDesiredStateQueryError,
+        build_fleet_desired_state as _build,
+    )
 
     stage = request.args.get("stage") or None
     pool_id_filter = request.args.get("pool_id") or None
@@ -353,7 +356,10 @@ def fleet_desired_state():
     else:
         bindings = svc.list_all()
 
-    desired = _build([b.to_dict() for b in bindings], stage_filter=stage)
+    try:
+        desired = _build([b.to_dict() for b in bindings], stage_filter=stage)
+    except FleetDesiredStateQueryError as exc:
+        return jsonify({"error": {"code": "INVALID_STAGE", "message": str(exc)}}), 400
     return jsonify(desired.to_dict(include_excluded=include_excluded)), 200
 
 
