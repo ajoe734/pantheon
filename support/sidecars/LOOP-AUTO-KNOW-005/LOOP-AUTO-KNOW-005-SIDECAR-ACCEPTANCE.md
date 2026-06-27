@@ -33,7 +33,7 @@
 
 | Task ID | Title | Status | Owner | Why needed |
 |---|---|---|---|---|
-| LOOP-AUTO-KNOW-004 | Extract Agora interaction evidence into datasets | todo | Copilot | Produces learning datasets that serve as trace inputs for imitation/shadow eval |
+| LOOP-AUTO-KNOW-004 | Extract Agora interaction evidence into datasets | done | Copilot | Produces learning datasets that serve as trace inputs for imitation/shadow eval |
 | LOOP-AUTO-TEL-005 | Add telemetry incident replay and operator evidence | todo | Gemini2 | Provides telemetry replay corpus that feeds imitation/shadow eval runs |
 
 ### Upstream Dependency Chain
@@ -183,3 +183,4 @@ This packet is a support artifact only. It:
 | Date | Author | Change |
 |---|---|---|
 | 2026-06-27 | Claude2 | Initial acceptance packet created (sidecar dispatch owned_ready_dispatch) |
+| 2026-06-27 | Claude2 | Finalization: updated Section 2 LOOP-AUTO-KNOW-004 status todo → done (merged via PR #2465); reviewer minor observation addressed |
