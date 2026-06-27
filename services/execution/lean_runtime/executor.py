@@ -38,6 +38,19 @@ _CONFIDENCE_FLOOR = 0.5
 BRACKET_ORDER_STATUS_LOGGED_ONLY = "logged_only"
 BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER = "submitted_to_broker"
 _BRACKET_EXECUTION_STAGES = {"paper", "sim", "simulation"}
+
+# Taiwan venue suffixes execute through the Shioaji broker boundary, not LEAN
+# Symbol.Create(). execute() routes these to algo.SubmitTaiwanBrokerOrder before
+# the LEAN symbol parser (which deliberately rejects TW market codes) is reached.
+_TAIWAN_VENUE_SUFFIXES = {"TW", "TWSE", "TWO", "TPEX", "TAIFEX"}
+
+
+def _is_taiwan_venue_symbol(symbol_str: str) -> bool:
+    s = str(symbol_str or "").strip().upper()
+    if "." not in s:
+        return False
+    return s.rsplit(".", 1)[1] in _TAIWAN_VENUE_SUFFIXES
+
 _ORDER_ADAPTER_CONTEXT_KEYS = (
     "adapter",
     "broker",
@@ -110,6 +123,22 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
     confidence = float(
         (signal.get("metadata") or {}).get("confidence_score", 1.0)
     )
+
+    # --- Taiwan venues: route to the Shioaji broker boundary, not LEAN ---
+    if _is_taiwan_venue_symbol(signal["symbol"]):
+        _execute_taiwan(
+            signal,
+            algo,
+            signal_id=signal_id,
+            action=action,
+            direction=direction,
+            quantity=quantity,
+            quantity_type=quantity_type,
+            order_type=order_type,
+            limit_price=limit_price,
+            signal_context=signal_context,
+        )
+        return
 
     # --- Parse symbol ---
     try:
@@ -963,3 +992,75 @@ def _get_price(algo: Any, lean_symbol: Any) -> float:
         except Exception:
             return 0.0
     return 0.0
+
+
+def _execute_taiwan(
+    signal: dict[str, Any],
+    algo: Any,
+    *,
+    signal_id: str,
+    action: str,
+    direction: str,
+    quantity: float,
+    quantity_type: str,
+    order_type: str,
+    limit_price: float | None,
+    signal_context: dict[str, Any],
+) -> None:
+    """Route a Taiwan-venue signal to the Shioaji paper broker boundary.
+
+    LEAN Symbol.Create() has no TW market; Taiwan execution is delegated to the
+    runtime's SubmitTaiwanBrokerOrder, which posts to the paper broker sidecar
+    and records the fill on the same telemetry path as LEAN fills.
+    """
+    submit = getattr(algo, "SubmitTaiwanBrokerOrder", None)
+    if not callable(submit):
+        raise ExecutionError(
+            f"[{signal_id}] Taiwan venue '{signal['symbol']}' requires a Shioaji "
+            "broker boundary; runtime exposes no SubmitTaiwanBrokerOrder"
+        )
+
+    if action == "HOLD":
+        _set_signal_context(algo, signal_context)
+        try:
+            _record_signal_noop(
+                algo,
+                signal["symbol"],
+                signal_id,
+                noop_reason="hold_signal",
+                requested_quantity=quantity,
+                quantity_type=quantity_type,
+                order_type=order_type,
+            )
+        finally:
+            _clear_signal_context(algo)
+        log.info("[%s] HOLD signal — no TW order placed (symbol=%s)", signal_id, signal["symbol"])
+        return
+
+    if action == "BUY" and direction == "LONG":
+        side = "buy"
+    elif action == "SELL" and direction == "SHORT":
+        side = "sell"
+    elif action == "SELL" and direction == "LONG":
+        side = "sell"
+    elif action == "BUY" and direction == "SHORT":
+        side = "buy"
+    else:
+        raise ExecutionError(
+            f"[{signal_id}] Unsupported TW action/direction: {action}/{direction}"
+        )
+
+    _set_signal_context(algo, signal_context)
+    try:
+        submit(
+            signal["symbol"],
+            signal_id=signal_id,
+            side=side,
+            quantity=quantity,
+            quantity_type=quantity_type,
+            action=action,
+            order_type=order_type,
+            limit_price=limit_price,
+        )
+    finally:
+        _clear_signal_context(algo)

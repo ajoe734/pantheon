@@ -250,6 +250,7 @@ class _NoopRecordingAlgo:
     def __init__(self, now: datetime) -> None:
         self.Time = now
         self.signal_noops: list[dict] = []
+        self.taiwan_orders: list[dict] = []
 
     def RecordSignalNoop(  # noqa: N802
         self,
@@ -281,6 +282,16 @@ class _NoopRecordingAlgo:
         if price is not None:
             payload["price"] = price
         self.signal_noops.append(payload)
+
+    def SubmitTaiwanBrokerOrder(  # noqa: N802
+        self, symbol, *, signal_id, side, quantity, quantity_type, action,
+        order_type="MARKET", limit_price=None,
+    ):
+        self.taiwan_orders.append({
+            "symbol": symbol, "signal_id": signal_id, "side": side,
+            "quantity": quantity, "quantity_type": quantity_type,
+            "action": action, "order_type": order_type, "limit_price": limit_price,
+        })
 
 
 def _make_signal(signal_id: str, binding_id: str | None = None) -> dict:
@@ -345,7 +356,7 @@ class TestBindingIsolation(unittest.TestCase):
         """Execution errors should not leave signals invisible or unprocessed."""
         now = datetime.now(timezone.utc).replace(microsecond=0)
         bad_symbol_signal = _make_signal("s-symbol-parse-error")
-        bad_symbol_signal["symbol"] = "2330.TW"
+        bad_symbol_signal["symbol"] = "BADSYM.XYZ"
         bad_symbol_signal["metadata"] = {
             "alpha_source": "unit_symbol_parse_error",
             "market_data": {"close": 930.0},
@@ -360,7 +371,7 @@ class TestBindingIsolation(unittest.TestCase):
         self.assertEqual(c._processed_signal_ids, {"s-symbol-parse-error"})
         self.assertEqual(len(algo.signal_noops), 1)
         noop = algo.signal_noops[0]
-        self.assertEqual(noop["symbol"], "2330.TW")
+        self.assertEqual(noop["symbol"], "BADSYM.XYZ")
         self.assertEqual(noop["noop_reason"], "symbol_parse_error")
         self.assertEqual(noop["requested_quantity"], 0.5)
         self.assertEqual(noop["computed_quantity"], 0.0)
@@ -370,9 +381,33 @@ class TestBindingIsolation(unittest.TestCase):
         self.assertEqual(noop["metadata"]["filter_reason"], "symbol_parse_error")
         self.assertEqual(noop["metadata"]["execution_error_type"], "ExecutionError")
         self.assertEqual(noop["metadata"]["execution_error_stage"], "execute_signal")
-        self.assertEqual(noop["metadata"]["execution_error_symbol"], "2330.TW")
-        self.assertIn("Unknown market code 'TW'", noop["metadata"]["execution_error_message"])
+        self.assertEqual(noop["metadata"]["execution_error_symbol"], "BADSYM.XYZ")
+        self.assertIn("Unknown market code 'XYZ'", noop["metadata"]["execution_error_message"])
         self.assertEqual(noop["metadata"]["alpha_source"], "unit_symbol_parse_error")
+
+    def test_drain_routes_taiwan_to_broker(self):
+        """Taiwan-venue signals route to the Shioaji broker boundary, not LEAN."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        tw_signal = _make_signal("s-tw-route")
+        tw_signal["symbol"] = "2330.TW"
+        tw_signal["action"] = "SELL"
+        tw_signal["direction"] = "SHORT"
+        tw_signal["metadata"] = {"alpha_source": "unit_tw_route"}
+        store = MagicMock()
+        store.get_pending.return_value = [tw_signal]
+        c = SignalConsumer(store_client=store)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+
+        c.drain(algo=algo)
+
+        self.assertEqual(c._processed_signal_ids, {"s-tw-route"})
+        self.assertEqual(len(algo.taiwan_orders), 1)
+        self.assertEqual(len(algo.signal_noops), 0)
+        order = algo.taiwan_orders[0]
+        self.assertEqual(order["symbol"], "2330.TW")
+        self.assertEqual(order["side"], "sell")
+        self.assertEqual(order["signal_id"], "s-tw-route")
+        self.assertEqual(order["action"], "SELL")
 
     def test_drain_records_unsupported_action_direction_noop_feedback(self):
         """Unsupported action/direction combinations should be classified for recovery."""
