@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add completion guardrails for loop claims
-- Status: todo
+- Status: review_approved
 - Owner: Claude
 - Reviewer: Codex
-- Next: Live dispatch materialized; waiting for supervisor pickup
+- Next: Review passed; evidence gate verified
 
 ## Summary
 新增完成宣告 guardrail，阻止 worker 只靠 route、seed、fixture 或 panel copy 宣稱 loop 已完成。
