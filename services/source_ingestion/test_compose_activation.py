@@ -33,6 +33,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert source_ingest_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"] == "${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"] == "${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}"
+    assert source_ingest_env["SEARCH_INGEST_NOTIFY_URL"] == "${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}"
     assert source_ingest_env["PANTHEON_SOURCE_SEARCH_POSTURE"] == "${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}"
     assert source_ingest_env["PANTHEON_S3_ENDPOINT"] == "${PANTHEON_S3_ENDPOINT:-http://minio:9000}"
     assert source_ingest_env["PANTHEON_ARTIFACT_BUCKET"] == "${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}"
@@ -90,6 +91,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled"' in bounded_smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/audit"' in bounded_smoke
     assert 'f"{SEARCH_URL}/api/search/index/refresh"' in bounded_smoke
+    assert 'f"{SEARCH_URL}/api/search/index/source-completions/{feed_run_id}"' in bounded_smoke
 
     prod_env = (compose_path.parent / "env/prod-control.env.example").read_text(encoding="utf-8")
     assert "PANTHEON_SOURCE_SEARCH_POSTURE=production" in prod_env

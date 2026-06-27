@@ -24,9 +24,11 @@ def client():
         "SOURCE_INGEST_DLQ_PATH": os.environ.get("SOURCE_INGEST_DLQ_PATH"),
         "SOURCE_INGEST_AUDIT_PATH": os.environ.get("SOURCE_INGEST_AUDIT_PATH"),
         "SOURCE_INGEST_MAX_RECORDS": os.environ.get("SOURCE_INGEST_MAX_RECORDS"),
+        "SEARCH_INGEST_NOTIFY_URL": os.environ.get("SEARCH_INGEST_NOTIFY_URL"),
     }
     os.environ["SOURCE_INGEST_DATA_DIR"] = tempdir
     os.environ["SOURCE_INGEST_MAX_RECORDS"] = "3"
+    os.environ["SEARCH_INGEST_NOTIFY_URL"] = ""
 
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
@@ -130,6 +132,9 @@ def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
     run_id = body["run"]["ingest_run_id"]
     assert body["run"]["status"] == "completed"
     assert body["watermark"]["value"] == "2026-04-28T18:00:00Z"
+    assert body["source_search_refresh"]["status"] == "not_configured"
+    assert body["source_search_refresh"]["ingest_run_id"] == run_id
+    assert body["run"]["events"][-1]["event_type"] == "SearchIndexRefreshObserved"
     assert (data_dir / "ingest_schedule.jsonl").exists()
 
     reloaded = importlib.reload(module)
@@ -137,6 +142,9 @@ def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
     replayed_run = replay_client.get(f"/api/source-ingest/jobs/{run_id}")
     assert replayed_run.status_code == 200
     assert replayed_run.json()["run"]["status"] == "completed"
+    replayed_events = replayed_run.json()["run"]["events"]
+    assert replayed_events[-1]["event_type"] == "SearchIndexRefreshObserved"
+    assert json.loads(replayed_events[-1]["message"])["status"] == "not_configured"
     replayed_watermark = replay_client.get("/api/source-ingest/watermarks/conn-openalex")
     assert replayed_watermark.status_code == 200
     assert replayed_watermark.json()["watermark"]["last_ingest_run_id"] == run_id
