@@ -747,6 +747,44 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _market_persona_required_data_sources(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    market = str(item.get("market") or "").upper()
+    if market == "TW":
+        return [
+            {
+                "dataset": "tw_price_daily",
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": [
+                    "tw-finmind-datasets",
+                    "tw-twse-tpex-official-market",
+                ],
+                "policy_gates": [
+                    "require_connector_approved",
+                    "require_schedule_active",
+                    "require_source_health_ok",
+                ],
+            },
+            {
+                "dataset": "tw_broker_top",
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "live_push",
+                "connector_candidates": [
+                    "tw-finmind-broker-daily-report",
+                    "tw-finmind-broker-bulk-parquet",
+                ],
+                "policy_gates": [
+                    "require_connector_approved",
+                    "require_schedule_active",
+                    "require_payload_push_health",
+                ],
+            },
+        ]
+    return []
+
+
 def _market_persona_research_truth(item: Dict[str, Any]) -> Dict[str, Any]:
     market = str(item.get("market") or "").upper()
     if market == "TW":
@@ -1099,6 +1137,7 @@ def _merge_market_persona_fleet(
                 "created_at": "2026-02-01T00:00:00Z",
                 "updated_at": "2026-06-07T13:00:00Z",
                 "last_active_at": "2026-06-07T13:00:00Z",
+                "required_data_sources": _market_persona_required_data_sources(item),
                 "metadata": metadata,
             },
         )
