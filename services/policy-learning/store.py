@@ -110,7 +110,41 @@ class PolicyLearningStore:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.jobs_path = self.data_dir / "policy_learning_jobs.json"
+        self.candidates_path = self.data_dir / "shadow_imitation_candidates.json"
         self.job_store = job_store
+
+    def _read_candidates(self) -> Dict[str, Dict[str, Any]]:
+        if not self.candidates_path.exists():
+            return {}
+        text = self.candidates_path.read_text(encoding="utf-8").strip()
+        if not text:
+            return {}
+        payload = json.loads(text)
+        if not isinstance(payload, dict):
+            return {}
+        return {str(key): value for key, value in payload.items() if isinstance(value, dict)}
+
+    def _write_candidates(self, candidates: Dict[str, Dict[str, Any]]) -> None:
+        self.candidates_path.parent.mkdir(parents=True, exist_ok=True)
+        self.candidates_path.write_text(json.dumps(candidates, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    def list_candidates(self) -> List[Dict[str, Any]]:
+        return list(self._read_candidates().values())
+
+    def get_candidate(self, candidate_id: str) -> Optional[Dict[str, Any]]:
+        return self._read_candidates().get(candidate_id)
+
+    def put_candidate(self, candidate: Dict[str, Any]) -> Dict[str, Any]:
+        candidate_id = str(candidate.get("candidate_id") or candidate.get("id") or "").strip()
+        if not candidate_id:
+            raise ValueError("candidate_id is required")
+        records = self._read_candidates()
+        record = json.loads(json.dumps(candidate))
+        record["candidate_id"] = candidate_id
+        record["id"] = candidate_id
+        records[candidate_id] = record
+        self._write_candidates(records)
+        return record
 
     def _read_jobs(self) -> Dict[str, Dict[str, Any]]:
         if not self.jobs_path.exists():
