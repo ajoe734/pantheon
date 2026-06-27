@@ -126,6 +126,11 @@ transitioning to `resolved` or `closed`.
 | `timeline` | `object[]` | Ordered event timeline (`ts`, `description`, `actor`) |
 | `action_items` | `string[]` | Follow-up action items |
 | `author_ids` | `string[]` | Postmortem authors |
+| `telemetry_event_ids` | `string[]` | Telemetry evidence copied from the parent `IncidentCase` |
+| `reconciliation_ids` | `string[]` | Reconciliation / DriftReport evidence copied from the parent `IncidentCase` |
+| `incident_cluster_id` | string | Incident cluster copied from the parent `IncidentCase` |
+| `incident_evidence_summary` | string | Evidence summary copied from the parent `IncidentCase` |
+| `lineage_ref` | string | Composite lineage ref copied from the parent `IncidentCase` |
 | `linked_evolution_decision_id` | string | Set by EVO-003 — reverse link for `evolution_decision.postmortem` edge |
 
 ### 5.3 Status lifecycle
