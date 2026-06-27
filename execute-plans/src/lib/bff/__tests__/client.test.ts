@@ -29,7 +29,7 @@ describe("managementClient — coverage", () => {
       "rebalances", "deployments", "evolution", "research", "artifacts",
       "tools", "mcpServers", "mcpTools", "skills", "channels",
       "jobs", "runtimes", "alerts", "incidents", "approvals", "audit",
-      "oodaPackets", "personaLeague", "personaFleet", "humanInbox",
+      "loopHealth", "oodaPackets", "personaLeague", "personaFleet", "humanInbox",
       "tradingPulse", "evidenceExplorer", "evolutionJournal", "personaIntent",
     ] as const;
     for (const family of required) {
@@ -44,7 +44,7 @@ describe("managementClient — coverage", () => {
       "strategies", "personas", "capitalPools", "rankingFormulas",
       "rebalances", "deployments", "evolution", "research", "artifacts",
       "tools", "mcpServers", "mcpTools", "skills", "channels",
-      "jobs", "runtimes", "alerts", "incidents", "approvals",
+      "jobs", "runtimes", "alerts", "incidents", "approvals", "loopHealth",
       "oodaPackets", "personaLeague", "humanInbox",
     ] as const;
     for (const family of entityRegistries) {
@@ -90,6 +90,25 @@ describe("managementClient — DTO normalization (mock mode)", () => {
     expect(env.items).toEqual([]);
     expect(env.totalCountExact).toBe(true);
     expect(env.meta?.surfaces).toHaveProperty("ooda_packets");
+  });
+
+  it("loopHealth.list labels mock seed data as unavailable, not live proof", async () => {
+    const env = await managementClient.loopHealth.list();
+    expect(env.items).toEqual([]);
+    expect(env.meta?.surfaces).toHaveProperty("loop_health");
+    expect(env.meta?.surfaces?.loop_health).toMatchObject({
+      status: "unavailable",
+      source: "mock_seed",
+      truth_level: "seed_fixture",
+    });
+    expect(env.meta?.truth_labels?.seed_fixture).toMatchObject({
+      label: "Seed / fixture",
+      accepted_as_live: false,
+    });
+    expect(env.meta?.truth_labels?.reconciled_live_proof).toMatchObject({
+      source_type: "live_truth",
+      accepted_as_live: true,
+    });
   });
 
   it("strategies.get returns a domain object or undefined", async () => {
