@@ -85,16 +85,24 @@ class SchedulerState:
         )
 
     def compute_startup_missed(self, *, interval_seconds: int) -> int:
-        """Estimate ticks missed since last success (for startup missed-tick reporting).
+        """Estimate ticks missed during downtime (for startup missed-tick reporting).
 
-        The caller is about to run a tick immediately, so the last missing tick
-        is not counted (it will be covered by the first tick of this run).
-        Returns 0 when there is no persisted last_success_at.
+        Anchors on the latest tick attempt (success or failure) so that failures
+        already persisted in missed_tick_count are not recounted.  The caller is
+        about to run a tick immediately, so the current incomplete interval is
+        not counted (-1 adjustment).
+        Returns 0 when no tick attempt has ever been recorded.
         """
-        if not self.last_success_at:
+        # Use the most recent tick attempt as the anchor.  Failures that occurred
+        # after the last success already incremented missed_tick_count, so anchoring
+        # on last_success_at would double-count those ticks on restart.
+        last_attempt = self.last_success_at
+        if self.last_failure_at and (not last_attempt or self.last_failure_at > last_attempt):
+            last_attempt = self.last_failure_at
+        if not last_attempt:
             return 0
         try:
-            last_dt = datetime.fromisoformat(self.last_success_at.replace("Z", "+00:00"))
+            last_dt = datetime.fromisoformat(last_attempt.replace("Z", "+00:00"))
             elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds()
             return max(0, int(elapsed / interval_seconds) - 1)
         except Exception:

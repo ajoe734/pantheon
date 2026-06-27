@@ -92,6 +92,21 @@ class TestSchedulerStateNoPath:
         missed = s.compute_startup_missed(interval_seconds=60)
         assert missed == 0
 
+    def test_compute_startup_missed_anchors_on_latest_failure_not_last_success(self) -> None:
+        # Regression: if failures occurred after last_success_at they are already
+        # counted in missed_tick_count.  compute_startup_missed must not re-count
+        # them by anchoring on last_success_at.  Anchor must be the latest tick
+        # attempt (max of last_success_at and last_failure_at).
+        s = SchedulerState()
+        # Last success was 10 minutes ago; 9 failures were recorded since then.
+        s.last_success_at = (datetime.now(timezone.utc) - timedelta(seconds=600)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        # Most recent failure was 30s ago — well within one interval.
+        s.last_failure_at = (datetime.now(timezone.utc) - timedelta(seconds=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        s.missed_tick_count = 9
+        # Only 30s elapsed since last tick attempt → 0 additional missed ticks.
+        # The old code anchored on last_success_at (600s ago) and would return ~8.
+        assert s.compute_startup_missed(interval_seconds=60) == 0
+
     def test_save_is_noop_without_path(self) -> None:
         s = SchedulerState()
         s.record_success()  # Should not raise even without a path
