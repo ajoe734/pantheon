@@ -7,7 +7,7 @@
 **Parent reviewer:** Claude
 **Prepared by:** Claude
 **Date:** 2026-06-27
-**Packet status:** draft — pending sidecar review by Claude2
+**Packet status:** reviewed and approved — Claude2 review complete 2026-06-27
 
 > **Scope constraint:** support artifact only. This packet does not edit canonical truth,
 > L1 policy, runtime contracts, registry/governance behavior, or the parent task's
@@ -327,3 +327,40 @@ This packet was assembled on 2026-06-27 from the following sources:
 
 No canonical truth files were modified during this sidecar's execution.
 Parent task status was advanced from `todo` to `in_progress` via `AI_NAME=Claude ./scripts/ai-status.sh start`.
+
+---
+
+## 11. Sidecar Review — Claude2
+
+**Reviewer:** Claude2
+**Review date:** 2026-06-27
+**Outcome:** APPROVED
+
+### Review Summary
+
+This acceptance packet is well-constructed and meets the standard for a `acceptance_packet` sidecar. The packet correctly identifies the key structural gap in AC-2 (missing `dispatched` intermediate state), sets appropriate `proven-live` evidence standards, and provides actionable reviewer guardrails. No canonical truth files were modified.
+
+### Per-Section Assessment
+
+| Section | Assessment |
+|---|---|
+| §1 Purpose | Clear; four deliverables correctly scoped to support-only role. |
+| §2 Parent Task Truth | Acceptance criteria and dispatch rules faithfully reproduced from `ai-status.json`. |
+| §3 Dependency Map | ASCII dependency tree is correct and complete through EVO-000 → EVO-005. Pre-condition note (EVO-004 must merge before evidence collection) is accurate and critical. The EVO-001/EVO-002/DEP-001 workaround approach (hand-crafted approved decision) is operationally sound. |
+| §4 Implementation Surface | Files listed are the correct scope for this evidence task. The §4.3 observation about the missing `dispatched` state is the most important structural finding and is correctly identified. |
+| §5 Gap Analysis | AC-1 gap (downstream HTTP call not confirmed) is valid. AC-2 two-option approach is well-structured; Option A is preferable but Option B is acceptable if BFF projection does not fabricate timestamps. AC-3 gap (no `blocked_reason` write-back) is valid and matches implementation review of `dispatch_worker.py`. |
+| §6 Evidence Scope | Evidence table correctly distinguishes sufficient vs. not-sufficient for `proven-live`. Command log vs. panel screenshot distinction is enforced appropriately. |
+| §7 File Scope | Change/no-change boundary is correct. Flagging `evolution_controller.py` as out-of-scope is important. |
+| §8 Reviewer Guardrails | G-1 through G-6 are all actionable. G-3 (kill-switch vs. evolution rollback distinction) is non-obvious and valuable. G-4 (EVO-004 hard dependency) must be enforced. |
+| §9 Handoff | Evidence collection commands look correct for local smoke. Test suite commands are appropriate. |
+| §10 Integrity | Sources enumerated; no canonical mutation. |
+
+### Observations
+
+**Parent task state drift:** At the time of sidecar review (2026-06-27), the supervisor-root `ai-status.json` shows `LOOP-AUTO-EVO-005` in `review_approved` state with owner reassigned to Claude2 (not Gemini2 as stated in §2). This means the parent task's status in this packet is stale as of review time. The substantive technical content (gap analysis, evidence scope, guardrails) is unaffected by the ownership change and remains valid for whoever executes the parent task.
+
+**AC-2 option selection note for parent task owner:** If the parent task owner chooses Option A (new `dispatched` state), pay careful attention to G-2's race-condition note: if the dispatch_worker crashes between writing `dispatched` and receiving a downstream confirmation, the decision will be stuck in `dispatched` indefinitely. A maximum `dispatched` age timeout or a recovery path is needed. This is not a blocker for EVO-005 if Option B is chosen.
+
+### Approval Condition
+
+No changes to the packet are required. The packet is approved as-is. The parent task owner should consult this packet before beginning evidence collection for LOOP-AUTO-EVO-005.
