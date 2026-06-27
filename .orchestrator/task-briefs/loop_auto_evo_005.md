@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
-- Next: Review approved: all 20 tests pass, all 3 ACs met with real service code paths. Owner Claude2 may finalize.
+- Next: Supervisor resumed LOOP-AUTO-EVO-005 for finalize after successful dispatch.
 
 ## Summary
 產出 approved rollback/mitigation command 到 runtime-manager/deployment 的 follow-through evidence。
