@@ -23,10 +23,18 @@ Task: Create postmortem drafts from resolved incidents
 - Duplicate resolved events do not create duplicate drafts:
   covered by `test_consume_resolved_incident_duplicate_event_is_idempotent`.
 
+## Reviewer Approval
+
+Reviewer approval is recorded in
+`docs/deployment/evidence/loop-auto-evo-001/review_claude2.md`.
+
 ## Verification
 
 ```bash
 python3 -m pytest services/incident/test_incident.py services/postmortems/test_main_routes.py
 ```
 
-Result: `104 passed in 17.78s`.
+Reviewer result: `104 passed in 17.78s`.
+
+Owner closeout rerun on 2026-06-27:
+`104 passed in 15.60s`.
