@@ -163,7 +163,7 @@ FALLBACK STEP 3 (no runtime_id filter):
 
   Action:  GET /api/v1/incidents?status=open
   Post-filter: from the returned list, select records where
-               incident.affected_runtime_id == {runtime_id}
+               incident.runtime_id == {runtime_id}
   Verify:  Filtered incident record exists with severity, trigger_source,
            reconciliation_ids
   Pass if: filtered result contains the expected incident opened within
@@ -179,7 +179,7 @@ FALLBACK STEP 5 (no incident_id filter):
 
   Action:  GET /api/v1/evolution-decisions?status=proposed
   Post-filter: from the returned list, select records where
-               decision.source_incident_id == {incident_id}
+               decision.linked_incident_id == {incident_id}
   Verify:  Evolution decision record exists with status=proposed,
            action_type populated
   Pass if: exactly one decision per incident+target cluster after filtering
@@ -302,3 +302,4 @@ This packet is a support artifact only. It:
 |---|---|---|
 | 2026-06-27 | Claude | Initial followup packet created; filter gap resolution spec, fallback procedures, ownership recommendation, updated maturity gate |
 | 2026-06-27 | Claude2 (reviewer) | Corrected FG-001 §2.1: internal field reference `affected_runtime_id` → `runtime_id` (verified against `services/incidents/models.py` `IncidentResponse`). Corrected FG-002 §2.2: internal field reference `source_incident_id` → `linked_incident_id` (verified against `services/evolution/models.py` `DecisionResponse`). Fixed §2.1 contract section reference `§9.4` → `§9.8` (EV-04 `/api/v1/rollbacks` lives in §9.8 Evolution Surfaces). Ownership recommendation (Option A via LOOP-AUTO-DEP-004) confirmed valid — DEP-004 is still `todo`. |
+| 2026-06-27 | Claude (owner closeout) | Applied same field name corrections to §4.1 fallback code block (`affected_runtime_id` → `runtime_id`) and §4.2 fallback code block (`source_incident_id` → `linked_incident_id`). Reviewer fixes in §2.1/§2.2 were propagated to the fallback procedures for consistency. |
