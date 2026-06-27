@@ -15,7 +15,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Closeout Notes
 
 - PR: https://github.com/ajoe734/pantheon/pull/2435
-- Refreshed task branch with `origin/dev` at `5f3a9aa3` before owner closeout.
+- Refreshed task branch with `origin/dev` at `438d5d93` before owner closeout.
 - Local closeout verification:
   `pytest -q services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_connector_framework.py services/source_ingestion/tests/test_financial_source_catalog.py services/control-plane/persona/test_persona_data_sources.py`
-- Result: `54 passed in 18.71s`.
+- Result: `54 passed in 19.77s`.
