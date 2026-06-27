@@ -32,28 +32,35 @@ New HTTP endpoint:
 
 ### 3. `services/runtime-manager/test_fleet_desired_state.py`
 
-32 unit tests covering:
+33 unit tests covering:
 - Fleet membership (paper, canary included; live, frozen, retired, failed, paused, pending_pause excluded)
 - Stage filter behavior
+- Invalid stage filters fail closed instead of returning an empty desired set
 - Policy envelope fields
 - `to_dict()` shape
 - Idempotency / stability
 
+### 4. `services/runtime-manager/test_runtime_manager.py`
+
+HTTP route coverage verifies `/api/runtime-fleet/desired-state` returns active
+and excluded bindings through the Flask auth/read path, and rejects invalid
+stage filters with `400 INVALID_STAGE`.
+
 ## Verification
 
 ```
-python3 -m pytest services/runtime-manager/test_fleet_desired_state.py -v
+python3 -m pytest services/runtime-manager/test_fleet_desired_state.py services/runtime-manager/test_runtime_manager.py -v
 ```
 
-Result: **32 passed** (2026-06-27)
+Result: **89 passed** (2026-06-27)
 
 ## Acceptance Criteria Status
 
 | Criterion | Status |
 |-----------|--------|
-| Active runtime bindings queryable with stage and policy envelope | ✓ `build_fleet_desired_state` + `/api/runtime-fleet/desired-state` |
+| Active runtime bindings queryable with stage and policy envelope | ✓ `build_fleet_desired_state` + `/api/runtime-fleet/desired-state` route test |
 | Retired, paused, blocked bindings excluded or explicitly marked | ✓ `FLEET_EXCLUDED_STATUSES` with explicit reasons; returned in `excluded` list |
-| Query stable for fleet reconciliation and tests | ✓ Idempotent; 32 passing unit tests |
+| Query stable for fleet reconciliation and tests | ✓ Idempotent; invalid stage filters fail closed; 89 focused tests passed |
 
 ## Non-Goals
 

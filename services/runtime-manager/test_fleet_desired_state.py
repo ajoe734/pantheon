@@ -25,6 +25,7 @@ from fleet_desired_state import (
     FLEET_EXCLUDED_STATUSES,
     FLEET_MANAGED_STAGES,
     ExcludedBinding,
+    FleetDesiredStateQueryError,
     FleetDesiredState,
     PolicyEnvelope,
     build_fleet_desired_state,
@@ -166,6 +167,10 @@ class TestStageFilter(unittest.TestCase):
         state = build_fleet_desired_state(self.bindings, stage_filter="paper")
         excluded_ids = {e.binding_id for e in state.excluded}
         self.assertNotIn("rb-c1", excluded_ids)
+
+    def test_invalid_stage_filter_is_rejected(self):
+        with self.assertRaisesRegex(FleetDesiredStateQueryError, "stage_filter"):
+            build_fleet_desired_state(self.bindings, stage_filter="live")
 
 
 # ---------------------------------------------------------------------------

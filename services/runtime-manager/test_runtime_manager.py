@@ -531,6 +531,18 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.assertEqual(payload["excluded"][0]["binding_id"], paused["binding_id"])
         self.assertEqual(payload["excluded"][0]["exclusion_reason"], "draining")
 
+    def test_runtime_fleet_desired_state_route_rejects_invalid_stage(self):
+        response = self.client.get(
+            "/api/runtime-fleet/desired-state?stage=live",
+            headers=self.auth,
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 400, payload)
+        self.assertEqual(payload["error"]["code"], "INVALID_STAGE")
+        self.assertIn("paper", payload["error"]["message"])
+        self.assertIn("canary", payload["error"]["message"])
+
 
 class KillSwitchControllerUnitTests(unittest.TestCase):
     """Pure unit tests for KillSwitchController — no I/O."""
