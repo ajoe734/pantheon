@@ -38,7 +38,7 @@ Result: `13 passed`.
 ## Closeout Finalization
 
 On 2026-06-27, owner closeout refreshed `task/LOOP-AUTO-001` with
-`origin/dev` at `43625ced` after reviewer approval identified PR #2409 as
+`origin/dev` at `1c8edbfa` after reviewer approval identified PR #2409 as
 behind the merge target.
 
 Verification rerun after the refresh:
