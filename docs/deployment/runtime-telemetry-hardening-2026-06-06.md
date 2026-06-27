@@ -304,6 +304,43 @@ python3 -m pytest services/control-plane/bff/test_pkt010_runtime_state_board_con
 
 ---
 
+# Runtime Fleet Evidence Packet — LOOP-AUTO-RT-005
+
+Task: LOOP-AUTO-RT-005
+
+## Scope
+
+The runtime fleet recovery evidence packet consolidates the controller,
+monitoring-session, BFF projection, and signal-isolation proof for:
+
+- stack/reconciler restart recovery
+- kill-one-worker recovery
+- paused or retired binding stop behavior
+- stale heartbeat session closure and replacement
+- binding/runtime/capital-pool signal isolation
+
+## Evidence
+
+The packet is recorded in:
+
+```text
+docs/deployment/evidence/loop-auto-rt-005/README.md
+docs/deployment/evidence/loop-auto-rt-005/verification-summary.json
+```
+
+Focused verification:
+
+```bash
+python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/execution/lean_runtime/test_signal_isolation.py services/execution/lean_runtime/test_signal_consumer.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q
+# Result: 114 passed in 37.31s
+```
+
+Boundary: this is local controller/contract evidence. It does not claim a dev
+VM full-stack restart drill, live broker execution, or a `proven-live` maturity
+increase.
+
+---
+
 # BFF Runtime-State Truth Split and Closeout — OPS-RTEL-005
 
 Task: OPS-RTEL-005
