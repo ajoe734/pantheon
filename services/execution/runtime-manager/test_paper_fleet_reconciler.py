@@ -627,6 +627,80 @@ class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
             )
             self.assertIsNotNone(persisted_old["ended_at"])
 
+    def test_staleness_marker_does_not_count_as_live_session_on_restart(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        with tempfile.TemporaryDirectory() as td:
+            store_path = Path(td) / "paper_runtime_monitoring_sessions.json"
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "monitoring_sessions": [
+                            {
+                                "session_id": "prmon-stale-marker",
+                                "id": "prmon-stale-marker",
+                                "session_type": "paper_runtime_monitoring",
+                                "binding_id": "b-marker-001",
+                                "runtime_binding_id": "b-marker-001",
+                                "runtime_id": "rt-marker-001",
+                                "deployment_stage": "paper",
+                                "status": "running",
+                                "active": True,
+                                "started_at": "2026-06-09T00:00:00Z",
+                                "ended_at": None,
+                                "last_heartbeat_at": "2026-06-09T00:00:00Z",
+                                "staleness": {
+                                    "status": "stale",
+                                    "reason": "stale_heartbeat",
+                                    "last_known_at": "2026-06-09T00:00:00Z",
+                                    "age_seconds": 600,
+                                    "threshold_seconds": 90,
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            spawned: List[Dict[str, Any]] = []
+
+            class _R(PaperFleetReconciler):
+                def _fetch_fleet_state(self):
+                    return ([_make_binding("b-marker-001", runtime_id="rt-marker-001")], set())
+
+                def _fetch_runtime_summaries(self):
+                    return None
+
+                def _spawn(self, binding_id, port, env):  # noqa: ANN001
+                    proc = _FakeProcess(pid=900 + len(spawned))
+                    spawned.append({"binding_id": binding_id, "proc": proc})
+                    return proc
+
+            recon = _R(
+                worker_base_port=9990,
+                poll_interval_seconds=999,
+                monitoring_session_store_path=str(store_path),
+                monitoring_heartbeat_stale_after_seconds=90,
+                drain_timeout_seconds=1,
+            )
+
+            snap = recon.reconcile_once()
+
+            old = next(
+                session
+                for session in snap["monitoring_sessions"]
+                if session["session_id"] == "prmon-stale-marker"
+            )
+            active = [session for session in snap["monitoring_sessions"] if session.get("active")]
+            self.assertEqual(len(spawned), 1)
+            self.assertFalse(old["active"])
+            self.assertEqual(old["ended_reason"], "stale_heartbeat")
+            self.assertEqual(old["terminal_reason"], "stale_heartbeat")
+            self.assertIsNotNone(old["ended_at"])
+            self.assertEqual(len(active), 1)
+            self.assertNotEqual(active[0]["session_id"], "prmon-stale-marker")
+
 
 class TestPaperFleetReconcilerExcludedBindings(unittest.TestCase):
     """Excluded bindings (paused/retired) must stop their workers immediately."""

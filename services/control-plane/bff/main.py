@@ -6321,6 +6321,7 @@ def _project_runtime_state_monitoring_session(session: Optional[Dict[str, Any]])
         "started_at",
         "ended_at",
         "ended_reason",
+        "terminal_reason",
         "last_heartbeat_at",
         "heartbeat_status",
         "stale_after_seconds",
@@ -6330,6 +6331,9 @@ def _project_runtime_state_monitoring_session(session: Optional[Dict[str, Any]])
     ):
         if key in session:
             projected[key] = session.get(key)
+    terminal_reason = _runtime_state_monitoring_terminal_reason(session)
+    if terminal_reason and "terminal_reason" not in projected:
+        projected["terminal_reason"] = terminal_reason
     return projected
 
 
@@ -6373,6 +6377,54 @@ def _runtime_state_row_health_check(
     return check
 
 
+def _runtime_state_monitoring_terminal_reason(
+    session: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    if not session:
+        return None
+    for key in ("terminal_reason", "ended_reason"):
+        value = str(session.get(key) or "").strip()
+        if value:
+            return value
+    staleness = session.get("staleness")
+    if isinstance(staleness, dict):
+        reason = str(staleness.get("reason") or "").strip()
+        if reason:
+            return reason
+        status = str(staleness.get("status") or "").strip().lower()
+        if status == "stale":
+            return "stale_monitoring_session"
+    status = str(session.get("status") or "").strip().lower()
+    if status in {"ended", "stale", "failed"}:
+        return status
+    return None
+
+
+def _runtime_state_monitoring_health_check(
+    monitoring_session: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if monitoring_session is None:
+        return _runtime_state_row_health_check(
+            "unavailable",
+            source="paper_runtime_monitoring_sessions",
+            message="Paper runtime monitoring session is unavailable for this runtime.",
+        )
+    terminal_reason = _runtime_state_monitoring_terminal_reason(monitoring_session)
+    inactive = monitoring_session.get("active") is False
+    ended = monitoring_session.get("ended_at") not in (None, "")
+    if terminal_reason or inactive or ended:
+        reason = terminal_reason or "inactive_monitoring_session"
+        return _runtime_state_row_health_check(
+            "degraded",
+            source="paper_runtime_monitoring_sessions",
+            message=f"Paper runtime monitoring session is terminal: {reason}.",
+        )
+    return _runtime_state_row_health_check(
+        "ok",
+        source="paper_runtime_monitoring_sessions",
+    )
+
+
 def _derive_runtime_state_row_health(
     *,
     binding: Dict[str, Any],
@@ -6398,17 +6450,8 @@ def _derive_runtime_state_row_health(
         ),
     }
     if deployment_stage == "paper":
-        checks["paper_runtime_monitoring"] = (
-            _runtime_state_row_health_check(
-                "ok",
-                source="paper_runtime_monitoring_sessions",
-            )
-            if monitoring_session is not None
-            else _runtime_state_row_health_check(
-                "unavailable",
-                source="paper_runtime_monitoring_sessions",
-                message="Paper runtime monitoring session is unavailable for this runtime.",
-            )
+        checks["paper_runtime_monitoring"] = _runtime_state_monitoring_health_check(
+            monitoring_session
         )
     else:
         checks["paper_runtime_monitoring"] = _runtime_state_row_health_check(
