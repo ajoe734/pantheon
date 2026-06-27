@@ -216,6 +216,99 @@ def ordered_subset(items: list[str], expected: list[str]) -> bool:
     return items == [source for source in expected if source in set(items)]
 
 
+def preflight_rbac_matrix_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    matrix = payload.get("rbac_matrix")
+    if not isinstance(matrix, dict):
+        return ["missing"]
+
+    failures: list[str] = []
+    expected_labels = list(RBAC_PROVIDED_LABELS)
+    expected_label_set = set(expected_labels)
+    required_labels, required_ok = list_of_strings(matrix.get("required_labels"))
+    present_labels, present_ok = list_of_strings(matrix.get("present_labels"))
+    missing_labels, missing_ok = list_of_strings(matrix.get("missing_labels"))
+    duplicate_groups, duplicate_ok = list_of_string_lists(matrix.get("duplicate_label_groups"))
+
+    if not required_ok or required_labels != expected_labels:
+        failures.append("required_labels")
+    if not present_ok or not ordered_subset(present_labels, expected_labels):
+        failures.append("present_labels")
+    if not missing_ok:
+        failures.append("missing_labels_type")
+    elif missing_labels != [label for label in expected_labels if label not in set(present_labels)]:
+        failures.append("missing_labels")
+    if set(present_labels) - expected_label_set:
+        failures.append("present_label_unknown")
+    if len(set(present_labels)) != len(present_labels):
+        failures.append("present_labels_duplicate")
+
+    expected_cases = matrix.get("expected_cases")
+    provided_cases = matrix.get("provided_cases")
+    distinct_count = matrix.get("distinct_bearer_count")
+    if not is_plain_int(expected_cases) or expected_cases != len(expected_labels):
+        failures.append("expected_cases")
+    if not is_plain_int(provided_cases) or provided_cases != len(present_labels):
+        failures.append("provided_cases")
+    if not is_plain_int(distinct_count) or distinct_count < 0 or distinct_count > len(present_labels):
+        failures.append("distinct_bearer_count")
+    if not isinstance(matrix.get("distinct_bearers"), bool):
+        failures.append("distinct_bearers_type")
+
+    duplicate_notes: list[str] = []
+    if not duplicate_ok:
+        failures.append("duplicate_label_groups_type")
+    else:
+        for index, group in enumerate(duplicate_groups):
+            if len(group) < 2:
+                failures.append(f"duplicate_group:{index}")
+                continue
+            if any(label not in expected_label_set for label in group):
+                failures.append(f"duplicate_group_unknown:{index}")
+                continue
+            duplicate_notes.append("/".join(group))
+
+    rbac_invalid_reported = "PANTHEON_BFF_RBAC_TOKENS_JSON" in invalid_input_names(invalid)
+    if duplicate_notes and not rbac_invalid_reported:
+        failures.append("duplicate_groups_without_invalid")
+
+    ready = not missing and not invalid
+    if ready:
+        if present_labels != expected_labels:
+            failures.append(f"present_labels:{len(present_labels)}/{len(expected_labels)}")
+        if missing_labels:
+            failures.append("missing_labels_ready")
+        if matrix.get("distinct_bearers") is not True:
+            failures.append("distinct_bearers")
+        if distinct_count != len(expected_labels):
+            failures.append(f"distinct_bearer_count:{distinct_count}/{len(expected_labels)}")
+        if duplicate_notes:
+            failures.append("duplicate_label_groups")
+
+    return failures
+
+
+def preflight_approval_race_token_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    tokens = payload.get("approval_race_tokens")
+    if not isinstance(tokens, dict):
+        return ["missing"]
+
+    failures: list[str] = []
+    for key in ("token_a_present", "token_b_present", "distinct_bearers"):
+        if not isinstance(tokens.get(key), bool):
+            failures.append(f"{key}_type")
+
+    ready = not missing and not invalid
+    if ready:
+        if tokens.get("token_a_present") is not True:
+            failures.append("token_a_present")
+        if tokens.get("token_b_present") is not True:
+            failures.append("token_b_present")
+        if tokens.get("distinct_bearers") is not True:
+            failures.append("distinct_bearers")
+
+    return failures
+
+
 def preflight_cross_secret_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
     cross = payload.get("cross_secret_bearers")
     if not isinstance(cross, dict):
@@ -395,6 +488,22 @@ def preflight_item(root: Path) -> dict[str, str]:
         )
     missing = payload.get("missing") if isinstance(payload.get("missing"), list) else []
     invalid = payload.get("invalid") if isinstance(payload.get("invalid"), list) else []
+    rbac_matrix_failures = preflight_rbac_matrix_failures(payload, missing, invalid)
+    if rbac_matrix_failures:
+        return status_item(
+            "fail",
+            "Strict preflight RBAC matrix evidence is valid",
+            evidence=rel(file_path, root),
+            note="rbac_matrix:" + ",".join(rbac_matrix_failures[:8]),
+        )
+    approval_race_token_failures = preflight_approval_race_token_failures(payload, missing, invalid)
+    if approval_race_token_failures:
+        return status_item(
+            "fail",
+            "Strict preflight approval-race token evidence is valid",
+            evidence=rel(file_path, root),
+            note="approval_race_tokens:" + ",".join(approval_race_token_failures[:8]),
+        )
     cross_secret_failures = preflight_cross_secret_failures(payload, missing, invalid)
     if cross_secret_failures:
         return status_item(
