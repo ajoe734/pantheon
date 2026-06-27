@@ -64,6 +64,18 @@ Environment variables:
 | `DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS` | `0` (unlimited) | Stop after N ticks (0 = run forever) |
 | `DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE` | `` (disabled) | Write health JSON to this path each tick |
 
+## Closeout Verification (owner, 2026-06-27)
+
+Final validation run by owner Claude after reviewer follow-up commit (fcde11d2) merged via PR #2414:
+
+```bash
+python3 -m pytest services/deployment/test_outbox_consumer_worker.py -v   # 19 passed
+python3 -m pytest services/deployment/test_service.py services/deployment/test_dep001_rebaseline_service.py -v  # 28 passed
+```
+
+Full suite: **47 passed**. Receipt classification hardening (out_of_order → error, not consumed)
+verified by `TestRunPoll::test_out_of_order_event_counts_as_error_not_consumed`.
+
 ## Maturity Claim
 
 This task moves `promotion_deployment` loop from `api-only` to `reconciled`:
