@@ -68,7 +68,7 @@ Proposed: status, severity, affected_pool_id, runtime_id
 
 **Semantics:**
 - `runtime_id` (optional, string): Filter incidents to those whose
-  `affected_runtime_id` field equals the provided value.
+  `runtime_id` field equals the provided value.
 - When absent, behavior is unchanged (return all incidents matching other filters).
 - Must be indexed for performance; the incidents table already indexes
   `affected_pool_id` which shares the same access pattern.
@@ -82,7 +82,7 @@ Proposed: status, severity, affected_pool_id, runtime_id
 
 **Evidence of pattern precedent:**
 - `GET /api/v1/rollbacks` (EV-04) already carries `runtime_id` as a filter,
-  establishing the cross-surface query pattern. See `BFF_API_CONTRACT.md §9.4`.
+  establishing the cross-surface query pattern. See `BFF_API_CONTRACT.md §9.8`.
 
 ### 2.2 EV-01 — Add `incident_id` filter
 
@@ -99,7 +99,7 @@ Proposed: action_type, risk_level, status, page_token, page_size, incident_id
 
 **Semantics:**
 - `incident_id` (optional, string): Filter decisions to those whose
-  `source_incident_id` field equals the provided value.
+  `linked_incident_id` field equals the provided value.
 - When absent, behavior is unchanged.
 - Resolves the Drill 2 Step 5 ambiguity where an operator must trace from a
   specific incident to its generated evolution proposal.
@@ -301,3 +301,4 @@ This packet is a support artifact only. It:
 | Date | Author | Change |
 |---|---|---|
 | 2026-06-27 | Claude | Initial followup packet created; filter gap resolution spec, fallback procedures, ownership recommendation, updated maturity gate |
+| 2026-06-27 | Claude2 (reviewer) | Corrected FG-001 §2.1: internal field reference `affected_runtime_id` → `runtime_id` (verified against `services/incidents/models.py` `IncidentResponse`). Corrected FG-002 §2.2: internal field reference `source_incident_id` → `linked_incident_id` (verified against `services/evolution/models.py` `DecisionResponse`). Fixed §2.1 contract section reference `§9.4` → `§9.8` (EV-04 `/api/v1/rollbacks` lives in §9.8 Evolution Surfaces). Ownership recommendation (Option A via LOOP-AUTO-DEP-004) confirmed valid — DEP-004 is still `todo`. |
