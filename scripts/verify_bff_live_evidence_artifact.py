@@ -196,6 +196,100 @@ def invalid_input_names(value: Any) -> list[str]:
     return names
 
 
+def is_plain_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def list_of_string_lists(value: Any) -> tuple[list[list[str]], bool]:
+    if not isinstance(value, list):
+        return [], False
+    groups: list[list[str]] = []
+    for group in value:
+        items, ok = list_of_strings(group)
+        if not ok:
+            return [], False
+        groups.append(items)
+    return groups, True
+
+
+def ordered_subset(items: list[str], expected: list[str]) -> bool:
+    return items == [source for source in expected if source in set(items)]
+
+
+def preflight_cross_secret_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    cross = payload.get("cross_secret_bearers")
+    if not isinstance(cross, dict):
+        return ["missing"]
+
+    failures: list[str] = []
+    expected_sources = list(BEARER_SHAPE_REQUIRED_SOURCES)
+    expected_source_set = set(expected_sources)
+    required_sources, required_ok = list_of_strings(cross.get("required_sources"))
+    present_sources, present_ok = list_of_strings(cross.get("present_sources"))
+    missing_sources, missing_ok = list_of_strings(cross.get("missing_sources"))
+    duplicate_groups, duplicate_ok = list_of_string_lists(cross.get("duplicate_source_groups"))
+
+    if not required_ok or required_sources != expected_sources:
+        failures.append("required_sources")
+    if not present_ok or not ordered_subset(present_sources, expected_sources):
+        failures.append("present_sources")
+    if not missing_ok:
+        failures.append("missing_sources_type")
+    elif missing_sources != [source for source in expected_sources if source not in set(present_sources)]:
+        failures.append("missing_sources")
+    if set(present_sources) - expected_source_set:
+        failures.append("present_source_unknown")
+    if len(set(present_sources)) != len(present_sources):
+        failures.append("present_sources_duplicate")
+
+    expected_count = cross.get("expected_sources")
+    provided_count = cross.get("provided_sources")
+    distinct_count = cross.get("distinct_bearer_count")
+    if not is_plain_int(expected_count) or expected_count != len(expected_sources):
+        failures.append("expected_sources")
+    if not is_plain_int(provided_count) or provided_count != len(present_sources):
+        failures.append("provided_sources")
+    if not is_plain_int(distinct_count) or distinct_count < 0 or distinct_count > len(present_sources):
+        failures.append("distinct_bearer_count")
+    if not isinstance(cross.get("distinct_bearers"), bool):
+        failures.append("distinct_bearers_type")
+
+    duplicate_notes: list[str] = []
+    if not duplicate_ok:
+        failures.append("duplicate_source_groups_type")
+    else:
+        for index, group in enumerate(duplicate_groups):
+            if len(group) < 2:
+                failures.append(f"duplicate_group:{index}")
+                continue
+            if any(source not in expected_source_set for source in group):
+                failures.append(f"duplicate_group_unknown:{index}")
+                continue
+            duplicate_notes.append("/".join(group))
+
+    invalid_names = invalid_input_names(invalid)
+    cross_invalid_reported = "PANTHEON_BFF_LIVE_EVIDENCE_BEARERS" in invalid_names
+    if duplicate_notes and not cross_invalid_reported:
+        failures.append("duplicate_groups_without_invalid")
+    if cross_invalid_reported and not duplicate_notes:
+        failures.append("duplicate_groups_missing")
+
+    ready = not missing and not invalid
+    if ready:
+        if present_sources != expected_sources:
+            failures.append(f"present_sources:{len(present_sources)}/{len(expected_sources)}")
+        if missing_sources:
+            failures.append("missing_sources_ready")
+        if cross.get("distinct_bearers") is not True:
+            failures.append("distinct_bearers")
+        if distinct_count != len(expected_sources):
+            failures.append(f"distinct_bearer_count:{distinct_count}/{len(expected_sources)}")
+        if duplicate_notes:
+            failures.append("duplicate_source_groups")
+
+    return failures
+
+
 def preflight_bearer_shape_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
     shape = payload.get("bearer_shape")
     if not isinstance(shape, dict):
@@ -301,6 +395,14 @@ def preflight_item(root: Path) -> dict[str, str]:
         )
     missing = payload.get("missing") if isinstance(payload.get("missing"), list) else []
     invalid = payload.get("invalid") if isinstance(payload.get("invalid"), list) else []
+    cross_secret_failures = preflight_cross_secret_failures(payload, missing, invalid)
+    if cross_secret_failures:
+        return status_item(
+            "fail",
+            "Strict preflight cross-secret bearer evidence is valid",
+            evidence=rel(file_path, root),
+            note="cross_secret_bearers:" + ",".join(cross_secret_failures[:8]),
+        )
     bearer_shape_failures = preflight_bearer_shape_failures(payload, missing, invalid)
     if bearer_shape_failures:
         return status_item(
