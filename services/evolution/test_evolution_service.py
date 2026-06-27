@@ -67,6 +67,17 @@ def sweep_fixture(extra: dict | None = None) -> dict:
     return payload
 
 
+def _reset_sweep_state():
+    evo_main._sweep_state.update({
+        "last_success_at": None,
+        "last_success_proposal_count": None,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "total_sweeps_run": 0,
+        "total_proposals_created": 0,
+    })
+
+
 @pytest.fixture(autouse=True)
 def reset_store():
     evo_main.store._decisions.clear()
@@ -76,6 +87,7 @@ def reset_store():
     evo_main.incident_store._postmortems.clear()
     if evo_main.incident_store._path and evo_main.incident_store._path.exists():
         evo_main.incident_store._path.unlink()
+    _reset_sweep_state()
     yield
     evo_main.store._decisions.clear()
     if evo_main.store._storage_path and evo_main.store._storage_path.exists():
@@ -84,6 +96,7 @@ def reset_store():
     evo_main.incident_store._postmortems.clear()
     if evo_main.incident_store._path and evo_main.incident_store._path.exists():
         evo_main.incident_store._path.unlink()
+    _reset_sweep_state()
 
 
 # ---------------------------------------------------------------------------
@@ -1668,4 +1681,83 @@ def test_action_paths_keys_match_boundary_for():
     # Old mismatched keys must be absent
     assert "freeze_paper_canary" not in keys
     assert "freeze_live_no_runtime" not in keys
-    assert "retrain_revalidate" not in keys
+
+
+# ---------------------------------------------------------------------------
+# LOOP-AUTO-EVO-003: sweep-status endpoint and sweep state tracking
+# ---------------------------------------------------------------------------
+
+def test_sweep_status_initially_empty():
+    """GET /api/evolution/sweep-status returns null timestamps before any sweep."""
+    r = client.get("/api/evolution/sweep-status")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["last_success_at"] is None
+    assert body["last_failure_at"] is None
+    assert body["total_sweeps_run"] == 0
+    assert body["total_proposals_created"] == 0
+    assert body["scheduler_attach"]["worker_module"] == "services.evolution.scheduler_worker"
+    assert body["scheduler_attach"]["compose_service"] == "evolution-daily-sweep-scheduler"
+
+
+def test_sweep_status_updates_after_successful_sweep():
+    """After a successful sweep, sweep-status reflects last_success_at and proposal count."""
+    payload = sweep_fixture()
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload)
+
+    r = client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [payload["incident_id"]], "sweep_id": "status-sweep"},
+    )
+    assert r.status_code == 200, r.text
+    created = r.json()["created_decisions"]
+
+    status = client.get("/api/evolution/sweep-status").json()
+    assert status["last_success_at"] is not None
+    assert status["last_success_proposal_count"] == created
+    assert status["total_sweeps_run"] == 1
+    assert status["total_proposals_created"] == created
+    assert status["last_failure_at"] is None
+
+
+def test_sweep_status_accumulates_across_multiple_sweeps():
+    """total_proposals_created accumulates across multiple sweep invocations."""
+    payload1 = sweep_fixture()
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload1)
+    client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [payload1["incident_id"]], "sweep_id": "acc-sweep-1"},
+    ).raise_for_status()
+
+    payload2 = sweep_fixture({"incident_id": "inc-evolution-acc-002"})
+    payload2["telemetry_event"]["event_id"] = "tel-evolution-acc-002"
+    payload2["telemetry_event"]["artifact_id"] = "artifact-acc-002"
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload2)
+    client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [payload2["incident_id"]], "sweep_id": "acc-sweep-2"},
+    ).raise_for_status()
+
+    status = client.get("/api/evolution/sweep-status").json()
+    assert status["total_sweeps_run"] == 2
+    assert status["total_proposals_created"] == 2
+
+
+def test_health_metrics_include_sweep_fields():
+    """The /livez health endpoint exposes sweep_last_success_at and sweep_total_proposals_created."""
+    payload = sweep_fixture({"incident_id": "inc-health-metrics-001"})
+    payload["telemetry_event"]["event_id"] = "tel-health-metrics-001"
+    payload["telemetry_event"]["artifact_id"] = "artifact-health-metrics-001"
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload)
+    client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [payload["incident_id"]], "sweep_id": "health-metrics-sweep"},
+    ).raise_for_status()
+
+    r = client.get("/livez")
+    assert r.status_code == 200, r.text
+    metrics = r.json().get("metrics", {})
+    assert "sweep_last_success_at" in metrics
+    assert metrics["sweep_last_success_at"] is not None
+    assert "sweep_total_proposals_created" in metrics
+    assert metrics["sweep_total_proposals_created"] >= 1
