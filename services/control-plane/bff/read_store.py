@@ -2825,6 +2825,13 @@ class ServiceBackedReadAdapter:
             "keys": ["id"],
             "snapshot_key": "loop_runs",
         },
+        "loop_health": {
+            "env": "PANTHEON_BFF_LOOP_HEALTH_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("loop_health.json", "loop-health.json"),
+            "keys": ["loop_id", "id"],
+            "snapshot_key": "loop_health",
+        },
         "sentinel_findings": {
             "env": "PANTHEON_BFF_SENTINEL_FINDING_STORE",
             "dirs": (),
@@ -3210,6 +3217,12 @@ class ServiceBackedReadAdapter:
         if avail_lr:
             return True, None
         return False, None
+
+    def list_loop_health_records(self) -> tuple[bool, List[Dict[str, Any]]]:
+        return self.list_records("loop_health")
+
+    def get_loop_health_record(self, loop_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        return self.record("loop_health", loop_id)
 
     def list_sentinel_findings(
         self,
@@ -15354,6 +15367,12 @@ class ReadSurfaceStore:
 
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         return self._service.get_loop_run(loop_run_id)
+
+    def list_loop_health_records(self) -> tuple[bool, List[Dict[str, Any]]]:
+        return self._service.list_loop_health_records()
+
+    def get_loop_health_record(self, loop_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        return self._service.get_loop_health_record(loop_id)
 
     def list_sentinel_findings(
         self,
