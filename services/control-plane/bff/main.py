@@ -136,7 +136,9 @@ from source_search_ops_client import (
     SourceSearchOpsClientError,
 )
 from loop_inventory import (
+    get_loop_health_entry,
     get_loop_inventory_entry,
+    list_loop_health_entries,
     list_loop_inventory_entries,
     loop_inventory_meta,
 )
@@ -48025,6 +48027,78 @@ def _loop_inventory_response_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def _loop_health_store_records() -> Tuple[bool, List[Dict[str, Any]], str]:
+    available, records = read_store.list_loop_health_records()
+    source = read_store.dataset_source("loop_health") if available else "missing"
+    return available, records if available else [], source
+
+
+def _loop_health_response_meta(
+    payload: Dict[str, Any],
+    *,
+    health_records_available: bool,
+    health_record_count: int,
+    health_source: str,
+) -> Dict[str, Any]:
+    meta = dict(payload.get("meta") or {})
+    snapshot_at = meta.get("snapshot_at") or utc_now()
+    item_count = len(payload.get("items") or ([payload.get("data")] if isinstance(payload.get("data"), dict) else []))
+    registry_surface = {
+        "status": "ok",
+        "source": "bff_local_registry",
+        "truth_level": "registry_metadata",
+        "registry_ref": "docs/deployment/loop-catalog.registry.json",
+        "note": "Static loop catalog supplies loop ids, owners, maturity, and expected controller contracts.",
+    }
+    snapshot_surface = _dataset_surface_status(
+        "loop_health",
+        snapshot_at=snapshot_at,
+        source=health_source if health_records_available else "missing",
+    )
+    if health_records_available and health_record_count >= item_count:
+        loop_health_surface = {
+            "status": "ok",
+            "source": "bff_composed",
+            "truth_level": "controller_snapshot",
+            "note": "Composed from loop catalog plus controller health records.",
+        }
+    elif health_records_available:
+        loop_health_surface = {
+            "status": "degraded",
+            "source": "bff_composed",
+            "truth_level": "partial_controller_snapshot",
+            "note": "Some loops lack controller health snapshots; registry metadata remains visible without live liveness claims.",
+            "staleness": {"served_from": "mixed", "last_known_at": snapshot_at},
+        }
+    else:
+        loop_health_surface = {
+            "status": "degraded",
+            "source": "bff_composed",
+            "truth_level": "registry_metadata",
+            "note": "Controller health snapshots are unavailable; BFF is serving registry truth without claiming live liveness.",
+            "staleness": {"served_from": "registry_only", "last_known_at": snapshot_at},
+        }
+    surfaces = meta.setdefault("surfaces", {})
+    surfaces["loop_health"] = loop_health_surface
+    surfaces["loop_inventory"] = registry_surface
+    surfaces["loop_health_snapshots"] = snapshot_surface
+    meta["catalog"] = loop_inventory_meta()
+    meta["truth_labels"] = {
+        "seed_fixture": "Seed or fixture data; never accepted as liveness proof.",
+        "snapshot": "BFF local snapshot fallback; useful for inspection but not live proof.",
+        "registry": "Durable static loop catalog metadata.",
+        "scheduled": "Scheduler or worker tick evidence without reconciliation proof.",
+        "live_truth": "Reconciled or proven-live evidence packet.",
+    }
+    meta["coverage"] = {
+        "loop_count": item_count,
+        "controller_health_record_count": health_record_count,
+        "controller_health_records_available": health_records_available,
+    }
+    payload["meta"] = meta
+    return payload
+
+
 @app.get("/bff/v5/loop-inventory")
 async def bff_v5_loop_inventory(
     authorization: Optional[str] = Header(default=None),
@@ -48040,6 +48114,59 @@ async def bff_v5_loop_inventory(
         source="bff_local_registry",
     )
     return _loop_inventory_response_meta(payload)
+
+
+@app.get("/bff/v5/loop-health")
+async def bff_v5_loop_health(
+    authorization: Optional[str] = Header(default=None),
+):
+    """List operator loop health truth without promoting registry metadata to liveness."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    health_available, health_records, health_source = _loop_health_store_records()
+    records = list_loop_health_entries(
+        health_records,
+        health_source=health_source,
+    )
+    payload = _sem_final_list_response(
+        records,
+        dataset="loop_health",
+        surface_key="loop_health",
+        source="bff_local_registry",
+    )
+    return _loop_health_response_meta(
+        payload,
+        health_records_available=health_available,
+        health_record_count=len(health_records),
+        health_source=health_source,
+    )
+
+
+@app.get("/bff/v5/loop-health/{loop_id}")
+async def bff_v5_loop_health_detail(
+    loop_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Get one operator loop health truth record."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    health_available, health_records, health_source = _loop_health_store_records()
+    payload = _sem_final_registry_detail(
+        get_loop_health_entry(
+            loop_id,
+            health_records,
+            health_source=health_source,
+        ),
+        entity_id=loop_id,
+        label="Loop health entry",
+        surface_key="loop_health",
+    )
+    return _loop_health_response_meta(
+        payload,
+        health_records_available=health_available,
+        health_record_count=len(health_records),
+        health_source=health_source,
+    )
 
 
 @app.get("/bff/v5/loop-inventory/{loop_id}")
