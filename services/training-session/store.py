@@ -107,6 +107,7 @@ class TrainingSessionStore:
         self.events_path = self.data_dir / "teaching_events.jsonl"
         self.controls_path = self.data_dir / "trainer_controls.json"
         self.previews_path = self.data_dir / "trainer_previews.json"
+        self.preview_jobs_path = self.data_dir / "trainer_preview_jobs.json"
         self.replays_path = self.data_dir / "trainer_replays.json"
         self.event_store = event_store
 
@@ -201,6 +202,20 @@ class TrainingSessionStore:
         record["session_id"] = session_id
         records[session_id] = record
         self._write_map(self.previews_path, records)
+        return record
+
+    def list_preview_jobs(self) -> List[Dict[str, Any]]:
+        return list(self._read_map(self.preview_jobs_path).values())
+
+    def get_preview_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        return self._read_map(self.preview_jobs_path).get(job_id)
+
+    def put_preview_job(self, job_id: str, job: Dict[str, Any]) -> Dict[str, Any]:
+        records = self._read_map(self.preview_jobs_path)
+        record = json.loads(json.dumps(job))
+        record["job_id"] = job_id
+        records[job_id] = record
+        self._write_map(self.preview_jobs_path, records)
         return record
 
     def list_replays(self) -> List[Dict[str, Any]]:

@@ -297,6 +297,23 @@ services:
       retries: 10
       start_period: 5s
 
+  training-session-preview-worker:
+    profiles: ["training-session-preview-worker"]
+    build:
+      context: .
+      dockerfile: services/training-session/Dockerfile
+    command: ["python", "services/training-session/preview_eval_worker.py"]
+    restart: unless-stopped
+    environment:
+      TRAINING_SESSION_API_URL: http://training-session-svc:8099
+      TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS:-30}
+      TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS: ${TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS:-0}
+      TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT: ${TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT:-10}
+      TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-}
+    depends_on:
+      training-session-svc:
+        condition: service_healthy
+
   policy-learning-svc:
     build:
       context: .

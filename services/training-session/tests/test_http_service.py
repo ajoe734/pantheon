@@ -76,6 +76,8 @@ def test_training_session_lifecycle_event_preview_and_replay_contract() -> None:
     assert preview.status_code == 201
     assert preview.json()["status"] == "completed"
     assert preview.json()["candidate_snapshot_at"]
+    assert preview.json()["evaluation_proof"]["status"] == "passed"
+    assert preview.json()["evaluation_proof"]["governance_gate_state"] == "passed"
 
     completed = client.post(f"/api/training/sessions/{session_id}/complete")
     assert completed.status_code == 201
@@ -118,6 +120,8 @@ def test_training_session_lifecycle_event_preview_and_replay_contract() -> None:
     artifact_refs = committed.json()["events"][-1]["artifact_refs"]
     assert artifact_refs["decision_record_ref"] == f"trainer-replay-decision:{session_id}:committed"
     assert artifact_refs["lineage_edge_id"] == f"lin-{session_id}-commit"
+    assert artifact_refs["evaluation_proof_ref"] == preview.json()["evaluation_proof"]["proof_ref"]
+    assert artifact_refs["evaluation_governance_gate_state"] == "passed"
     assert artifact_refs["persona_policy_ref"] == f"persona:persona-alpha:policy:{session_id}"
     assert artifact_refs["route_policy_ref"] == f"persona:persona-alpha:route-policy:{session_id}"
     assert reloaded_store.list_event_log(session_id)[-1]["event_type"] == "commit"
@@ -133,6 +137,116 @@ def test_training_session_lifecycle_event_preview_and_replay_contract() -> None:
 
     duplicate_complete = client.post(f"/api/training/sessions/{session_id}/complete")
     assert duplicate_complete.status_code == 409
+
+
+def test_async_preview_job_completes_eval_proof_for_commit() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-alpha",
+            "objective": "Evaluate async trainer patch",
+            "actor_id": "operator-async",
+            "created_at": "2026-04-28T22:00:00Z",
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={
+            "mode": "refresh",
+            "requested_by": "operator-async",
+            "requested_at": "2026-04-28T22:01:00Z",
+        },
+        headers={"Idempotency-Key": "async-preview-001"},
+    )
+    assert queued.status_code == 201, queued.text
+    assert queued.json()["status"] == "queued"
+    job_id = queued.json()["job_id"]
+
+    replayed_queue = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={
+            "mode": "refresh",
+            "requested_by": "operator-async",
+            "requested_at": "2026-04-28T22:01:00Z",
+        },
+        headers={"Idempotency-Key": "async-preview-001"},
+    )
+    assert replayed_queue.status_code == 201
+    assert replayed_queue.json()["job_id"] == job_id
+    assert replayed_queue.json()["replayed"] is True
+
+    listed = client.get("/api/training/preview-jobs", params={"status": "queued"})
+    assert listed.status_code == 200
+    assert [job["job_id"] for job in listed.json()] == [job_id]
+
+    run = client.post(
+        f"/api/training/preview-jobs/{job_id}/run",
+        json={"run_at": "2026-04-28T22:02:00Z"},
+    )
+    assert run.status_code == 200, run.text
+    job = run.json()
+    assert job["status"] == "completed"
+    assert job["evaluation_proof_ref"].startswith("trainer-eval-proof:")
+    assert job["governance_gate_state"] == "passed"
+    assert job["preview"]["evaluation_proof"]["status"] == "passed"
+
+    rerun = client.post(
+        f"/api/training/preview-jobs/{job_id}/run",
+        json={"run_at": "2026-04-28T22:02:30Z"},
+    )
+    assert rerun.status_code == 200
+    assert rerun.json()["replayed"] is True
+
+    completed = client.post(f"/api/training/sessions/{session_id}/complete")
+    assert completed.status_code == 201
+    candidate_snapshot_at = completed.json()["events"][-1]["eval_ref"]["candidate_snapshot_at"]
+    committed = client.post(
+        f"/api/training/replays/{session_id}/commit",
+        json={
+            "expected_candidate_snapshot_at": candidate_snapshot_at,
+            "actor_id": "operator-async",
+            "decided_at": "2026-04-28T22:05:00Z",
+        },
+    )
+    assert committed.status_code == 200, committed.text
+    artifacts = committed.json()["artifacts"]
+    assert artifacts["evaluation_proof_ref"] == job["evaluation_proof_ref"]
+    assert artifacts["evaluation_governance_gate_state"] == "passed"
+    assert artifacts["lineage_audit"]["evaluation_proof_ref"] == job["evaluation_proof_ref"]
+
+
+def test_commit_rejects_persona_patch_without_eval_proof() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-alpha",
+            "objective": "Reject unproven patch",
+            "created_at": "2026-04-28T23:00:00Z",
+        },
+    ).json()["session_id"]
+
+    completed = client.post(f"/api/training/sessions/{session_id}/complete")
+    assert completed.status_code == 201
+    candidate_snapshot_at = completed.json()["events"][-1]["eval_ref"]["candidate_snapshot_at"]
+
+    rejected = client.post(
+        f"/api/training/replays/{session_id}/commit",
+        json={
+            "expected_candidate_snapshot_at": candidate_snapshot_at,
+            "actor_id": "operator-1",
+            "decided_at": "2026-04-28T23:05:00Z",
+        },
+    )
+
+    assert rejected.status_code == 409
+    assert "evaluation proof required" in rejected.text
 
 
 def test_control_patch_rejects_unknown_key_and_accepts_known_key() -> None:
