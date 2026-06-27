@@ -226,8 +226,32 @@ This packet is a support artifact only. It:
 
 ---
 
+## Owner Closeout Verification
+
+Codex rechecked this packet after Claude's approval and before sidecar `done`
+finalization. The closeout preserved the reviewed support-only boundary:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-12
+git diff --check HEAD
+gh pr checks 2503
+```
+
+Observed closeout state:
+
+| Item | Result |
+|---|---|
+| Sidecar status | `review_approved` with Codex owner and Claude reviewer |
+| Reviewed artifacts | Handoff packet plus Claude review file only |
+| PR | #2503 opened for this task branch into `dev` |
+| Required checks before closeout commit | Commit trailers, Runtime mirror guard, and Smoke acceptance passed on the task branch |
+| Scope | Support material only; no canonical truth, runtime, registry, BFF route, or frontend implementation changes |
+
+---
+
 ## Change Log
 
 | Date | Author | Change |
 |---|---|---|
 | 2026-06-27 | Codex | FOLLOWUP-12 packet: records BFF-004 as `review_approved`; confirms all direct dependencies archived `done`; captures PR #2500 open/blocked-at-audit state; preserves `reconciled` maturity and sidecar-only support boundary for parent finalization |
+| 2026-06-27 | Codex | Owner closeout note: records review-approved sidecar state, PR #2503, required checks, and support-only boundary before final `done` transition |
