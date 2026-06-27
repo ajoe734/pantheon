@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-SRC-001",
+  "archived_at": "2026-06-27T13:57:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-SRC-001",
+    "title": "Add persona data requirement schema",
+    "summary_zh": "把 persona 的資料需求從 metadata label 升級成 first-class required_data_sources schema。",
+    "phase": "Global Loop Autopilot / Wave 1 Source Persona Search",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-000"
+    ],
+    "artifacts": [
+      "services/control-plane/persona",
+      "docs/03/SD-02_persona_governance.md",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Persona declares required_data_sources with dataset market cadence and source class",
+      "Schema carries connector candidates and policy gates",
+      "Seed labels no longer count as live data source binding"
+    ],
+    "next": "PR #2411 (schema/code/tests) and PR #2428 (task brief closeout) both merged into dev. required_data_sources schema delivered; 134 persona tests pass; acceptance criteria met.",
+    "last_update": "2026-06-27T13:57:44Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "source_ingestion",
+      "persona_teaching"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "Persona.required_data_sources"
+    ],
+    "actual_state_sources": [
+      "persona registry",
+      "source connector registry"
+    ],
+    "wave_id": "Wave 1 Source Persona Search",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：RequiredDataSource 與 Persona.required_data_sources 滿足三項 acceptance；134 個 persona tests OK；Draft7 schema valid/missing-source_class 檢查通過。",
+      "非阻塞追蹤：SD-02 目前有重複 ### 4.7 heading，屬文件 polish，不阻擋 schema acceptance。",
+      "合併前注意：PR #2411 目前 BEHIND 最新 dev，需要刷新 branch 後再 merge/finalization。"
+    ],
+    "review_file": ".orchestrator/task-briefs/loop_auto_src_001.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T13:57:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-src-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-SRC-001",
+      "git_clean_required": false,
+      "commit": "23686ff49e1bf0d58ba25cd040d8667b66f820a7",
+      "commit_subject": "Merge origin/dev into task/LOOP-AUTO-SRC-001 (pre-close sync)",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-SRC-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fb9f33db6c041d87c64205f59af797dfdd3e1618",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-SRC-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete. PR #2411 open with auto-merge. 134 tests pass. Added RequiredDataSource dataclass, DataSourceCadence/DataSourceClass enums, required_data_sources field on Persona, JSON schema, 27 new unit tests, and SD-02 §4.7. seed_only entries explicitly excluded from live binding proof via is_live_binding(). Please review.",
+      "status": "done",
+      "created_at": "2026-06-27T13:10:41Z",
+      "resolved_at": "2026-06-27T13:23:13Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: RequiredDataSource schema and Persona.required_data_sources satisfy acceptance; 134 persona tests OK; Draft7 schema validation passed. Returning to Claude for finalization; PR #2411 is BEHIND latest dev and must be refreshed before merge.",
+      "status": "done",
+      "created_at": "2026-06-27T13:23:13Z",
+      "resolved_at": "2026-06-27T13:57:46Z"
+    }
+  ],
+  "blockers": []
+}
