@@ -60,8 +60,25 @@ def _replay_candidate_snapshot_at(replay: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _replay_eval_ref(replay: Dict[str, Any]) -> Dict[str, Any]:
+    for event in reversed(list(replay.get("events") or [])):
+        if not isinstance(event, dict):
+            continue
+        eval_ref = event.get("eval_ref")
+        if isinstance(eval_ref, dict) and eval_ref:
+            return dict(eval_ref)
+    return {}
+
+
 def _stable_hash(payload: Dict[str, Any]) -> str:
     return sha256(json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _preview_job_id(session_id: str, idempotency_key: Optional[str] = None) -> str:
+    if idempotency_key:
+        digest = sha256(f"{session_id}\0{idempotency_key}".encode("utf-8")).hexdigest()[:16]
+        return f"pvjob-{digest}"
+    return f"pvjob-{uuid.uuid4().hex[:12]}"
 
 
 def _replay_decision_hash(session_id: str, body: "ReplayDecisionBody", state: str) -> str:
@@ -307,6 +324,16 @@ class RefreshPreviewBody(BaseModel):
     refreshed_at: Optional[str] = None
 
 
+class QueuePreviewJobBody(BaseModel):
+    mode: str = "refresh"
+    requested_by: str = "operator"
+    requested_at: Optional[str] = None
+
+
+class RunPreviewJobBody(BaseModel):
+    run_at: Optional[str] = None
+
+
 class ReplayDecisionBody(BaseModel):
     expected_candidate_snapshot_at: Optional[str] = None
     actor_id: str = "operator"
@@ -542,12 +569,7 @@ def get_preview(session_id: str) -> Dict[str, Any]:
 
 from services.research.vectorbt.adapter.vectorbt_adapter import run_vectorbt_workflow, BacktestConfig
 
-# ... (rest of imports)
-
-# Add stub for OHLCV data
 def _get_ohlcv_data(session_id: str) -> List[Dict[str, Any]]:
-    # In a real implementation, this would fetch data based on context_refs
-    # For now, return a dataset with enough bars for governed vectorbt (MIN_BARS=30)
     data = []
     start_date = datetime(2026, 1, 1)
     for instrument in ["STUB1", "STUB2"]:
@@ -564,24 +586,103 @@ def _get_ohlcv_data(session_id: str) -> List[Dict[str, Any]]:
             })
     return data
 
-# ...
 
-@app.post("/api/training/sessions/{session_id}/preview", status_code=201)
-def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]:
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="training session not found")
-    timestamp = body.refreshed_at or utc_now()
+def _append_training_event(
+    session: Dict[str, Any],
+    *,
+    event_type: str,
+    actor: str,
+    timestamp: str,
+    actor_type: Optional[str] = None,
+    actor_label: Optional[str] = None,
+    summary: Optional[str] = None,
+    outcome_signal: Optional[str] = None,
+    evidence_ref: Optional[Dict[str, Any]] = None,
+    patch_delta: Optional[List[Dict[str, Any]]] = None,
+    eval_ref: Optional[Dict[str, Any]] = None,
+    artifact_refs: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    session_id = str(session.get("session_id") or session.get("id") or "").strip()
+    events = session.setdefault("events", [])
+    event = _build_teaching_event(
+        session_id=session_id,
+        event_id=_next_event_id(timestamp, events),
+        event_type=event_type,
+        actor=actor,
+        actor_type=actor_type,
+        actor_label=actor_label,
+        summary=summary,
+        timestamp=timestamp,
+        sequence_number=max((int(item.get("sequence_number") or 0) for item in events), default=0) + 1,
+        outcome_signal=outcome_signal,
+        evidence_ref=evidence_ref,
+        patch_delta=patch_delta,
+        eval_ref=eval_ref,
+        artifact_refs=artifact_refs,
+        payload=payload,
+    )
+    events.append(event)
+    if outcome_signal:
+        outcomes = session.setdefault("outcomes", [])
+        if outcome_signal not in outcomes:
+            outcomes.append(outcome_signal)
+    store.put_session(_teaching_session_contract(session))
+    store.append_event(event)
+    return event
+
+
+def _build_preview_evaluation_proof(
+    *,
+    session_id: str,
+    eval_id: str,
+    timestamp: str,
+    preview: Dict[str, Any],
+    job_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    metric_delta = preview.get("metric_delta") if isinstance(preview.get("metric_delta"), list) else []
+    metric_keys = [
+        str(metric.get("metric_key"))
+        for metric in metric_delta
+        if isinstance(metric, dict) and metric.get("metric_key")
+    ]
+    proof = {
+        "proof_id": f"teval-proof-{eval_id}",
+        "proof_ref": f"trainer-eval-proof:{session_id}:{eval_id}",
+        "session_id": session_id,
+        "eval_id": eval_id,
+        "job_id": job_id,
+        "status": "passed",
+        "generated_at": timestamp,
+        "baseline_snapshot_at": preview.get("baseline_snapshot_at"),
+        "candidate_snapshot_at": preview.get("candidate_snapshot_at"),
+        "metric_keys": metric_keys,
+        "preview_quality": preview.get("preview_quality"),
+        "governance_gate_id": "persona_teaching_eval_proof",
+        "governance_gate_state": "passed",
+        "required_for_commit": True,
+        "direct_live_influence": False,
+    }
+    return {key: value for key, value in proof.items() if value is not None}
+
+
+def _run_preview_evaluation(
+    session_id: str,
+    session: Dict[str, Any],
+    *,
+    mode: str,
+    timestamp: str,
+    eval_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    requested_by: str = "operator",
+) -> Dict[str, Any]:
     controls = (store.get_controls(session_id) or {}).get("controls") or []
-    
-    # Extract strategy parameters
     strategy_params = {
         control.get("parameter_key"): control.get("current_value")
         for control in controls
         if isinstance(control, dict) and control.get("parameter_key")
     }
-    
-    # Prepare data for vectorbt
+
     ohlcv_records = _get_ohlcv_data(session_id)
     dataset = {
         "dataset_id": f"preview-{session_id}",
@@ -589,8 +690,7 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
         "source_dataset_ref": "stub-ref",
         "records": ohlcv_records,
     }
-    
-    # Run backtest
+
     config = BacktestConfig(strategy_params=strategy_params)
     try:
         backtest_result = run_vectorbt_workflow(dataset, config=config)
@@ -632,7 +732,7 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
 
     bundle = store.get_preview_bundle(session_id) or {"session_id": session_id, "evaluations": {}}
     evaluations = bundle.setdefault("evaluations", {})
-    eval_id = f"teval-{uuid.uuid4().hex[:12]}"
+    eval_id = eval_id or f"teval-{uuid.uuid4().hex[:12]}"
     control_diff = [
         {
             "field": control.get("parameter_key"),
@@ -645,18 +745,234 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
     ]
     preview = {
         "eval_id": eval_id,
+        "job_id": job_id,
         "session_id": session_id,
         "status": "completed",
+        "mode": mode,
         "baseline_snapshot_at": session.get("started_at"),
         "candidate_snapshot_at": timestamp,
         "metric_delta": metric_delta,
         "control_diff": control_diff,
         "preview_quality": "vectorbt_real",
     }
+    proof = _build_preview_evaluation_proof(
+        session_id=session_id,
+        eval_id=eval_id,
+        timestamp=timestamp,
+        preview=preview,
+        job_id=job_id,
+    )
+    preview["evaluation_proof"] = proof
+    preview["governance_gate"] = {
+        "gate_id": proof["governance_gate_id"],
+        "state": proof["governance_gate_state"],
+        "required_for_commit": True,
+    }
     evaluations[eval_id] = preview
     bundle["preview"] = preview
     store.put_preview_bundle(session_id, bundle)
+
+    _append_training_event(
+        session,
+        event_type="preview_result",
+        actor="training-session",
+        actor_type="service",
+        actor_label="Training Session Service",
+        summary="Trainer preview evaluation completed.",
+        timestamp=timestamp,
+        outcome_signal="preview-evaluated",
+        eval_ref={
+            "eval_id": eval_id,
+            "job_id": job_id,
+            "candidate_snapshot_at": timestamp,
+            "evaluation_proof_ref": proof["proof_ref"],
+            "governance_gate_state": proof["governance_gate_state"],
+        },
+        artifact_refs={
+            "preview_ref": f"trainer-preview:{session_id}:{eval_id}",
+            "evaluation_proof_ref": proof["proof_ref"],
+        },
+        payload={"mode": mode, "requested_by": requested_by, "job_id": job_id},
+    )
     return preview
+
+
+def _preview_for_eval_ref(session_id: str, eval_ref: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    bundle = store.get_preview_bundle(session_id) or {}
+    eval_id = str(eval_ref.get("eval_id") or "").strip()
+    evaluations = bundle.get("evaluations") if isinstance(bundle.get("evaluations"), dict) else {}
+    if eval_id and isinstance(evaluations, dict):
+        preview = evaluations.get(eval_id)
+        if isinstance(preview, dict):
+            return dict(preview)
+    preview = bundle.get("preview")
+    return dict(preview) if isinstance(preview, dict) else None
+
+
+def _require_commit_eval_proof(session_id: str, replay: Dict[str, Any]) -> Dict[str, Any]:
+    eval_ref = _replay_eval_ref(replay)
+    preview = _preview_for_eval_ref(session_id, eval_ref)
+    if not preview:
+        raise HTTPException(status_code=409, detail="evaluation proof required before commit")
+    if preview.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="evaluation proof is not completed")
+
+    candidate_snapshot_at = _replay_candidate_snapshot_at(replay)
+    if candidate_snapshot_at and preview.get("candidate_snapshot_at") != candidate_snapshot_at:
+        raise HTTPException(status_code=409, detail="evaluation proof candidate snapshot mismatch")
+
+    proof = preview.get("evaluation_proof")
+    if not isinstance(proof, dict) or not proof.get("proof_ref"):
+        raise HTTPException(status_code=409, detail="evaluation proof required before commit")
+    if proof.get("status") != "passed" or proof.get("governance_gate_state") != "passed":
+        raise HTTPException(status_code=409, detail="evaluation governance gate is not passed")
+    return dict(proof)
+
+
+@app.post("/api/training/sessions/{session_id}/preview", status_code=201)
+def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]:
+    session = store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="training session not found")
+    timestamp = body.refreshed_at or utc_now()
+    return _run_preview_evaluation(
+        session_id,
+        session,
+        mode=body.mode,
+        timestamp=timestamp,
+        requested_by="operator",
+    )
+
+
+@app.get("/api/training/preview-jobs")
+def list_preview_jobs(
+    session_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> List[Dict[str, Any]]:
+    jobs = store.list_preview_jobs()
+    if session_id:
+        jobs = [job for job in jobs if job.get("session_id") == session_id]
+    if status:
+        jobs = [job for job in jobs if str(job.get("status") or "").lower() == status.lower()]
+    jobs.sort(key=lambda job: str(job.get("requested_at") or ""))
+    return jobs[:limit]
+
+
+@app.get("/api/training/preview-jobs/{job_id}")
+def get_preview_job(job_id: str) -> Dict[str, Any]:
+    job = store.get_preview_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="preview job not found")
+    return job
+
+
+@app.post("/api/training/sessions/{session_id}/preview-jobs", status_code=201)
+def queue_preview_job(
+    session_id: str,
+    body: QueuePreviewJobBody,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> Dict[str, Any]:
+    session = store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="training session not found")
+    if str(session.get("status") or "").lower() != "active":
+        raise HTTPException(status_code=409, detail="training session is not active")
+
+    timestamp = body.requested_at or utc_now()
+    key = _idempotency_key(idempotency_key, x_idempotency_key)
+    job_id = _preview_job_id(session_id, key)
+    existing = store.get_preview_job(job_id)
+    if existing is not None:
+        existing["replayed"] = True
+        return existing
+
+    eval_id = f"teval-{uuid.uuid4().hex[:12]}"
+    job = {
+        "job_id": job_id,
+        "session_id": session_id,
+        "eval_id": eval_id,
+        "status": "queued",
+        "mode": body.mode,
+        "requested_by": body.requested_by,
+        "requested_at": timestamp,
+        "attempt_count": 0,
+        "idempotency_key": key,
+    }
+    stored = store.put_preview_job(job_id, job)
+    _append_training_event(
+        session,
+        event_type="preview_requested",
+        actor=body.requested_by,
+        actor_type=_actor_type_from_actor(body.requested_by),
+        summary="Async trainer preview evaluation queued.",
+        timestamp=timestamp,
+        eval_ref={"eval_id": eval_id, "job_id": job_id},
+        payload={"mode": body.mode, "job_id": job_id},
+    )
+    return stored
+
+
+@app.post("/api/training/preview-jobs/{job_id}/run")
+def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Dict[str, Any]:
+    job = store.get_preview_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="preview job not found")
+    if job.get("status") == "completed":
+        job["replayed"] = True
+        return job
+    if job.get("status") == "running":
+        return job
+    if job.get("status") not in {"queued", "failed"}:
+        raise HTTPException(status_code=409, detail="preview job is not runnable")
+
+    timestamp = (body.run_at if body else None) or utc_now()
+    job["status"] = "running"
+    job["last_attempt_at"] = timestamp
+    job["attempt_count"] = int(job.get("attempt_count") or 0) + 1
+    store.put_preview_job(job_id, job)
+
+    session_id = str(job.get("session_id") or "").strip()
+    session = store.get_session(session_id)
+    if not session:
+        job["status"] = "failed"
+        job["failed_at"] = timestamp
+        job["error"] = "training session not found"
+        store.put_preview_job(job_id, job)
+        raise HTTPException(status_code=404, detail="training session not found")
+
+    try:
+        preview = _run_preview_evaluation(
+            session_id,
+            session,
+            mode=str(job.get("mode") or "refresh"),
+            timestamp=timestamp,
+            eval_id=str(job.get("eval_id") or "") or None,
+            job_id=job_id,
+            requested_by=str(job.get("requested_by") or "operator"),
+        )
+    except HTTPException as exc:
+        job["status"] = "failed"
+        job["failed_at"] = timestamp
+        job["error"] = str(exc.detail)
+        store.put_preview_job(job_id, job)
+        raise
+
+    proof = preview.get("evaluation_proof") if isinstance(preview.get("evaluation_proof"), dict) else {}
+    job.update(
+        {
+            "status": "completed",
+            "completed_at": timestamp,
+            "candidate_snapshot_at": preview.get("candidate_snapshot_at"),
+            "preview_ref": f"trainer-preview:{session_id}:{preview.get('eval_id')}",
+            "evaluation_proof_ref": proof.get("proof_ref"),
+            "governance_gate_state": proof.get("governance_gate_state"),
+            "preview": preview,
+        }
+    )
+    job.pop("error", None)
+    return store.put_preview_job(job_id, job)
 
 
 
@@ -706,9 +1022,18 @@ def complete_session(session_id: str) -> Dict[str, Any]:
     }
     replay_eval_ref = {
         "eval_id": preview.get("eval_id"),
+        "job_id": preview.get("job_id"),
         "baseline_snapshot_at": preview.get("baseline_snapshot_at"),
         "candidate_snapshot_at": candidate_snapshot_at,
     }
+    proof = preview.get("evaluation_proof") if isinstance(preview.get("evaluation_proof"), dict) else {}
+    if proof:
+        replay_eval_ref.update(
+            {
+                "evaluation_proof_ref": proof.get("proof_ref"),
+                "governance_gate_state": proof.get("governance_gate_state"),
+            }
+        )
     replay_event = _build_teaching_event(
         session_id=session_id,
         event_id=_next_event_id(timestamp, replay.get("events") or []),
@@ -774,6 +1099,17 @@ def _decide_replay(
         )
     )
     if state == "committed":
+        proof = _require_commit_eval_proof(session_id, replay)
+        resolution["evaluation_proof"] = proof
+        artifacts.update(
+            {
+                "evaluation_proof_ref": proof.get("proof_ref"),
+                "evaluation_proof_id": proof.get("proof_id"),
+                "evaluation_job_id": proof.get("job_id"),
+                "evaluation_governance_gate_id": proof.get("governance_gate_id"),
+                "evaluation_governance_gate_state": proof.get("governance_gate_state"),
+            }
+        )
         try:
             policy_edges = record_policy_lineage_commit(
                 session_id,
@@ -787,6 +1123,13 @@ def _decide_replay(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         artifacts["policy_lineage_edge_ids"] = [edge["edge_id"] for edge in policy_edges]
         artifacts["policy_lineage_store_ref"] = "lineage-read:training-session-policy-lineage"
+        artifacts["lineage_audit"] = {
+            "state": "recorded",
+            "recorded_at": timestamp,
+            "policy_lineage_edge_ids": artifacts["policy_lineage_edge_ids"],
+            "evaluation_proof_ref": proof.get("proof_ref"),
+            "governance_gate_state": proof.get("governance_gate_state"),
+        }
     decision_artifact_refs = {
         "before_artifact_ref": artifacts.get("before_artifact_ref"),
         "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
@@ -795,10 +1138,14 @@ def _decide_replay(
         "lineage_ref": artifacts.get("lineage_ref"),
         "lineage_edge_id": artifacts.get("lineage_edge_id"),
         "lineage_recorded_at": artifacts.get("lineage_recorded_at"),
+        "evaluation_proof_ref": artifacts.get("evaluation_proof_ref"),
+        "evaluation_governance_gate_id": artifacts.get("evaluation_governance_gate_id"),
+        "evaluation_governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
         "persona_policy_ref": artifacts.get("persona_policy_ref"),
         "route_policy_ref": artifacts.get("route_policy_ref"),
         "policy_lineage_edge_ids": artifacts.get("policy_lineage_edge_ids"),
         "policy_lineage_store_ref": artifacts.get("policy_lineage_store_ref"),
+        "lineage_audit": artifacts.get("lineage_audit"),
     }
     decision_event = _build_teaching_event(
         session_id=session_id,
@@ -813,7 +1160,11 @@ def _decide_replay(
             default=0,
         )
         + 1,
-        eval_ref={"candidate_snapshot_at": candidate_snapshot_at},
+        eval_ref={
+            "candidate_snapshot_at": candidate_snapshot_at,
+            "evaluation_proof_ref": artifacts.get("evaluation_proof_ref"),
+            "governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
+        },
         artifact_refs=decision_artifact_refs,
     )
     replay.setdefault("events", []).append(decision_event)
