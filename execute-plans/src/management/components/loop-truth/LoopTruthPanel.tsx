@@ -66,7 +66,7 @@ const fallbackTruthLabels: LoopTruthLabel[] = [
     truth_bucket: "live_truth",
     source_type: "live_truth",
     rank: 3,
-    label: "Live truth",
+    label: "Reconciled live truth",
     accepted_as_live: true,
   },
 ];

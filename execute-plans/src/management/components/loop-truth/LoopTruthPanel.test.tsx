@@ -194,12 +194,12 @@ describe("LoopTruthPanel", () => {
     render(<LoopTruthPanel />);
 
     await waitFor(() => expect(listSpy).toHaveBeenCalledTimes(1));
+    await screen.findByText("Source: bff_composed");
     expect(screen.getByTestId("truth-label-seed_fixture").textContent).toContain("Seed / fixture");
     expect(screen.getByTestId("truth-label-snapshot_fallback").textContent).toContain("Snapshot fallback");
     expect(screen.getByTestId("truth-label-registry_metadata").textContent).toContain("Registry metadata");
     expect(screen.getByTestId("truth-label-scheduled_tick").textContent).toContain("Scheduled tick");
     expect(screen.getByTestId("truth-label-reconciled_live_proof").textContent).toContain("Reconciled live truth");
-    expect(screen.getByText("Source: bff_composed")).toBeTruthy();
     expect(screen.getByText("Degraded: 1")).toBeTruthy();
 
     const snapshotRow = screen.getByTestId("loop-truth-row-bff_health_monitoring");
