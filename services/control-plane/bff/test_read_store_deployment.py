@@ -94,6 +94,74 @@ def test_canonical_overlay():
                 },
             )
             _write_json(
+                governance_dir / "deployment_sagas.json",
+                {
+                    "sagas": {
+                        "deployment-saga-plan-live-001": {
+                            "saga_id": "deployment-saga-plan-live-001",
+                            "plan_id": "plan-live-001",
+                            "approval_decision_id": "approval-live-001",
+                            "strategy_id": "strat-live-001",
+                            "artifact_id": "artifact-live-001",
+                            "artifact_version": "v3.2.1",
+                            "capital_pool_id": "pool-live-001",
+                            "current_stage": "none",
+                            "target_stage": "paper",
+                            "runtime_action": "deploy_new_binding",
+                            "rollback_action_type": "replace",
+                            "status": "awaiting_binding",
+                            "current_step": "binding_requested",
+                            "trace_id": "trace-live-001",
+                            "created_at": "2026-04-11T10:00:00Z",
+                            "updated_at": "2026-04-11T10:15:00Z",
+                            "last_sequence_no": 1,
+                            "last_event_id": "deployment-saga-plan-live-001-evt-0001",
+                            "history": [
+                                {
+                                    "step": "binding_requested",
+                                    "status": "awaiting_binding",
+                                    "event_id": "deployment-saga-plan-live-001-evt-0001",
+                                    "sequence_no": 1,
+                                    "emitted_at": "2026-04-11T10:00:00Z",
+                                }
+                            ],
+                        }
+                    },
+                    "outbox": [
+                        {
+                            "owner_service": "deployment-orchestrator",
+                            "event": {
+                                "event_id": "deployment-saga-plan-live-001-evt-0001",
+                                "event_type": "runtime.binding.requested",
+                                "aggregate_type": "deployment_saga",
+                                "aggregate_id": "deployment-saga-plan-live-001",
+                                "sequence_no": 1,
+                                "causal_parent_id": None,
+                                "event_time": "2026-04-11T10:00:00Z",
+                                "emitted_at": "2026-04-11T10:00:00Z",
+                                "trace_id": "trace-live-001",
+                                "idempotency_key": "deployment-saga-plan-live-001:1:runtime.binding.requested",
+                                "payload": {"plan_id": "plan-live-001"},
+                            },
+                            "status": "dead_lettered",
+                            "delivery_attempts": 3,
+                            "last_error": "runtime-manager unavailable",
+                            "last_attempt_at": "2026-04-11T10:14:00Z",
+                            "blocked_reason": "runtime-manager unavailable",
+                            "dlq_at": "2026-04-11T10:15:00Z",
+                            "replay_count": 0,
+                            "retry_policy": {
+                                "consumer_name": "deployment-outbox-consumer",
+                                "retryable": True,
+                                "max_attempts": 3,
+                                "retry_delay_seconds": 30,
+                            },
+                        }
+                    ],
+                    "inbox": [],
+                },
+            )
+            _write_json(
                 governance_dir / "capital_pools.json",
                 [
                     {
@@ -150,6 +218,12 @@ def test_canonical_overlay():
             assert plan["runtime_binding_id"] == "rb-live-001"
             assert plan["current_stage"] == "none"
             assert plan["target_stage"] == "paper"
+            assert plan["deployment_saga_id"] == "deployment-saga-plan-live-001"
+            assert plan["saga_progress_status"] == "blocked"
+            assert plan["blocked_reason"] == "runtime-manager unavailable"
+            assert plan["dlq_count"] == 1
+            assert plan["retry_state"][0]["status"] == "dead_lettered"
+            assert plan["saga_progress"]["retry_policy"]["max_attempts"] == 3
 
             decision = store.get_approval_decision("approval-live-001")
             assert decision is not None
