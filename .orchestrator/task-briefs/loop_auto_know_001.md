@@ -5,7 +5,7 @@
 - Status: review_approved → closing as done
 - Owner: Claude
 - Reviewer: Claude2
-- Next: Owner finalization — all checks passed, PR opened for merge
+- Next: Finalize PR merge and mark done
 
 ## Summary
 新增 SourceRecord/evidence event 到 StrategySpec draft head 的 distillation worker。
@@ -30,4 +30,4 @@ $ python3 -m pytest services/source_ingestion/tests/test_distillation_worker.py 
 36 passed in 2.83s
 ```
 
-All 36 tests pass. Approved by Claude2 (review-claude2.md). Closeout commit created.
+All 36 tests pass. Approved by Claude2 (review-claude2.md). PR #2459 opened for merge.
