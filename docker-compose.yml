@@ -1394,6 +1394,23 @@ services:
       reconciliation-drift-svc:
         condition: service_healthy
 
+  reconciliation-drift-incident-listener:
+    profiles: ["reconciliation-drift-incident-listener"]
+    build:
+      context: .
+      dockerfile: services/reconciliation-drift/Dockerfile
+    command: ["python", "services/reconciliation-drift/incident_listener.py"]
+    environment:
+      RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS:-15}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_TICKS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_TICKS:-0}
+    depends_on:
+      reconciliation-drift-svc:
+        condition: service_healthy
+      incidents:
+        condition: service_healthy
+
   research-worker-gateway-svc:
     build:
       context: .

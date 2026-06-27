@@ -32,6 +32,12 @@ def _to_float(value: object) -> Optional[float]:
     return f if f > 0 else None
 
 
+def _is_tw_symbol(symbol: str) -> bool:
+    s = str(symbol or "").strip().upper()
+    # Suffixed (2330.TW) or a bare TWSE/TPEx numeric ticker (e.g. 2330, 00878).
+    return s.endswith(_TW_SUFFIXES) or (s.isdigit() and 4 <= len(s) <= 6)
+
+
 class QuotePricer:
     """TTL-cached real-time price lookup: Shioaji primary, TWSE MIS fallback."""
 
@@ -53,7 +59,7 @@ class QuotePricer:
             if cached is not None and (now - cached[0]) < self._ttl:
                 return cached[1]
         price = self._shioaji_price(key)
-        if price is None and key.endswith(_TW_SUFFIXES):
+        if price is None and _is_tw_symbol(key):
             price = self._twse_mis_price(key)
         with self._lock:
             self._cache[key] = (now, price)
@@ -62,7 +68,7 @@ class QuotePricer:
     # --- primary: Shioaji snapshot ---
     def _shioaji_price(self, symbol: str) -> Optional[float]:
         adapter = self._adapter
-        if adapter is None or not symbol.endswith(_TW_SUFFIXES):
+        if adapter is None or not _is_tw_symbol(symbol):
             return None
         try:
             return adapter.snapshot_price(symbol)  # type: ignore[attr-defined]
