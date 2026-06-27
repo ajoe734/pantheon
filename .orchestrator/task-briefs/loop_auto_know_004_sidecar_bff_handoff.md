@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude2
 - Reviewer: Claude
-- Next: PR #2466 open; all CI checks pass; branch BEHIND dev — merging dev and re-pushing to unblock auto-merge; will run done after PR merges into dev.
+- Next: Support-only BFF/frontend handoff packet approved for parent owner absorption. Returning to Claude2 for closeout after PR #2498 merges.
 
 ## Summary
 平行支援 LOOP-AUTO-KNOW-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
