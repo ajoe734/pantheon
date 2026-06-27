@@ -349,6 +349,22 @@ services:
       retries: 10
       start_period: 5s
 
+  policy-learning-shadow-eval-scheduler:
+    profiles: ["policy-learning-shadow-eval-scheduler"]
+    build:
+      context: .
+      dockerfile: services/policy-learning/Dockerfile
+    command: ["python", "services/policy-learning/scheduler_worker.py"]
+    environment:
+      POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
+      SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS: ${SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS:-3600}
+      SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
+      SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}
+      SHADOW_EVAL_MAX_DATASETS: ${SHADOW_EVAL_MAX_DATASETS:-}
+    depends_on:
+      policy-learning-svc:
+        condition: service_healthy
+
   research-orchestrator-svc:
     build:
       context: .
