@@ -14,6 +14,7 @@ REQUIRED_SECRET_ENV_VARS = (
     "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B",
 )
 RBAC_REQUIRED_LABELS = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
+MIN_BEARER_TOKEN_LENGTH = 12
 
 CROSS_SECRET_REQUIRED_SOURCES = (
     "smoke",
@@ -114,6 +115,14 @@ def test_preflight_writes_missing_inputs_without_secret_values(tmp_path: Path) -
         "distinct_bearer_count": 0,
         "duplicate_source_groups": [],
     }
+    assert payload["bearer_shape"] == {
+        "required_sources": list(CROSS_SECRET_REQUIRED_SOURCES),
+        "checked_sources": [],
+        "valid_sources": [],
+        "invalid_sources": [],
+        "min_length": MIN_BEARER_TOKEN_LENGTH,
+        "placeholder_values_rejected": True,
+    }
     remediation = payload["operator_remediation"]
     assert payload["github_environment"] == "dev"
     assert remediation["github_environment"] == "dev"
@@ -186,6 +195,14 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
         "distinct_bearer_count": len(CROSS_SECRET_REQUIRED_SOURCES),
         "duplicate_source_groups": [],
     }
+    assert payload["bearer_shape"] == {
+        "required_sources": list(CROSS_SECRET_REQUIRED_SOURCES),
+        "checked_sources": list(CROSS_SECRET_REQUIRED_SOURCES),
+        "valid_sources": list(CROSS_SECRET_REQUIRED_SOURCES),
+        "invalid_sources": [],
+        "min_length": MIN_BEARER_TOKEN_LENGTH,
+        "placeholder_values_rejected": True,
+    }
     remediation = payload["operator_remediation"]
     assert payload["github_environment"] == "staging-live"
     assert remediation["repository"] == "example/pantheon"
@@ -206,6 +223,97 @@ def test_preflight_passes_when_all_required_inputs_are_present(tmp_path: Path) -
     ]
     for secret_value in leaked_values:
         assert secret_value not in text
+
+
+def test_preflight_rejects_placeholder_bearers_before_live_probes(tmp_path: Path) -> None:
+    env = clean_env()
+    rbac_tokens = {label: f"{label}-secret" for label in RBAC_REQUIRED_LABELS}
+    rbac_tokens["operator"] = "dummy-token"
+    env.update(
+        {
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN": "bearer redacted",
+            "PANTHEON_BFF_RBAC_TOKENS_JSON": json.dumps(rbac_tokens),
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A": "***",
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "race-secret-b",
+        }
+    )
+
+    result = run_preflight(
+        tmp_path,
+        env,
+        approval_race_id="appr-live-123",
+        two_man_race_id="int-live-123",
+    )
+    assert result.returncode == 1
+    assert "PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE" in result.stderr
+    assert "smoke=placeholder_value" in result.stderr
+    assert "rbac:operator=placeholder_prefix" in result.stderr
+    assert "approval_race:a=placeholder_value" in result.stderr
+
+    output = tmp_path / ".lovable" / "audits" / "current-run" / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    text = output.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    assert payload["missing"] == []
+    assert payload["rbac_matrix"]["distinct_bearers"] is True
+    assert payload["cross_secret_bearers"]["distinct_bearers"] is True
+    assert payload["bearer_shape"]["invalid_sources"] == [
+        {"source": "smoke", "reason": "placeholder_value"},
+        {"source": "rbac:operator", "reason": "placeholder_prefix"},
+        {"source": "approval_race:a", "reason": "placeholder_value"},
+    ]
+    assert payload["bearer_shape"]["min_length"] == MIN_BEARER_TOKEN_LENGTH
+    assert payload["invalid"] == [
+        {
+            "name": "PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE",
+            "reason": "bearer tokens must not be placeholders and must be at least 12 characters: "
+            "smoke=placeholder_value; rbac:operator=placeholder_prefix; "
+            "approval_race:a=placeholder_value",
+        }
+    ]
+    for leaked_value in ["redacted", "dummy-token", "race-secret-b"]:
+        assert leaked_value not in text
+
+
+def test_preflight_rejects_short_bearer_tokens_before_live_probes(tmp_path: Path) -> None:
+    env = clean_env()
+    rbac_tokens = {label: f"{label}-secret" for label in RBAC_REQUIRED_LABELS}
+    rbac_tokens["reviewer"] = "tiny"
+    env.update(
+        {
+            "PANTHEON_BFF_SMOKE_BEARER_TOKEN": "smoke-secret",
+            "PANTHEON_BFF_RBAC_TOKENS_JSON": json.dumps(rbac_tokens),
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A": "race-secret-a",
+            "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B": "race-secret-b",
+        }
+    )
+
+    result = run_preflight(
+        tmp_path,
+        env,
+        approval_race_id="appr-live-123",
+        two_man_race_id="int-live-123",
+    )
+    assert result.returncode == 1
+    assert "PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE" in result.stderr
+    assert "rbac:reviewer=too_short_min_12" in result.stderr
+
+    output = tmp_path / ".lovable" / "audits" / "current-run" / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    text = output.read_text(encoding="utf-8")
+    payload = json.loads(text)
+    assert payload["missing"] == []
+    assert payload["rbac_matrix"]["distinct_bearers"] is True
+    assert payload["cross_secret_bearers"]["distinct_bearers"] is True
+    assert payload["bearer_shape"]["invalid_sources"] == [
+        {"source": "rbac:reviewer", "reason": "too_short_min_12"},
+    ]
+    assert payload["invalid"] == [
+        {
+            "name": "PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE",
+            "reason": "bearer tokens must not be placeholders and must be at least 12 characters: "
+            "rbac:reviewer=too_short_min_12",
+        }
+    ]
+    assert "tiny" not in text
 
 
 def test_preflight_rejects_short_sse_soak_before_live_write_steps(tmp_path: Path) -> None:
