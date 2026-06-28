@@ -150,6 +150,49 @@ def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
     assert replayed_watermark.json()["watermark"]["last_ingest_run_id"] == run_id
 
 
+def test_provider_owned_job_parameters_are_accepted_by_jobs_api(client) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": {
+                "connector_id": "us-fred-macro",
+                "source_type": "macro",
+                "provider": "FRED",
+                "license_scope": "public_macro_reference",
+            },
+            "fetch": {
+                "mode": "provider_owned_adapter",
+                "adapter": "FredMacroSeriesAdapter.records_from_observations_payload",
+                "adapter_config": {"max_records": 3},
+                "request": {},
+                "max_records": 3,
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "us-fred-macro",
+            "trace_id": "trace-fred-job-parameters",
+            "trigger_type": "srclive_api_regression",
+            "job_parameters": {
+                "series_id": "GDP",
+                "csv_text": "observation_date,GDP\n2025-07-01,30623.1\n2025-10-01,30999.2\n",
+            },
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["run"]["status"] == "completed"
+    assert body["run"]["normalized_count"] == 2
+    assert body["records"][0]["metadata"]["series_id"] == "GDP"
+    assert body["records"][0]["metadata"]["fetch_mode"] == "public_csv_fallback"
+
+
 def test_configured_connector_fetch_runs_without_inline_records_and_persists_evidence_refs(client) -> None:
     test_client, data_dir, module = client
     configured = test_client.post(
