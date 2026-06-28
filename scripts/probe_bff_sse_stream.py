@@ -52,6 +52,19 @@ SSE_HEADER_KEYS = (
 )
 
 
+def strict_live_evidence_run() -> dict[str, str]:
+    return {
+        "github_environment": os.environ.get("PANTHEON_LIVE_EVIDENCE_ENVIRONMENT", "").strip(),
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "").strip(),
+        "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "").strip(),
+        "github_workflow": os.environ.get("GITHUB_WORKFLOW", "").strip(),
+        "github_job": os.environ.get("GITHUB_JOB", "").strip(),
+        "repository": os.environ.get("GITHUB_REPOSITORY", "").strip(),
+        "ref": (os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", "")).strip(),
+        "sha": os.environ.get("GITHUB_SHA", "").strip(),
+    }
+
+
 @dataclass(frozen=True)
 class AuthMode:
     name: str
@@ -1013,6 +1026,7 @@ def main() -> int:
         "task_id": TASK_ID,
         "generated_at": generated_at,
         "target_url": base_url,
+        "strict_live_evidence_run": strict_live_evidence_run(),
         "channel": args.channel,
         "auth_source": auth_source,
         "strict_live_evidence": args.strict_live_evidence,

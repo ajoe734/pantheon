@@ -27,6 +27,22 @@ BEARER_SHAPE_REQUIRED_SOURCES = (
 CROSS_SECRET_REQUIRED_SOURCES = BEARER_SHAPE_REQUIRED_SOURCES
 RBAC_REQUIRED_LABELS = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
 MIN_BEARER_TOKEN_LENGTH = 12
+TARGET_URL = "https://pantheon-bff-dev.example.test"
+
+
+def strict_live_evidence_run(**overrides: str) -> dict[str, str]:
+    payload = {
+        "github_environment": "dev",
+        "github_run_id": "123456789",
+        "github_run_attempt": "1",
+        "github_workflow": "Stage 0 CI",
+        "github_job": "live-evidence",
+        "repository": "ajoe734/pantheon",
+        "ref": "refs/heads/dev",
+        "sha": "a" * 40,
+    }
+    payload.update(overrides)
+    return payload
 
 
 def run_verifier(artifact_dir: Path) -> subprocess.CompletedProcess[str]:
@@ -388,6 +404,8 @@ def write_strict_auth_json(artifact_dir: Path) -> None:
         json.dumps(
             {
                 "strict_live_evidence": True,
+                "strict_live_evidence_run": strict_live_evidence_run(),
+                "target_url": TARGET_URL,
                 "auth_source": {"kind": "provided_bearer"},
                 "rbac_auth_source": strict_rbac_auth_source(),
                 "include_writes": True,
@@ -473,6 +491,8 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
         json.dumps(
             {
                 "strict_live_evidence": True,
+                "strict_live_evidence_run": strict_live_evidence_run(),
+                "target_url": TARGET_URL,
                 "channel": "approval",
                 "auth_source": {"kind": "provided_bearer", "token_sha256_12": "abcdef123456"},
                 "strict_live_evidence_requirements": {
@@ -575,7 +595,9 @@ def write_passing_artifact(artifact_dir: Path) -> None:
             {
                 "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
                 "strict_live_evidence_preflight": True,
+                "strict_live_evidence_run": strict_live_evidence_run(),
                 "github_environment": "dev",
+                "target_url": TARGET_URL,
                 "missing": [],
                 "invalid": [],
                 "output_scope": ".lovable/audits/current-run",
@@ -610,6 +632,56 @@ def test_verifier_accepts_complete_strict_live_artifact(tmp_path: Path) -> None:
     assert payload["criteria"]["sse_reconnect_soak"]["status"] == "pass"
     assert payload["criteria"]["current_run_only"]["status"] == "pass"
     assert payload["criteria"]["raw_secret_scan"]["status"] == "pass"
+
+
+def test_verifier_rejects_auth_json_from_stale_sha_even_when_summary_passes(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    auth["strict_live_evidence_run"]["sha"] = "b" * 40
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["overall"] == "fail"
+    for key in ("rbac_matrix", "dry_run_no_side_effects", "approval_race", "two_man_race"):
+        item = payload["criteria"][key]
+        assert item["status"] == "fail"
+        assert "runProvenance:sha" in item["note"]
+
+
+def test_verifier_rejects_sse_json_from_stale_run_id_even_when_summary_passes(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    sse["strict_live_evidence_run"]["github_run_id"] = "987654321"
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "runProvenance:github_run_id" in item["note"]
+
+
+def test_verifier_rejects_sse_json_from_different_target_url_even_when_summary_passes(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    sse["target_url"] = "https://pantheon-bff-staging.example.test"
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "runProvenance:target_url" in item["note"]
 
 
 
@@ -1136,7 +1208,9 @@ def test_verifier_fails_preflight_blocked_artifact(tmp_path: Path) -> None:
             {
                 "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
                 "strict_live_evidence_preflight": True,
+                "strict_live_evidence_run": strict_live_evidence_run(sha="b" * 40),
                 "github_environment": "dev",
+                "target_url": TARGET_URL,
                 "missing": ["PANTHEON_BFF_SMOKE_BEARER_TOKEN", "PANTHEON_BFF_RBAC_TOKENS_JSON"],
                 "invalid": [],
                 "output_scope": ".lovable/audits/current-run",
@@ -1169,7 +1243,9 @@ def test_verifier_fails_when_preflight_secret_safety_flag_is_missing(tmp_path: P
             {
                 "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
                 "strict_live_evidence_preflight": True,
+                "strict_live_evidence_run": strict_live_evidence_run(sha="c" * 40),
                 "github_environment": "dev",
+                "target_url": TARGET_URL,
                 "missing": [],
                 "invalid": [],
                 "output_scope": ".lovable/audits/current-run",
@@ -1220,7 +1296,7 @@ def test_verifier_rejects_master_preflight_provenance_even_when_checks_pass(tmp_
     assert payload["overall"] == "fail"
     item = payload["criteria"]["preflight_ready"]
     assert item["status"] == "fail"
-    assert item["note"] == "provenance:ref"
+    assert item["note"] == "provenance:ref,strict_live_evidence_run.ref"
 
 
 def test_verifier_rejects_missing_preflight_provenance_even_when_checks_pass(tmp_path: Path) -> None:
@@ -1240,7 +1316,7 @@ def test_verifier_rejects_missing_preflight_provenance_even_when_checks_pass(tmp
     payload = json.loads(result.stdout)
     item = payload["criteria"]["preflight_ready"]
     assert item["status"] == "fail"
-    assert item["note"] == "provenance:task_id,strict_live_evidence_preflight,output_scope,github_environment,sha"
+    assert item["note"] == "provenance:task_id,strict_live_evidence_preflight,output_scope,github_environment,sha,strict_live_evidence_run.github_environment,strict_live_evidence_run.sha"
 
 
 def test_verifier_rejects_raw_bearer_material_without_echoing_secret(tmp_path: Path) -> None:
