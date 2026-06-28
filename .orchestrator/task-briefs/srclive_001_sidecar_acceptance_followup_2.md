@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare SRCLIVE-001 acceptance packet and dependency map
-- Status: review_approved
+- Status: done
 - Owner: Claude2
 - Reviewer: Codex
-- Next: Review approved. Owner Claude2 must finalize the support packet through task closeout; parent SRCLIVE-001 acceptance still requires VM-local source-ingest activation evidence.
+- Next: Closed. Sidecar packet committed at bd0d4b5a; review_approved by Codex; closeout complete.
 
 ## Summary
 平行支援 SRCLIVE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
