@@ -71,6 +71,17 @@ RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-note"}
 RBAC_READ_ALLOWED = {"viewer", "operator", "reviewer", "approver", "admin"}
 RBAC_WRITE_ALLOWED = {"operator", "reviewer", "approver", "admin"}
 RBAC_DENIED_ERROR_CODES = {"AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"}
+RBAC_READ_EXPECTATIONS = {
+    "bff-strategies": {"method": "GET", "path": "/bff/strategies"},
+    "bff-ranking-formulas": {"method": "GET", "path": "/bff/ranking-formulas"},
+    "bff-agora-signals": {"method": "GET", "path": "/bff/agora/signals"},
+}
+RBAC_WRITE_EXPECTATIONS = {
+    "strategy": {"method": "POST", "path": "/bff/strategies"},
+    "ranking-formula": {"method": "POST", "path": "/bff/ranking-formulas"},
+    "agora-note": {"method": "POST", "path": "/bff/agora/notes"},
+    "intervention-claim": {"method": "POST", "path": "/bff/v5/interventions/int-live-rbac-matrix/claim"},
+}
 APPROVAL_RACE_ACCEPTED_STATUSES = {200, 201, 202}
 APPROVAL_RACE_SAFE_ERROR_CODES = {
     "RESOURCE_NOT_FOUND",
@@ -810,7 +821,10 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     actual_keys: set[tuple[str, str, str]] = set()
     ok_count = 0
     detail_links = 0
+    request_links = 0
     bearer_links = 0
+    allowed_read_statuses = 0
+    allowed_write_statuses = 0
     write_items = 0
     write_side_effect_proofs = 0
     write_readback_proofs = 0
@@ -829,6 +843,9 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
         operation = str(item.get("rbac_operation") or "")
         resource = str(item.get("rbac_resource") or "")
         family = str(item.get("family") or "")
+        method = str(item.get("method") or "")
+        path = str(item.get("path") or "")
+        status = safe_int(item.get("status"))
         key = (label, operation, resource)
         if key in expected_keys:
             actual_keys.add(key)
@@ -847,26 +864,52 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
                 failures.append(f"{index}:bearer-link")
 
         error_code = str(item.get("error_code") or "")
-        if operation == "read" and label not in RBAC_READ_ALLOWED:
-            if item.get("error_envelope") is True and error_code in RBAC_DENIED_ERROR_CODES:
+        if operation == "read":
+            spec = RBAC_READ_EXPECTATIONS.get(resource)
+            if spec and method == spec["method"] and path == spec["path"]:
+                request_links += 1
+            else:
+                failures.append(f"{index}:rbac-request-link")
+            if label in RBAC_READ_ALLOWED:
+                if status == 200 and item.get("error_envelope") is not True:
+                    allowed_read_statuses += 1
+                else:
+                    failures.append(f"{index}:read-allowed-status")
+            elif (
+                item.get("error_envelope") is True
+                and error_code in RBAC_DENIED_ERROR_CODES
+                and status in ({401, 403} if label == "anonymous" else {403})
+            ):
                 read_denials += 1
             else:
                 failures.append(f"{index}:read-denial-envelope")
+            continue
+
         if operation != "write":
             continue
 
         write_items += 1
+        spec = RBAC_WRITE_EXPECTATIONS.get(resource)
+        if spec and method == spec["method"] and path == spec["path"]:
+            request_links += 1
+        else:
+            failures.append(f"{index}:rbac-request-link")
         check = item.get("side_effect_check") if isinstance(item.get("side_effect_check"), dict) else {}
         marker_hash = str(item.get("request_marker_sha256_12") or "")
         if check.get("ok") is True:
             if label in RBAC_WRITE_ALLOWED:
+                if status != 200 or item.get("error_envelope") is True:
+                    failures.append(f"{index}:write-allowed-status")
                 meta_ok = (
                     check.get("kind") == "rbac_dry_run_write_meta"
                     and check.get("dryRun") is True
                     and check.get("durable") is False
                     and check.get("liveCapitalSideEffects") is False
                     and item.get("error_envelope") is not True
+                    and status == 200
                 )
+                if meta_ok:
+                    allowed_write_statuses += 1
                 readback_ok = True
                 if resource in RBAC_WRITE_READBACK_RESOURCES:
                     readback = check.get("readback_not_persisted")
@@ -896,11 +939,15 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
                         failures.append(f"{index}:write-readback-proof")
                 proof_ok = meta_ok and readback_ok
             else:
+                denied_statuses = {401, 403} if label == "anonymous" else {403}
+                if status not in denied_statuses:
+                    failures.append(f"{index}:write-denial-status")
                 denied_code = str(check.get("error_code") or item.get("error_code") or "")
                 proof_ok = (
                     check.get("kind") == "authorization_rejected_before_persistence"
                     and item.get("error_envelope") is True
                     and denied_code in RBAC_DENIED_ERROR_CODES
+                    and status in denied_statuses
                 )
                 if proof_ok:
                     write_denials += 1
@@ -917,14 +964,19 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     expected_write_denials = (len(RBAC_LABELS) - len(RBAC_WRITE_ALLOWED)) * len(RBAC_WRITE_RESOURCES)
     expected_write_items = len(RBAC_LABELS) * len(RBAC_WRITE_RESOURCES)
     expected_write_readbacks = len(RBAC_WRITE_ALLOWED) * len(RBAC_WRITE_READBACK_RESOURCES)
+    expected_allowed_reads = len(RBAC_READ_ALLOWED) * len(RBAC_READ_RESOURCES)
+    expected_allowed_writes = len(RBAC_WRITE_ALLOWED) * len(RBAC_WRITE_RESOURCES)
     detail_ok = (
         len(rbac_matrix) == len(expected_keys)
         and safe_int(summary.get("rbac_matrix_probes") or len(rbac_matrix)) >= len(expected_keys)
         and ok_count == len(expected_keys)
         and matrix_coverage == len(expected_keys)
         and detail_links == len(expected_keys)
+        and request_links == len(expected_keys)
         and source_ok
         and bearer_links == expected_non_anonymous
+        and allowed_read_statuses == expected_allowed_reads
+        and allowed_write_statuses == expected_allowed_writes
         and read_denials == expected_read_denials
         and write_items == expected_write_items
         and write_side_effect_proofs == expected_write_items
@@ -936,15 +988,15 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
     note = (
         f"rbac:{ok_count}/{len(expected_keys)} matrixCoverage:{matrix_coverage}/{len(expected_keys)} "
-        f"detailLinks:{detail_links}/{len(expected_keys)} {source_note} "
-        f"bearerLinks:{bearer_links}/{expected_non_anonymous} readDenials:{read_denials}/{expected_read_denials} "
+        f"detailLinks:{detail_links}/{len(expected_keys)} requestLinks:{request_links}/{len(expected_keys)} {source_note} "
+        f"bearerLinks:{bearer_links}/{expected_non_anonymous} readAllowed:{allowed_read_statuses}/{expected_allowed_reads} "
+        f"writeAllowed:{allowed_write_statuses}/{expected_allowed_writes} readDenials:{read_denials}/{expected_read_denials} "
         f"writeSideEffectProofs:{write_side_effect_proofs}/{expected_write_items} "
         f"writeReadbackProofs:{write_readback_proofs}/{expected_write_readbacks} "
         f"writeMarkerLinks:{write_marker_links}/{expected_write_items} writeDenials:{write_denials}/{expected_write_denials}"
         f"{failure_note}"
     )
     return detail_ok, note
-
 
 def race_token_hashes(race: dict[str, Any]) -> tuple[dict[str, str], bool, str]:
     source = race.get("token_source") if isinstance(race.get("token_source"), dict) else {}
