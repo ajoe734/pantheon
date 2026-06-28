@@ -238,6 +238,12 @@ consumes the BFF projection.
 
 ## 8. Handoff Status
 
-Ready for `Claude2` review. This packet is intentionally sidecar support
-material. It should not be treated as the canonical SRCLIVE-002 implementation
-or as proof that the seven-chip acceptance state is live.
+Reviewed by `Claude2` and approved for owner closeout per
+`AI_NAME=Codex ./scripts/ai-status.sh show SRCLIVE-002-SIDECAR-BFF-HANDOFF`.
+The status record reports all 7 reviewer checklist items passing, with the
+sidecar remaining support-only and canonical truth untouched.
+
+This packet is intentionally sidecar support material. It should not be treated
+as the canonical SRCLIVE-002 implementation or as proof that the seven-chip
+acceptance state is live. Parent owner `Claude2` still decides whether and how
+to absorb these BFF/frontend handoff notes into the main SRCLIVE-002 work.
