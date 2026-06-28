@@ -934,7 +934,7 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
         "auth": {"auth_type": "none"},
         "fetch": {
             "mode": "provider_owned_adapter",
-            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
             "datasets": ["tw_price_daily", "tw_exchange_chip_summary"],
         },
         "schedule": {
@@ -1023,7 +1023,7 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
         "auth": {"auth_type": "none"},
         "fetch": {
             "mode": "provider_owned_adapter",
-            "adapter": "MopsSourceIngestAdapter",
+            "adapter": "MopsSourceIngestAdapter.records_from_payload",
             "datasets": [
                 "tw_material_events",
                 "tw_monthly_revenue",
