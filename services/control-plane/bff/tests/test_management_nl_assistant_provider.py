@@ -454,6 +454,33 @@ def test_openclaw_client_reads_assistant_provider_readiness_with_auth_probe(monk
     assert recorded["timeout"] == 1.5
 
 
+def test_openclaw_client_lists_assistant_providers_with_auth_probe(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": [
+                    {"provider": "codex_cli", "ready": True, "auth_status": "ready"},
+                    {"provider": "claude", "ready": False, "auth_status": "failed"},
+                ],
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).list_assistant_providers(auth_probe=True)
+
+    assert result["data"][0]["provider"] == "codex_cli"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers?auth_probe=true"
+    )
+    assert recorded["timeout"] == 1.5
+
+
 def test_openclaw_client_starts_provider_reauth_device_flow(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
     monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")

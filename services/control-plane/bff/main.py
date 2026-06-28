@@ -52609,6 +52609,35 @@ def _assistant_provider_readiness() -> Dict[str, Any]:
         }
 
 
+def _assistant_provider_list(auth_probe: bool = False) -> Dict[str, Any]:
+    provider = _mgmt_nl_provider_name()
+    try:
+        return OpenClawOpsClient().list_assistant_providers(auth_probe=auth_probe)
+    except OpenClawOpsClientError as exc:
+        return {
+            "status": "degraded",
+            "data": [
+                {
+                    "provider": provider,
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": False,
+                    "status": "unavailable",
+                    "auth": "unavailable" if auth_probe else "not_checked",
+                    "auth_status": "failed" if auth_probe else "not_checked",
+                    "reason": exc.error_code,
+                    "message": exc.message,
+                    "httpStatus": exc.status_code,
+                }
+            ],
+            "meta": {
+                "openclawAdapterStatus": "degraded",
+                "openclaw_adapter_status": "degraded",
+                "reason": exc.error_code,
+                "message": exc.message,
+            },
+        }
+
+
 def _assistant_openclaw_tool_policy() -> Dict[str, Any]:
     try:
         return OpenClawOpsClient().get_tool_policy()
@@ -52751,6 +52780,7 @@ def _include_assistant_routes() -> None:
             transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
             control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
             provider_readiness=_assistant_provider_readiness,
+            provider_list=_assistant_provider_list,
             openclaw_tool_policy=_assistant_openclaw_tool_policy,
             openclaw_effective_tools=_assistant_openclaw_effective_tools,
             authorize_assistant_skill=_assistant_authorize_skill,
