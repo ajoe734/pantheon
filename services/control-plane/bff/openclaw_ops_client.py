@@ -552,12 +552,22 @@ class OpenClawOpsClient:
     def list_assistant_providers(self, *, auth_probe: bool = False) -> Dict[str, Any]:
         """Return readiness metadata for all assistant providers."""
         query = {"auth_probe": "true"} if auth_probe else None
-        return self._request("GET", "/api/openclaw-adapter/assistant/providers", query=query)
+        return self._request(
+            "GET",
+            "/api/openclaw-adapter/assistant/providers",
+            query=query,
+            timeout_seconds=self._assistant_timeout_seconds() if auth_probe else None,
+        )
 
     def get_assistant_readiness(self, provider: str = "codex", *, auth_probe: bool = False) -> Dict[str, Any]:
         """Return readiness metadata for an assistant provider."""
         query = {"auth_probe": "true"} if auth_probe else None
-        return self._request("GET", f"/api/openclaw-adapter/assistant/readiness/{provider}", query=query)
+        return self._request(
+            "GET",
+            f"/api/openclaw-adapter/assistant/readiness/{provider}",
+            query=query,
+            timeout_seconds=self._assistant_timeout_seconds() if auth_probe else None,
+        )
 
     def invoke_assistant(
         self,
