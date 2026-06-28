@@ -671,15 +671,15 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
                 },
             ),
             _provider_truth(
-                provider_key="stooq",
-                provider="Stooq daily OHLCV",
+                provider_key="yahoo",
+                provider="Yahoo Finance chart daily OHLCV",
                 market="US",
                 source_class="research_grade",
                 status="read_unavailable",
-                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-stooq.json",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-yahoo.json",
                 order_capable_provider=False,
                 order_path="not_applicable",
-                reason="Stooq endpoint unverified; flips to read_ok when source-ingest connector reports live health",
+                reason="Yahoo chart API replaces blocked Stooq CSV; flips to read_ok when source-ingest connector reports live health",
             ),
             _provider_truth(
                 provider_key="sec_edgar",
@@ -708,11 +708,12 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
                 provider="FRED macro series",
                 market="GLOBAL",
                 source_class="official_reference",
-                status="read_unavailable",
+                status="credential_unavailable",
                 evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-fred.json",
                 order_capable_provider=False,
                 order_path="not_applicable",
-                reason="FRED public macro series (symbol-less); flips to read_ok when source-ingest connector reports live health",
+                reason="FRED keyed API requires FRED_API_KEY; flips to read_ok when source-ingest connector reports live health",
+                secret_ref="env://FRED_API_KEY",
             ),
             _provider_truth(
                 provider_key="polygon",
@@ -749,10 +750,10 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
         data_source_status = {
             "state": "partial_readback",
             "summary": (
-                "IBKR broker readback is present; four no-key US research connectors "
-                "(stooq/sec_edgar/finra/fred) default to read_unavailable and flip to "
-                "read_ok when source-ingest reports live health; two key-gated connectors "
-                "(polygon/alphavantage) require API credentials."
+                "IBKR broker readback is present; Yahoo, SEC EDGAR, and FINRA "
+                "default to read_unavailable and flip to read_ok when source-ingest "
+                "reports live health; FRED, Polygon, and Alpha Vantage require API "
+                "credentials before they can become read_ok."
             ),
             "provider_statuses": provider_statuses,
             "readback_refs": readback_refs,

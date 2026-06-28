@@ -59,6 +59,11 @@ from .us_public import (
     SecEdgarFilingAdapter,
     StooqDailyOhlcvAdapter,
 )
+from .us_yahoo import (
+    YAHOO_US_DAILY_OHLCV_CONNECTOR_ID,
+    YAHOO_US_DAILY_OHLCV_SCHEMA_HASH,
+    YahooUsEquityDailyAdapter,
+)
 from .yahoo_taiwan import (
     AnueTaiwanRssAdapter,
     YahooTaiwanBrokerTopAdapter,
@@ -120,6 +125,9 @@ __all__ = [
     "TejSourceIngestAdapter",
     "YahooTaiwanBrokerTopAdapter",
     "YahooTaiwanRssAdapter",
+    "YahooUsEquityDailyAdapter",
+    "YAHOO_US_DAILY_OHLCV_CONNECTOR_ID",
+    "YAHOO_US_DAILY_OHLCV_SCHEMA_HASH",
     "parse_yahoo_broker_trading_html",
     "example_provider_catalog",
 ]

@@ -24,11 +24,13 @@ from .connectors.finmind_taiwan import (
 from .connectors.taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
 from .connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
 from .connectors.us_public import (
+    FRED_API_URL,
     FinraShortSaleAdapter,
     FredMacroSeriesAdapter,
     SecEdgarFilingAdapter,
     StooqDailyOhlcvAdapter,
 )
+from .connectors.us_yahoo import YahooUsEquityDailyAdapter
 from .connectors.us_paid_broker import (
     AlphaVantageUsEquityDailyAdapter,
     IbkrBrokerReadbackAdapter,
@@ -350,19 +352,50 @@ def _tej(adapter: TejSourceIngestAdapter, request: Mapping[str, Any], trace_id: 
 
 
 def _sec_edgar(adapter: SecEdgarFilingAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
-    dataset = str(_require(request.get("dataset"), "dataset"))
+    dataset = str(request.get("dataset") or "sec_filing_event")
+    if dataset not in {"sec_filing_event", "sec_company_fact"}:
+        raise SourceEvidenceError(f"unsupported SEC EDGAR dataset: {dataset}")
     payload = request.get("payload")
     if payload in (None, ""):
-        cik = str(_require(request.get("cik"), "cik"))
-        if dataset == "sec_filing_event":
-            payload = adapter.fetch_submissions(cik)
-        elif dataset == "sec_company_fact":
-            payload = adapter.fetch_companyfacts(cik)
+        requested_symbols = _string_list(request.get("symbols") or request.get("symbol"))
+        requested_cik = str(request.get("cik") or "").strip()
+        targets: list[tuple[str, str]] = []
+        if requested_symbols:
+            mapping = adapter.ticker_mapping_from_payload(adapter.fetch_company_tickers())
+            for symbol in requested_symbols:
+                symbol_value = str(symbol).strip().upper()
+                mapped = mapping.get(symbol_value, {})
+                cik = requested_cik or str(mapped.get("cik") or "").strip()
+                if not cik:
+                    raise SourceEvidenceError(f"SEC EDGAR could not resolve CIK for symbol={symbol_value or '<missing>'}")
+                targets.append((symbol_value, cik))
+        elif requested_cik:
+            targets.append((str(request.get("symbol") or "").strip().upper(), requested_cik))
         else:
-            raise SourceEvidenceError(f"unsupported SEC EDGAR dataset: {dataset}")
+            mapping = adapter.ticker_mapping_from_payload(adapter.fetch_company_tickers())
+            targets = [(symbol, str(mapping.get(symbol, {}).get("cik") or "").strip()) for symbol in ("AAPL", "MSFT")]
+        records: list[SourceRecord] = []
+        for symbol_value, cik in targets:
+            if not cik:
+                raise SourceEvidenceError(f"SEC EDGAR could not resolve CIK for symbol={symbol_value or '<missing>'}")
+            payload = (
+                adapter.fetch_companyfacts(cik)
+                if dataset == "sec_company_fact"
+                else adapter.fetch_submissions(cik)
+            )
+            records.extend(
+                adapter.records_from_payload(
+                    dataset,
+                    payload,
+                    symbol=symbol_value or None,
+                    cik=cik,
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(records)
     return adapter.records_from_payload(
         dataset,
-        _mapping(payload),
+        _mapping(_require(request.get("payload"), "payload")),
         symbol=request.get("symbol"),
         cik=request.get("cik"),
         trace_id=trace_id,
@@ -370,23 +403,35 @@ def _sec_edgar(adapter: SecEdgarFilingAdapter, request: Mapping[str, Any], trace
 
 
 def _fred(adapter: FredMacroSeriesAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
-    series_id = str(_require(request.get("series_id"), "series_id"))
+    series_ids = _string_list(request.get("series_ids") or request.get("series_id"))
+    if not series_ids:
+        series_ids = [str(config.get("series_id")).upper() for config in adapter.starter_series]
+    if len(series_ids) != 1 and (request.get("csv_text") not in (None, "") or request.get("payload") not in (None, "")):
+        raise SourceEvidenceError("FRED fixture payload requests must target exactly one series_id")
+    series_id = str(series_ids[0]).upper()
     if request.get("csv_text") not in (None, ""):
         return adapter.records_from_csv(series_id, str(request.get("csv_text")), trace_id=trace_id)
-    if request.get("payload") in (None, ""):
-        csv_text = adapter.fetch_csv_observations(series_id)
-        return adapter.records_from_csv(
+    if request.get("payload") not in (None, ""):
+        return adapter.records_from_observations_payload(
             series_id,
-            csv_text,
+            _mapping(_require(request.get("payload"), "payload")),
+            source_url=request.get("source_url"),
+            fetch_mode=str(request.get("fetch_mode") or "api_or_fixture"),
             trace_id=trace_id,
         )
-    return adapter.records_from_observations_payload(
-        series_id,
-        _mapping(_require(request.get("payload"), "payload")),
-        source_url=request.get("source_url"),
-        fetch_mode=str(request.get("fetch_mode") or "api_or_fixture"),
-        trace_id=trace_id,
-    )
+    records: list[SourceRecord] = []
+    for item in series_ids:
+        payload = adapter.fetch_api_observations(str(item).upper())
+        records.extend(
+            adapter.records_from_observations_payload(
+                str(item).upper(),
+                payload,
+                source_url=FRED_API_URL,
+                fetch_mode="keyed_api",
+                trace_id=trace_id,
+            )
+        )
+    return tuple(records)
 
 
 def _finra_short_sale(
@@ -397,14 +442,63 @@ def _finra_short_sale(
     text = request.get("text") or request.get("payload")
     trade_date = request.get("trade_date") or request.get("date") or request.get("run_date")
     if text in (None, ""):
-        trade_date = str(_require(trade_date, "trade_date"))
-        text = adapter.fetch_short_volume_text(trade_date)
+        last_error: Exception | None = None
+        for candidate_date in adapter.candidate_trade_dates(start_date=trade_date, count=int(request.get("lookback_days") or 5)):
+            try:
+                text = adapter.fetch_short_volume_text(candidate_date)
+                return adapter.records_from_short_volume_text(
+                    text,
+                    trade_date=candidate_date,
+                    source_url=adapter.short_volume_url(candidate_date),
+                    trace_id=trace_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - try previous FINRA business file.
+                last_error = exc
+        raise SourceEvidenceError(f"FINRA short-volume fetch failed for recent trade dates: {last_error}") from last_error
     return adapter.records_from_short_volume_text(
         str(_require(text, "text")),
         trade_date=trade_date,
         source_url=request.get("source_url"),
         trace_id=trace_id,
     )
+
+
+def _yahoo_us_daily(
+    adapter: YahooUsEquityDailyAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    symbols = _string_list(request.get("symbols") or request.get("symbol")) or [
+        str(symbol).upper() for symbol in adapter.default_symbols
+    ]
+    records: list[SourceRecord] = []
+    if request.get("payload") not in (None, ""):
+        if len(symbols) != 1:
+            raise SourceEvidenceError("Yahoo chart fixture payload requests must target exactly one symbol")
+        symbol = symbols[0]
+        return adapter.records_from_chart_payload(
+            symbol,
+            _mapping(_require(request.get("payload"), "payload")),
+            source_url=request.get("source_url"),
+            trace_id=trace_id,
+        )
+    payloads = _mapping(request.get("payloads")) if request.get("payloads") not in (None, "") else {}
+    range_value = str(request.get("range") or request.get("range_value") or adapter.range_value)
+    interval = str(request.get("interval") or adapter.interval)
+    for symbol in symbols:
+        symbol_value = str(symbol).strip().upper()
+        payload = payloads.get(symbol_value)
+        if payload is None:
+            payload = adapter.fetch_chart(symbol_value, range_value=range_value, interval=interval)
+        records.extend(
+            adapter.records_from_chart_payload(
+                symbol_value,
+                _mapping(payload),
+                source_url=adapter.daily_url(symbol_value, range_value=range_value, interval=interval),
+                trace_id=trace_id,
+            )
+        )
+    return tuple(records)
 
 
 def _stooq_daily(adapter: StooqDailyOhlcvAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
@@ -657,6 +751,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=StooqDailyOhlcvAdapter,
         handler=_stooq_daily,
         config_keys=("max_records", "connector_status", "disabled_reason"),
+    ),
+    "YahooUsEquityDailyAdapter.records_from_chart_payload": ProviderAdapterSpec(
+        token="YahooUsEquityDailyAdapter.records_from_chart_payload",
+        adapter_cls=YahooUsEquityDailyAdapter,
+        handler=_yahoo_us_daily,
+        config_keys=("max_records", "default_symbols", "range_value", "interval", "timeout_seconds", "user_agent"),
     ),
     "CoinGeckoSpotMarketAdapter.records_from_payload": ProviderAdapterSpec(
         token="CoinGeckoSpotMarketAdapter.records_from_payload",
