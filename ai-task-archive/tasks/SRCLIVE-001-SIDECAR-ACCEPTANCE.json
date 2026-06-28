@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "SRCLIVE-001-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-28T10:32:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRCLIVE-001-SIDECAR-ACCEPTANCE",
+    "title": "Prepare SRCLIVE-001 acceptance packet and dependency map",
+    "summary_zh": "平行支援 SRCLIVE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC SRCLIVE / Phase 1",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SRCLIVE-001/SRCLIVE-001-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized support-only acceptance packet closeout after Codex review approval; PR #2513 merged into dev at 081b3ae44c74e5ae6d9262d5a376cddfee60fa35; verified git diff --check HEAD^ HEAD and python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_taiwan_market_connectors.py (11 passed, 1 skipped).",
+    "last_update": "2026-06-28T10:32:08Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SRCLIVE-001",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Codex review approved: packet 只新增 support artifact，未改 L1 canonical truth、runtime、registry、governance 或 routing；PR #2513 merge 081b3ae4 已在 origin/dev；驗證 git diff --check 與 focused source-ingest pytest 通過。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-28T10:32:08Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/srclive-001-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SRCLIVE-001-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "081b3ae44c74e5ae6d9262d5a376cddfee60fa35",
+      "commit_subject": "Merge pull request #2513 from ajoe734/task/SRCLIVE-001-SIDECAR-ACCEPTANCE",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "SRCLIVE-001-SIDECAR-ACCEPTANCE": "add packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SRCLIVE-001-SIDECAR-ACCEPTANCE",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8da3d35766a041bfbb7b85aa018ee4ef65114cfd",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRCLIVE-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support packet merged in PR #2513 (merge 081b3ae44c74e5ae6d9262d5a376cddfee60fa35). Artifact: support/sidecars/SRCLIVE-001/SRCLIVE-001-SIDECAR-ACCEPTANCE.md. Validation: git diff --check for packet; pytest taiwan_official + taiwan_market connectors = 11 passed, 1 skipped. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-06-28T10:23:15Z",
+      "resolved_at": "2026-06-28T10:29:30Z"
+    },
+    {
+      "task_id": "SRCLIVE-001-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Codex review approved. Support packet is scoped to acceptance material only; PR #2513 merge 081b3ae4 is on origin/dev; git diff --check and TW source-ingest focused regression pass. Owner Codex2 should finalize closeout to done.",
+      "status": "done",
+      "created_at": "2026-06-28T10:29:30Z",
+      "resolved_at": "2026-06-28T10:32:10Z"
+    }
+  ],
+  "blockers": []
+}

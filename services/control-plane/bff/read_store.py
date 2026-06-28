@@ -528,8 +528,9 @@ def _provider_truth(
     order_path: str,
     read_intent: Optional[Dict[str, Any]] = None,
     reason: Optional[str] = None,
+    secret_ref: Optional[str] = None,
 ) -> Dict[str, Any]:
-    return {
+    result: Dict[str, Any] = {
         "provider_key": provider_key,
         "provider": provider,
         "market": market,
@@ -542,6 +543,9 @@ def _provider_truth(
         "reason": reason,
         **_read_only_side_effect_guard(),
     }
+    if secret_ref is not None:
+        result["secret_ref"] = secret_ref
+    return result
 
 
 def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -665,21 +669,101 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
                     "snapshot": True,
                     "readonly": True,
                 },
-            )
+            ),
+            _provider_truth(
+                provider_key="stooq",
+                provider="Stooq daily OHLCV",
+                market="US",
+                source_class="research_grade",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-stooq.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="Stooq endpoint unverified; flips to read_ok when source-ingest connector reports live health",
+            ),
+            _provider_truth(
+                provider_key="sec_edgar",
+                provider="SEC EDGAR filings",
+                market="US",
+                source_class="official_reference",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-sec-edgar.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="SEC EDGAR batch connector requires configured user-agent; flips to read_ok when source-ingest reports ok",
+            ),
+            _provider_truth(
+                provider_key="finra",
+                provider="FINRA short-sale volume",
+                market="US",
+                source_class="official_reference",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-finra.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="FINRA public short-volume files; flips to read_ok when source-ingest connector reports live health",
+            ),
+            _provider_truth(
+                provider_key="fred",
+                provider="FRED macro series",
+                market="GLOBAL",
+                source_class="official_reference",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-fred.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="FRED public macro series (symbol-less); flips to read_ok when source-ingest connector reports live health",
+            ),
+            _provider_truth(
+                provider_key="polygon",
+                provider="Polygon.io daily OHLCV",
+                market="US",
+                source_class="research_grade",
+                status="credential_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-polygon.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="Polygon API key required; set POLYGON_API_KEY (or MASSIVE_API_KEY / US_MARKET_DATA_API_KEY)",
+                secret_ref="env://POLYGON_API_KEY",
+            ),
+            _provider_truth(
+                provider_key="alphavantage",
+                provider="Alpha Vantage daily OHLCV",
+                market="US",
+                source_class="research_grade",
+                status="credential_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-alphavantage.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="Alpha Vantage API key required; set ALPHA_VANTAGE_API_KEY",
+                secret_ref="env://ALPHA_VANTAGE_API_KEY",
+            ),
+        ]
+        provider_statuses = {src["provider_key"]: src["status"] for src in sources}
+        readback_refs = [
+            src["evidence_ref"] for src in sources if src.get("status") == "read_ok"
+        ]
+        unavailable_refs = [
+            src["evidence_ref"] for src in sources if src.get("status") != "read_ok"
         ]
         data_source_status = {
-            "state": "quote_readback_ok",
-            "summary": "IBKR quote readback is present; order path is disabled for marketdata smoke.",
-            "provider_statuses": {"ibkr": "read_ok"},
-            "readback_refs": [sources[0]["evidence_ref"]],
-            "unavailable_refs": [],
+            "state": "partial_readback",
+            "summary": (
+                "IBKR broker readback is present; four no-key US research connectors "
+                "(stooq/sec_edgar/finra/fred) default to read_unavailable and flip to "
+                "read_ok when source-ingest reports live health; two key-gated connectors "
+                "(polygon/alphavantage) require API credentials."
+            ),
+            "provider_statuses": provider_statuses,
+            "readback_refs": readback_refs,
+            "unavailable_refs": unavailable_refs,
             "readback_captured_at": "2026-05-01T17:20:00Z",
             **_read_only_side_effect_guard(),
         }
         return {
             "data_source_status": data_source_status,
             "data_sources": sources,
-            "data_source_refs": [sources[0]["evidence_ref"]],
+            "data_source_refs": [*readback_refs, *unavailable_refs],
         }
 
     if market == "CRYPTO":
