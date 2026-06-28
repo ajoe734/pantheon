@@ -270,6 +270,13 @@ def strict_approval_race_entry() -> dict[str, object]:
         "accepted_count": 1,
         "safe_error_count": 1,
         "duplicate_winners": False,
+        "concurrency": {
+            "timing_proof": "monotonic_ms_relative_to_race_start",
+            "actor_count": 2,
+            "start_skew_ms": 3.0,
+            "overlap_ms": 37.0,
+            "concurrent": True,
+        },
         "token_source": {
             "kind": "provided_bearer_pair",
             "token_a_sha256_12": "race-token-a",
@@ -287,6 +294,7 @@ def strict_approval_race_entry() -> dict[str, object]:
                 "target_id_sha256_12": target_hash,
                 "request_bearer_sha256_12": "race-token-a",
                 "request_idempotency_key_sha256_12": "approval-idem-a",
+                "race_timing": {"start_ms": 1.0, "end_ms": 41.0, "duration_ms": 40.0},
             },
             {
                 "family": "approval-race-b",
@@ -300,6 +308,7 @@ def strict_approval_race_entry() -> dict[str, object]:
                 "target_id_sha256_12": target_hash,
                 "request_bearer_sha256_12": "race-token-b",
                 "request_idempotency_key_sha256_12": "approval-idem-b",
+                "race_timing": {"start_ms": 4.0, "end_ms": 42.0, "duration_ms": 38.0},
             },
         ],
     }
@@ -321,6 +330,13 @@ def strict_two_man_race_entry() -> dict[str, object]:
         "replayed_count": 0,
         "distinct_command_ids": True,
         "command_id_count": 2,
+        "concurrency": {
+            "timing_proof": "monotonic_ms_relative_to_race_start",
+            "actor_count": 2,
+            "start_skew_ms": 1.0,
+            "overlap_ms": 32.0,
+            "concurrent": True,
+        },
         "token_source": {
             "kind": "provided_bearer_pair",
             "token_a_sha256_12": "race-token-a",
@@ -339,6 +355,7 @@ def strict_two_man_race_entry() -> dict[str, object]:
                 "request_bearer_sha256_12": "race-token-a",
                 "request_idempotency_key_sha256_12": "two-man-shared-idem",
                 "request_signature_id_sha256_12": "two-man-sig-a",
+                "race_timing": {"start_ms": 2.0, "end_ms": 35.0, "duration_ms": 33.0},
                 "extracted": {
                     "meta.idempotency.replayed": False,
                     "data.command_id": "command-a",
@@ -356,6 +373,7 @@ def strict_two_man_race_entry() -> dict[str, object]:
                 "request_bearer_sha256_12": "race-token-b",
                 "request_idempotency_key_sha256_12": "two-man-shared-idem",
                 "request_signature_id_sha256_12": "two-man-sig-b",
+                "race_timing": {"start_ms": 3.0, "end_ms": 36.0, "duration_ms": 33.0},
                 "extracted": {
                     "meta.idempotency.replayed": False,
                     "data.command_id": "command-b",
@@ -755,6 +773,22 @@ def test_verifier_rejects_approval_race_without_distinct_provided_bearers(tmp_pa
     assert "distinctTokens:1/2" in item["note"]
 
 
+def test_verifier_rejects_approval_race_without_concurrency_timing(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    auth["approval_race"].pop("concurrency")
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["approval_race"]
+    assert item["status"] == "fail"
+    assert "raceTiming:missing" in item["note"]
+
+
 def test_verifier_rejects_two_man_race_with_idempotency_replay(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifact"
     write_passing_artifact(artifact_dir)
@@ -769,6 +803,31 @@ def test_verifier_rejects_two_man_race_with_idempotency_replay(tmp_path: Path) -
     item = payload["criteria"]["two_man_race"]
     assert item["status"] == "fail"
     assert "replayed:1/0" in item["note"]
+
+
+def test_verifier_rejects_two_man_race_without_timing_overlap(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    auth["two_man_race"]["concurrency"] = {
+        "timing_proof": "monotonic_ms_relative_to_race_start",
+        "actor_count": 2,
+        "start_skew_ms": 50.0,
+        "overlap_ms": -40.0,
+        "concurrent": True,
+    }
+    auth["two_man_race"]["results"][0]["race_timing"] = {"start_ms": 0.0, "end_ms": 10.0, "duration_ms": 10.0}
+    auth["two_man_race"]["results"][1]["race_timing"] = {"start_ms": 50.0, "end_ms": 80.0, "duration_ms": 30.0}
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["two_man_race"]
+    assert item["status"] == "fail"
+    assert "overlapMs:-40.0" in item["note"]
+    assert "timing-overlap" in item["note"]
 
 
 def test_verifier_rejects_dry_run_missing_side_effect_detail_even_when_summary_passes(tmp_path: Path) -> None:

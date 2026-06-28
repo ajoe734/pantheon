@@ -798,6 +798,44 @@ def request_json(
     return result
 
 
+def race_timing_entry(race_started_monotonic: float, request_started: float, request_finished: float) -> dict[str, float]:
+    start_ms = (request_started - race_started_monotonic) * 1000
+    end_ms = (request_finished - race_started_monotonic) * 1000
+    return {
+        "start_ms": round(start_ms, 3),
+        "end_ms": round(end_ms, 3),
+        "duration_ms": round(max(0.0, end_ms - start_ms), 3),
+    }
+
+
+def race_concurrency_summary(race_results: list[dict[str, Any]]) -> dict[str, Any]:
+    timings: list[dict[str, float]] = []
+    for result in race_results:
+        timing = result.get("race_timing") if isinstance(result.get("race_timing"), dict) else {}
+        start_ms = timing.get("start_ms")
+        end_ms = timing.get("end_ms")
+        if isinstance(start_ms, (int, float)) and not isinstance(start_ms, bool) and isinstance(end_ms, (int, float)) and not isinstance(end_ms, bool):
+            timings.append({"start_ms": float(start_ms), "end_ms": float(end_ms)})
+    if len(timings) != 2:
+        return {
+            "timing_proof": "monotonic_ms_relative_to_race_start",
+            "actor_count": len(timings),
+            "concurrent": False,
+            "missing_timing": True,
+        }
+    starts = [timing["start_ms"] for timing in timings]
+    ends = [timing["end_ms"] for timing in timings]
+    start_skew_ms = max(starts) - min(starts)
+    overlap_ms = min(ends) - max(starts)
+    return {
+        "timing_proof": "monotonic_ms_relative_to_race_start",
+        "actor_count": 2,
+        "start_skew_ms": round(start_skew_ms, 3),
+        "overlap_ms": round(overlap_ms, 3),
+        "concurrent": overlap_ms >= 0 and start_skew_ms <= 1000,
+    }
+
+
 def approval_race_tokens(args: argparse.Namespace, primary_token: str) -> tuple[str, str, dict[str, Any]]:
     token_a = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "").removeprefix("Bearer ").strip()
     token_b = os.getenv("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "").removeprefix("Bearer ").strip()
@@ -869,6 +907,7 @@ def build_approval_race_results(
 
     def run_one(index: int, bearer: str, actor_label: str) -> None:
         barrier.wait(timeout=timeout)
+        request_started = time.monotonic()
         result = request_json(
             base_url=base_url,
             probe=Probe(
@@ -886,8 +925,10 @@ def build_approval_race_results(
             timeout=timeout,
             idempotency_prefix=f"{idempotency_prefix}-race-{actor_label}",
         )
+        request_finished = time.monotonic()
         result["actor_label"] = actor_label
         result["request_bearer_sha256_12"] = sha256_12(bearer)
+        result["race_timing"] = race_timing_entry(started_monotonic, request_started, request_finished)
         results[index] = result
 
     threads = [
@@ -895,6 +936,7 @@ def build_approval_race_results(
         threading.Thread(target=run_one, args=(1, token_b, "b"), daemon=True),
     ]
     started = time.time()
+    started_monotonic = time.monotonic()
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -920,12 +962,14 @@ def build_approval_race_results(
     ]
     transport_failures = [result for result in race_results if int(result.get("status") or 0) == 0]
     duplicate_winners = len(accepted) > 1
+    concurrency = race_concurrency_summary(race_results)
     bounded = (
         len(race_results) == 2
         and not transport_failures
         and not duplicate_winners
         and len(accepted) == 1
         and len(safe_errors) == 1
+        and concurrency.get("concurrent") is True
     )
     return {
         "family": "approval-race",
@@ -940,6 +984,7 @@ def build_approval_race_results(
         "accepted_count": len(accepted),
         "safe_error_count": len(safe_errors),
         "duplicate_winners": duplicate_winners,
+        "concurrency": concurrency,
         "token_source": token_source,
         "expectation": "one accepted decision plus one safe BffErrorEnvelope loser; two safe errors are not a live race proof",
         "results": race_results,
@@ -967,6 +1012,7 @@ def build_two_man_race_results(
 
     def run_one(index: int, bearer: str, actor_label: str) -> None:
         barrier.wait(timeout=timeout)
+        request_started = time.monotonic()
         signature_id = f"tms-live-{target_id}-{actor_label}-{stamp}"
         result = request_json(
             base_url=base_url,
@@ -993,10 +1039,12 @@ def build_two_man_race_results(
             timeout=timeout,
             idempotency_prefix=f"{idempotency_prefix}-two-man-race",
         )
+        request_finished = time.monotonic()
         result["actor_label"] = actor_label
         result["target_id_sha256_12"] = target_hash
         result["request_signature_id_sha256_12"] = sha256_12(signature_id)
         result["request_bearer_sha256_12"] = sha256_12(bearer)
+        result["race_timing"] = race_timing_entry(started_monotonic, request_started, request_finished)
         results[index] = result
 
     threads = [
@@ -1004,6 +1052,7 @@ def build_two_man_race_results(
         threading.Thread(target=run_one, args=(1, token_b, "b"), daemon=True),
     ]
     started = time.time()
+    started_monotonic = time.monotonic()
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -1032,12 +1081,14 @@ def build_two_man_race_results(
             command_ids.append(str(command_id))
     distinct_command_ids = len(set(command_ids)) == len(command_ids) == len(accepted) == 2
     transport_failures = [result for result in race_results if int(result.get("status") or 0) == 0]
+    concurrency = race_concurrency_summary(race_results)
     operator_scoped = (
         len(race_results) == 2
         and not transport_failures
         and len(accepted) == 2
         and not replayed
         and distinct_command_ids
+        and concurrency.get("concurrent") is True
     )
     return {
         "family": "two-man-race",
@@ -1053,6 +1104,7 @@ def build_two_man_race_results(
         "replayed_count": len(replayed),
         "distinct_command_ids": distinct_command_ids,
         "command_id_count": len(set(command_ids)),
+        "concurrency": concurrency,
         "token_source": token_source,
         "expectation": "two distinct operators share one idempotency key and both create independent two-man signatures without replay",
         "results": race_results,

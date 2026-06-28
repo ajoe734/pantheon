@@ -510,6 +510,7 @@ def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) ->
         with lock:
             calls.append(request.headers["Authorization"])
             call_number = len(calls)
+        probe.time.sleep(0.02)
         if call_number == 1:
             return _FakeResponse(
                 status=202,
@@ -560,6 +561,8 @@ def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) ->
     assert result["accepted_count"] == 1
     assert result["safe_error_count"] == 1
     assert result["duplicate_winners"] is False
+    assert result["concurrency"]["concurrent"] is True
+    assert result["concurrency"]["overlap_ms"] >= 0
     assert sorted(calls) == ["Bearer token-a", "Bearer token-b"]
 
 
@@ -579,6 +582,7 @@ def test_build_two_man_race_accepts_two_operator_scoped_signatures(monkeypatch) 
         with lock:
             calls.append(request.headers["Authorization"])
             call_number = len(calls)
+        probe.time.sleep(0.02)
         return _FakeResponse(
             status=202,
             body={
@@ -614,6 +618,8 @@ def test_build_two_man_race_accepts_two_operator_scoped_signatures(monkeypatch) 
     assert result["replayed_count"] == 0
     assert result["distinct_command_ids"] is True
     assert result["command_id_count"] == 2
+    assert result["concurrency"]["concurrent"] is True
+    assert result["concurrency"]["overlap_ms"] >= 0
     assert sorted(calls) == ["Bearer token-a", "Bearer token-b"]
 
 
