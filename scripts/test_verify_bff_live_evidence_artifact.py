@@ -372,11 +372,16 @@ def strict_sse_reconnect_bearer(attempt_count: int = 5) -> dict[str, object]:
                 "expected_replayed_event_id": expected_event_id,
                 "observed_replayed_event_id": expected_event_id,
                 "replayed_expected_event": True,
+                "url_path": "/bff/events/stream?channel=approval",
                 "request_headers": {
                     "Authorization": "present",
                     "Cookie": "absent",
                     "Last-Event-ID": cursor_event_id,
                     "Accept": "text/event-stream",
+                },
+                "response_headers": {
+                    "X-SSE-Channel": "approval",
+                    "X-SSE-Replay-Supported": "true",
                 },
                 "lineage_checks": {
                     "last_event_id_sent": True,
@@ -409,6 +414,7 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
         json.dumps(
             {
                 "strict_live_evidence": True,
+                "channel": "approval",
                 "auth_source": {"kind": "provided_bearer", "token_sha256_12": "abcdef123456"},
                 "strict_live_evidence_requirements": {
                     "min_soak_seconds": 75,
@@ -1235,6 +1241,42 @@ def test_verifier_rejects_sse_without_heartbeat_or_duplicate_proof(tmp_path: Pat
     assert item["status"] == "fail"
     assert "heartbeat:0/1" in item["note"]
     assert "duplicates:1" in item["note"]
+
+
+
+def test_verifier_rejects_sse_when_requested_reconnect_attempts_are_not_proven(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    sse["strict_live_evidence_requirements"]["requested_reconnect_attempts"] = 7
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "reconnect:5/7" in item["note"]
+    assert "observed:5/7" in item["note"]
+
+
+
+def test_verifier_rejects_sse_reconnect_when_last_event_id_is_spoofed(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    bearer = sse["reconnect_sequence"]["bearer_polyfill"]
+    bearer["attempts"][2]["request_headers"]["Last-Event-ID"] = "evt-wrong-cursor"
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "attemptLineage:False" in item["note"]
 
 
 

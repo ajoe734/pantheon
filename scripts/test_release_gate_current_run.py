@@ -777,7 +777,7 @@ def test_integration_gate_uploads_only_current_run_audits() -> None:
     assert "scripts/probe_bff_sse_stream.py" in text
     assert "--strict-live-evidence" in text
     assert "--soak-seconds 75" in text
-    assert "--reconnect-attempts 5" in text
+    assert "--reconnect-attempts 7" in text
     assert "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json" in text
 
 
@@ -1329,7 +1329,7 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
     assert "scripts/probe_bff_sse_stream.py" in text
     assert "--soak-min-heartbeats 1" in text
-    assert "--reconnect-attempts 5" in text
+    assert "--reconnect-attempts 7" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "scripts/verify_bff_live_evidence_artifact.py" in text
@@ -1384,7 +1384,7 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
     assert "scripts/probe_bff_sse_stream.py" in text
     assert "--soak-min-heartbeats 1" in text
-    assert "--reconnect-attempts 5" in text
+    assert "--reconnect-attempts 7" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "scripts/verify_bff_live_evidence_artifact.py" in text

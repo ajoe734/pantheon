@@ -1040,7 +1040,7 @@ def main() -> int:
             "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> "
             "scripts/probe_bff_sse_stream.py --base-url <bff-url> "
             "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 1 "
-            "--reconnect-attempts 5"
+            "--reconnect-attempts 7"
         ],
         "publish": published_events,
         "open_transcripts": {
