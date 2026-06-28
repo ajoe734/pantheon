@@ -67,6 +67,17 @@ def sweep_fixture(extra: dict | None = None) -> dict:
     return payload
 
 
+def _reset_sweep_state():
+    evo_main._sweep_state.update({
+        "last_success_at": None,
+        "last_success_proposal_count": None,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "total_sweeps_run": 0,
+        "total_proposals_created": 0,
+    })
+
+
 @pytest.fixture(autouse=True)
 def reset_store():
     evo_main.store._decisions.clear()
@@ -76,6 +87,7 @@ def reset_store():
     evo_main.incident_store._postmortems.clear()
     if evo_main.incident_store._path and evo_main.incident_store._path.exists():
         evo_main.incident_store._path.unlink()
+    _reset_sweep_state()
     yield
     evo_main.store._decisions.clear()
     if evo_main.store._storage_path and evo_main.store._storage_path.exists():
@@ -84,6 +96,7 @@ def reset_store():
     evo_main.incident_store._postmortems.clear()
     if evo_main.incident_store._path and evo_main.incident_store._path.exists():
         evo_main.incident_store._path.unlink()
+    _reset_sweep_state()
 
 
 # ---------------------------------------------------------------------------
@@ -1047,6 +1060,165 @@ def test_propose_from_incident_rejects_postmortem_for_different_incident():
 
 
 # ---------------------------------------------------------------------------
+# LOOP-AUTO-EVO-002: published postmortem bridge
+# ---------------------------------------------------------------------------
+
+def test_propose_from_postmortem_published_creates_review_gated_decision():
+    pm_id = f"pm-published-{uuid.uuid4().hex[:8]}"
+    inc_id = _seed_incident_and_postmortem(
+        pm_id,
+        incident_overrides={
+            "severity": "high",
+            "artifact_id": "artifact-postmortem-bridge",
+            "artifact_version": "v3",
+            "incident_cluster_id": "cluster-postmortem-bridge",
+            "telemetry_event_ids": ["tel-pm-bridge-001"],
+            "reconciliation_ids": ["recon-pm-bridge-001"],
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:30:00Z",
+            "incident_cluster_id": "cluster-postmortem-bridge",
+            "telemetry_event_ids": ["tel-pm-bridge-001"],
+            "reconciliation_ids": ["recon-pm-bridge-001"],
+            "root_cause": "Postmortem published after a clustered threshold breach.",
+        },
+    )
+
+    r = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id, "publish_event_id": "evt-publish-001"},
+    )
+
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["decision_state"] == "proposed"
+    assert d["action_type"] == "flag_for_review"
+    assert d["target_type"] == "candidate_artifact"
+    assert d["target_id"] == "artifact-postmortem-bridge"
+    assert d["target_version"] == "v3"
+    assert d["linked_incident_id"] == inc_id
+    assert d["linked_postmortem_id"] == pm_id
+    assert d["review_chain"] == []
+    assert d["execution_result"] is None
+    assert d["metadata"]["source"] == "postmortem_published_bridge"
+    assert d["metadata"]["review_gate_state"] == "awaiting_review"
+    assert d["metadata"]["proposal_only"] is True
+    assert d["metadata"]["runtime_binding_mutation_allowed"] is False
+    assert d["metadata"]["broker_order_allowed"] is False
+    assert d["metadata"]["capital_binding_mutation_allowed"] is False
+    assert d["metadata"]["bridge_legacy_proposed_action"] == "rollback"
+    assert d["metadata"]["rollback_is_followthrough"] is True
+    assert d["metadata"]["publish_event_id"] == "evt-publish-001"
+    assert {ref["ref_id"] for ref in d["evidence_refs"]} >= {
+        pm_id,
+        inc_id,
+        "tel-pm-bridge-001",
+        "recon-pm-bridge-001",
+    }
+
+    pm = evo_main.incident_store.get_postmortem(pm_id)
+    assert pm is not None
+    assert pm.linked_evolution_decision_id == d["decision_id"]
+
+
+def test_propose_from_postmortem_published_duplicate_event_is_idempotent():
+    pm_id = f"pm-dup-{uuid.uuid4().hex[:8]}"
+    _seed_incident_and_postmortem(
+        pm_id,
+        incident_overrides={
+            "severity": "medium",
+            "artifact_id": "artifact-duplicate-postmortem",
+            "incident_cluster_id": "cluster-duplicate-postmortem",
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:30:00Z",
+            "incident_cluster_id": "cluster-duplicate-postmortem",
+        },
+    )
+
+    first = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id, "publish_event_id": "evt-publish-dup-a"},
+    )
+    second = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id, "publish_event_id": "evt-publish-dup-b"},
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["decision_id"] == first.json()["decision_id"]
+    assert len(evo_main.store.list_all()) == 1
+
+
+def test_propose_from_postmortem_published_is_once_per_target_and_cluster():
+    cluster_id = f"cluster-target-{uuid.uuid4().hex[:8]}"
+    target_id = f"artifact-target-cluster-{uuid.uuid4().hex[:8]}"
+    first_pm = f"pm-cluster-a-{uuid.uuid4().hex[:8]}"
+    second_pm = f"pm-cluster-b-{uuid.uuid4().hex[:8]}"
+    _seed_incident_and_postmortem(
+        first_pm,
+        incident_id=f"inc-cluster-a-{uuid.uuid4().hex[:8]}",
+        incident_overrides={
+            "severity": "high",
+            "artifact_id": target_id,
+            "incident_cluster_id": cluster_id,
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:30:00Z",
+            "incident_cluster_id": cluster_id,
+        },
+    )
+    _seed_incident_and_postmortem(
+        second_pm,
+        incident_id=f"inc-cluster-b-{uuid.uuid4().hex[:8]}",
+        incident_overrides={
+            "severity": "high",
+            "artifact_id": target_id,
+            "incident_cluster_id": cluster_id,
+        },
+        postmortem_overrides={
+            "status": "published",
+            "published_at": "2026-06-27T15:35:00Z",
+            "incident_cluster_id": cluster_id,
+        },
+    )
+
+    first = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": first_pm},
+    )
+    second = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": second_pm},
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["decision_id"] == first.json()["decision_id"]
+    assert len(evo_main.store.list_all()) == 1
+    linked_second = evo_main.incident_store.get_postmortem(second_pm)
+    assert linked_second is not None
+    assert linked_second.linked_evolution_decision_id == first.json()["decision_id"]
+
+
+def test_propose_from_postmortem_published_rejects_unpublished_postmortem():
+    pm_id = f"pm-unpublished-{uuid.uuid4().hex[:8]}"
+    _seed_incident_and_postmortem(pm_id)
+
+    r = client.post(
+        "/api/evolution/proposals/from-postmortem-published",
+        json={"postmortem_id": pm_id},
+    )
+
+    assert r.status_code == 422
+    assert "must be published" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
 # EVO-004: Cooldown enforcement — repeated triggers blocked
 # ---------------------------------------------------------------------------
 
@@ -1509,4 +1681,83 @@ def test_action_paths_keys_match_boundary_for():
     # Old mismatched keys must be absent
     assert "freeze_paper_canary" not in keys
     assert "freeze_live_no_runtime" not in keys
-    assert "retrain_revalidate" not in keys
+
+
+# ---------------------------------------------------------------------------
+# LOOP-AUTO-EVO-003: sweep-status endpoint and sweep state tracking
+# ---------------------------------------------------------------------------
+
+def test_sweep_status_initially_empty():
+    """GET /api/evolution/sweep-status returns null timestamps before any sweep."""
+    r = client.get("/api/evolution/sweep-status")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["last_success_at"] is None
+    assert body["last_failure_at"] is None
+    assert body["total_sweeps_run"] == 0
+    assert body["total_proposals_created"] == 0
+    assert body["scheduler_attach"]["worker_module"] == "services.evolution.scheduler_worker"
+    assert body["scheduler_attach"]["compose_service"] == "evolution-daily-sweep-scheduler"
+
+
+def test_sweep_status_updates_after_successful_sweep():
+    """After a successful sweep, sweep-status reflects last_success_at and proposal count."""
+    payload = sweep_fixture()
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload)
+
+    r = client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [payload["incident_id"]], "sweep_id": "status-sweep"},
+    )
+    assert r.status_code == 200, r.text
+    created = r.json()["created_decisions"]
+
+    status = client.get("/api/evolution/sweep-status").json()
+    assert status["last_success_at"] is not None
+    assert status["last_success_proposal_count"] == created
+    assert status["total_sweeps_run"] == 1
+    assert status["total_proposals_created"] == created
+    assert status["last_failure_at"] is None
+
+
+def test_sweep_status_accumulates_across_multiple_sweeps():
+    """total_proposals_created accumulates across multiple sweep invocations."""
+    payload1 = sweep_fixture()
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload1)
+    client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [payload1["incident_id"]], "sweep_id": "acc-sweep-1"},
+    ).raise_for_status()
+
+    payload2 = sweep_fixture({"incident_id": "inc-evolution-acc-002"})
+    payload2["telemetry_event"]["event_id"] = "tel-evolution-acc-002"
+    payload2["telemetry_event"]["artifact_id"] = "artifact-acc-002"
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload2)
+    client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [payload2["incident_id"]], "sweep_id": "acc-sweep-2"},
+    ).raise_for_status()
+
+    status = client.get("/api/evolution/sweep-status").json()
+    assert status["total_sweeps_run"] == 2
+    assert status["total_proposals_created"] == 2
+
+
+def test_health_metrics_include_sweep_fields():
+    """The /livez health endpoint exposes sweep_last_success_at and sweep_total_proposals_created."""
+    payload = sweep_fixture({"incident_id": "inc-health-metrics-001"})
+    payload["telemetry_event"]["event_id"] = "tel-health-metrics-001"
+    payload["telemetry_event"]["artifact_id"] = "artifact-health-metrics-001"
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload)
+    client.post(
+        "/api/evolution/daily-sweep",
+        json={"incident_ids": [payload["incident_id"]], "sweep_id": "health-metrics-sweep"},
+    ).raise_for_status()
+
+    r = client.get("/livez")
+    assert r.status_code == 200, r.text
+    metrics = r.json().get("metrics", {})
+    assert "sweep_last_success_at" in metrics
+    assert metrics["sweep_last_success_at"] is not None
+    assert "sweep_total_proposals_created" in metrics
+    assert metrics["sweep_total_proposals_created"] >= 1

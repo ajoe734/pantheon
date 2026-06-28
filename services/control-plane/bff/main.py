@@ -135,6 +135,7 @@ from source_search_ops_client import (
     SourceIngestCommandClient,
     SourceSearchOpsClientError,
 )
+from downstream_health_monitor import DownstreamHealthMonitor
 from loop_inventory import (
     get_loop_health_entry,
     get_loop_inventory_entry,
@@ -863,6 +864,19 @@ read_store = ReadSurfaceStore(
 )
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
 _COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
+
+downstream_health_monitor = DownstreamHealthMonitor()
+
+
+@app.on_event("startup")
+async def _start_downstream_health_monitor() -> None:
+    await downstream_health_monitor.start()
+
+
+@app.on_event("shutdown")
+async def _stop_downstream_health_monitor() -> None:
+    await downstream_health_monitor.stop()
+
 
 _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 
@@ -14020,19 +14034,25 @@ async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Heade
             f"Deployment plan {plan_id} does not exist",
         )
 
+    payload = _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
     decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
-    payload = dict(plan)
     if decision:
         payload["approval_decision"] = decision
+    stage_surfaces = _deployment_stage_truth_surfaces(
+        payload["stage_truth"],
+        snapshot_at=snapshot_at,
+    )
+    meta = _read_surface_meta(
+        "deployment_plans",
+        "deployment_plan_detail",
+        snapshot_at=snapshot_at,
+        surface=plan_surface,
+    )
+    meta["surfaces"].update(stage_surfaces)
 
     return {
         "data": payload,
-        "meta": _read_surface_meta(
-            "deployment_plans",
-            "deployment_plan_detail",
-            snapshot_at=snapshot_at,
-            surface=plan_surface,
-        ),
+        "meta": meta,
     }
 
 
@@ -14393,6 +14413,7 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
     if approval_decision:
         deployment_plan_payload["approval_decision"] = approval_decision
 
+    stage_truth = _deployment_stage_truth(plan)
     data = {
         "deployment_plan": deployment_plan_payload,
         "approval_decision": approval_decision or {},
@@ -14403,6 +14424,7 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
         "allowedActions": allowed_actions,
         "latestRun": latest_run,
         "review": review,
+        "stage_truth": stage_truth,
     }
 
     surfaces = {
@@ -14452,6 +14474,8 @@ async def get_deployment_review(plan_id: str, authorization: Optional[str] = Hea
             has_data=review is not None,
         ),
     }
+
+    surfaces.update(_deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at))
 
     meta: Dict[str, Any] = {
         "snapshot_at": snapshot_at,
@@ -24212,7 +24236,7 @@ def _project_persona_dto(
 ) -> Dict[str, Any]:
     """Project canonical persona data into execute-plans Persona DTO."""
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
-    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+    metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     archetype = str(
         metadata.get("archetype")
         or raw.get("strategy_family")
@@ -24247,10 +24271,26 @@ def _project_persona_dto(
         "strategyFamily": raw.get("strategy_family") or "",
         "traits": metadata.get("traits") if isinstance(metadata.get("traits"), dict) else {},
     }
+    required_data_sources = (
+        raw.get("required_data_sources")
+        if isinstance(raw.get("required_data_sources"), list)
+        else []
+    )
+    if isinstance(metadata.get("data_source_status"), dict) or isinstance(metadata.get("data_sources"), list) or required_data_sources:
+        data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
+            metadata.get("data_source_status") if isinstance(metadata.get("data_source_status"), dict) else {},
+            metadata.get("data_sources") if isinstance(metadata.get("data_sources"), list) else [],
+            required_data_sources=required_data_sources,
+        )
+        metadata["data_source_status"] = data_source_status
+        metadata["data_sources"] = data_sources
+        metadata["source_health_bindings"] = source_health_bindings
+
     for source_key, dto_key in (
         ("data_source_status", "dataSourceStatus"),
         ("data_sources", "dataSources"),
         ("data_source_refs", "dataSourceRefs"),
+        ("source_health_bindings", "sourceHealthBindings"),
         ("research_status", "researchStatus"),
         ("research_refs", "researchRefs"),
         ("current_research_projects", "currentResearchProjects"),
@@ -24258,6 +24298,8 @@ def _project_persona_dto(
         value = metadata.get(source_key)
         if value is not None:
             dto[dto_key] = json.loads(json.dumps(value))
+    if required_data_sources:
+        dto["requiredDataSources"] = json.loads(json.dumps(required_data_sources))
     performance = metadata.get("performance") if isinstance(metadata.get("performance"), dict) else {}
     if performance:
         dto["metrics"] = json.loads(json.dumps(performance))
@@ -44611,6 +44653,410 @@ async def bff_approval_evidence(
 
 # -- Deployments -------------------------------------------------------------
 
+_DEPLOYMENT_STAGE_TRUTH_ORDER = (
+    "approval",
+    "plan",
+    "saga",
+    "binding",
+    "runtime_fleet",
+)
+_DEPLOYMENT_STAGE_FAILURE_STATUSES = {
+    "aborted",
+    "blocked",
+    "dead_lettered",
+    "degraded",
+    "failed",
+    "missing",
+    "rejected",
+    "stale",
+    "unavailable",
+}
+
+
+def _deployment_stage_status(value: Any, *, default: str = "unknown") -> str:
+    status = str(value or "").strip().lower()
+    return status or default
+
+
+def _deployment_stage_entry(
+    *,
+    stage: str,
+    status: Any,
+    source_dataset: str,
+    source_id: Optional[str] = None,
+    available: bool = True,
+    message: Optional[str] = None,
+    failure: Optional[bool] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    normalized_status = _deployment_stage_status(status)
+    entry: Dict[str, Any] = {
+        "stage": stage,
+        "status": normalized_status,
+        "source_dataset": source_dataset,
+        "available": bool(available),
+        "failure": bool(
+            normalized_status in _DEPLOYMENT_STAGE_FAILURE_STATUSES
+            if failure is None
+            else failure
+        ),
+    }
+    if source_id:
+        entry["source_id"] = source_id
+    if message:
+        entry["message"] = message
+    for key, value in extra.items():
+        if value is not None:
+            entry[key] = value
+    return entry
+
+
+def _deployment_plan_identifier(plan: Dict[str, Any]) -> str:
+    return str(plan.get("plan_id") or plan.get("id") or "").strip()
+
+
+def _runtime_binding_matches_deployment_plan(
+    runtime_binding: Dict[str, Any],
+    plan: Dict[str, Any],
+) -> bool:
+    plan_id = _deployment_plan_identifier(plan)
+    runtime_plan_id = str(
+        runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or ""
+    ).strip()
+    if plan_id and runtime_plan_id == plan_id:
+        return True
+
+    requested_binding_ids = {
+        str(plan.get("runtime_binding_id") or "").strip(),
+        str(plan.get("binding_id") or plan.get("persona_capital_binding_id") or "").strip(),
+    }
+    requested_binding_ids.update(
+        str(value).strip()
+        for value in (plan.get("binding_ids") or [])
+        if str(value).strip()
+    )
+    requested_binding_ids.discard("")
+    runtime_binding_ids = {
+        str(runtime_binding.get("id") or "").strip(),
+        str(runtime_binding.get("binding_id") or "").strip(),
+        str(runtime_binding.get("runtime_binding_id") or "").strip(),
+        str(runtime_binding.get("persona_capital_binding_id") or "").strip(),
+    }
+    runtime_binding_ids.discard("")
+    return bool(requested_binding_ids.intersection(runtime_binding_ids))
+
+
+def _deployment_runtime_binding(plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    runtime_binding_id = str(plan.get("runtime_binding_id") or "").strip()
+    if runtime_binding_id:
+        binding = read_store.get_runtime_binding(runtime_binding_id)
+        if binding:
+            return binding
+
+    for binding in read_store.list_runtime_bindings():
+        if _runtime_binding_matches_deployment_plan(binding, plan):
+            return binding
+    return None
+
+
+def _runtime_fleet_stage_truth(runtime_binding: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not runtime_binding:
+        return _deployment_stage_entry(
+            stage="runtime_fleet",
+            status="unavailable",
+            source_dataset="runtime_bindings",
+            available=False,
+            message=(
+                "Runtime fleet evidence unavailable because no RuntimeBinding "
+                "projection is linked to this deployment plan."
+            ),
+        )
+
+    runtime_id = str(
+        runtime_binding.get("runtime_id")
+        or runtime_binding.get("id")
+        or runtime_binding.get("binding_id")
+        or ""
+    ).strip()
+    runtime_binding_id = str(
+        runtime_binding.get("runtime_binding_id")
+        or runtime_binding.get("binding_id")
+        or runtime_binding.get("id")
+        or ""
+    ).strip()
+    deployment_stage = str(
+        runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode") or ""
+    ).strip().lower()
+
+    monitoring = read_store.get_paper_runtime_monitoring_session(
+        runtime_id=runtime_id,
+        binding_id=runtime_binding_id,
+    )
+    if monitoring:
+        active = bool(monitoring.get("active", True))
+        staleness = monitoring.get("staleness") if isinstance(monitoring.get("staleness"), dict) else {}
+        terminal_reason = (
+            monitoring.get("terminal_reason")
+            or monitoring.get("ended_reason")
+            or staleness.get("reason")
+        )
+        status = "active" if active and not terminal_reason else "degraded"
+        return _deployment_stage_entry(
+            stage="runtime_fleet",
+            status=status,
+            source_dataset="paper_runtime_monitoring_sessions",
+            source_id=str(monitoring.get("session_id") or monitoring.get("id") or ""),
+            available=True,
+            failure=status != "active",
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            deployment_stage=deployment_stage or None,
+            active=active,
+            last_heartbeat_at=monitoring.get("last_heartbeat_at"),
+            terminal_reason=terminal_reason,
+        )
+
+    telemetry = read_store.get_telemetry_summary(runtime_id) if runtime_id else None
+    if telemetry:
+        health_summary = telemetry.get("health_summary") if isinstance(telemetry.get("health_summary"), dict) else {}
+        unhealthy = [
+            str(key)
+            for key, value in health_summary.items()
+            if str(value).strip().lower() not in {"", "ok", "not_applicable"}
+        ]
+        status = "degraded" if unhealthy else "observed"
+        return _deployment_stage_entry(
+            stage="runtime_fleet",
+            status=status,
+            source_dataset="telemetry_summaries",
+            source_id=runtime_id,
+            available=True,
+            failure=status == "degraded",
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            deployment_stage=deployment_stage or None,
+            last_heartbeat_at=telemetry.get("last_heartbeat_at"),
+            last_event_at=telemetry.get("last_event_at"),
+            degraded_checks=unhealthy or None,
+        )
+
+    source_dataset = (
+        "paper_runtime_monitoring_sessions"
+        if deployment_stage == "paper"
+        else "telemetry_summaries"
+    )
+    return _deployment_stage_entry(
+        stage="runtime_fleet",
+        status="unavailable",
+        source_dataset=source_dataset,
+        source_id=runtime_id or None,
+        available=False,
+        failure=True,
+        runtime_id=runtime_id or None,
+        runtime_binding_id=runtime_binding_id or None,
+        deployment_stage=deployment_stage or None,
+        message=(
+            "Runtime fleet evidence unavailable; status is not inferred from "
+            "deployment plan metadata or RuntimeBinding existence."
+        ),
+    )
+
+
+def _deployment_stage_truth(plan: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    plan_id = _deployment_plan_identifier(plan)
+    approval_decision_id = str(plan.get("approval_decision_id") or "").strip()
+    approval_decision = read_store.get_approval_decision(approval_decision_id)
+    if approval_decision:
+        approval_status = approval_decision.get("outcome") or approval_decision.get("state")
+        approval_entry = _deployment_stage_entry(
+            stage="approval",
+            status=approval_status,
+            source_dataset="approval_decisions",
+            source_id=str(
+                approval_decision.get("decision_id")
+                or approval_decision.get("id")
+                or approval_decision_id
+            ),
+            available=True,
+            failure=_deployment_stage_status(approval_status) in {"rejected", "failed"},
+            decision_state=approval_decision.get("state"),
+            reviewer=approval_decision.get("reviewer"),
+        )
+    else:
+        plan_status = _deployment_stage_status(plan.get("status"))
+        pending_status = "pending" if plan_status in {"pending_approval", "draft", "proposed"} else "missing"
+        approval_entry = _deployment_stage_entry(
+            stage="approval",
+            status=pending_status,
+            source_dataset="approval_decisions",
+            source_id=approval_decision_id or None,
+            available=False,
+            failure=False,
+            message="Approval decision has not been recorded for this deployment plan.",
+        )
+
+    plan_status = plan.get("status") or plan.get("state") or "unknown"
+    plan_entry = _deployment_stage_entry(
+        stage="plan",
+        status=plan_status,
+        source_dataset="deployment_plans",
+        source_id=plan_id or None,
+        available=True,
+        failure=_deployment_stage_status(plan_status) in {"aborted", "failed", "rejected"},
+        current_stage=plan.get("current_stage"),
+        target_stage=plan.get("target_stage") or plan.get("stage"),
+        transition_type=plan.get("transition_type"),
+    )
+
+    saga_progress = plan.get("saga_progress") if isinstance(plan.get("saga_progress"), dict) else {}
+    if saga_progress:
+        saga_status = saga_progress.get("progress_status") or saga_progress.get("saga_status")
+        saga_entry = _deployment_stage_entry(
+            stage="saga",
+            status=saga_status,
+            source_dataset="deployment_sagas",
+            source_id=str(saga_progress.get("saga_id") or plan.get("deployment_saga_id") or ""),
+            available=True,
+            failure=_deployment_stage_status(saga_status) in {"blocked", "failed"},
+            saga_status=saga_progress.get("saga_status"),
+            current_step=saga_progress.get("current_step"),
+            blocked_reason=saga_progress.get("blocked_reason"),
+            dlq_count=saga_progress.get("dlq_count"),
+            pending_event_count=saga_progress.get("pending_event_count"),
+        )
+    else:
+        saga_entry = _deployment_stage_entry(
+            stage="saga",
+            status="not_started",
+            source_dataset="deployment_sagas",
+            source_id=str(plan.get("deployment_saga_id") or "") or None,
+            available=False,
+            failure=False,
+            message="Deployment saga progress has not been observed for this plan.",
+        )
+
+    runtime_binding = _deployment_runtime_binding(plan)
+    if runtime_binding:
+        binding_status = runtime_binding.get("status") or runtime_binding.get("state") or "present"
+        binding_entry = _deployment_stage_entry(
+            stage="binding",
+            status=binding_status,
+            source_dataset="runtime_bindings",
+            source_id=str(
+                runtime_binding.get("runtime_binding_id")
+                or runtime_binding.get("binding_id")
+                or runtime_binding.get("id")
+                or ""
+            ),
+            available=True,
+            failure=_deployment_stage_status(binding_status) in {"failed", "rejected", "stopped"},
+            runtime_id=runtime_binding.get("runtime_id"),
+            deployment_stage=runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode"),
+            artifact_id=runtime_binding.get("artifact_id"),
+            artifact_version=runtime_binding.get("artifact_version"),
+        )
+    else:
+        binding_entry = _deployment_stage_entry(
+            stage="binding",
+            status="missing",
+            source_dataset="runtime_bindings",
+            available=False,
+            failure=False,
+            message="RuntimeBinding projection is not available for this deployment plan.",
+        )
+
+    return {
+        "approval": approval_entry,
+        "plan": plan_entry,
+        "saga": saga_entry,
+        "binding": binding_entry,
+        "runtime_fleet": _runtime_fleet_stage_truth(runtime_binding),
+    }
+
+
+def _deployment_stage_truth_surfaces(
+    stage_truth: Dict[str, Dict[str, Any]],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Dict[str, Any]]:
+    surfaces: Dict[str, Dict[str, Any]] = {}
+    for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER:
+        entry = stage_truth.get(stage) or {}
+        dataset = str(entry.get("source_dataset") or "").strip() or "deployment_plans"
+        surface = _dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at,
+            has_data=bool(entry.get("available")),
+            missing_message=entry.get("message"),
+        )
+        if entry.get("failure") and surface.get("status") == "ok":
+            surface["status"] = "degraded"
+            surface["message"] = entry.get("message") or f"{stage} stage requires operator attention."
+        surfaces[f"{stage}_stage"] = surface
+
+    surfaces["deployment_stage_truth"] = _aggregate_group_surface(
+        "deployment_stage_truth",
+        [surfaces[f"{stage}_stage"] for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER],
+        snapshot_at=snapshot_at,
+        unavailable_message="Deployment stage truth is unavailable.",
+        degraded_message="Deployment stage truth is degraded because one or more stages need evidence or attention.",
+    )
+    return surfaces
+
+
+def _deployment_stage_truth_collection_surfaces(
+    stage_truths: Sequence[Dict[str, Dict[str, Any]]],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Dict[str, Any]]:
+    collected = [
+        _deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at)
+        for stage_truth in stage_truths
+        if stage_truth
+    ]
+    if not collected:
+        return {}
+    if len(collected) == 1:
+        return collected[0]
+
+    surfaces: Dict[str, Dict[str, Any]] = {}
+    for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER:
+        surface_key = f"{stage}_stage"
+        stage_label = stage.replace("_", " ")
+        surfaces[surface_key] = _aggregate_group_surface(
+            surface_key,
+            [item[surface_key] for item in collected],
+            snapshot_at=snapshot_at,
+            unavailable_message=(
+                f"{stage_label} stage truth is unavailable across listed deployment plans."
+            ),
+            degraded_message=(
+                f"{stage_label} stage truth is degraded for one or more listed deployment plans."
+            ),
+        )
+
+    surfaces["deployment_stage_truth"] = _aggregate_group_surface(
+        "deployment_stage_truth",
+        [surfaces[f"{stage}_stage"] for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER],
+        snapshot_at=snapshot_at,
+        unavailable_message="Deployment stage truth is unavailable.",
+        degraded_message=(
+            "Deployment stage truth is degraded because one or more stages need "
+            "evidence or attention."
+        ),
+    )
+    return surfaces
+
+
+def _deployment_plan_with_stage_truth(
+    plan: Dict[str, Any],
+    *,
+    snapshot_at: str,
+) -> Dict[str, Any]:
+    payload = dict(plan)
+    payload["stage_truth"] = _deployment_stage_truth(plan)
+    return payload
+
 @app.get("/bff/deployments")
 async def bff_list_deployments(
     status: Optional[str] = None,
@@ -44636,9 +45082,21 @@ async def bff_list_deployments(
         total = 0
     else:
         plans, next_page_token = _page_slice(plans, page_token, page_size)
+        plans = [
+            _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
+            for plan in plans
+        ]
 
     meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"deployments": surface}
+    stage_surfaces = (
+        _deployment_stage_truth_collection_surfaces(
+            [plan["stage_truth"] for plan in plans],
+            snapshot_at=snapshot_at,
+        )
+        if plans
+        else {}
+    )
+    meta["surfaces"] = {"deployments": surface, **stage_surfaces}
     staleness = _meta_staleness()
     if staleness is not None:
         meta["staleness"] = staleness
@@ -44671,16 +45129,28 @@ async def bff_get_deployment(
         )
 
     snapshot_at = utc_now()
+    plan_payload = _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
     decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
     review = read_store.get_review_summary(clean_id)
+    stage_surfaces = _deployment_stage_truth_surfaces(
+        plan_payload["stage_truth"],
+        snapshot_at=snapshot_at,
+    )
 
     return {
         "data": {
-            **plan,
+            **plan_payload,
             "approval_decision": decision or {},
             "review": review or {},
         },
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "surfaces": {
+                "deployments": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
+                **stage_surfaces,
+            },
+            "staleness": _meta_staleness(),
+        },
     }
 
 
@@ -48186,6 +48656,31 @@ async def bff_v5_loop_inventory_detail(
     return _loop_inventory_response_meta(payload)
 
 
+@app.get("/bff/v5/downstream-health")
+async def bff_v5_downstream_health(
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return the current BFF downstream service health probe state.
+
+    Reports the most-recent probe result per downstream target.
+    overall_ok is null when no probes have run yet (monitor just started).
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    state = downstream_health_monitor.get_state()
+    return {
+        "read_model": "downstream_health",
+        "data": state,
+        "meta": {
+            "source": "bff_downstream_health_monitor",
+            "description": (
+                "Live probe results from the BFF continuous downstream health monitor. "
+                "Degraded targets have their last failure reason and consecutive failure count."
+            ),
+        },
+    }
+
+
 # -- V5 Loop-runs ------------------------------------------------------------
 
 @app.get("/bff/v5/loop-runs")
@@ -49669,26 +50164,279 @@ def _training_improvement_delta(metrics: Dict[str, Any]) -> float:
 
 _SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
 _SOURCE_HEALTH_OVERLAY_TTL = 60.0
+_SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
+    "finmind": (
+        "tw-finmind-datasets",
+        "tw-finmind-broker-daily-report",
+        "tw-finmind-broker-bulk-parquet",
+    ),
+    "twse": ("tw-twse-tpex-official-market",),
+    "tpex": ("tw-twse-tpex-official-market",),
+    "mops": ("tw-mops-official-disclosures",),
+}
 
 
-def _live_source_health_by_connector() -> Dict[str, Any]:
+def _source_ingest_truth_by_connector() -> Dict[str, Dict[str, Any]]:
     now = time.monotonic()
-    cached = _SOURCE_HEALTH_OVERLAY_CACHE.get("by_connector")
+    cached = _SOURCE_HEALTH_OVERLAY_CACHE.get("truth_by_connector")
     if cached is not None and (now - float(_SOURCE_HEALTH_OVERLAY_CACHE.get("at") or 0.0)) < _SOURCE_HEALTH_OVERLAY_TTL:
         return cached
-    by_conn: Dict[str, Any] = {}
+
+    truth: Dict[str, Dict[str, Any]] = {}
+    try:
+        registry = read_store.get_source_connector_registry()
+        for connector in (registry.get("connectors") or []):
+            if not isinstance(connector, dict):
+                continue
+            connector_id = str(connector.get("connector_id") or "").strip()
+            if connector_id:
+                truth.setdefault(connector_id, {})["connector"] = json.loads(json.dumps(connector))
+    except Exception:  # read-only enrichment must never break persona surfaces
+        pass
+
     try:
         snapshot = read_store.get_source_health_usage_snapshot()
         for source in (snapshot.get("sources") or []):
+            if not isinstance(source, dict):
+                continue
             health = source.get("health") if isinstance(source.get("health"), dict) else {}
-            connector_id = str(health.get("source_id") or "")
+            connector_id = str(health.get("source_id") or "").strip()
             if connector_id:
-                by_conn[connector_id] = health
-    except Exception:  # read-only enrichment must never break the fleet surface
-        by_conn = {}
+                truth.setdefault(connector_id, {})["health"] = json.loads(json.dumps(health))
+                truth[connector_id]["usage_aggregate_30d"] = json.loads(
+                    json.dumps(source.get("usage_aggregate_30d") or {})
+                )
+                if source.get("recommendation") is not None:
+                    truth[connector_id]["recommendation"] = json.loads(json.dumps(source.get("recommendation")))
+    except Exception:  # read-only enrichment must never break persona surfaces
+        pass
+
     _SOURCE_HEALTH_OVERLAY_CACHE["at"] = now
-    _SOURCE_HEALTH_OVERLAY_CACHE["by_connector"] = by_conn
-    return by_conn
+    _SOURCE_HEALTH_OVERLAY_CACHE["truth_by_connector"] = truth
+    _SOURCE_HEALTH_OVERLAY_CACHE["by_connector"] = {
+        connector_id: payload["health"]
+        for connector_id, payload in truth.items()
+        if isinstance(payload.get("health"), dict)
+    }
+    return truth
+
+
+def _live_source_health_by_connector() -> Dict[str, Any]:
+    return {
+        connector_id: payload["health"]
+        for connector_id, payload in _source_ingest_truth_by_connector().items()
+        if isinstance(payload.get("health"), dict)
+    }
+
+
+def _connector_candidates_for_provider(source: Dict[str, Any]) -> List[str]:
+    candidates: List[str] = []
+    for key in ("connector_id", "connectorId", "source_id", "sourceId"):
+        value = str(source.get(key) or "").strip()
+        if value:
+            candidates.append(value)
+    provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip().lower()
+    candidates.extend(_SOURCE_PROVIDER_CONNECTOR_CANDIDATES.get(provider_key, ()))
+    return list(dict.fromkeys(candidates))
+
+
+def _source_failure_reason(health: Dict[str, Any], connector: Dict[str, Any]) -> Optional[str]:
+    metadata = health.get("metadata") if isinstance(health.get("metadata"), dict) else {}
+    health_metrics = connector.get("health_metrics") if isinstance(connector.get("health_metrics"), dict) else {}
+    state = connector.get("state") if isinstance(connector.get("state"), dict) else {}
+    for candidate in (
+        metadata.get("source_error"),
+        metadata.get("last_failure_error"),
+        health_metrics.get("source_error"),
+        state.get("last_error"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _provider_status_from_truth(health: Dict[str, Any], connector: Dict[str, Any]) -> str:
+    status = str(health.get("status") or "").strip().lower()
+    if status:
+        return "read_ok" if status == "ok" else f"source_health_{status}"
+    freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
+    freshness_status = str(freshness.get("status") or "").strip().lower()
+    if freshness_status:
+        return f"connector_{freshness_status}"
+    return "connector_configured_no_health"
+
+
+def _source_truth_projection(connector_id: str, truth: Dict[str, Any]) -> Dict[str, Any]:
+    health = truth.get("health") if isinstance(truth.get("health"), dict) else {}
+    connector = truth.get("connector") if isinstance(truth.get("connector"), dict) else {}
+    schedule = connector.get("schedule") if isinstance(connector.get("schedule"), dict) else {}
+    freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
+    latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), dict) else {}
+    health_metrics = connector.get("health_metrics") if isinstance(connector.get("health_metrics"), dict) else {}
+    status = _provider_status_from_truth(health, connector)
+    last_fetch_at = (
+        latest_run.get("finished_at")
+        or latest_run.get("started_at")
+        or health.get("last_failure_at")
+        or health.get("last_success_at")
+        or freshness.get("last_success_at")
+    )
+    last_push_at = (
+        health.get("last_success_at")
+        or health_metrics.get("last_success_at")
+        or freshness.get("last_success_at")
+    )
+    failure_reason = _source_failure_reason(health, connector)
+    projection = {
+        "schema_version": "bff_source_health_truth.v1",
+        "connector_id": connector_id,
+        "connectorId": connector_id,
+        "health_source": "source_ingest",
+        "healthSource": "source_ingest",
+        "static_label": False,
+        "staticLabel": False,
+        "source_health_available": bool(health),
+        "sourceHealthAvailable": bool(health),
+        "health_status": health.get("status"),
+        "healthStatus": health.get("status"),
+        "connector_status": connector.get("status"),
+        "connectorStatus": connector.get("status"),
+        "status": status,
+        "last_success_at": health.get("last_success_at"),
+        "lastSuccessAt": health.get("last_success_at"),
+        "last_failure_at": health.get("last_failure_at"),
+        "lastFailureAt": health.get("last_failure_at"),
+        "last_fetch_at": last_fetch_at,
+        "lastFetchAt": last_fetch_at,
+        "last_push_at": last_push_at,
+        "lastPushAt": last_push_at,
+        "failure_reason": failure_reason,
+        "failureReason": failure_reason,
+        "latest_watermark": health.get("latest_watermark") or freshness.get("last_watermark"),
+        "latestWatermark": health.get("latest_watermark") or freshness.get("last_watermark"),
+        "row_count_last_run": health.get("row_count_last_run"),
+        "rowCountLastRun": health.get("row_count_last_run"),
+        "rejected_count_last_run": health.get("rejected_count_last_run"),
+        "rejectedCountLastRun": health.get("rejected_count_last_run"),
+        "connector_schedule": json.loads(json.dumps(schedule)),
+        "connectorSchedule": json.loads(json.dumps(schedule)),
+        "connector_freshness": json.loads(json.dumps(freshness)),
+        "connectorFreshness": json.loads(json.dumps(freshness)),
+        "source_health": json.loads(json.dumps(health)),
+        "sourceHealth": json.loads(json.dumps(health)),
+    }
+    if isinstance(truth.get("usage_aggregate_30d"), dict):
+        projection["usage_aggregate_30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
+        projection["usageAggregate30d"] = json.loads(json.dumps(truth["usage_aggregate_30d"]))
+    if truth.get("recommendation") is not None:
+        projection["recommendation"] = json.loads(json.dumps(truth["recommendation"]))
+    return projection
+
+
+def _select_source_truth(
+    candidate_ids: List[str],
+    truth_by_connector: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    for connector_id in candidate_ids:
+        truth = truth_by_connector.get(connector_id)
+        if isinstance(truth, dict) and (truth.get("health") or truth.get("connector")):
+            return connector_id, truth
+    return None, None
+
+
+def _source_health_bindings_from_requirements(
+    required_data_sources: List[Dict[str, Any]],
+    truth_by_connector: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    bindings: List[Dict[str, Any]] = []
+    for requirement in required_data_sources:
+        if not isinstance(requirement, dict):
+            continue
+        candidates = [
+            str(candidate).strip()
+            for candidate in (requirement.get("connector_candidates") or [])
+            if str(candidate).strip()
+        ]
+        connector_id, truth = _select_source_truth(candidates, truth_by_connector)
+        binding = {
+            "dataset": requirement.get("dataset"),
+            "market": requirement.get("market"),
+            "cadence": requirement.get("cadence"),
+            "source_class": requirement.get("source_class"),
+            "sourceClass": requirement.get("source_class"),
+            "connector_candidates": candidates,
+            "connectorCandidates": candidates,
+            "selected_connector_id": connector_id,
+            "selectedConnectorId": connector_id,
+            "health_source": "source_ingest" if truth else "unbound",
+            "healthSource": "source_ingest" if truth else "unbound",
+            "source_health_available": bool(truth and truth.get("health")),
+            "sourceHealthAvailable": bool(truth and truth.get("health")),
+        }
+        if truth and connector_id:
+            binding.update(_source_truth_projection(connector_id, truth))
+        elif str(requirement.get("source_class") or "") == "seed_only":
+            binding["health_source"] = "seed_only_not_live_binding"
+            binding["healthSource"] = "seed_only_not_live_binding"
+        bindings.append(binding)
+    return bindings
+
+
+def _overlay_source_health_truth(
+    data_source_status: Any,
+    data_sources: Any,
+    *,
+    required_data_sources: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    dss = json.loads(json.dumps(data_source_status)) if isinstance(data_source_status, dict) else {}
+    srcs = json.loads(json.dumps(data_sources)) if isinstance(data_sources, list) else []
+    truth_by_connector = _source_ingest_truth_by_connector()
+    provider_statuses = dss.get("provider_statuses")
+    if not isinstance(provider_statuses, dict):
+        provider_statuses = {}
+        dss["provider_statuses"] = provider_statuses
+
+    connector_health: List[Dict[str, Any]] = []
+    live_connector_ids: List[str] = []
+    static_source_labels: List[str] = []
+    for source in srcs:
+        if not isinstance(source, dict):
+            continue
+        provider_key = str(source.get("provider_key") or source.get("providerKey") or "").strip()
+        connector_id, truth = _select_source_truth(
+            _connector_candidates_for_provider(source),
+            truth_by_connector,
+        )
+        if connector_id and truth:
+            projection = _source_truth_projection(connector_id, truth)
+            source.update(projection)
+            if provider_key:
+                provider_statuses[provider_key] = projection["status"]
+            connector_health.append(projection)
+            live_connector_ids.append(connector_id)
+        else:
+            source.setdefault("health_source", "static_metadata")
+            source.setdefault("healthSource", "static_metadata")
+            source.setdefault("static_label", True)
+            source.setdefault("staticLabel", True)
+            if provider_key in _SOURCE_PROVIDER_CONNECTOR_CANDIDATES:
+                static_source_labels.append(provider_key)
+
+    bindings = _source_health_bindings_from_requirements(required_data_sources or [], truth_by_connector)
+    has_live_truth = bool(connector_health) or any(binding.get("health_source") == "source_ingest" for binding in bindings)
+    dss["source_health_source"] = "source_ingest" if has_live_truth else "static_metadata"
+    dss["sourceHealthSource"] = dss["source_health_source"]
+    dss["live_ingestion_enabled"] = bool(has_live_truth)
+    dss["connector_health"] = json.loads(json.dumps(connector_health))
+    dss["connectorHealth"] = json.loads(json.dumps(connector_health))
+    dss["live_source_connector_ids"] = list(dict.fromkeys(live_connector_ids))
+    dss["liveSourceConnectorIds"] = dss["live_source_connector_ids"]
+    dss["static_source_labels"] = sorted(set(static_source_labels))
+    dss["staticSourceLabels"] = dss["static_source_labels"]
+    dss["required_source_health"] = json.loads(json.dumps(bindings))
+    dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
+    return dss, srcs, bindings
 
 
 def _overlay_live_finmind_health(data_source_status, data_sources):
@@ -49823,8 +50571,15 @@ def _build_persona_health_items(
             if isinstance(metadata.get("data_sources"), list)
             else []
         )
-        data_source_status, data_sources = _overlay_live_finmind_health(
-            data_source_status, data_sources
+        required_data_sources = (
+            persona.get("required_data_sources")
+            if isinstance(persona.get("required_data_sources"), list)
+            else []
+        )
+        data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
+            data_source_status,
+            data_sources,
+            required_data_sources=required_data_sources,
         )
         data_source_refs = (
             metadata.get("data_source_refs")
@@ -49912,6 +50667,10 @@ def _build_persona_health_items(
             "dataSources": json.loads(json.dumps(data_sources)),
             "data_source_refs": json.loads(json.dumps(data_source_refs)),
             "dataSourceRefs": json.loads(json.dumps(data_source_refs)),
+            "required_data_sources": json.loads(json.dumps(required_data_sources)),
+            "requiredDataSources": json.loads(json.dumps(required_data_sources)),
+            "source_health_bindings": json.loads(json.dumps(source_health_bindings)),
+            "sourceHealthBindings": json.loads(json.dumps(source_health_bindings)),
             "research_status": json.loads(json.dumps(research_status)),
             "researchStatus": json.loads(json.dumps(research_status)),
             "research_refs": json.loads(json.dumps(research_refs)),

@@ -125,6 +125,51 @@ The bridge is called by whichever component subscribes to the
 `postmortem.published` event — the supervisor event bus, a background worker,
 or the incident service itself after a postmortem reaches `PUBLISHED` status.
 
+## Service Admission Path
+
+`LOOP-AUTO-EVO-002` adds an evolution-service admission route for the published
+postmortem event:
+
+```text
+POST /api/evolution/proposals/from-postmortem-published
+```
+
+Request:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `postmortem_id` | str | yes | published Postmortem to consume |
+| `decision_id` | str | no | optional deterministic id override |
+| `publish_event_id` | str | no | upstream event id for metadata |
+| `created_by_id` | str | no | defaults to `postmortem-bridge` |
+| `created_by_role` | str | no | defaults to `evolution_controller` |
+
+The route reads the `Postmortem` and parent `IncidentCase` from the evolution
+service incident store, then creates a normal `EvolutionDecision` through the
+existing proposal path. It is idempotent by:
+
+```text
+target_type + target_id + incident_cluster
+```
+
+Duplicate publish events return the existing proposal with HTTP 200. A new
+proposal returns HTTP 201.
+
+Admission semantics:
+
+- every consumed postmortem must already be `published` and carry
+  `published_at`;
+- created decisions remain in `decision_state=proposed`;
+- review, approval, runtime, broker, and capital-binding follow-through remain
+  separate governed steps;
+- high-severity postmortems are admitted as `flag_for_review` because
+  `rollback` is an operational follow-through, not an `EvolutionDecision`
+  action type;
+- critical postmortems on paper/canary/live targets are admitted as `freeze`;
+- low/medium postmortems without a stronger trigger still create a
+  review-gated `flag_for_review` proposal so the published postmortem is
+  visible in the evolution loop.
+
 ---
 
 ## Acceptance Verification
@@ -135,6 +180,12 @@ python3 -m pytest services/evolution/test_postmortem_bridge.py -q
 ```
 
 Expected: all tests pass, exit 0.
+
+For the service admission path, run:
+
+```bash
+python3 -m pytest services/evolution/test_postmortem_bridge.py services/evolution/test_evolution_service.py -q
+```
 
 ---
 

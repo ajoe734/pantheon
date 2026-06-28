@@ -54,6 +54,22 @@ The BFF exposes the operator-facing trainer session API at
 Replay commit/discard and rapid-eval routes are intentionally separate follow-on
 contracts.
 
+## Async Preview/Eval Worker
+
+Trainer preview can run through a durable async job queue:
+
+- `POST /api/training/sessions/{session_id}/preview-jobs` records a queued
+  preview evaluation and appends a `preview_requested` `TeachingEvent`.
+- `GET /api/training/preview-jobs?status=queued` exposes queued work to the
+  supervised worker.
+- `POST /api/training/preview-jobs/{job_id}/run` executes the existing vectorbt
+  preview path, stores the completed preview bundle, and appends a
+  `preview_result` event with an `evaluation_proof_ref`.
+
+`services/training-session/preview_eval_worker.py` polls queued jobs over HTTP.
+It is wired in Docker Compose behind the `training-session-preview-worker`
+profile with `restart: unless-stopped`.
+
 ## Replay Decisions
 
 The replay decision routes own the durable commit/discard record for a completed
@@ -72,3 +88,8 @@ decision event `artifact_refs`, including `lineage_ref`, `lineage_edge_id`,
 `persona_policy_ref`, and `route_policy_ref`. Discard decisions record a
 decision/lineage reference but leave `after_artifact_ref` empty and do not claim
 persona or route-policy mutation.
+
+Commit is fail-closed unless the replay candidate points to a completed preview
+with an evaluation proof whose governance gate state is `passed`. Successful
+commits copy the evaluation proof ref and governance gate state into the replay
+resolution, decision event, and lineage audit artifact.

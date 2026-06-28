@@ -20,6 +20,14 @@ def test_compose_wires_training_session_service_and_bff_normal_path() -> None:
     assert training["ports"] == ["${TRAINING_SESSION_PORT:-18099}:8099"]
     assert "healthcheck" in training
 
+    worker = services["training-session-preview-worker"]
+    assert worker["profiles"] == ["training-session-preview-worker"]
+    assert worker["build"]["dockerfile"] == "services/training-session/Dockerfile"
+    assert worker["command"] == ["python", "services/training-session/preview_eval_worker.py"]
+    assert worker["restart"] == "unless-stopped"
+    assert worker["environment"]["TRAINING_SESSION_API_URL"] == "http://training-session-svc:8099"
+    assert worker["depends_on"]["training-session-svc"]["condition"] == "service_healthy"
+
     bff = services["operator-bff"]
     assert bff["environment"]["PANTHEON_TRAINING_SESSION_API_URL"] == "http://training-session-svc:8099"
     assert bff["depends_on"]["training-session-svc"]["condition"] == "service_healthy"

@@ -93,6 +93,10 @@ def test_default_read_store_has_us_tw_crypto_persona_execution_chain() -> None:
 
         tw_persona = store.get_persona("persona-tw-equity")
         assert tw_persona is not None
+        required_sources = {source["dataset"]: source for source in tw_persona["required_data_sources"]}
+        assert required_sources["tw_price_daily"]["source_class"] == "live_pull"
+        assert required_sources["tw_broker_top"]["source_class"] == "live_push"
+        assert "tw-finmind-broker-daily-report" in required_sources["tw_broker_top"]["connector_candidates"]
         tw_metadata = tw_persona["metadata"]
         assert tw_metadata["data_source_status"]["state"] == "partial_readback"
         assert tw_metadata["data_source_status"]["live_ingestion_enabled"] is False
@@ -390,3 +394,100 @@ def test_overlay_live_finmind_health_noop_when_unavailable(monkeypatch):
     )
     assert out_dss["provider_statuses"]["finmind"] == "read_unavailable"
     assert out_dss["state"] == "partial_readback"
+
+
+def test_source_health_truth_overlay_projects_connector_panel_fields(monkeypatch):
+    dss = {
+        "state": "partial_readback",
+        "provider_statuses": {
+            "finmind": "read_unavailable",
+            "twse": "read_unavailable",
+            "tpex": "read_unavailable",
+        },
+    }
+    sources = [
+        {"provider_key": "finmind", "status": "read_unavailable"},
+        {"provider_key": "twse", "status": "read_unavailable"},
+        {"provider_key": "tpex", "status": "read_unavailable"},
+    ]
+    required_sources = [
+        {
+            "dataset": "tw_broker_top",
+            "market": "TW",
+            "cadence": "daily",
+            "source_class": "live_push",
+            "connector_candidates": ["tw-finmind-broker-daily-report"],
+        }
+    ]
+    monkeypatch.setattr(
+        bff_main,
+        "_source_ingest_truth_by_connector",
+        lambda: {
+            "tw-finmind-broker-daily-report": {
+                "health": {
+                    "source_id": "tw-finmind-broker-daily-report",
+                    "status": "failed",
+                    "last_success_at": "2026-06-27T05:00:00Z",
+                    "last_failure_at": "2026-06-27T06:00:00Z",
+                    "latest_watermark": "2026-06-26",
+                    "row_count_last_run": 0,
+                    "metadata": {"source_error": "FinMind quota exhausted"},
+                },
+                "connector": {
+                    "connector_id": "tw-finmind-broker-daily-report",
+                    "status": "enabled",
+                    "schedule": {
+                        "configured": True,
+                        "enabled": True,
+                        "interval_seconds": 86400,
+                    },
+                    "freshness": {
+                        "status": "degraded",
+                        "latest_run": {
+                            "ingest_run_id": "run-finmind-001",
+                            "status": "failed",
+                            "finished_at": "2026-06-27T06:00:00Z",
+                        },
+                    },
+                    "health_metrics": {"source_error": "FinMind quota exhausted"},
+                },
+            },
+            "tw-twse-tpex-official-market": {
+                "health": {
+                    "source_id": "tw-twse-tpex-official-market",
+                    "status": "ok",
+                    "last_success_at": "2026-06-27T04:30:00Z",
+                    "row_count_last_run": 42,
+                    "metadata": {},
+                },
+                "connector": {
+                    "connector_id": "tw-twse-tpex-official-market",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "fresh", "last_success_at": "2026-06-27T04:30:00Z"},
+                    "health_metrics": {},
+                },
+            },
+        },
+    )
+
+    out_dss, out_sources, bindings = bff_main._overlay_source_health_truth(
+        dss,
+        sources,
+        required_data_sources=required_sources,
+    )
+
+    assert out_dss["source_health_source"] == "source_ingest"
+    assert out_dss["live_ingestion_enabled"] is True
+    assert out_dss["provider_statuses"]["finmind"] == "source_health_failed"
+    assert out_dss["provider_statuses"]["twse"] == "read_ok"
+    by_provider = {source["provider_key"]: source for source in out_sources}
+    finmind = by_provider["finmind"]
+    assert finmind["health_source"] == "source_ingest"
+    assert finmind["connectorSchedule"]["enabled"] is True
+    assert finmind["lastFetchAt"] == "2026-06-27T06:00:00Z"
+    assert finmind["lastPushAt"] == "2026-06-27T05:00:00Z"
+    assert finmind["failureReason"] == "FinMind quota exhausted"
+    assert bindings[0]["source_class"] == "live_push"
+    assert bindings[0]["selectedConnectorId"] == "tw-finmind-broker-daily-report"
+    assert bindings[0]["failureReason"] == "FinMind quota exhausted"
