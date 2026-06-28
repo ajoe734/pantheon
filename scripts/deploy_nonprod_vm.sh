@@ -817,7 +817,10 @@ remove_dev_paper_runtime_name_conflict() {
 
   project="$(docker inspect "$container_id" --format '{{ index .Config.Labels "com.docker.compose.project" }}' 2>/dev/null || true)"
   service="$(docker inspect "$container_id" --format '{{ index .Config.Labels "com.docker.compose.service" }}' 2>/dev/null || true)"
-  if [[ "$project" != "pantheon" || "$service" != "pantheon-paper-runtime" ]]; then
+  if [[ -n "$project" && "$project" != "pantheon" ]]; then
+    error "refusing to remove ${container}; labels project=${project} service=${service:-<missing>}"
+  fi
+  if [[ -n "$service" && "$service" != "pantheon-paper-runtime" ]]; then
     error "refusing to remove ${container}; labels project=${project:-<missing>} service=${service:-<missing>}"
   fi
 
