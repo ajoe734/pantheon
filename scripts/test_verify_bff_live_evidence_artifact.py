@@ -181,6 +181,7 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                 "family": f"rbac-read-{label}-{resource}",
                 "method": "GET",
                 "path": path,
+                "status": 403 if denied else 200,
                 "ok": True,
                 "error_envelope": denied,
                 "rbac_label": label,
@@ -201,6 +202,7 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                 "family": f"rbac-write-{label}-{resource}",
                 "method": "POST",
                 "path": path,
+                "status": 403 if denied else 200,
                 "ok": True,
                 "error_envelope": denied,
                 "request_marker_sha256_12": marker_hash,
@@ -628,6 +630,60 @@ def test_verifier_rejects_rbac_matrix_without_distinct_provided_bearers(tmp_path
     item = payload["criteria"]["rbac_matrix"]
     assert item["status"] == "fail"
     assert "distinctBearers:6/7" in item["note"]
+
+
+def test_verifier_rejects_rbac_matrix_request_path_swap(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    read_item = next(item for item in auth["rbac_matrix"] if item["family"] == "rbac-read-viewer-bff-ranking-formulas")
+    read_item["path"] = "/bff/strategies"
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["rbac_matrix"]
+    assert item["status"] == "fail"
+    assert "requestLinks:55/56" in item["note"]
+    assert "rbac-request-link" in item["note"]
+
+
+def test_verifier_rejects_rbac_allowed_read_without_success_status(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    read_item = next(item for item in auth["rbac_matrix"] if item["family"] == "rbac-read-viewer-bff-strategies")
+    read_item["status"] = 204
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["rbac_matrix"]
+    assert item["status"] == "fail"
+    assert "readAllowed:14/15" in item["note"]
+    assert "read-allowed-status" in item["note"]
+
+
+def test_verifier_rejects_rbac_denied_write_without_forbidden_status(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    write_item = next(item for item in auth["rbac_matrix"] if item["family"] == "rbac-write-viewer-strategy")
+    write_item["status"] = 200
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["rbac_matrix"]
+    assert item["status"] == "fail"
+    assert "writeDenials:15/16" in item["note"]
+    assert "write-denial-status" in item["note"]
 
 
 
