@@ -332,6 +332,7 @@ class TriggerIngestJobRequest(StrictBaseModel):
     records: list[SourceRecordBody] = Field(default_factory=list)
     next_watermark: str | None = None
     fetch: ConfiguredFetchBody | None = None
+    job_parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class SourceRecordIngestRequest(StrictBaseModel):
@@ -1258,7 +1259,11 @@ def _run_ingest_request(request: TriggerIngestJobRequest) -> dict[str, Any]:
                     raise SourceEvidenceError("record source_type must match job connector")
             fetch_batch = _inline_fetch(records, request.next_watermark)
         else:
-            fetch_batch = _configured_fetch(connector.connector_id, trace_id=request.trace_id)
+            fetch_batch = _configured_fetch(
+                connector.connector_id,
+                trace_id=request.trace_id,
+                job_parameters=request.job_parameters,
+            )
         result, evidence_refs, source_search_refresh = _run_job(
             connector=connector,
             trace_id=request.trace_id,
