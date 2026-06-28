@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated_at": "2026-06-28T15:29:31Z",
+  "updated_at": "2026-06-28T15:39:26Z",
   "counts": {
-    "total": 1444,
-    "completed": 1421,
+    "total": 1445,
+    "completed": 1422,
     "superseded": 23
   },
   "recent_terminal_ids": [
+    "SRCLIVE-006-SIDECAR-BFF-HANDOFF",
     "SRCLIVE-005-SIDECAR-BFF-HANDOFF",
     "AG-DYNUI-SRC-001",
     "SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
@@ -25,7 +26,6 @@
     "AG-FE-DB-001-SIDECAR-ACCEPTANCE-FOLLOWUP-2",
     "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-5",
     "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
-    "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
-    "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2"
+    "AG-FE-ID-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3"
   ]
 }
