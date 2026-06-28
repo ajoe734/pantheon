@@ -181,6 +181,25 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                     "target_marker_sha256_12": marker_hash,
                 }
             else:
+                readback = None
+                if resource == "agora-note":
+                    readback = {
+                        "kind": "list_readback_not_persisted",
+                        "ok": True,
+                        "target_id_sha256_12": f"target-{label}-{resource}",
+                        "status": 200,
+                        "absent_checks": 2,
+                        "items_checked": 3,
+                    }
+                elif resource in {"strategy", "ranking-formula"}:
+                    readback = {
+                        "kind": "readback_not_persisted",
+                        "ok": True,
+                        "target_id_sha256_12": f"target-{label}-{resource}",
+                        "status": 404,
+                        "error_envelope": True,
+                        "error_code": "RESOURCE_NOT_FOUND",
+                    }
                 item["side_effect_check"] = {
                     "kind": "rbac_dry_run_write_meta",
                     "ok": True,
@@ -189,6 +208,8 @@ def strict_rbac_matrix_entries() -> list[dict[str, object]]:
                     "liveCapitalSideEffects": False,
                     "target_marker_sha256_12": marker_hash,
                 }
+                if readback is not None:
+                    item["side_effect_check"]["readback_not_persisted"] = readback
             items.append(item)
     return items
 
@@ -580,6 +601,24 @@ def test_verifier_rejects_rbac_write_without_side_effect_proof(tmp_path: Path) -
     item = payload["criteria"]["rbac_matrix"]
     assert item["status"] == "fail"
     assert "writeSideEffectProofs:31/32" in item["note"]
+
+
+def test_verifier_rejects_rbac_write_without_readback_proof(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    write_item = next(item for item in auth["rbac_matrix"] if item["family"] == "rbac-write-operator-strategy")
+    write_item["side_effect_check"].pop("readback_not_persisted")
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["rbac_matrix"]
+    assert item["status"] == "fail"
+    assert "writeReadbackProofs:11/12" in item["note"]
+
 
 
 def test_verifier_rejects_approval_race_without_detail_results_even_when_summary_passes(tmp_path: Path) -> None:

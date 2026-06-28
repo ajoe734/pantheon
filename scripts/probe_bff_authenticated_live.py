@@ -45,6 +45,7 @@ class Probe:
     expect_error_envelope: bool = False
     allowed_error_codes: tuple[str, ...] = ()
     min_turn_count: int = 0
+    absent_item_values: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = ()
 
 
 READ_PROBES: tuple[Probe, ...] = (
@@ -200,6 +201,7 @@ RBAC_WRITE_PATHS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("agora-note", "/bff/agora/notes", {"title": "", "body": "live dry-run RBAC matrix"}),
     ("intervention-claim", "/bff/v5/interventions/int-live-rbac-matrix/claim", {"reason": ""}),
 )
+RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-note"}
 
 DENIED_ERROR_CODES = (
     "AUTH_REQUIRED",
@@ -401,7 +403,35 @@ def readback_side_effect_check(
         "ok": ok,
         "target_family": target_family,
         "target_id_sha256_12": sha256_12(str(target_id)),
+        "status": result.get("status"),
+        "error_envelope": result.get("error_envelope") is True,
         "error_code": error_code or None,
+    }
+
+
+def list_absence_side_effect_check(
+    result: dict[str, Any],
+    *,
+    target_family: str,
+    target_id: str,
+) -> dict[str, Any]:
+    checks = result.get("absent_item_checks") if isinstance(result.get("absent_item_checks"), list) else []
+    ok_checks = [check for check in checks if isinstance(check, dict) and check.get("ok") is True]
+    items_checked = sum(int(check.get("items_checked") or 0) for check in ok_checks)
+    ok = (
+        result.get("ok") is True
+        and int(result.get("status") or 0) == 200
+        and bool(checks)
+        and len(ok_checks) == len(checks)
+    )
+    return {
+        "kind": "list_readback_not_persisted",
+        "ok": ok,
+        "target_family": target_family,
+        "target_id_sha256_12": sha256_12(str(target_id)),
+        "status": result.get("status"),
+        "absent_checks": len(ok_checks),
+        "items_checked": items_checked,
     }
 
 
@@ -424,9 +454,13 @@ def rbac_write_side_effect_check(
     *,
     can_write: bool,
     marker: str,
+    readback_check: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if can_write:
         check = dry_run_meta_side_effect_check(result, kind="rbac_dry_run_write_meta")
+        if readback_check is not None:
+            check["readback_not_persisted"] = readback_check
+            check["ok"] = check["ok"] is True and readback_check.get("ok") is True
     else:
         error_code = str(result.get("error_code") or "")
         check = {
@@ -581,9 +615,44 @@ def marker_payload(path: str, base: dict[str, Any], marker: str) -> dict[str, An
         payload["name"] = marker
     elif path == "/bff/agora/notes":
         payload["title"] = marker
+        payload["id"] = marker
     elif path.endswith("/claim"):
         payload["reason"] = marker
     return payload
+
+
+def rbac_write_readback_probe(resource: str, created_id: str) -> Probe | None:
+    quoted_id = urllib.parse.quote(str(created_id), safe="")
+    if resource == "strategy":
+        return Probe(
+            "GET",
+            f"/bff/strategies/{quoted_id}",
+            "rbac-write-strategy-readback-not-persisted",
+            expect_status={404},
+            expect_error_envelope=True,
+            allowed_error_codes=NOT_FOUND_ERROR_CODES,
+        )
+    if resource == "ranking-formula":
+        return Probe(
+            "GET",
+            f"/bff/ranking-formulas/{quoted_id}",
+            "rbac-write-ranking-formula-readback-not-persisted",
+            expect_status={404},
+            expect_error_envelope=True,
+            allowed_error_codes=NOT_FOUND_ERROR_CODES,
+        )
+    if resource == "agora-note":
+        return Probe(
+            "GET",
+            "/bff/agora/notes",
+            "rbac-write-agora-note-readback-not-persisted",
+            expect_status={200},
+            absent_item_values=(
+                (("items",), ("id",), str(created_id)),
+                (("items",), ("note_id",), str(created_id)),
+            ),
+        )
+    return None
 
 
 def request_json(
@@ -652,6 +721,28 @@ def request_json(
         actual = path_value(parsed, path)
         if actual != expected:
             missing_paths.append(f"{'.'.join(path)}={expected!r}")
+    absent_item_checks: list[dict[str, Any]] = []
+    for list_path, item_path, forbidden_value in probe.absent_item_values:
+        list_value = path_value(parsed, list_path, default=None)
+        target_hash = sha256_12(str(forbidden_value))
+        check: dict[str, Any] = {
+            "list_path": ".".join(list_path),
+            "item_path": ".".join(item_path),
+            "target_sha256_12": target_hash,
+        }
+        if isinstance(list_value, list):
+            found = any(
+                isinstance(item, dict)
+                and path_value(item, item_path, default=None) == forbidden_value
+                for item in list_value
+            )
+            check.update({"ok": not found, "found": found, "items_checked": len(list_value)})
+            if found:
+                missing_paths.append(f"absent_item:{'.'.join(list_path)}:{'.'.join(item_path)}:{target_hash}")
+        else:
+            check.update({"ok": False, "found": None, "items_checked": 0})
+            missing_paths.append(f"absent_item_list:{'.'.join(list_path)}")
+        absent_item_checks.append(check)
     if probe.min_turn_count:
         turns = None
         if isinstance(parsed, dict) and isinstance(parsed.get("data"), dict):
@@ -692,6 +783,8 @@ def request_json(
         result["request_idempotency_key_sha256_12"] = sha256_12(idempotency_key)
     if extracted:
         result["extracted"] = extracted
+    if absent_item_checks:
+        result["absent_item_checks"] = absent_item_checks
     if probe.family == "management-ai-multiturn" and isinstance(parsed, dict):
         data = parsed.get("data")
         if isinstance(data, dict):
@@ -1016,7 +1109,10 @@ def build_rbac_matrix_results(
                 f"rbac-write-{label}-{name}",
                 body=marker_payload(path, base_body, marker),
                 expect_status={200} if can_write else deny_status,
+                required_paths=(("data", "id"),) if can_write and name in RBAC_WRITE_READBACK_RESOURCES else (),
                 required_values=DRY_RUN_META_VALUES if can_write else (),
+                extract_paths=DRY_RUN_META_EXTRACT_PATHS
+                + ((("data", "id"),) if name in RBAC_WRITE_READBACK_RESOURCES else ()),
                 extra_headers=(("X-Dry-Run", "1"),),
                 expect_error_envelope=not can_write,
                 allowed_error_codes=() if can_write else DENIED_ERROR_CODES,
@@ -1035,11 +1131,37 @@ def build_rbac_matrix_results(
             if token_hash:
                 result["request_bearer_sha256_12"] = token_hash
             result["request_marker_sha256_12"] = marker_hash
+            readback_check: dict[str, Any] | None = None
+            created_id = _extracted_value(result, ("data", "id"))
+            if can_write and created_id:
+                readback_probe = rbac_write_readback_probe(name, str(created_id))
+                if readback_probe is not None:
+                    readback = request_json(
+                        base_url=base_url,
+                        probe=readback_probe,
+                        token=token,
+                        timeout=timeout,
+                        idempotency_prefix=idempotency_prefix,
+                    )
+                    if name == "agora-note":
+                        readback_check = list_absence_side_effect_check(
+                            readback,
+                            target_family=f"rbac-write-{name}",
+                            target_id=str(created_id),
+                        )
+                    else:
+                        readback_check = readback_side_effect_check(
+                            readback,
+                            target_family=f"rbac-write-{name}",
+                            target_id=str(created_id),
+                        )
             result["side_effect_check"] = rbac_write_side_effect_check(
                 result,
                 can_write=can_write,
                 marker=marker,
+                readback_check=readback_check,
             )
+            result.pop("extracted", None)
             results.append(result)
     return results, source
 
