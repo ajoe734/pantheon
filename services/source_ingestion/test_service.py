@@ -342,10 +342,19 @@ def test_financial_data_source_catalog_endpoint_exposes_templates(client) -> Non
     assert response.status_code == 200, response.text
     body = response.json()
     template_ids = {template["template_id"] for template in body["config_templates"]}
+    templates_by_id = {template["template_id"]: template for template in body["config_templates"]}
     assert body["catalog_status"] == "template_only_not_live_ingestion_claim"
     assert "template-tw-tej-research-backfill" in template_ids
     assert "template-tw-mops-official-disclosures" in template_ids
     assert "template-us-sec-edgar-filings" in template_ids
+    assert (
+        templates_by_id["template-tw-twse-tpex-official-market"]["fetch"]["adapter"]
+        == "TaiwanOfficialMarketDatasetAdapter.records_from_payload"
+    )
+    assert (
+        templates_by_id["template-tw-mops-official-disclosures"]["fetch"]["adapter"]
+        == "MopsSourceIngestAdapter.records_from_payload"
+    )
     assert body["active_universe_policy"]["summary"]["archive_baseline_rule_count"] >= 3
 
 
