@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a Shioaji broker sandbox place/cancel/readback/reconcile smoke.
 
-This harness exercises ``services.broker.shioaji.ShioajiBrokerAdapter`` under
+This harness exercises ``services.broker.sinopac.ShioajiBrokerAdapter`` under
 the explicit ``BROKER_SHIOAJI_SANDBOX_ENABLED`` gate. By default it uses the
 real Shioaji simulation SDK path through the adapter. ``--mock-api`` is only a
 repo-safe replay mode for CI and local verification when sandbox credentials
@@ -29,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from services.broker.shioaji.adapter import (  # noqa: E402
+from services.broker.sinopac.adapter import (  # noqa: E402
     ShioajiBrokerAdapter,
     ShioajiBrokerError,
 )
@@ -369,7 +369,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
         "generated_at": generated_at,
         "completed_at": iso_now(),
         "provider": "Shioaji",
-        "adapter": "services.broker.shioaji.ShioajiBrokerAdapter",
+        "adapter": "services.broker.sinopac.ShioajiBrokerAdapter",
         "account_kind": args.account_kind,
         "run_mode": "mock_api_replay" if args.mock_api else "shioaji_simulation_sdk",
         "status": status,

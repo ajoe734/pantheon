@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 from quote_pricing import QuotePricer
 from paper_simulation import simulate_paper_order
-from shioaji.adapter import ShioajiBrokerAdapter
+from sinopac.adapter import ShioajiBrokerAdapter
 
 
 def test_mis_parse_uses_last_trade():
@@ -19,12 +19,16 @@ def test_mis_parse_empty():
     assert QuotePricer.price_from_mis_payload({"msgArray": []}) is None
 
 
-def test_quote_pricer_prefers_shioaji():
-    class _A:
-        def snapshot_price(self, symbol):
+def test_quote_pricer_prefers_streaming():
+    class _M:
+        def ensure_subscribed(self, symbol):
+            pass
+        def live_price(self, symbol):
             return 2400.0
-    qp = QuotePricer(shioaji_adapter=_A())
-    assert qp.market_price("2330.TW") == 2400.0  # shioaji primary, no network
+        def snapshot_price(self, symbol):
+            return None
+    qp = QuotePricer(streaming_manager=_M())
+    assert qp.market_price("2330.TW") == 2400.0  # streaming tick primary, no network
 
 
 def test_market_fill_uses_market_price():

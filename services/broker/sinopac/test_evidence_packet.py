@@ -10,7 +10,7 @@ import argparse
 from pathlib import Path
 from unittest.mock import patch
 
-from services.broker.shioaji import evidence_packet, sandbox_smoke
+from services.broker.sinopac import evidence_packet, sandbox_smoke
 
 
 GENERATED_AT = "2026-05-15T16:10:00Z"

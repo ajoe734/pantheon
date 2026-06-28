@@ -5,8 +5,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from services.broker.shioaji.adapter import ShioajiBrokerAdapter, ShioajiBrokerError
-from services.broker.shioaji.facade import ShioajiSandboxFacade
+from services.broker.sinopac.adapter import ShioajiBrokerAdapter, ShioajiBrokerError
+from services.broker.sinopac.facade import ShioajiSandboxFacade
 
 
 def _make_mock_api(trade_id: str = "mock-facade-trade-001") -> MagicMock:

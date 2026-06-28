@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services.broker.shioaji.adapter import ShioajiBrokerAdapter
-from services.broker.shioaji.facade import PROOF_BOUNDARY, ShioajiSandboxFacade
+from services.broker.sinopac.adapter import ShioajiBrokerAdapter
+from services.broker.sinopac.facade import PROOF_BOUNDARY, ShioajiSandboxFacade
 from services.execution.lean_runtime.symbol_parser import SymbolParseError, parse
 from services.memory.institutional_memory_store import InstitutionalMemoryStore
 from services.memory.learn_feedback_writeback import write_learn_feedback
