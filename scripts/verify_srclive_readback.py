@@ -31,7 +31,6 @@ EXPECTED_PROVIDER_STATUS = {
     },
     "persona-us-equity": {
         "ibkr": "read_ok",
-        "stooq": "read_ok",
         "sec_edgar": "read_ok",
         "finra": "read_ok",
         "fred": "read_ok",
@@ -40,6 +39,15 @@ EXPECTED_PROVIDER_STATUS = {
     },
     "persona-crypto": {
         "coingecko": "read_ok",
+    },
+}
+
+OPTIONAL_PROVIDER_STATUS = {
+    # Newer BFF source maps may keep Stooq as source-ingest-only health proof
+    # while exposing Yahoo as the public price provider key. Source-ingest
+    # health below still requires us-stooq-daily-ohlcv to be ok.
+    "persona-us-equity": {
+        "stooq": "read_ok",
     },
 }
 
@@ -107,6 +115,10 @@ def verify_bff(base_url: str, token: str) -> dict[str, Any]:
         for provider, expected_status in expected.items():
             actual = providers.get(provider)
             if actual != expected_status:
+                failures.append(f"{persona_id}.{provider}: expected {expected_status}, got {actual}")
+        for provider, expected_status in OPTIONAL_PROVIDER_STATUS.get(persona_id, {}).items():
+            actual = providers.get(provider)
+            if actual is not None and actual != expected_status:
                 failures.append(f"{persona_id}.{provider}: expected {expected_status}, got {actual}")
 
     if failures:
