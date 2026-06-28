@@ -35045,6 +35045,32 @@ async def bff_management_nl_ask(
         )
         return JSONResponse(status_code=202, content=_management_json_clone(cached))
 
+    if _request_dry_run_requested():
+        return _dry_run_success_response(
+            {
+                "status": "accepted",
+                "lifecycleStatus": "accepted",
+                "lifecycle_status": "accepted",
+                "sessionId": str(payload.get("sessionId") or payload.get("session_id") or ""),
+                "session_id": str(payload.get("session_id") or payload.get("sessionId") or ""),
+                "message_id": "",
+                "traceId": str(payload.get("traceId") or payload.get("trace_id") or ""),
+                "trace_id": str(payload.get("trace_id") or payload.get("traceId") or ""),
+                "question": question,
+                "focus": focus,
+                "sources": [],
+                "confidence": "dry_run",
+            },
+            status_code=202,
+            idempotency_key=resolved_key,
+            evidence_kind="ManagementNLQuery",
+            extra_meta={
+                "status": "accepted",
+                "route": "POST /bff/management/nl/ask",
+                "dry_run_mode": "compact_receipt",
+            },
+        )
+
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
