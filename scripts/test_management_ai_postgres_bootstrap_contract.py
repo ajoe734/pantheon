@@ -89,6 +89,8 @@ def test_nonprod_deploy_removes_stale_paper_runtime_name_conflict_before_root_bu
     assert 'container="pantheon-pantheon-paper-runtime-1"' in deploy
     assert 'com.docker.compose.project' in deploy
     assert 'com.docker.compose.service' in deploy
+    assert '[[ -n "$project" && "$project" != "pantheon" ]]' in deploy
+    assert '[[ -n "$service" && "$service" != "pantheon-paper-runtime" ]]' in deploy
     assert 'refusing to remove ${container}; labels project=' in deploy
     assert 'docker rm -f "$container_id"' in deploy
     assert (
