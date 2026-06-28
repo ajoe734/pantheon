@@ -23,11 +23,11 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
         "FinMind",
         "MOPS",
         "SEC EDGAR",
-        "Stooq",
         "TAIFEX",
         "TDCC",
         "TEJ",
         "TWSE/TPEx",
+        "Yahoo Finance",
         "Yahoo Taiwan Stock",
     } <= providers
     assert payload["summary"]["data_source_count"] == 17
@@ -62,7 +62,7 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert "template-us-sec-edgar-filings" in templates
     assert "template-us-fred-macro" in templates
     assert "template-us-finra-short-sale" in templates
-    assert "template-us-stooq-daily-ohlcv" in templates
+    assert "template-us-yahoo-daily-ohlcv" in templates
     assert "template-crypto-coingecko-spot" in templates
     assert "template-us-polygon-daily-ohlcv" in templates
     assert "template-us-alpha-vantage-daily-ohlcv" in templates
@@ -91,12 +91,13 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert templates["template-us-fred-macro"]["fetch"]["adapter"] == (
         "FredMacroSeriesAdapter.records_from_observations_payload"
     )
+    assert templates["template-us-fred-macro"]["auth"]["secret_ref_id"] == "env://FRED_API_KEY"
     assert templates["template-us-fred-macro"]["fetch"]["symbol_scope"] == "global_no_symbol_filter"
     assert templates["template-us-finra-short-sale"]["fetch"]["expected_publication_delay_hours"] == 26
-    assert templates["template-us-stooq-daily-ohlcv"]["lifecycle_state"] == "disabled"
-    assert templates["template-us-stooq-daily-ohlcv"]["fetch"]["disabled_reason"] == (
-        "stooq_endpoint_unverified_2026-06-11"
-    )
+    yahoo_template = templates["template-us-yahoo-daily-ohlcv"]
+    assert yahoo_template["lifecycle_state"] == "candidate"
+    assert yahoo_template["fetch"]["adapter"] == "YahooUsEquityDailyAdapter.records_from_chart_payload"
+    assert yahoo_template["fetch"]["replaces_connector_id"] == "us-stooq-daily-ohlcv"
     coingecko_template = templates["template-crypto-coingecko-spot"]
     assert coingecko_template["auth"]["credential_mode"] == "keyless_public_api"
     assert coingecko_template["fetch"]["adapter"] == "CoinGeckoSpotMarketAdapter.records_from_payload"
@@ -156,4 +157,5 @@ def test_catalog_embeds_active_universe_scheduling_policy() -> None:
     assert "tw-taifex-futures-options-chip" in policy["summary"]["candidate_detail_connector_ids"]
     assert "tw-tej-research-datasets" in policy["summary"]["candidate_detail_connector_ids"]
     assert "crypto-coingecko-spot" in policy["summary"]["candidate_detail_connector_ids"]
+    assert "us-yahoo-daily-ohlcv" in policy["summary"]["archive_baseline_connector_ids"]
     assert payload["summary"]["active_universe_rule_count"] == policy["summary"]["rule_count"]

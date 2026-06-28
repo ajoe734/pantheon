@@ -536,7 +536,7 @@ class SecEdgarFilingAdapter(SourceConnectorProvider):
 
 @dataclass(frozen=True)
 class FredMacroSeriesAdapter(SourceConnectorProvider):
-    """FRED macro series adapter with API-key mode and public CSV fallback."""
+    """FRED macro series adapter with required API-key mode and CSV fixture parsing."""
 
     connector_id: str = FRED_CONNECTOR_ID
     secret_ref_id: str = "env://FRED_API_KEY"
@@ -551,9 +551,9 @@ class FredMacroSeriesAdapter(SourceConnectorProvider):
             source_type="macro",
             provider="FRED",
             license_scope="public_macro_reference",
-            auth_type=AuthType.NONE,
+            auth_type=AuthType.API_KEY,
             supported_modes=(ConnectorMode.BATCH,),
-            auth_policy=AuthPolicy(auth_type=AuthType.NONE),
+            auth_policy=AuthPolicy(auth_type=AuthType.API_KEY, secret_ref=self.secret_ref_id),
             license_policy=LicensePolicy(
                 license_scope="public_macro_reference",
                 allowed_use=("research_data", "backtest_data", "feature_generation", "monitoring", "audit_evidence"),
@@ -581,8 +581,10 @@ class FredMacroSeriesAdapter(SourceConnectorProvider):
                 "normalized_datasets": ["macro_fred_observation"],
                 "schema_hash": FRED_OBSERVATION_SCHEMA_HASH,
                 "symbol_scope": "global_no_symbol_filter",
-                "optional_secret_ref_id": self.secret_ref_id,
-                "csv_fallback_url": FRED_CSV_URL,
+                "secret_ref_id": self.secret_ref_id,
+                "required_secret_ref_id": self.secret_ref_id,
+                "keyed_api_url": FRED_API_URL,
+                "csv_fixture_parser_supported": True,
                 "starter_series": [dict(item) for item in self.starter_series],
                 "feature_targets": ["features/macro_regime_features"],
                 **dict(self.connector_metadata),
@@ -597,7 +599,10 @@ class FredMacroSeriesAdapter(SourceConnectorProvider):
                 "secret_ref_id": self.secret_ref_id,
                 "max_records": self.max_records,
             },
-            "request": {},
+            "request": {
+                "series_ids": [str(item["series_id"]).upper() for item in self.starter_series],
+                "fetch_mode": "keyed_api",
+            },
             "max_records": self.max_records,
             "next_watermark": None,
             "dataset": "macro_fred_observation",
@@ -605,10 +610,22 @@ class FredMacroSeriesAdapter(SourceConnectorProvider):
             "starter_series": [dict(item) for item in self.starter_series],
         }
 
+    def secret_env_name(self) -> str:
+        if self.secret_ref_id.startswith("env://"):
+            return self.secret_ref_id.removeprefix("env://")
+        return "FRED_API_KEY"
+
+    def resolve_api_key(self) -> str | None:
+        return os.getenv(self.secret_env_name(), "").strip() or None
+
     def fetch_api_observations(self, series_id: str, *, api_key: str | None = None) -> Mapping[str, Any]:
+        key = api_key or self.resolve_api_key()
+        if not key:
+            raise SourceEvidenceError(
+                f"FRED API fetch requires {self.secret_env_name()} via {self.secret_ref_id}; none found in environment"
+            )
         params = {"series_id": series_id, "file_type": "json"}
-        if api_key:
-            params["api_key"] = api_key
+        params["api_key"] = key
         url = f"{FRED_API_URL}?{urllib.parse.urlencode(params)}"
         return _request_json(url, user_agent="pantheon-source-ingest/0.1")
 
@@ -801,6 +818,27 @@ class FinraShortSaleAdapter(SourceConnectorProvider):
     def short_volume_url(self, trade_date: str) -> str:
         compact = trade_date.replace("-", "")
         return FINRA_SHORT_VOLUME_URL.format(date=compact)
+
+    def default_trade_date(self, *, now: datetime | None = None) -> str:
+        current = now or datetime.now(timezone.utc)
+        candidate = (current - timedelta(hours=self.expected_publication_delay_hours)).date()
+        while candidate.weekday() >= 5:
+            candidate = candidate - timedelta(days=1)
+        return candidate.isoformat()
+
+    def candidate_trade_dates(self, *, start_date: str | None = None, count: int = 5) -> tuple[str, ...]:
+        if count < 1:
+            raise SourceEvidenceError("FINRA candidate date count must be positive")
+        if start_date:
+            candidate = datetime.fromisoformat(str(start_date).replace("Z", "+00:00")[:10]).date()
+        else:
+            candidate = datetime.fromisoformat(self.default_trade_date()).date()
+        dates: list[str] = []
+        while len(dates) < count:
+            if candidate.weekday() < 5:
+                dates.append(candidate.isoformat())
+            candidate = candidate - timedelta(days=1)
+        return tuple(dates)
 
     def fetch_short_volume_text(self, trade_date: str) -> str:
         return _request_text(self.short_volume_url(trade_date))
