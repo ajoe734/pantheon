@@ -144,6 +144,24 @@ def submit_paper_order(req: PaperOrderRequest) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
 
 
+@app.get("/api/broker/quote-debug")
+def quote_debug() -> JSONResponse:
+    """Read-only streaming quote diagnostics: session health, subscription list
+    (報價列), live tick price map, reconnect count. Used to verify the live
+    tick feed during market hours."""
+    mgr = getattr(_QUOTE_PRICER, "_streaming", None)
+    if mgr is None:
+        return JSONResponse(status_code=200, content={"streaming": "disabled"})
+    return JSONResponse(status_code=200, content={
+        "streaming": "enabled",
+        "session_ok": bool(mgr.session_ok),
+        "quote_list": mgr.quote_list,
+        "quote_list_size": len(mgr.quote_list),
+        "reconnect_count": mgr.reconnect_count,
+        "prices": mgr.prices_snapshot(),
+    })
+
+
 @app.get("/api/broker/paper/orders")
 def list_paper_orders(
     capital_pool_id: Optional[str] = None,

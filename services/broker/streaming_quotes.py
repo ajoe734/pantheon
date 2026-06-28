@@ -254,3 +254,10 @@ class StreamingQuoteManager:
     @property
     def reconnect_count(self) -> int:
         return self._reconnect_count
+
+    @property
+    def session_ok(self) -> bool:
+        return self._session_ok
+
+    def prices_snapshot(self) -> dict:
+        return {k: dict(v) for k, v in self._prices.items()}
