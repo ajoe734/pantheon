@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-06-28T12:44:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare SRCLIVE-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SRCLIVE-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC SRCLIVE / Phase 2",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SRCLIVE-002",
+      "SRCLIVE-003"
+    ],
+    "artifacts": [
+      "support/sidecars/SRCLIVE-004/SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Done: support-only SRCLIVE-004 BFF/frontend handoff follow-up packet reviewed, PR #2534 merged, and closeout brief finalized. Parent SRCLIVE-004 remains responsible for contract tests and live e2e after SRCLIVE-001 unblocks.",
+    "last_update": "2026-06-28T12:44:57Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SRCLIVE-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：FOLLOWUP-2 正確反映 SRCLIVE-004 當前 BFF/frontend handoff；PR #2531 已 merge 到 dev，diff 只含 task brief 與 support packet，SRCLIVE-002/003 已 done，SRCLIVE-001 仍 blocked，packet 保持 support-only 且未改 canonical/runtime/source-ingest/frontend。驗證：git diff --check 41b2e075^1 41b2e075；python3 -m pytest services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py -q -> 14 passed, 4 warnings",
+      "後續：owner Codex2 可依 closeout finalization 把 review_approved task 正式收尾為 done；parent SRCLIVE-004 可先做合約測試，但 live e2e closeout 仍需等待 TW activation proof"
+    ],
+    "review_file": "support/sidecars/SRCLIVE-004/SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-28T12:44:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/srclive-004-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "afd8fd879030f09524dde2743d6e73cadcb73a7a",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b5d651a3061cc0562d333e45622f81004bb8531a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "PR #2531 merged into dev at 41b2e07570d403ad60833f307a9001c0a7d38137; follow-up packet is support-only at support/sidecars/SRCLIVE-004/SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md. Checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator. Please review; no canonical/runtime/source-ingest/frontend changes were made.",
+      "status": "done",
+      "created_at": "2026-06-28T12:36:48Z",
+      "resolved_at": "2026-06-28T12:39:24Z"
+    },
+    {
+      "task_id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Sidecar follow-up packet approved; support-only SRCLIVE-004 BFF/frontend handoff returned to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-28T12:39:24Z",
+      "resolved_at": "2026-06-28T12:44:58Z"
+    }
+  ],
+  "blockers": []
+}
