@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -1159,10 +1160,30 @@ def sse_request_used_bearer_auth(item: Any) -> bool:
     return headers.get("Authorization") == "present" and headers.get("Cookie") == "absent"
 
 
-def sse_attempts_have_lineage(attempts: list[Any]) -> bool:
-    if not attempts:
+def sse_attempt_url_matches_channel(url_path: Any, expected_channel: str) -> bool:
+    text = str(url_path or "")
+    if not text:
         return False
-    for attempt in attempts:
+    try:
+        parsed = urllib.parse.urlparse(text)
+    except Exception:
+        return False
+    query = urllib.parse.parse_qs(parsed.query)
+    return parsed.path == "/bff/events/stream" and query.get("channel") == [expected_channel]
+
+
+def sse_attempts_have_lineage(
+    attempts: list[Any],
+    *,
+    cursor_ids: list[str],
+    expected_ids: list[str],
+    observed_ids: list[str],
+    channel: str,
+    min_attempts: int,
+) -> bool:
+    if len(attempts) < min_attempts or len(cursor_ids) < min_attempts:
+        return False
+    for index, attempt in enumerate(attempts[:min_attempts]):
         if not isinstance(attempt, dict):
             return False
         lineage = attempt.get("lineage_checks")
@@ -1170,10 +1191,26 @@ def sse_attempts_have_lineage(attempts: list[Any]) -> bool:
             return False
         if any(value is not True for value in lineage.values()):
             return False
-        expected = str(attempt.get("expected_replayed_event_id") or "")
-        observed = str(attempt.get("observed_replayed_event_id") or "")
-        cursor = str(attempt.get("cursor_event_id") or "")
+        cursor = cursor_ids[index]
+        expected = expected_ids[index] if index < len(expected_ids) else ""
+        observed = observed_ids[index] if index < len(observed_ids) else ""
+        request_headers = attempt.get("request_headers") if isinstance(attempt.get("request_headers"), dict) else {}
+        response_headers = attempt.get("response_headers") if isinstance(attempt.get("response_headers"), dict) else {}
         if not cursor or not expected or observed != expected:
+            return False
+        if index > 0 and cursor != expected_ids[index - 1]:
+            return False
+        if attempt.get("cursor_event_id") != cursor:
+            return False
+        if attempt.get("expected_replayed_event_id") != expected or attempt.get("observed_replayed_event_id") != observed:
+            return False
+        if request_headers.get("Last-Event-ID") != cursor:
+            return False
+        if request_headers.get("Authorization") != "present" or request_headers.get("Cookie") != "absent":
+            return False
+        if response_headers.get("X-SSE-Channel") != channel or response_headers.get("X-SSE-Replay-Supported") != "true":
+            return False
+        if not sse_attempt_url_matches_channel(attempt.get("url_path"), channel):
             return False
         if attempt.get("ok") is not True or attempt.get("replayed_expected_event") is not True:
             return False
@@ -1189,6 +1226,13 @@ def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
     attempts = as_list(bearer_reconnect.get("attempts"))
     expected_ids = [str(item) for item in as_list(bearer_reconnect.get("expected_event_ids")) if item]
     observed_ids = [str(item) for item in as_list(bearer_reconnect.get("observed_event_ids")) if item]
+    cursor_ids = [str(item) for item in as_list(bearer_reconnect.get("cursor_event_ids")) if item]
+    requirements = (
+        payload.get("strict_live_evidence_requirements")
+        if isinstance(payload.get("strict_live_evidence_requirements"), dict)
+        else {}
+    )
+    channel = str(payload.get("channel") or "approval")
     soak_duplicates = as_list(blocks.get("duplicate_event_ids"))
     reconnect_duplicates = as_list(bearer_reconnect.get("duplicate_event_ids"))
     soak_missing = as_list(bearer_soak.get("missing_expected_event_ids"))
@@ -1196,12 +1240,35 @@ def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
 
     strict = payload.get("strict_live_evidence") is True
     seconds = safe_float(soak.get("seconds"))
-    min_heartbeats = max(1, safe_int(soak.get("min_heartbeats") or bearer_soak.get("min_heartbeats")))
+    min_soak_seconds = max(75.0, safe_float(requirements.get("min_soak_seconds")))
+    min_heartbeats = max(
+        1,
+        safe_int(requirements.get("min_heartbeats")),
+        safe_int(soak.get("min_heartbeats") or bearer_soak.get("min_heartbeats")),
+    )
+    min_reconnect_attempts = max(
+        5,
+        safe_int(requirements.get("min_reconnect_attempts")),
+        safe_int(requirements.get("requested_reconnect_attempts")),
+    )
     heartbeat_count = safe_int(blocks.get("heartbeat_count"))
     attempt_count = safe_int(bearer_reconnect.get("attempt_count") or len(attempts))
-    attempt_details_ok = attempt_count >= 5 and len(attempts) >= 5
-    attempt_lineage_ok = sse_attempts_have_lineage(attempts)
-    observed_sequence_ok = len(observed_ids) >= 5 and observed_ids == expected_ids
+    attempt_details_ok = attempt_count >= min_reconnect_attempts and len(attempts) >= min_reconnect_attempts
+    attempt_lineage_ok = sse_attempts_have_lineage(
+        attempts,
+        cursor_ids=cursor_ids,
+        expected_ids=expected_ids,
+        observed_ids=observed_ids,
+        channel=channel,
+        min_attempts=min_reconnect_attempts,
+    )
+    observed_unique_count = len(set(observed_ids))
+    observed_sequence_ok = (
+        len(observed_ids) >= min_reconnect_attempts
+        and observed_unique_count == len(observed_ids)
+        and len(expected_ids) >= min_reconnect_attempts
+        and expected_ids[: len(observed_ids)] == observed_ids
+    )
     cursors_advanced = bearer_reconnect.get("cursors_advanced") is True
     duplicates = len(soak_duplicates) + len(reconnect_duplicates)
     missing_replay = len(soak_missing) + len(reconnect_missing)
@@ -1210,19 +1277,19 @@ def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
     auth_source_ok, auth_source_note, _token_hash_ok = sse_auth_source_check(payload)
     soak_bearer_auth_ok = sse_request_used_bearer_auth(bearer_soak)
     bearer_attempt_auth_count = sum(1 for attempt in attempts if sse_request_used_bearer_auth(attempt))
-    bearer_attempt_auth_ok = attempt_count >= 5 and bearer_attempt_auth_count >= 5
+    bearer_attempt_auth_ok = attempt_count >= min_reconnect_attempts and bearer_attempt_auth_count >= min_reconnect_attempts
 
     detail_ok = (
         strict
         and auth_source_ok
-        and seconds >= 75
+        and seconds >= min_soak_seconds
         and bearer_soak_ok
         and soak_bearer_auth_ok
         and heartbeat_count >= min_heartbeats
         and duplicates == 0
         and missing_replay == 0
         and bearer_reconnect_ok
-        and attempt_count >= 5
+        and attempt_count >= min_reconnect_attempts
         and attempt_details_ok
         and bearer_attempt_auth_ok
         and attempt_lineage_ok
@@ -1230,11 +1297,11 @@ def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
         and cursors_advanced
     )
     note = (
-        f"strict:{strict} {auth_source_note} soak:{seconds:g}/75 "
+        f"strict:{strict} {auth_source_note} soak:{seconds:g}/{min_soak_seconds:g} "
         f"soakBearerAuth:{soak_bearer_auth_ok} heartbeat:{heartbeat_count}/{min_heartbeats} "
-        f"reconnect:{attempt_count}/5 attemptDetails:{attempt_details_ok} "
-        f"bearerAttemptAuth:{bearer_attempt_auth_count}/5 attemptLineage:{attempt_lineage_ok} "
-        f"observed:{len(observed_ids)}/5 observedSequence:{observed_sequence_ok} duplicates:{duplicates} "
+        f"reconnect:{attempt_count}/{min_reconnect_attempts} attemptDetails:{attempt_details_ok} "
+        f"bearerAttemptAuth:{bearer_attempt_auth_count}/{min_reconnect_attempts} attemptLineage:{attempt_lineage_ok} "
+        f"observed:{len(observed_ids)}/{min_reconnect_attempts} observedSequence:{observed_sequence_ok} duplicates:{duplicates} "
         f"missingReplay:{missing_replay} cursorsAdvanced:{cursors_advanced} "
         f"soakOk:{bearer_soak_ok} reconnectOk:{bearer_reconnect_ok}"
     )
