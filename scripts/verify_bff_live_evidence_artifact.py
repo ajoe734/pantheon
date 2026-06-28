@@ -21,6 +21,8 @@ CURRENT_RUN_OUTPUT_SCOPE = ".lovable/audits/current-run"
 ALLOWED_LIVE_EVIDENCE_ENVIRONMENTS = {"dev", "staging-live"}
 ALLOWED_DEV_REFS = {"dev", "refs/heads/dev"}
 GIT_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z", re.IGNORECASE)
+REQUIRED_STRICT_RUN_KEYS = ("github_environment", "github_run_id", "github_run_attempt", "ref", "sha")
+OPTIONAL_STRICT_RUN_KEYS = ("github_workflow", "github_job", "repository")
 SECRET_LEAK_PATTERNS = (
     ("raw_bearer", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
@@ -523,6 +525,7 @@ def preflight_item(root: Path) -> dict[str, str]:
         provenance_failures.append("ref")
     if not GIT_SHA_RE.fullmatch(sha):
         provenance_failures.append("sha")
+    provenance_failures.extend(preflight_run_provenance_failures(payload))
     if provenance_failures:
         return status_item(
             "fail",
@@ -581,6 +584,81 @@ def preflight_item(root: Path) -> dict[str, str]:
             parts.append(f"invalid:{invalid_text}")
         return status_item("fail", "Strict preflight is not blocking live probes", evidence=rel(file_path, root), note=" ".join(parts))
     return status_item("pass", "Strict preflight is not blocking live probes", evidence=rel(file_path, root))
+
+
+def preflight_run_provenance_failures(payload: dict[str, Any]) -> list[str]:
+    run = payload.get("strict_live_evidence_run")
+    if not isinstance(run, dict):
+        return ["strict_live_evidence_run"]
+    failures: list[str] = []
+    for key in REQUIRED_STRICT_RUN_KEYS:
+        if not str(run.get(key) or ""):
+            failures.append(f"strict_live_evidence_run.{key}")
+    expected = {
+        "github_environment": str(payload.get("github_environment") or ""),
+        "ref": str(payload.get("ref") or ""),
+        "sha": str(payload.get("sha") or ""),
+    }
+    for key, value in expected.items():
+        if str(run.get(key) or "") != value and f"strict_live_evidence_run.{key}" not in failures:
+            failures.append(f"strict_live_evidence_run.{key}")
+    return failures
+
+
+def preflight_payload(root: Path) -> dict[str, Any] | None:
+    file_path = find_file(root, PREFLIGHT_JSON_NAME)
+    payload = read_json(file_path) if file_path else None
+    return payload if isinstance(payload, dict) else None
+
+
+def normalized_url(value: Any) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def strict_run_provenance_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
+    preflight = preflight_payload(root)
+    if not isinstance(preflight, dict):
+        return False, "runProvenance:preflight-missing"
+    run = payload.get("strict_live_evidence_run")
+    failures: list[str] = []
+    if not isinstance(run, dict):
+        failures.append("strict_live_evidence_run")
+        run = {}
+
+    preflight_run = (
+        preflight.get("strict_live_evidence_run")
+        if isinstance(preflight.get("strict_live_evidence_run"), dict)
+        else {}
+    )
+    expected = {
+        "github_environment": str(preflight.get("github_environment") or ""),
+        "ref": str(preflight.get("ref") or ""),
+        "sha": str(preflight.get("sha") or ""),
+    }
+    for key in (*REQUIRED_STRICT_RUN_KEYS, *OPTIONAL_STRICT_RUN_KEYS):
+        value = str(preflight_run.get(key) or "")
+        if value:
+            expected[key] = value
+
+    for key in REQUIRED_STRICT_RUN_KEYS:
+        if not expected.get(key):
+            failures.append(f"preflight.{key}")
+        if not str(run.get(key) or ""):
+            failures.append(key)
+
+    for key, value in expected.items():
+        if value and str(run.get(key) or "") != value and key not in failures:
+            failures.append(key)
+
+    preflight_url = normalized_url(preflight.get("target_url"))
+    payload_url = normalized_url(payload.get("target_url"))
+    if not preflight_url or payload_url != preflight_url:
+        failures.append("target_url")
+
+    if failures:
+        unique = list(dict.fromkeys(failures))
+        return False, "runProvenance:" + ",".join(unique[:8])
+    return True, "runProvenance:match targetUrl:match"
 
 
 def allowed_current_run_artifact_path(path: Path, root: Path) -> bool:
@@ -1337,23 +1415,24 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
     dry_run_detail_ok, dry_run_detail_note = dry_run_detail_check(dry_run)
     approval_detail_ok, approval_detail_note = approval_race_detail_check(approval_race)
     two_man_detail_ok, two_man_detail_note = two_man_race_detail_check(two_man_race)
-    base = strict and includes
+    provenance_ok, provenance_note = strict_run_provenance_check(root, payload)
+    base = strict and includes and provenance_ok
     return payload, {
         "rbac_matrix": (
             base and rbac_detail_ok,
-            f"strict:{strict} includes:{includes} {rbac_detail_note}",
+            f"strict:{strict} includes:{includes} {provenance_note} {rbac_detail_note}",
         ),
         "dry_run_no_side_effects": (
             base and dry_run_count >= 7 and dry_run_detail_ok and summary.get("live_capital_side_effects") is False,
-            f"strict:{strict} includes:{includes} dryRun:{dry_run_count}/7 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
+            f"strict:{strict} includes:{includes} {provenance_note} dryRun:{dry_run_count}/7 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
         ),
         "approval_race": (
             base and approval_count == 1 and summary.get("approval_race_bounded") is True and approval_detail_ok,
-            f"strict:{strict} includes:{includes} approvalRace:{approval_count}/1 bounded:{summary.get('approval_race_bounded') is True} {approval_detail_note}",
+            f"strict:{strict} includes:{includes} {provenance_note} approvalRace:{approval_count}/1 bounded:{summary.get('approval_race_bounded') is True} {approval_detail_note}",
         ),
         "two_man_race": (
             base and two_man_count == 1 and summary.get("two_man_race_operator_scoped") is True and two_man_detail_ok,
-            f"strict:{strict} includes:{includes} twoManRace:{two_man_count}/1 operatorScoped:{summary.get('two_man_race_operator_scoped') is True} {two_man_detail_note}",
+            f"strict:{strict} includes:{includes} {provenance_note} twoManRace:{two_man_count}/1 operatorScoped:{summary.get('two_man_race_operator_scoped') is True} {two_man_detail_note}",
         ),
     }
 
@@ -1449,7 +1528,7 @@ def sse_attempts_have_lineage(
     return True
 
 
-def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
+def sse_detail_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
     soak = payload.get("soak") if isinstance(payload.get("soak"), dict) else {}
     bearer_soak = soak.get("bearer_polyfill") if isinstance(soak.get("bearer_polyfill"), dict) else {}
     blocks = bearer_soak.get("blocks") if isinstance(bearer_soak.get("blocks"), dict) else {}
@@ -1510,9 +1589,11 @@ def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
     soak_bearer_auth_ok = sse_request_used_bearer_auth(bearer_soak)
     bearer_attempt_auth_count = sum(1 for attempt in attempts if sse_request_used_bearer_auth(attempt))
     bearer_attempt_auth_ok = attempt_count >= min_reconnect_attempts and bearer_attempt_auth_count >= min_reconnect_attempts
+    provenance_ok, provenance_note = strict_run_provenance_check(root, payload)
 
     detail_ok = (
         strict
+        and provenance_ok
         and auth_source_ok
         and seconds >= min_soak_seconds
         and bearer_soak_ok
@@ -1529,7 +1610,7 @@ def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
         and cursors_advanced
     )
     note = (
-        f"strict:{strict} {auth_source_note} soak:{seconds:g}/{min_soak_seconds:g} "
+        f"strict:{strict} {provenance_note} {auth_source_note} soak:{seconds:g}/{min_soak_seconds:g} "
         f"soakBearerAuth:{soak_bearer_auth_ok} heartbeat:{heartbeat_count}/{min_heartbeats} "
         f"reconnect:{attempt_count}/{min_reconnect_attempts} attemptDetails:{attempt_details_ok} "
         f"bearerAttemptAuth:{bearer_attempt_auth_count}/{min_reconnect_attempts} attemptLineage:{attempt_lineage_ok} "
@@ -1547,7 +1628,7 @@ def sse_item(root: Path, summary: Any) -> dict[str, str]:
     payload = read_json(file_path) if file_path else None
     if not isinstance(payload, dict):
         return status_item(summary_status, CHECK_LABELS["sse_reconnect_soak"], evidence=evidence, note=summary_note or "SSE JSON missing")
-    raw_ok, raw_note = sse_detail_check(payload)
+    raw_ok, raw_note = sse_detail_check(root, payload)
     if summary_status != "pass":
         return status_item(summary_status, CHECK_LABELS["sse_reconnect_soak"], evidence=evidence, note=summary_note or raw_note)
     if not raw_ok:

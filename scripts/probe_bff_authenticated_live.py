@@ -31,6 +31,19 @@ if str(REPO_ROOT) not in sys.path:
 DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
 
 
+def strict_live_evidence_run() -> dict[str, str]:
+    return {
+        "github_environment": os.environ.get("PANTHEON_LIVE_EVIDENCE_ENVIRONMENT", "").strip(),
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "").strip(),
+        "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "").strip(),
+        "github_workflow": os.environ.get("GITHUB_WORKFLOW", "").strip(),
+        "github_job": os.environ.get("GITHUB_JOB", "").strip(),
+        "repository": os.environ.get("GITHUB_REPOSITORY", "").strip(),
+        "ref": (os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", "")).strip(),
+        "sha": os.environ.get("GITHUB_SHA", "").strip(),
+    }
+
+
 @dataclass(frozen=True)
 class Probe:
     method: str
@@ -1493,6 +1506,7 @@ def main() -> int:
         "task_id": "BFF-LUV-AUTHED-LIVE-001",
         "generated_at": ts,
         "target_url": args.base_url.rstrip("/"),
+        "strict_live_evidence_run": strict_live_evidence_run(),
         "auth_source": auth_source,
         "rbac_auth_source": rbac_auth_source,
         "include_writes": args.include_writes,

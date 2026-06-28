@@ -65,6 +65,13 @@ def clean_env() -> dict[str, str]:
         "TWO_MAN_RACE_ID",
         "SOAK_SECONDS",
         "GITHUB_REPOSITORY",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_WORKFLOW",
+        "GITHUB_JOB",
+        "GITHUB_REF",
+        "GITHUB_REF_NAME",
+        "GITHUB_SHA",
         "PANTHEON_LIVE_EVIDENCE_ENVIRONMENT",
     ):
         env.pop(name, None)
@@ -80,6 +87,16 @@ def test_preflight_writes_missing_inputs_without_secret_values(tmp_path: Path) -
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["task_id"] == "BFF-LIVE-EVIDENCE-PREFLIGHT"
     assert payload["strict_live_evidence_preflight"] is True
+    assert payload["strict_live_evidence_run"] == {
+        "github_environment": "dev",
+        "github_run_id": "",
+        "github_run_attempt": "",
+        "github_workflow": "",
+        "github_job": "",
+        "repository": "",
+        "ref": "",
+        "sha": "",
+    }
     assert payload["target_url"] == "https://bff.example.test"
     assert payload["soak_seconds"] == "75"
     assert payload["min_soak_seconds"] == 75.0
