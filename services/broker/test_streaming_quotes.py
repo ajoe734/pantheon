@@ -4,7 +4,7 @@ from streaming_quotes import StreamingQuoteManager
 
 def _mgr():
     api = MagicMock()
-    m = StreamingQuoteManager("k", "s", api=api)
+    m = StreamingQuoteManager("k", "s", api=api, enable_keepalive=False)
     assert m.start() is True  # injected api -> registers callbacks, no login
     return m, api
 
@@ -29,7 +29,7 @@ def test_bidask_midpoint_when_no_tick():
 
 def test_quote_list_capped():
     api = MagicMock()
-    m = StreamingQuoteManager("k", "s", api=api, max_subscriptions=1)
+    m = StreamingQuoteManager("k", "s", api=api, max_subscriptions=1, enable_keepalive=False)
     m.start()
     assert m.ensure_subscribed("2330") is True
     assert m.ensure_subscribed("2317") is False  # cap reached
@@ -46,3 +46,18 @@ def test_subscribe_registers_callbacks():
     m, api = _mgr()
     assert api.set_on_tick_stk_v1_callback.called
     assert api.set_on_bidask_stk_v1_callback.called
+
+
+def test_reconnect_resubscribes_quote_list():
+    api = MagicMock()
+    m = StreamingQuoteManager("k", "s", api=api, enable_keepalive=False)
+    m.start()
+    m.ensure_subscribed("2330")
+    m.ensure_subscribed("2317")
+    assert m.quote_list == ["2317", "2330"]
+    m._on_session_down()            # broker drops the session
+    assert m._session_ok is False
+    m._reconnect()                  # keepalive would call this
+    assert m._session_ok is True
+    assert m.reconnect_count == 1
+    assert m.quote_list == ["2317", "2330"]   # entire 報價列 re-subscribed
