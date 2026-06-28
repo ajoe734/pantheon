@@ -19,7 +19,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
   - https://github.com/ajoe734/pantheon/pull/2539 - BFF overlay regression tests and initial readback verifier; merged at `87c382c779869c8920a73aa794f308c9acb8046c`.
   - https://github.com/ajoe734/pantheon/pull/2548 - source-ingest job-parameter entrypoint needed by live public-source activation; merged at `80ae5544591dad98d2fb1a25fe45fcb9f5abbb26`.
   - https://github.com/ajoe734/pantheon/pull/2554 - verifier tolerance for source-only Stooq proof; merged at `f353139ed446d97946a7745a3aaf0a5ca8a634b6`.
-- Owner closeout PR: pending from `task/SRCLIVE-004`; final PR URL is recorded in the task delivery status after merge.
+- Owner closeout PR: https://github.com/ajoe734/pantheon/pull/2557
 - Delivered implementation commits:
   - `f8ffc8e3` `SRCLIVE-004: repair readback verifier and public source fetch`
   - `b7d05568` `SRCLIVE-004: accept source ingest job parameters`
