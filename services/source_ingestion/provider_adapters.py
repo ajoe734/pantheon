@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping, Sequence
 from services.research.adapters.taiwan_market_client import MopsRouteSpec, TejTableSpec
 
 from .connectors.base import SourceConnector, SourceEvidenceError, SourceRecord
+from .connectors.crypto_coingecko import CoinGeckoSpotMarketAdapter, _coin_ids_from_symbols
 from .connectors.finmind_taiwan import (
     FinMindTaiwanBrokerBulkBackfillAdapter,
     FinMindTaiwanBrokerDailyReportAdapter,
@@ -347,6 +348,66 @@ def _stooq_daily(adapter: StooqDailyOhlcvAdapter, request: Mapping[str, Any], tr
     )
 
 
+def _coingecko_coin_ids(request: Mapping[str, Any]) -> tuple[str, ...]:
+    coin_id = str(request.get("coin_id") or request.get("id") or "").strip().lower()
+    if coin_id:
+        return (coin_id,)
+    coin_ids = tuple(str(item).strip().lower() for item in _string_list(request.get("coin_ids")) if str(item).strip())
+    if coin_ids:
+        return tuple(dict.fromkeys(coin_ids))
+    return _coin_ids_from_symbols(request.get("symbols") or request.get("symbol"))
+
+
+def _coingecko_spot(
+    adapter: CoinGeckoSpotMarketAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    coin_ids = _coingecko_coin_ids(request) or ("bitcoin",)
+    dataset = str(request.get("dataset") or "crypto_spot_ohlc_and_price")
+    vs_currency = str(request.get("vs_currency") or adapter.vs_currency)
+    days = request.get("ohlc_days") or request.get("days") or adapter.ohlc_days
+    records: list[SourceRecord] = []
+
+    if dataset in {"crypto_spot_ohlc", "crypto_spot_ohlc_and_price"}:
+        for coin_id in coin_ids:
+            payload = request.get("ohlc_payload")
+            if payload is None and dataset == "crypto_spot_ohlc":
+                payload = request.get("payload")
+            if payload is None:
+                payload = adapter.fetch_ohlc(coin_id, vs_currency=vs_currency, days=days)
+            records.extend(
+                adapter.records_from_ohlc_payload(
+                    coin_id,
+                    payload,
+                    vs_currency=vs_currency,
+                    days=days,
+                    source_url=request.get("ohlc_source_url") or request.get("source_url"),
+                    trace_id=trace_id,
+                )
+            )
+
+    if dataset in {"crypto_spot_price", "crypto_spot_ohlc_and_price"}:
+        payload = request.get("price_payload")
+        if payload is None and dataset == "crypto_spot_price":
+            payload = request.get("payload")
+        if payload is None:
+            payload = adapter.fetch_simple_price(coin_ids, vs_currency=vs_currency)
+        records.extend(
+            adapter.records_from_simple_price_payload(
+                payload,
+                coin_ids=coin_ids,
+                vs_currency=vs_currency,
+                source_url=request.get("price_source_url") or request.get("source_url"),
+                trace_id=trace_id,
+            )
+        )
+
+    if not records:
+        raise SourceEvidenceError(f"CoinGecko adapter produced no records for dataset={dataset}")
+    return tuple(records)
+
+
 def _polygon_daily(
     adapter: PolygonUsEquityDailyAdapter,
     request: Mapping[str, Any],
@@ -508,6 +569,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=StooqDailyOhlcvAdapter,
         handler=_stooq_daily,
         config_keys=("max_records", "connector_status", "disabled_reason"),
+    ),
+    "CoinGeckoSpotMarketAdapter.records_from_payload": ProviderAdapterSpec(
+        token="CoinGeckoSpotMarketAdapter.records_from_payload",
+        adapter_cls=CoinGeckoSpotMarketAdapter,
+        handler=_coingecko_spot,
+        config_keys=("api_base_url", "vs_currency", "ohlc_days", "max_records", "timeout_seconds", "user_agent"),
     ),
     "PolygonUsEquityDailyAdapter.records_from_aggs_payload": ProviderAdapterSpec(
         token="PolygonUsEquityDailyAdapter.records_from_aggs_payload",

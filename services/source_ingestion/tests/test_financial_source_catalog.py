@@ -17,6 +17,7 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
     assert payload["schema_version"] == "financial_data_source_catalog.v1"
     assert {
         "Anue Cnyes",
+        "CoinGecko",
         "FINRA",
         "FRED",
         "FinMind",
@@ -29,7 +30,7 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
         "TWSE/TPEx",
         "Yahoo Taiwan Stock",
     } <= providers
-    assert payload["summary"]["data_source_count"] == 16
+    assert payload["summary"]["data_source_count"] == 17
     assert {"Polygon", "Alpha Vantage", "IBKR", "Shioaji"} <= providers
     assert all(entry.source_kind == "data_source" for entry in entries.values())
     assert all(entry.lifecycle_state.value == "candidate" for entry in entries.values())
@@ -43,6 +44,7 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
     assert entries["ds-yahoo-tw-news-broker"].metadata["not_official_reference_truth"] is True
     assert entries["ds-anue-tw-news"].metadata["not_official_reference_truth"] is True
     assert entries["ds-anue-tw-news"].metadata["template_status"] == "candidate_not_live_ingestion_claim"
+    assert entries["ds-coingecko-crypto-spot"].metadata["order_capable_provider"] is False
 
 
 def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_sources() -> None:
@@ -61,6 +63,7 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert "template-us-fred-macro" in templates
     assert "template-us-finra-short-sale" in templates
     assert "template-us-stooq-daily-ohlcv" in templates
+    assert "template-crypto-coingecko-spot" in templates
     assert "template-us-polygon-daily-ohlcv" in templates
     assert "template-us-alpha-vantage-daily-ohlcv" in templates
     assert "template-us-ibkr-broker-readback" in templates
@@ -94,6 +97,11 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert templates["template-us-stooq-daily-ohlcv"]["fetch"]["disabled_reason"] == (
         "stooq_endpoint_unverified_2026-06-11"
     )
+    coingecko_template = templates["template-crypto-coingecko-spot"]
+    assert coingecko_template["auth"]["credential_mode"] == "keyless_public_api"
+    assert coingecko_template["fetch"]["adapter"] == "CoinGeckoSpotMarketAdapter.records_from_payload"
+    assert coingecko_template["fetch"]["order_placement_forbidden"] is True
+    assert coingecko_template["schedule"]["archive_behavior"] == "daily_price_baseline"
     tdcc_template = templates["template-tw-tdcc-shareholding-distribution"]
     assert tdcc_template["lifecycle_state"] == "disabled"
     assert tdcc_template["fetch"]["adapter_status"] == "pending_implementation"
@@ -147,4 +155,5 @@ def test_catalog_embeds_active_universe_scheduling_policy() -> None:
     assert "tw-tdcc-shareholding-distribution" in policy["summary"]["candidate_detail_connector_ids"]
     assert "tw-taifex-futures-options-chip" in policy["summary"]["candidate_detail_connector_ids"]
     assert "tw-tej-research-datasets" in policy["summary"]["candidate_detail_connector_ids"]
+    assert "crypto-coingecko-spot" in policy["summary"]["candidate_detail_connector_ids"]
     assert payload["summary"]["active_universe_rule_count"] == policy["summary"]["rule_count"]
