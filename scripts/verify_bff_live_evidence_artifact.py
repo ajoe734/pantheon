@@ -94,6 +94,9 @@ APPROVAL_RACE_SAFE_ERROR_CODES = {
     "PRECONDITION_NOT_MET",
     "APPROVAL_ALREADY_DECIDED",
 }
+RACE_TIMING_PROOF = "monotonic_ms_relative_to_race_start"
+RACE_MAX_START_SKEW_MS = 1000.0
+RACE_TIMING_LINK_TOLERANCE_MS = 2.0
 DRY_RUN_META_EXPECTATIONS = {
     "dry-run-strategy-create": {
         "kind": "dry_run_preview_meta",
@@ -1022,6 +1025,73 @@ def extracted_value(result: dict[str, Any], path: tuple[str, ...]) -> Any:
     return extracted.get(".".join(path))
 
 
+def timing_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def race_concurrency_detail(race: dict[str, Any], results: list[Any]) -> tuple[bool, str, list[str]]:
+    concurrency = race.get("concurrency") if isinstance(race.get("concurrency"), dict) else {}
+    failures: list[str] = []
+    if not concurrency:
+        return False, "raceTiming:missing", ["race-timing-missing"]
+    if concurrency.get("timing_proof") != RACE_TIMING_PROOF:
+        failures.append("race-timing-proof")
+    if concurrency.get("concurrent") is not True:
+        failures.append("race-concurrent")
+    if safe_int(concurrency.get("actor_count")) != 2:
+        failures.append("race-actor-count")
+
+    actor_timings: list[tuple[str, float, float]] = []
+    for index, item in enumerate(results):
+        if not isinstance(item, dict):
+            continue
+        actor = str(item.get("actor_label") or "")
+        timing = item.get("race_timing") if isinstance(item.get("race_timing"), dict) else {}
+        start_ms = timing_number(timing.get("start_ms"))
+        end_ms = timing_number(timing.get("end_ms"))
+        duration_ms = timing_number(timing.get("duration_ms"))
+        if actor not in {"a", "b"}:
+            failures.append(f"{index}:timing-actor")
+            continue
+        if start_ms is None or end_ms is None or duration_ms is None:
+            failures.append(f"{index}:timing-missing")
+            continue
+        if start_ms < 0 or end_ms < start_ms or duration_ms < 0:
+            failures.append(f"{index}:timing-window")
+            continue
+        if abs((end_ms - start_ms) - duration_ms) > RACE_TIMING_LINK_TOLERANCE_MS:
+            failures.append(f"{index}:timing-duration-link")
+        actor_timings.append((actor, start_ms, end_ms))
+
+    if len(actor_timings) != 2 or {actor for actor, _start, _end in actor_timings} != {"a", "b"}:
+        failures.append("race-timing-actors")
+        return False, f"raceTiming:{len(actor_timings)}/2", failures
+
+    starts = [start for _actor, start, _end in actor_timings]
+    ends = [end for _actor, _start, end in actor_timings]
+    start_skew_ms = max(starts) - min(starts)
+    overlap_ms = min(ends) - max(starts)
+    if start_skew_ms > RACE_MAX_START_SKEW_MS:
+        failures.append("timing-start-skew")
+    if overlap_ms < 0:
+        failures.append("timing-overlap")
+
+    recorded_start_skew = timing_number(concurrency.get("start_skew_ms"))
+    recorded_overlap = timing_number(concurrency.get("overlap_ms"))
+    if recorded_start_skew is None or abs(recorded_start_skew - start_skew_ms) > RACE_TIMING_LINK_TOLERANCE_MS:
+        failures.append("timing-start-skew-link")
+    if recorded_overlap is None or abs(recorded_overlap - overlap_ms) > RACE_TIMING_LINK_TOLERANCE_MS:
+        failures.append("timing-overlap-link")
+
+    note = (
+        f"raceTiming:{len(actor_timings)}/2 concurrent:{concurrency.get('concurrent')} "
+        f"startSkewMs:{start_skew_ms:.1f}/{RACE_MAX_START_SKEW_MS:.0f} overlapMs:{overlap_ms:.1f}"
+    )
+    return not failures, note, failures
+
+
 def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     source_hashes, source_ok, source_note = race_token_hashes(race)
     results = as_list(race.get("results"))
@@ -1038,6 +1108,8 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     safe_error_count = 0
     transport_failures = 0
     failures: list[str] = []
+    timing_ok, timing_note, timing_failures = race_concurrency_detail(race, results)
+    failures.extend(timing_failures)
 
     for index, item in enumerate(results):
         if not isinstance(item, dict):
@@ -1106,6 +1178,7 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
         and race.get("duplicate_winners") is False
         and idempotency_distinct
         and top_counts_ok
+        and timing_ok
         and not failures
     )
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
@@ -1114,7 +1187,7 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
         f"bearerLinks:{bearer_links}/2 accepted:{accepted_count}/1 safeErrors:{safe_error_count}/1 "
         f"transportFailures:{transport_failures}/0 duplicateWinners:{race.get('duplicate_winners')} "
         f"idempotencyDistinct:{idempotency_distinct} topCounts:{top_counts_ok} "
-        f"family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
+        f"{timing_note} family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
     )
     return detail_ok, note
 
@@ -1138,6 +1211,8 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     replay_proofs = 0
     transport_failures = 0
     failures: list[str] = []
+    timing_ok, timing_note, timing_failures = race_concurrency_detail(race, results)
+    failures.extend(timing_failures)
 
     for index, item in enumerate(results):
         if not isinstance(item, dict):
@@ -1218,6 +1293,7 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
         and distinct_signatures
         and distinct_commands
         and top_counts_ok
+        and timing_ok
         and not failures
     )
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
@@ -1227,7 +1303,7 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
         f"replayProofs:{replay_proofs}/2 sharedIdempotency:{shared_idempotency} "
         f"distinctSignatures:{len(signature_hashes)}/2 distinctCommands:{len(set(command_ids))}/2 "
         f"transportFailures:{transport_failures}/0 topCounts:{top_counts_ok} "
-        f"family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
+        f"{timing_note} family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
     )
     return detail_ok, note
 
