@@ -66,6 +66,7 @@ BEARER_SHAPE_REQUIRED_SOURCES = (
 MIN_BEARER_SHAPE_TOKEN_LENGTH = 12
 RBAC_READ_RESOURCES = ("bff-strategies", "bff-ranking-formulas", "bff-agora-signals")
 RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-note", "intervention-claim")
+RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-note"}
 RBAC_READ_ALLOWED = {"viewer", "operator", "reviewer", "approver", "admin"}
 RBAC_WRITE_ALLOWED = {"operator", "reviewer", "approver", "admin"}
 RBAC_DENIED_ERROR_CODES = {"AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"}
@@ -699,6 +700,7 @@ def rbac_source_hashes(payload: dict[str, Any]) -> tuple[dict[str, str], bool, s
 
 def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: dict[str, Any]) -> tuple[bool, str]:
     expected_keys = rbac_expected_keys()
+    not_found_codes = {"RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND"}
     source_hashes, source_ok, source_note = rbac_source_hashes(payload)
     actual_keys: set[tuple[str, str, str]] = set()
     ok_count = 0
@@ -706,6 +708,7 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     bearer_links = 0
     write_items = 0
     write_side_effect_proofs = 0
+    write_readback_proofs = 0
     write_marker_links = 0
     read_denials = 0
     write_denials = 0
@@ -752,13 +755,41 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
         marker_hash = str(item.get("request_marker_sha256_12") or "")
         if check.get("ok") is True:
             if label in RBAC_WRITE_ALLOWED:
-                proof_ok = (
+                meta_ok = (
                     check.get("kind") == "rbac_dry_run_write_meta"
                     and check.get("dryRun") is True
                     and check.get("durable") is False
                     and check.get("liveCapitalSideEffects") is False
                     and item.get("error_envelope") is not True
                 )
+                readback_ok = True
+                if resource in RBAC_WRITE_READBACK_RESOURCES:
+                    readback = check.get("readback_not_persisted")
+                    if not isinstance(readback, dict):
+                        readback = {}
+                    readback_kind = str(readback.get("kind") or "")
+                    if resource == "agora-note":
+                        readback_ok = (
+                            readback_kind == "list_readback_not_persisted"
+                            and readback.get("ok") is True
+                            and int(readback.get("status") or 0) == 200
+                            and safe_int(readback.get("absent_checks")) >= 1
+                            and bool(readback.get("target_id_sha256_12"))
+                        )
+                    else:
+                        readback_ok = (
+                            readback_kind == "readback_not_persisted"
+                            and readback.get("ok") is True
+                            and int(readback.get("status") or 0) == 404
+                            and readback.get("error_envelope") is True
+                            and str(readback.get("error_code") or "") in not_found_codes
+                            and bool(readback.get("target_id_sha256_12"))
+                        )
+                    if readback_ok:
+                        write_readback_proofs += 1
+                    else:
+                        failures.append(f"{index}:write-readback-proof")
+                proof_ok = meta_ok and readback_ok
             else:
                 denied_code = str(check.get("error_code") or item.get("error_code") or "")
                 proof_ok = (
@@ -780,6 +811,7 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     expected_read_denials = (len(RBAC_LABELS) - len(RBAC_READ_ALLOWED)) * len(RBAC_READ_RESOURCES)
     expected_write_denials = (len(RBAC_LABELS) - len(RBAC_WRITE_ALLOWED)) * len(RBAC_WRITE_RESOURCES)
     expected_write_items = len(RBAC_LABELS) * len(RBAC_WRITE_RESOURCES)
+    expected_write_readbacks = len(RBAC_WRITE_ALLOWED) * len(RBAC_WRITE_READBACK_RESOURCES)
     detail_ok = (
         len(rbac_matrix) == len(expected_keys)
         and safe_int(summary.get("rbac_matrix_probes") or len(rbac_matrix)) >= len(expected_keys)
@@ -791,6 +823,7 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
         and read_denials == expected_read_denials
         and write_items == expected_write_items
         and write_side_effect_proofs == expected_write_items
+        and write_readback_proofs == expected_write_readbacks
         and write_marker_links == expected_write_items
         and write_denials == expected_write_denials
         and not failures
@@ -801,6 +834,7 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
         f"detailLinks:{detail_links}/{len(expected_keys)} {source_note} "
         f"bearerLinks:{bearer_links}/{expected_non_anonymous} readDenials:{read_denials}/{expected_read_denials} "
         f"writeSideEffectProofs:{write_side_effect_proofs}/{expected_write_items} "
+        f"writeReadbackProofs:{write_readback_proofs}/{expected_write_readbacks} "
         f"writeMarkerLinks:{write_marker_links}/{expected_write_items} writeDenials:{write_denials}/{expected_write_denials}"
         f"{failure_note}"
     )
