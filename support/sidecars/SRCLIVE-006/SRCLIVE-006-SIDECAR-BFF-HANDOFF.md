@@ -294,20 +294,27 @@ Frontend smoke expected after SRCLIVE-006 lands:
 | `rg 'def _overlay_source_health_truth|dataSourceTone|provider_statuses' ...` | Confirmed BFF projection path and frontend badge/count split |
 | `sed -n '50280,50580p' services/control-plane/bff/main.py` | Confirmed overlay returns without aggregate `state` recomputation |
 | `sed -n '320,490p' /home/lupin/code/execute-plans/src/management/pages/oversight/_core.tsx` | Confirmed frontend ok-token grammar and independent provider count |
+| `git diff --check -- .orchestrator/task-briefs/srclive_006_sidecar_bff_handoff.md support/sidecars/SRCLIVE-006/SRCLIVE-006-SIDECAR-BFF-HANDOFF.md` | Owner closeout whitespace check passed |
+| `python3 -m pytest services/control-plane/bff/test_srclive_overlay_contract.py` | Owner closeout focused BFF contract check passed |
 
-No runtime tests were run for this sidecar because it changes only support
-artifacts. The parent task owns BFF implementation tests and live operator smoke
-verification.
+This sidecar changes only support artifacts. The focused BFF contract test was
+rerun during owner closeout because reviewer approval named it as the relevant
+confidence check; the parent task still owns implementation tests and live
+operator smoke verification.
 
 ---
 
 ## 11. Handoff Status
 
-At packet creation time, this packet is ready for `Codex` review as support
-material. It should not be treated as approval of new canonical implementation,
-runtime wiring, BFF code changes, source-ingest changes, registry/governance
-changes, or frontend code changes from this sidecar.
+`Codex` review approved this packet as support-only SRCLIVE-006 BFF/frontend
+handoff material. Owner closeout by `Codex2` records the approval and keeps the
+scope limited to this packet plus the generated task-scoped brief.
 
 Parent owner `Codex` should decide whether to absorb these notes into
 SRCLIVE-006, adjust the parent implementation plan, or request a narrow
 correction to this packet.
+
+This closeout does not approve new canonical implementation, runtime wiring,
+BFF code changes, source-ingest changes, registry/governance changes, or
+frontend code changes from this sidecar. The task is eligible for `done` only
+after PR #2547 merges into `dev`.
