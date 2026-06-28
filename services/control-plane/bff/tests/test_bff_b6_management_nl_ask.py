@@ -120,6 +120,40 @@ def test_nl_ask_authenticated_returns_202_with_data_fields() -> None:
             bff_main.read_store = original
 
 
+def test_nl_ask_dry_run_returns_compact_receipt_without_context_work(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+
+            def fail_collect_context(*args, **kwargs):
+                raise AssertionError("dry-run must not collect management context")
+
+            monkeypatch.setattr(bff_main, "_mgmt_nl_collect_context", fail_collect_context)
+            resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "probe", "focus": "all", "context": "probe-script"},
+                headers={
+                    **OPERATOR_HEADERS,
+                    "Idempotency-Key": "test-idem-b6-dry-run",
+                    "X-Dry-Run": "1",
+                },
+            )
+            assert resp.status_code == 202, resp.text
+            body = resp.json()
+            assert body["data"]["status"] == "accepted"
+            assert body["data"]["question"] == "probe"
+            assert body["data"]["confidence"] == "dry_run"
+            assert body["meta"]["dryRun"] is True
+            assert body["meta"]["durable"] is False
+            assert body["meta"]["dry_run_mode"] == "compact_receipt"
+            assert body["meta"]["idempotency"]["idempotencyKey"] == "test-idem-b6-dry-run"
+            assert len(bff_main._MGMT_AI_AUDIT_EVENTS) == 0
+            assert len(bff_main._sse_buffers["ask"]) == 0
+        finally:
+            bff_main.read_store = original
+
+
 # ---------------------------------------------------------------------------
 # AC#2 — anonymous POST returns 401
 # ---------------------------------------------------------------------------
