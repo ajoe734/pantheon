@@ -83,6 +83,41 @@ APPROVAL_RACE_SAFE_ERROR_CODES = {
     "PRECONDITION_NOT_MET",
     "APPROVAL_ALREADY_DECIDED",
 }
+DRY_RUN_META_EXPECTATIONS = {
+    "dry-run-strategy-create": {
+        "kind": "dry_run_preview_meta",
+        "method": "POST",
+        "path": "/bff/strategies",
+        "status": 200,
+        "readback_family": "dry-run-strategy-create-readback-not-persisted",
+        "readback_path_prefix": "/bff/strategies/",
+    },
+    "dry-run-ranking-formula-create": {
+        "kind": "dry_run_preview_meta",
+        "method": "POST",
+        "path": "/bff/ranking-formulas",
+        "status": 200,
+        "readback_family": "dry-run-ranking-formula-create-readback-not-persisted",
+        "readback_path_prefix": "/bff/ranking-formulas/",
+    },
+    "dry-run-v5-intervention-claim": {
+        "kind": "dry_run_command_meta",
+        "method": "POST",
+        "path": "/bff/v5/interventions/int-live-dry-run/claim",
+        "status": 200,
+        "readback_family": "",
+        "readback_path_prefix": "",
+    },
+}
+DRY_RUN_READBACK_FAMILIES = {
+    str(spec["readback_family"]): family
+    for family, spec in DRY_RUN_META_EXPECTATIONS.items()
+    if spec["readback_family"]
+}
+DRY_RUN_VALIDATION_EXPECTATIONS = {
+    "dry-run-invalid-strategy": {"method": "POST", "path": "/bff/strategies", "status": 422},
+    "dry-run-invalid-ranking-formula": {"method": "POST", "path": "/bff/ranking-formulas", "status": 422},
+}
 
 
 def read_json(path: Path) -> Any:
@@ -603,6 +638,9 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
     meta_kinds = {"dry_run_preview_meta", "dry_run_command_meta"}
     not_found_codes = {"RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND"}
     kind_counts = {kind: 0 for kind in expected_kind_counts}
+    seen_meta: dict[str, dict[str, Any]] = {}
+    seen_readbacks: dict[str, dict[str, Any]] = {}
+    seen_validations: set[str] = set()
     failures: list[str] = []
 
     for index, item in enumerate(dry_run):
@@ -623,15 +661,40 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
         else:
             failures.append(f"{index}:unexpected-kind:{kind or 'missing'}")
             continue
+        family = str(item.get("family") or "")
+        method = str(item.get("method") or "")
+        path = str(item.get("path") or "")
+        status = safe_int(item.get("status"))
 
         if kind in meta_kinds:
+            spec = DRY_RUN_META_EXPECTATIONS.get(family)
+            if not spec:
+                failures.append(f"{index}:unexpected-meta-family:{family or 'missing'}")
+            else:
+                seen_meta[family] = item
+                if method != spec["method"] or path != spec["path"] or status != spec["status"]:
+                    failures.append(f"{index}:meta-request-link")
+                if kind != spec["kind"]:
+                    failures.append(f"{index}:meta-kind-link")
             if check.get("dryRun") is not True:
                 failures.append(f"{index}:dryRun")
             if check.get("durable") is not False:
                 failures.append(f"{index}:durable")
             if check.get("liveCapitalSideEffects") is not False:
                 failures.append(f"{index}:liveCapitalSideEffects")
+            if spec and spec["readback_family"] and not check.get("target_id_sha256_12"):
+                failures.append(f"{index}:meta-target-hash")
         elif kind == "readback_not_persisted":
+            parent_family = DRY_RUN_READBACK_FAMILIES.get(family)
+            if not parent_family:
+                failures.append(f"{index}:unexpected-readback-family:{family or 'missing'}")
+            else:
+                seen_readbacks[parent_family] = item
+                spec = DRY_RUN_META_EXPECTATIONS[parent_family]
+                if method != "GET" or not path.startswith(str(spec["readback_path_prefix"])) or status != 404:
+                    failures.append(f"{index}:readback-request-link")
+                if check.get("target_family") != parent_family:
+                    failures.append(f"{index}:readback-target-family")
             error_code = str(check.get("error_code") or item.get("error_code") or "")
             if item.get("error_envelope") is not True:
                 failures.append(f"{index}:readback-error-envelope")
@@ -642,18 +705,59 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
             if not check.get("target_id_sha256_12"):
                 failures.append(f"{index}:target-id-hash")
         elif kind == "validation_rejected_before_persistence":
+            spec = DRY_RUN_VALIDATION_EXPECTATIONS.get(family)
+            if not spec:
+                failures.append(f"{index}:unexpected-validation-family:{family or 'missing'}")
+            else:
+                seen_validations.add(family)
+                if method != spec["method"] or path != spec["path"] or status != spec["status"]:
+                    failures.append(f"{index}:validation-request-link")
             error_code = str(check.get("error_code") or item.get("error_code") or "")
             if item.get("error_envelope") is not True:
                 failures.append(f"{index}:validation-error-envelope")
             if error_code != "VALIDATION_FAILED":
                 failures.append(f"{index}:validation-error-code")
 
+    for family, spec in DRY_RUN_META_EXPECTATIONS.items():
+        if family not in seen_meta:
+            failures.append(f"missing-meta:{family}")
+        readback_family = str(spec["readback_family"] or "")
+        if not readback_family:
+            continue
+        if family not in seen_readbacks:
+            failures.append(f"missing-readback:{family}")
+            continue
+        meta_check = seen_meta.get(family, {}).get("side_effect_check")
+        if not isinstance(meta_check, dict):
+            meta_check = {}
+        readback_check = seen_readbacks[family].get("side_effect_check")
+        if not isinstance(readback_check, dict):
+            readback_check = {}
+        meta_target_hash = str(meta_check.get("target_id_sha256_12") or "")
+        readback_target_hash = str(readback_check.get("target_id_sha256_12") or "")
+        if not meta_target_hash or meta_target_hash != readback_target_hash:
+            failures.append(f"readback-target-link:{family}")
+
+    for family in DRY_RUN_VALIDATION_EXPECTATIONS:
+        if family not in seen_validations:
+            failures.append(f"missing-validation:{family}")
+
     kind_note = ",".join(f"{kind}:{kind_counts[kind]}/{expected}" for kind, expected in expected_kind_counts.items())
     count_ok = len(dry_run) == 7
     kinds_ok = all(kind_counts[kind] == expected for kind, expected in expected_kind_counts.items())
-    detail_ok = count_ok and kinds_ok and not failures
+    meta_ok = set(seen_meta) == set(DRY_RUN_META_EXPECTATIONS)
+    readback_ok = set(seen_readbacks) == set(DRY_RUN_READBACK_FAMILIES.values())
+    validation_ok = seen_validations == set(DRY_RUN_VALIDATION_EXPECTATIONS)
+    detail_ok = count_ok and kinds_ok and meta_ok and readback_ok and validation_ok and not failures
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
-    return detail_ok, f"dryRunDetails:{len(dry_run)}/7 kinds:{kind_note}{failure_note}"
+    return (
+        detail_ok,
+        f"dryRunDetails:{len(dry_run)}/7 kinds:{kind_note} "
+        f"metaLinks:{len(seen_meta)}/{len(DRY_RUN_META_EXPECTATIONS)} "
+        f"readbackLinks:{len(seen_readbacks)}/{len(DRY_RUN_READBACK_FAMILIES)} "
+        f"validationLinks:{len(seen_validations)}/{len(DRY_RUN_VALIDATION_EXPECTATIONS)}"
+        f"{failure_note}",
+    )
 
 
 def auth_json_item(root: Path, summary: Any, key: str, raw_ok: bool, raw_note: str) -> dict[str, str]:
