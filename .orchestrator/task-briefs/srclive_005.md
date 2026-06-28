@@ -14,6 +14,7 @@ US 研究源真實抓取 driver：Yahoo 替代 Stooq、SEC/FINRA 多步抓取、
 
 ## Closeout Evidence
 - Implementation PR: https://github.com/ajoe734/pantheon/pull/2543
+- Owner closeout PR: https://github.com/ajoe734/pantheon/pull/2551
 - Delivered commit: c7b793a1b755acbd78e2feb18fd9a897f18c19b2
 - Merge commit: bfec5636ef96084d7ada26ab75370cd9e986bec4
 - Reviewer approval: Claude2 approved Yahoo/SEC/FINRA/FRED live drivers and the BFF no-false-read_ok overlay in central task state.
