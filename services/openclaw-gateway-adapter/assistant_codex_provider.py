@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from assistant_credential_mounts import AssistantCredentialMounts, DEFAULT_CODEX_CONTAINER_HOME
+from assistant_provider_usage import provider_usage_snapshot
 from assistant_repair_workflow import AssistantRepairWorkflow, AssistantRepairWorkflowError
 
 try:
@@ -204,6 +205,12 @@ class AssistantCodexProvider:
         repair_workspace = _repair_workspace_metadata(
             self._environ.get("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT", DEFAULT_REPAIR_WORKTREE_ROOT)
         )
+        usage = provider_usage_snapshot(
+            CODEX_PROVIDER_ID,
+            CODEX_PROVIDER,
+            environ=self._environ,
+            clock=self._clock,
+        )
         base = {
             "provider": CODEX_PROVIDER_ID,
             "provider_name": CODEX_PROVIDER,
@@ -215,6 +222,8 @@ class AssistantCodexProvider:
             "auth_status": "not_checked",
             "credential_mount": _mount_metadata(mount_validation),
             "mount_mode": getattr(mount_validation, "mount_mode", "unknown"),
+            "usage": usage,
+            "quota": usage,
             "repair_workspace": repair_workspace,
             "repairWorkspace": repair_workspace,
             "capabilities": {

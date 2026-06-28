@@ -21,6 +21,7 @@ from assistant_credential_mounts import (
     AssistantCredentialMounts,
     DEFAULT_CLAUDE_CONTAINER_CONFIG_DIR,
 )
+from assistant_provider_usage import provider_usage_snapshot
 
 _DEFAULT_TIMEOUT = int(os.getenv("ASSISTANT_CLAUDE_PROVIDER_TIMEOUT", "60"))
 _BINARY_NAME = "claude"
@@ -70,6 +71,11 @@ class AssistantClaudeProvider:
         checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         binary = _resolve_binary(self._environ)
         mount_validation = self._mounts.validate_mounts().get(_PROVIDER_NAME)
+        usage = provider_usage_snapshot(
+            _PROVIDER_NAME,
+            _PROVIDER_NAME,
+            environ=self._environ,
+        )
 
         base = {
             "provider": _PROVIDER_NAME,
@@ -82,6 +88,8 @@ class AssistantClaudeProvider:
             "auth_status": "not_checked",
             "credential_mount": _mount_metadata(mount_validation),
             "mount_mode": getattr(mount_validation, "mount_mode", "unknown"),
+            "usage": usage,
+            "quota": usage,
             "last_refresh_check_time": None,
             "ready": False,
             "status": "degraded",
