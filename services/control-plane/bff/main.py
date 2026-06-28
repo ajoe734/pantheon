@@ -50173,6 +50173,13 @@ _SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
     "twse": ("tw-twse-tpex-official-market",),
     "tpex": ("tw-twse-tpex-official-market",),
     "mops": ("tw-mops-official-disclosures",),
+    # US research sources (SRCLIVE-002)
+    "stooq": ("us-stooq-daily-ohlcv",),
+    "sec_edgar": ("us-sec-edgar-filings",),
+    "finra": ("us-finra-short-sale",),
+    "fred": ("us-fred-macro",),
+    "polygon": ("us-polygon-daily-ohlcv",),
+    "alphavantage": ("us-alpha-vantage-daily-ohlcv",),
 }
 
 
