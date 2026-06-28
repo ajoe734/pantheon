@@ -4937,6 +4937,7 @@ _VALIDATORS = {
 
 _READ_ROLES = {"viewer", "operator", "approver", "admin", "reviewer"}
 _WRITE_ROLES = {"operator", "approver", "admin", "reviewer"}
+_INCIDENT_READ_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 
 def _require_read_role(identity: OperatorIdentity) -> None:
@@ -4960,6 +4961,18 @@ def _require_operator_role(identity: OperatorIdentity) -> None:
             "Operator does not hold the required command role",
             precondition_failed="role_check",
             suggestion="Escalate to a user with operator, approver, admin, or reviewer role",
+        )
+
+
+def _require_incident_read_role(identity: OperatorIdentity) -> None:
+    if not _INCIDENT_READ_ROLES.intersection(identity.roles):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Incident surfaces require operator-level read role",
+            "Operator does not hold a role allowed to read incident surfaces",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, reviewer, approver, or admin role",
         )
 
 
@@ -15597,7 +15610,7 @@ async def get_source_ops(
     and audit summary.  The BFF never reads source volumes directly.
     """
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_incident_read_role(identity)
     snapshot_at = utc_now()
     data = read_store.get_source_ops_snapshot(
         crawl_run_limit=crawl_run_limit,
@@ -18057,7 +18070,7 @@ async def list_incidents(
 ):
     """IN-01: Incident List with optional filters."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_incident_read_role(identity)
 
     snapshot_at = utc_now()
     surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
@@ -18113,7 +18126,7 @@ async def stream_incident_events(
     BFF_API_CONTRACT.md §11.2
     """
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_incident_read_role(identity)
 
     return _handle_sse_stream("incident", _incident_events, _incident_subscribers, last_event_id)
 
@@ -18122,7 +18135,7 @@ async def stream_incident_events(
 async def get_incident(incident_id: str, authorization: Optional[str] = Header(default=None)):
     """IN-02: Incident Detail."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_incident_read_role(identity)
 
     incident = read_store.get_incident(incident_id)
     if not incident:
@@ -18148,7 +18161,7 @@ async def list_postmortems(
 ):
     """IN-03: Postmortem List."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_incident_read_role(identity)
 
     postmortems = read_store.list_postmortems(time_range=time_range)
     return {
@@ -18164,7 +18177,7 @@ async def list_postmortems(
 async def get_postmortem(report_id: str, authorization: Optional[str] = Header(default=None)):
     """IN-04: Postmortem Detail."""
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_incident_read_role(identity)
 
     postmortem = read_store.get_postmortem(report_id)
     if not postmortem:
@@ -18265,7 +18278,7 @@ async def get_incident_response(
     Composes: incident record, affected bindings, kill-switch state, and action authority.
     """
     identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    _require_incident_read_role(identity)
 
     # IN-02: Incident detail
     incident = read_store.get_incident(incident_id)
@@ -51504,6 +51517,35 @@ def _assistant_provider_readiness() -> Dict[str, Any]:
         }
 
 
+def _assistant_provider_list(auth_probe: bool = False) -> Dict[str, Any]:
+    provider = _mgmt_nl_provider_name()
+    try:
+        return OpenClawOpsClient().list_assistant_providers(auth_probe=auth_probe)
+    except OpenClawOpsClientError as exc:
+        return {
+            "status": "degraded",
+            "data": [
+                {
+                    "provider": provider,
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": False,
+                    "status": "unavailable",
+                    "auth": "unavailable" if auth_probe else "not_checked",
+                    "auth_status": "failed" if auth_probe else "not_checked",
+                    "reason": exc.error_code,
+                    "message": exc.message,
+                    "httpStatus": exc.status_code,
+                }
+            ],
+            "meta": {
+                "openclawAdapterStatus": "degraded",
+                "openclaw_adapter_status": "degraded",
+                "reason": exc.error_code,
+                "message": exc.message,
+            },
+        }
+
+
 def _assistant_openclaw_tool_policy() -> Dict[str, Any]:
     try:
         return OpenClawOpsClient().get_tool_policy()
@@ -51646,6 +51688,7 @@ def _include_assistant_routes() -> None:
             transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
             control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
             provider_readiness=_assistant_provider_readiness,
+            provider_list=_assistant_provider_list,
             openclaw_tool_policy=_assistant_openclaw_tool_policy,
             openclaw_effective_tools=_assistant_openclaw_effective_tools,
             authorize_assistant_skill=_assistant_authorize_skill,

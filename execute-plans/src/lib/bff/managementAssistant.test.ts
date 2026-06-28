@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assistantCatalogRouteFromHandlerRef,
+  activateAssistantControlMode,
+  getAssistantProviderReauthStatus,
+  getAssistantProviders,
   invokeAssistantCatalogRoute,
+  startAssistantProviderReauth,
 } from "./managementAssistant";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -80,5 +84,85 @@ describe("assistant catalog route descriptors", () => {
         {},
       ),
     ).rejects.toThrow("Missing assistant catalog route path parameter: sessionId");
+  });
+});
+
+describe("OpenClaw assistant provider auth client", () => {
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("reads provider readiness with auth probe enabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      status: "ok",
+      data: [{ provider: "codex_cli", auth_status: "ready" }],
+    }));
+    globalThis.fetch = fetchMock;
+
+    const result = await getAssistantProviders({ authProbe: true }, "https://bff.example.test");
+
+    expect(result.data[0].provider).toBe("codex_cli");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://bff.example.test/bff/assistant/providers?auth_probe=true");
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBeUndefined();
+    expect(init.credentials).toBe("include");
+  });
+
+  it("activates control mode and starts provider reauth through BFF routes", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ data: { active: true, mode: "kernel_debug" } }, 202))
+      .mockResolvedValueOnce(jsonResponse({
+        data: {
+          provider: "codex_cli",
+          reauth_session_id: "codex_reauth_1",
+          status: "pending",
+          verification_uri: "https://auth.openai.com/device",
+          user_code: "ABCD-EFGH",
+        },
+      }, 202));
+    globalThis.fetch = fetchMock;
+
+    await activateAssistantControlMode(
+      { passphrase: "control phrase ok", reason: "reauth", mode: "kernel_debug" },
+      "https://bff.example.test",
+    );
+    const reauth = await startAssistantProviderReauth(
+      { provider: "codex", reason: "expired" },
+      "https://bff.example.test",
+    );
+
+    expect(reauth.data.user_code).toBe("ABCD-EFGH");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://bff.example.test/bff/assistant/control-mode/activate");
+    expect(fetchMock.mock.calls[1][0]).toBe("https://bff.example.test/bff/assistant/provider/reauth");
+    expect(JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body))).toEqual({
+      provider: "codex",
+      reason: "expired",
+    });
+  });
+
+  it("reads provider reauth status with provider query", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      data: {
+        provider: "codex_cli",
+        reauthSessionId: "codex_reauth_1",
+        status: "completed",
+      },
+    }));
+    globalThis.fetch = fetchMock;
+
+    const result = await getAssistantProviderReauthStatus(
+      "codex_reauth_1",
+      "codex",
+      "https://bff.example.test",
+    );
+
+    expect(result.data.status).toBe("completed");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://bff.example.test/bff/assistant/provider/reauth/codex_reauth_1?provider=codex",
+    );
   });
 });
