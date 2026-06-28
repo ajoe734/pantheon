@@ -12,6 +12,8 @@ preview, and workspace versions can be compared or rolled back.
 
 - Local design archive:
   `/home/lupin/code/pantheon/AI Trading Desk Design.zip`
+- Frozen dynamic UI source/gap/invariant map:
+  `docs/04/agora_design_pack_dynui_2026-06-28/source-map-and-gap-map.md`
 - Extracted reference used while creating this packet:
   `/tmp/ai-trading-desk-design/`
 - Primary documents:
@@ -29,6 +31,12 @@ preview, and workspace versions can be compared or rolled back.
 If a worker cannot read the local design archive or finds a conflict between
 the archive and committed Agora schemas, the worker must open a blocker. The
 worker must not invent missing fields, routes, widgets, layouts, or behavior.
+
+AG-DYNUI-SRC-001 freezes the archive reference map, current implementation
+gap map, and non-static dynamic invariants in
+`source-map-and-gap-map.md`. Downstream workers should treat that file as the
+task-scoped intake artifact before adding contracts, generated types, runtime
+UI, or visual parity.
 
 ## Dynamic UI Invariants
 
