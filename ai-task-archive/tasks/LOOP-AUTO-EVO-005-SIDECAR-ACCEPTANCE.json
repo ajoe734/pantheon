@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-27T18:34:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE",
+    "title": "Prepare LOOP-AUTO-EVO-005 acceptance packet and dependency map",
+    "summary_zh": "平行支援 LOOP-AUTO-EVO-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-EVO-004"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-EVO-005/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Acceptance packet finalized and approved by Claude2. All three acceptance criteria (AC-1/AC-2/AC-3) gap-analyzed with remediation guidance. Dispatched-state gap identified with two options. Reviewer guardrails G-1 through G-6 documented. No canonical truth modified. PR #2476 merged into dev at 2026-06-27T18:34:03Z.",
+    "last_update": "2026-06-27T18:34:18Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-EVO-005",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：AC-1/AC-2/AC-3 gap 分析正確；dispatched state 缺口已明確識別且提供兩個可行 option；G-1~G-6 guardrails 可操作；EVO-004 硬依賴已標記。觀察：父任務 owner 在審查時已從 Gemini2 變更為 Claude2，但技術內容不受影響。"
+    ],
+    "review_file": "support/sidecars/LOOP-AUTO-EVO-005/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T18:34:18Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-evo-005-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "c2acb12e8555215082e4cacd5f2176c61f89fee6",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6f91c3cbe73d28a136597b4b7b2b32df45ac3c45",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Acceptance packet for LOOP-AUTO-EVO-005 is ready for sidecar review. Key content: dependency map from LOOP-AUTO-000 through EVO-005, gap analysis for all 3 acceptance criteria (AC-1 rollback reach, AC-2 BFF stage visibility with dispatched-state gap identified, AC-3 failure path), proven-live evidence scope, and reviewer guardrails. Artifact: support/sidecars/LOOP-AUTO-EVO-005/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE.md. Commit: 7a6f7093.",
+      "status": "done",
+      "created_at": "2026-06-27T18:10:11Z",
+      "resolved_at": "2026-06-27T18:15:37Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Sidecar acceptance packet reviewed and approved by Claude2. Gap analysis for AC-1/AC-2/AC-3 is accurate; dispatched-state gap identified with two viable remediation options; reviewer guardrails G-1 through G-6 are actionable. Parent task owner should read §11 before beginning evidence collection. Task returns to Claude for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T18:15:37Z",
+      "resolved_at": "2026-06-27T18:34:19Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-DEP-003",
+  "archived_at": "2026-06-27T14:51:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-DEP-003",
+    "title": "Add deployment saga progress feedback and DLQ",
+    "summary_zh": "補 saga status updates、retry policy、blocked reason 與 DLQ replay，讓 deployment failure 不再消失在 outbox。",
+    "phase": "Global Loop Autopilot / Wave 3 Deployment Saga",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-DEP-001",
+      "LOOP-AUTO-DEP-002"
+    ],
+    "artifacts": [
+      "services/deployment",
+      "services/control-plane/bff",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Saga exposes pending running blocked failed and completed progress",
+      "DLQ replay is idempotent",
+      "Operator can see blocked reason and retry state"
+    ],
+    "next": "Owner finalized approved deployment saga DLQ task after PR #2443 merged at 074b3be786b12294893ce7275491d58cc0429e4a; verified pytest services/deployment/test_service.py services/deployment/test_outbox_consumer_worker.py services/control-plane/bff/test_read_store_deployment.py -q (47 passed) and python3 -m unittest test_deployment_saga.py (9 passed).",
+    "last_update": "2026-06-27T14:51:23Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "promotion_deployment"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "deployment saga outbox"
+    ],
+    "actual_state_sources": [
+      "saga progress store",
+      "DLQ"
+    ],
+    "wave_id": "Wave 3 Deployment Saga",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "已 review PR #2443 merge commit 074b3be786b12294893ce7275491d58cc0429e4a；saga progress、blocked reason、retry state、DLQ replay idempotency 與 BFF read model 符合 LOOP-AUTO-DEP-003 acceptance；本機 pytest 47 passed、governance unittest 9 passed、git diff --check passed。"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-dep-003/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T14:51:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-dep-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-DEP-003",
+      "git_clean_required": false,
+      "commit": "8c1504c748fe67e5476c1027cd668be5add9f3ae",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-AUTO-DEP-003",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-DEP-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2e46c5cf97350d04aa458e96b6be02aabb07dc63",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-DEP-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-27T14:23:43Z",
+      "resolved_at": "2026-06-27T14:23:57Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implementation merged via PR #2443 at 074b3be786b12294893ce7275491d58cc0429e4a. Reviewer approval required before Codex2 can run done; validation passed locally and GitHub checks passed.",
+      "status": "done",
+      "created_at": "2026-06-27T14:43:14Z",
+      "resolved_at": "2026-06-27T14:47:19Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: PR #2443 merged at 074b3be786b12294893ce7275491d58cc0429e4a; local validation passed.",
+      "status": "done",
+      "created_at": "2026-06-27T14:47:19Z",
+      "resolved_at": "2026-06-27T14:51:25Z"
+    }
+  ],
+  "blockers": []
+}

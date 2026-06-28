@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-DEP-004",
+  "archived_at": "2026-06-27T15:26:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-DEP-004",
+    "title": "Split promotion and deployment BFF truth by stage",
+    "summary_zh": "讓 BFF 明確分開 approval、plan、saga、binding、runtime fleet 狀態，避免單一綠燈掩蓋某段未執行。",
+    "phase": "Global Loop Autopilot / Wave 3 Deployment Saga",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-DEP-003"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/deployment",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "BFF shows approval plan saga binding and runtime fleet stages separately",
+      "Failure stage is visible to operator",
+      "Panel does not infer runtime health from deployment metadata"
+    ],
+    "next": "PR #2451 merged at 80a85779ee501a93f245531570f914b987bf9850; closeout verification passed: py_compile, DEP-004 focused pytest (3 passed), BFF regression group (48 passed).",
+    "last_update": "2026-06-27T15:26:06Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "promotion_deployment",
+      "bff_health_monitoring"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "proven-live",
+    "desired_state_sources": [
+      "deployment saga state"
+    ],
+    "actual_state_sources": [
+      "BFF deployment read model",
+      "RuntimeBinding projection"
+    ],
+    "wave_id": "Wave 3 Deployment Saga",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Reviewer approved after fixing list-level stage surface aggregation in PR #2451. Verified DEP-004 BFF stage_truth keeps approval/plan/saga/binding/runtime_fleet separate, exposes runtime_fleet unavailable without runtime-owned evidence, and list meta no longer uses a healthy first deployment to hide a later deployment failure. Local validation: py_compile BFF files; DEP-004 test 3 passed; focused BFF suite 48 passed. GitHub checks for PR #2451 passed and merged to dev at 80a85779ee501a93f245531570f914b987bf9850."
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-dep-004/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T15:26:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-dep-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-DEP-004",
+      "git_clean_required": false,
+      "commit": "80a85779ee501a93f245531570f914b987bf9850",
+      "commit_subject": "Merge pull request #2451 from ajoe734/task/LOOP-AUTO-DEP-004",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "LOOP-AUTO-DEP-004": "aggregate list stage surfaces"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-DEP-004",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "80a85779ee501a93f245531570f914b987bf9850",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-DEP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-DEP-004 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:57Z",
+      "resolved_at": "2026-06-27T12:36:58Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-DEP-004 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:58Z",
+      "resolved_at": "2026-06-27T14:54:39Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-27T14:54:39Z",
+      "resolved_at": "2026-06-27T14:54:48Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "PR #2449 merged into dev at 6b57af097e3104bff7a83568c61df2c107dc325f. Please review DEP-004 stage_truth BFF projection and evidence; owner cannot mark done until review_approved.",
+      "status": "done",
+      "created_at": "2026-06-27T15:09:05Z",
+      "resolved_at": "2026-06-27T15:22:49Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-DEP-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved after PR #2451 merged; owner Codex2 should finalize done.",
+      "status": "done",
+      "created_at": "2026-06-27T15:22:49Z",
+      "resolved_at": "2026-06-27T15:26:07Z"
+    }
+  ],
+  "blockers": []
+}

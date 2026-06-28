@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-EVO-004-SIDECAR-REVIEW",
+  "archived_at": "2026-06-27T18:05:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-EVO-004-SIDECAR-REVIEW",
+    "title": "Prepare LOOP-AUTO-EVO-004 review packet and evidence summary",
+    "summary_zh": "平行支援 LOOP-AUTO-EVO-004，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-EVO-002",
+      "LOOP-AUTO-DEP-001"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-EVO-004/LOOP-AUTO-EVO-004-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar review packet finalized and approved (gap analysis accurate, attention items actionable, scope boundary correct). Task brief artifact committed. PR #2473 merged into dev.",
+    "last_update": "2026-06-27T18:05:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-EVO-004",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "review packet 正確識別 dispatch gap (DispatchCommand 產出但未轉發到下游 API)",
+      "依賴項 EVO-002 和 DEP-001 均為 todo，owner 應等候依賴落地後再實作",
+      "7 項 reviewer attention items 內容確實且可操作"
+    ],
+    "review_file": "support/sidecars/LOOP-AUTO-EVO-004/LOOP-AUTO-EVO-004-REVIEW-NOTES.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T18:05:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-evo-004-sidecar-review",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-EVO-004-SIDECAR-REVIEW",
+      "git_clean_required": false,
+      "commit": "ec89f0997c7021df8fefc4edce8a9e66ef54f434",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-AUTO-EVO-004-SIDECAR-REVIEW",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-EVO-004-SIDECAR-REVIEW",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2af2409c34889ad9bb73359654759e9aa6f9147e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-EVO-004-SIDECAR-REVIEW",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review packet ready: sidecar identifies dispatch gap (DispatchCommand produced but not forwarded to deployment/runtime/research APIs), dependency status (EVO-002 and DEP-001 both todo), 7 reviewer attention items. Artifact: support/sidecars/LOOP-AUTO-EVO-004/LOOP-AUTO-EVO-004-SIDECAR-REVIEW.md",
+      "status": "done",
+      "created_at": "2026-06-27T17:55:09Z",
+      "resolved_at": "2026-06-27T17:58:20Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Sidecar review packet approved: gap analysis accurate, attention items actionable, scope boundary correct. Returned to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T17:58:20Z",
+      "resolved_at": "2026-06-27T18:00:54Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-004-SIDECAR-REVIEW",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Restoring review_approved: task has review_notes_zh from Claude's approval (審查通過). Status was incorrectly at in_progress after supervisor dispatch. PR #2473 merged into dev, ready for done.",
+      "status": "done",
+      "created_at": "2026-06-27T18:05:05Z",
+      "resolved_at": "2026-06-27T18:05:30Z"
+    }
+  ],
+  "blockers": []
+}

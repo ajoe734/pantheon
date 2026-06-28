@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-06-27T18:54:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare LOOP-AUTO-BFF-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 LOOP-AUTO-BFF-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-SRC-004",
+      "LOOP-AUTO-RT-005",
+      "LOOP-AUTO-DEP-004",
+      "LOOP-AUTO-TEL-005",
+      "LOOP-AUTO-KNOW-006",
+      "LOOP-AUTO-BFF-003"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: filter gap resolution packet finalized, reviewer corrections propagated to fallback procedures, both PRs merged into dev. Sidecar artifact ready for absorption into LOOP-AUTO-BFF-004 evidence at parent task closeout.",
+    "last_update": "2026-06-27T18:54:24Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-BFF-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過，已修正兩個欄位名稱錯誤",
+      "FG-001: affected_runtime_id→runtime_id（IncidentResponse 實際欄位）",
+      "FG-002: source_incident_id→linked_incident_id（DecisionResponse 實際欄位）",
+      "合約 section 參照 §9.4→§9.8 已修正",
+      "Ownership Option A 確認有效（DEP-004 仍為 todo）"
+    ],
+    "review_file": "/tmp/review-LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T18:54:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-bff-004-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "6843fd2613cb5f53158e8fa35c4e2ce21bb6d870",
+      "commit_subject": "Merge dev into task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2 for CI catch-up",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "abc241771b50d82a72927d9bc33e9f9be32de05e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Filter gap resolution packet complete. Document specifies BFF contract amendments for FG-001 (runtime_id on IN-01) and FG-002 (incident_id on EV-01), ownership options (DEP-004 or new FILTER-GAP task), fallback drill procedures for Drill 2 Steps 3+5, and updated maturity gate for proven-live. Please verify field names against models.py and confirm ownership recommendation.",
+      "status": "done",
+      "created_at": "2026-06-27T18:37:12Z",
+      "resolved_at": "2026-06-27T18:41:57Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved with field name corrections applied. FG-001 runtime_id and FG-002 linked_incident_id verified against models.py. Returned to Claude for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T18:41:57Z",
+      "resolved_at": "2026-06-27T18:54:25Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-EVO-002",
+  "archived_at": "2026-06-27T17:06:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-EVO-002",
+    "title": "Bridge postmortems into evolution proposals",
+    "summary_zh": "新增 postmortem-to-evolution proposal bridge，讓 published postmortem 可以產生 exactly-one EvolutionDecision proposal。",
+    "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-EVO-001"
+    ],
+    "artifacts": [
+      "services/postmortems",
+      "services/evolution",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Published postmortem creates one evolution proposal per target and incident cluster",
+      "Duplicate publish events are idempotent",
+      "Proposal carries evidence links and review gate state"
+    ],
+    "next": "Claude finalized closeout: review file created, task brief updated, 86 tests verified, PR #2463 merged into dev.",
+    "last_update": "2026-06-27T17:06:02Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "evolution"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "published Postmortem"
+    ],
+    "actual_state_sources": [
+      "EvolutionDecision proposed"
+    ],
+    "wave_id": "Wave 5 Postmortem Evolution",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過｜所有驗收標準達成；idempotency、review gate、evidence refs 正確；86 tests 通過；core bridge 設計為純轉換模組；非目標均已確認不受影響。返回 Codex2 做 closeout。"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-evo-002/review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T17:06:02Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-evo-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-EVO-002",
+      "git_clean_required": false,
+      "commit": "9156b25ad5bc756958e4f512039999210a79b683",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-AUTO-EVO-002",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-EVO-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "97d8ef013c078f014feb39f0375a614fede01693",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-EVO-002",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-27T15:32:40Z",
+      "resolved_at": "2026-06-27T15:32:49Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "PR #2455 merged at 4dba952dd1099506f6567960cfef1b46f2f68e2d. Local verification: git diff --check; python3 -m pytest services/evolution/test_postmortem_bridge.py services/evolution/test_evolution_service.py -q (86 passed). Please review status evidence and approve for owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T15:44:56Z",
+      "resolved_at": "2026-06-27T16:17:03Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex to Claude2: Codex (codex1) quota-paused since 2026-06-27T15:38:41Z (>33 min before scan); hint_blocked_until 2026-06-28T11:05:00Z; LOOP-AUTO-EVO-002 stuck in review; Claude2 completed LOOP-AUTO-KNOW-001 review at 16:02:16Z and is now idle; owner is Codex2 so no owner==reviewer conflict",
+      "status": "done",
+      "created_at": "2026-06-27T16:17:03Z",
+      "resolved_at": "2026-06-27T16:19:46Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-002",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved and returned to Codex2 for finalization: all acceptance criteria met, idempotency correct, review gate enforced, 86 tests passing",
+      "status": "done",
+      "created_at": "2026-06-27T16:19:46Z",
+      "resolved_at": "2026-06-27T16:44:17Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-27T16:44:18Z",
+      "resolved_at": "2026-06-27T17:06:03Z"
+    }
+  ],
+  "blockers": []
+}
