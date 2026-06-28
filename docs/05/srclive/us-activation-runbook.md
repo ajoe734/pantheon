@@ -57,12 +57,16 @@ The BFF `_overlay_source_health_truth` layer is the **only** path to `read_ok`.
    `provider_key` to one or more connector IDs.
 2. `_source_ingest_truth_by_connector()` polls `/api/source-ingest/health-usage-snapshot`
    (60 s TTL cache).
-3. If `health.status == "ok"`, the overlay sets the source status to `read_ok`.
-4. If health is absent or not `ok`, the static default (`read_unavailable` or
-   `credential_unavailable`) is shown.
+3. Only when `health.status == "ok"` (i.e., `source_health_available == True` in the
+   projection) does the overlay promote the source status to `read_ok`.
+4. If the connector appears in the registry but the health snapshot has no live data
+   (`source_health_available == False`), the overlay enriches connector metadata
+   but **preserves** the static default status (`read_unavailable` or
+   `credential_unavailable`) and its `reason`/`secret_ref` fields.
+5. If the connector is not found at all, the source is marked `static_metadata`.
 
 **Never hard-code `read_ok`.** No connector becomes `read_ok` without a live
-health signal from source-ingest.
+health signal from source-ingest. Registry-only presence is insufficient.
 
 ---
 
