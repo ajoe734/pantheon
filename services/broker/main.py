@@ -23,7 +23,8 @@ from pydantic import BaseModel
 
 from paper_simulation import PaperSimulationStore, SimulationError, simulate_paper_order
 from quote_pricing import QuotePricer
-from shioaji.adapter import ShioajiBrokerAdapter, ShioajiBrokerError
+from streaming_quotes import StreamingQuoteManager
+from sinopac.adapter import ShioajiBrokerAdapter, ShioajiBrokerError
 
 _PAPER_ENABLED = os.getenv("BROKER_PAPER_ENABLED", "").lower() in {"1", "true", "yes"}
 _LIVE_ENABLED = False  # never enabled; kept explicit for telemetry clarity
@@ -31,18 +32,28 @@ _LIVE_ENABLED = False  # never enabled; kept explicit for telemetry clarity
 _STORE = PaperSimulationStore()
 
 _SHIOAJI_SANDBOX_ENABLED = os.getenv("BROKER_SHIOAJI_SANDBOX_ENABLED", "").lower() in {"1", "true", "yes"}
+_TW_QUOTE_SEED = [s.strip() for s in os.getenv("BROKER_TW_QUOTE_SEED", "2330,2317,2454").split(",") if s.strip()]
 
 
 def _build_quote_pricer() -> QuotePricer:
-    """Authoritative live-quote pricer: Shioaji snapshot primary (when the
-    sandbox session is enabled), TWSE MIS public endpoint fallback."""
-    adapter = None
+    """Authoritative live-quote pricer: Shioaji streaming tick primary (when the
+    sandbox session is enabled and credentials are set), TWSE MIS fallback.
+
+    The streaming manager subscribes the seed TW execution universe and grows the
+    quote list (報價列, <= 500) as the broker prices new symbols.
+    """
+    manager = None
     if _SHIOAJI_SANDBOX_ENABLED:
-        try:
-            adapter = ShioajiBrokerAdapter()
-        except Exception:  # pragma: no cover - never block paper pricing on quote setup
-            adapter = None
-    return QuotePricer(shioaji_adapter=adapter)
+        api_key = os.getenv("BROKER_SHIOAJI_API_KEY", "")
+        secret_key = os.getenv("BROKER_SHIOAJI_SECRET_KEY", "")
+        if api_key and secret_key:
+            try:
+                manager = StreamingQuoteManager(
+                    api_key, secret_key, seed_symbols=_TW_QUOTE_SEED
+                )
+            except Exception:  # pragma: no cover - never block paper pricing on quote setup
+                manager = None
+    return QuotePricer(streaming_manager=manager)
 
 
 _QUOTE_PRICER = _build_quote_pricer()

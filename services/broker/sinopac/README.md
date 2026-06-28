@@ -21,7 +21,7 @@ Live orders **always** raise `SHIOAJI_LIVE_DISABLED` (HTTP 403), regardless of t
 ## Interface
 
 ```python
-from services.broker.shioaji import ShioajiBrokerAdapter, ShioajiBrokerError
+from services.broker.sinopac import ShioajiBrokerAdapter, ShioajiBrokerError
 
 adapter = ShioajiBrokerAdapter()  # reads env gate
 
@@ -53,7 +53,7 @@ surfaces. It does not write evidence files, approve canary/live activation, or
 enable capital binding.
 
 ```python
-from services.broker.shioaji import ShioajiSandboxFacade
+from services.broker.sinopac import ShioajiSandboxFacade
 
 payload = ShioajiSandboxFacade().run_lifecycle(
     capital_pool_id="pool-mgmt-broker-001",

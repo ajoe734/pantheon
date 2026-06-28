@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from services.broker.shioaji import sandbox_smoke
+from services.broker.sinopac import sandbox_smoke
 
 
 class ShioajiSandboxSmokeTest(unittest.TestCase):
