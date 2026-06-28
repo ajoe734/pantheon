@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare SRCLIVE-005 BFF and frontend handoff packet
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: You have exceeded your monthly quota (Request ID: CBD0:FFBF4:8EF473:A8025E:6A413918). Task returned to todo until Codex starts a fresh run.
+- Next: Codex2 review approved: support-only BFF/frontend handoff packet is scoped correctly; owner Codex should finalize closeout after recording PR #2542 / 854a18854e6b443c6758a3ed78c7b418c31b91ea.
 
 ## Summary
 平行支援 SRCLIVE-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
