@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-27T18:32:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare LOOP-AUTO-BFF-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 LOOP-AUTO-BFF-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-SRC-004",
+      "LOOP-AUTO-RT-005",
+      "LOOP-AUTO-DEP-004",
+      "LOOP-AUTO-TEL-005",
+      "LOOP-AUTO-KNOW-006",
+      "LOOP-AUTO-BFF-003"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: sidecar handoff packet finalized and merged to dev (PR #2477). Added Section 3.4 documenting IN-01 runtime_id and EV-01 incident_id filter gaps per Claude2 reviewer findings. Packet ready for absorption into LOOP-AUTO-BFF-004 parent task closeout.",
+    "last_update": "2026-06-27T18:32:09Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-BFF-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "所有 7 個 BFF query gap 均已對照 BFF_SURFACE_INVENTORY.md 與 BFF_API_CONTRACT.md 確認為真實 gap，且均有對應的 dependency task",
+      "現有路由全部確認在 BFF_API_CONTRACT.md §9 中",
+      "額外發現 IN-01 缺少 runtime_id filter、EV-01 缺少 incident_id filter，應在 BFF-004 執行前補充，建議納入 LOOP-AUTO-DEP-004 或另開小 gap task",
+      "Sidecar scope 未違反 L1"
+    ],
+    "review_file": "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T18:32:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-bff-004-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "8f14621eef68a6c065233396550dc8bea620e201",
+      "commit_subject": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF: add filter gap section",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "reviewer Claude2": "IN-01 missing runtime_id filter and EV-01 missing",
+        "Owned layer": "support/sidecars/LOOP-AUTO-BFF-004 (sidecar handoff packet only)",
+        "Not changing": "L1 canonical policy files, ai-status.json, loop registry, BFF routes",
+        "Composes with": "LOOP-AUTO-BFF-004 parent task — packet absorbed at parent closeout",
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude2",
+        "Verified": "support artifact only — reviewer approval on file at LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-REVIEW.md"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fc26cddda5d0340e70d3239a84e2e112094aa6bb",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "BFF handoff packet complete (commit badf0ce1). Packet covers: BFF query gaps for drill 1 (source-to-health) and drill 2 (runtime-to-incident-to-evolution-proposal), operator journey step sequences, frontend handoff materials (truth labels, degraded-state rules, panel readiness), and acceptance checklist. Please verify that the BFF query gap list in Section 3 matches BFF_SURFACE_INVENTORY.md and BFF_API_CONTRACT.md — if any gap is already implemented, mark it implemented with the commit/PR; if any gap is missing from the listed dependency tasks, flag as blocker before BFF-004 drills can run.",
+      "status": "done",
+      "created_at": "2026-06-27T17:54:31Z",
+      "resolved_at": "2026-06-27T17:59:07Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all 7 BFF query gaps confirmed genuine against BFF_SURFACE_INVENTORY.md and BFF_API_CONTRACT.md; no gaps are already implemented; no dependency task is missing; two additional filter field gaps (IN-01 runtime_id, EV-01 incident_id) noted for Claude2 pre-drill; packet returned to Claude for closeout",
+      "status": "done",
+      "created_at": "2026-06-27T17:59:07Z",
+      "resolved_at": "2026-06-27T18:32:10Z"
+    }
+  ],
+  "blockers": []
+}

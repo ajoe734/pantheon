@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+  "archived_at": "2026-06-27T22:17:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+    "title": "Prepare LOOP-AUTO-EVO-005 acceptance packet and dependency map",
+    "summary_zh": "平行支援 LOOP-AUTO-EVO-005，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-EVO-004"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-EVO-005/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar acceptance follow-up packet reviewed and merged via PR #2494; support-only scope honored; parent handoff remains blocked pending Claude approval transition.",
+    "last_update": "2026-06-27T22:17:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-EVO-005",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar 未修改 canonical truth",
+      "依賴圖正確反映所有上游 archived done",
+      "parent 狀態 blocked/Claude2/waiting-for-Claude 描述準確",
+      "Section 5 remediation commands 角色指向正確",
+      "20-test evidence 引用完整可複用"
+    ],
+    "review_file": "support/sidecars/LOOP-AUTO-EVO-005/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T22:17:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-evo-005-sidecar-acceptance-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "52c2323a6b5ace5dc43ad355e424aa909f060714",
+      "commit_subject": "Merge pull request #2494 from ajoe734/task/LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4": "correct packet state"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/dev",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "52c2323a6b5ace5dc43ad355e424aa909f060714",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Support packet corrected and merged: PR #2494 merge 52c2323a6b5ace5dc43ad355e424aa909f060714 updates follow-up-4 to match active parent state (LOOP-AUTO-EVO-005 blocked, owner Claude2, waiting for Claude) and archived dependency status. Validation: python3 -m pytest services/evolution/test_evo_005_rollback_followthrough.py -q (20 passed).",
+      "status": "done",
+      "created_at": "2026-06-27T22:10:19Z",
+      "resolved_at": "2026-06-27T22:15:44Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-005-SIDECAR-ACCEPTANCE-FOLLOWUP-4",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Sidecar packet reviewed: scope constraint honored, active parent state correct, dependency map accurate, AC checklists actionable. Returned to Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T22:15:44Z",
+      "resolved_at": "2026-06-27T22:17:50Z"
+    }
+  ],
+  "blockers": []
+}
