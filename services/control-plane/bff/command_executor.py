@@ -1112,7 +1112,7 @@ def execute_command_with_status(
         # Covers connection failures, timeouts, SSL errors
         reason = str(getattr(exc, "reason", exc))
         is_timeout = "timed out" in reason.lower() or "timeout" in reason.lower()
-        code = "COMMAND_TIMEOUT" if is_timeout else "DOWNSTREAM_UNAVAILABLE"
+        code = "COMMAND_TIMEOUT" if is_timeout else "DEPENDENCY_UNAVAILABLE"
         status = CommandStatus.TIMEOUT if is_timeout else CommandStatus.FAILED
         error = {
             "code": code,

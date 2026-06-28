@@ -549,6 +549,11 @@ class OpenClawOpsClient:
     # Assistant provider surfaces
     # ------------------------------------------------------------------
 
+    def list_assistant_providers(self, *, auth_probe: bool = False) -> Dict[str, Any]:
+        """Return readiness metadata for all assistant providers."""
+        query = {"auth_probe": "true"} if auth_probe else None
+        return self._request("GET", "/api/openclaw-adapter/assistant/providers", query=query)
+
     def get_assistant_readiness(self, provider: str = "codex", *, auth_probe: bool = False) -> Dict[str, Any]:
         """Return readiness metadata for an assistant provider."""
         query = {"auth_probe": "true"} if auth_probe else None
