@@ -371,19 +371,23 @@ def dry_run_meta_side_effect_check(result: dict[str, Any], *, kind: str) -> dict
     dry_run = _extracted_value(result, ("meta", "dryRun"))
     durable = _extracted_value(result, ("meta", "durable"))
     side_effects = _extracted_value(result, ("meta", "liveCapitalSideEffects"))
+    target_id = _extracted_value(result, ("data", "id"))
     ok = (
         result.get("ok") is True
         and dry_run is True
         and durable is False
         and side_effects is False
     )
-    return {
+    check = {
         "kind": kind,
         "ok": ok,
         "dryRun": dry_run,
         "durable": durable,
         "liveCapitalSideEffects": side_effects,
     }
+    if target_id:
+        check["target_id_sha256_12"] = sha256_12(str(target_id))
+    return check
 
 
 def readback_side_effect_check(

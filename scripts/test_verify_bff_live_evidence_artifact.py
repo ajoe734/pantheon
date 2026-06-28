@@ -57,18 +57,29 @@ def write_summary(artifact_dir: Path, *, status: str = "pass") -> None:
 
 
 def dry_run_side_effect_entries() -> list[dict[str, object]]:
-    def meta(kind: str) -> dict[str, object]:
-        return {
+    def meta(kind: str, digest: str = "") -> dict[str, object]:
+        item: dict[str, object] = {
             "kind": kind,
             "ok": True,
             "dryRun": True,
             "durable": False,
             "liveCapitalSideEffects": False,
         }
+        if digest:
+            item["target_id_sha256_12"] = digest
+        return item
 
     def readback(family: str, digest: str) -> dict[str, object]:
+        path = (
+            "/bff/strategies/dry-run-generated"
+            if family == "dry-run-strategy-create"
+            else "/bff/ranking-formulas/dry-run-generated"
+        )
         return {
             "family": f"{family}-readback-not-persisted",
+            "method": "GET",
+            "path": path,
+            "status": 404,
             "ok": True,
             "error_envelope": True,
             "error_code": "RESOURCE_NOT_FOUND",
@@ -82,8 +93,12 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
         }
 
     def validation(family: str) -> dict[str, object]:
+        path = "/bff/strategies" if family == "dry-run-invalid-strategy" else "/bff/ranking-formulas"
         return {
             "family": family,
+            "method": "POST",
+            "path": path,
+            "status": 422,
             "ok": True,
             "error_envelope": True,
             "error_code": "VALIDATION_FAILED",
@@ -95,11 +110,35 @@ def dry_run_side_effect_entries() -> list[dict[str, object]]:
         }
 
     return [
-        {"family": "dry-run-strategy-create", "ok": True, "error_envelope": False, "side_effect_check": meta("dry_run_preview_meta")},
+        {
+            "family": "dry-run-strategy-create",
+            "method": "POST",
+            "path": "/bff/strategies",
+            "status": 200,
+            "ok": True,
+            "error_envelope": False,
+            "side_effect_check": meta("dry_run_preview_meta", "abc123abc123"),
+        },
         readback("dry-run-strategy-create", "abc123abc123"),
-        {"family": "dry-run-ranking-formula-create", "ok": True, "error_envelope": False, "side_effect_check": meta("dry_run_preview_meta")},
+        {
+            "family": "dry-run-ranking-formula-create",
+            "method": "POST",
+            "path": "/bff/ranking-formulas",
+            "status": 200,
+            "ok": True,
+            "error_envelope": False,
+            "side_effect_check": meta("dry_run_preview_meta", "def456def456"),
+        },
         readback("dry-run-ranking-formula-create", "def456def456"),
-        {"family": "dry-run-v5-intervention-claim", "ok": True, "error_envelope": False, "side_effect_check": meta("dry_run_command_meta")},
+        {
+            "family": "dry-run-v5-intervention-claim",
+            "method": "POST",
+            "path": "/bff/v5/interventions/int-live-dry-run/claim",
+            "status": 200,
+            "ok": True,
+            "error_envelope": False,
+            "side_effect_check": meta("dry_run_command_meta"),
+        },
         validation("dry-run-invalid-strategy"),
         validation("dry-run-invalid-ranking-formula"),
     ]
@@ -711,6 +750,44 @@ def test_verifier_rejects_dry_run_validation_without_error_envelope(tmp_path: Pa
     item = payload["criteria"]["dry_run_no_side_effects"]
     assert item["status"] == "fail"
     assert "validation-error-envelope" in item["note"]
+
+
+def test_verifier_rejects_dry_run_readback_target_mismatch(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    readback = next(
+        item
+        for item in auth["dry_run"]
+        if item["family"] == "dry-run-strategy-create-readback-not-persisted"
+    )
+    readback["side_effect_check"]["target_id_sha256_12"] = "wrongtarget12"
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["dry_run_no_side_effects"]
+    assert item["status"] == "fail"
+    assert "readback-target-link:dry-run-strategy-create" in item["note"]
+
+
+def test_verifier_rejects_dry_run_request_path_swap(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    auth_path = artifact_dir / "BFF-LUV-AUTHED-LIVE-001-live-smoke.json"
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    meta = next(item for item in auth["dry_run"] if item["family"] == "dry-run-ranking-formula-create")
+    meta["path"] = "/bff/strategies"
+    auth_path.write_text(json.dumps(auth), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["dry_run_no_side_effects"]
+    assert item["status"] == "fail"
+    assert "meta-request-link" in item["note"]
 
 
 def test_verifier_fails_when_preflight_rbac_matrix_is_missing(tmp_path: Path) -> None:
