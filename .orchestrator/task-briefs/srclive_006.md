@@ -20,5 +20,6 @@ BUG:persona-tw-equity 五個 provider_statuses 全 read_ok(面板 5/5 可讀)但
 - Live verification: `curl -fsS -H 'Authorization: Bearer op-dev:admin:mfa' https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/persona-fleet?page_size=200 | jq ...`
   - `persona-tw-equity`: `state=live_readback_ok`, providers 5/5 read_ok.
   - `persona-us-equity`: `state=partial_readback`, providers 4/7 readable with credential gaps preserved.
-  - `persona-crypto`: `state=datasource_smoke_ok`, providers 2/2 readable and already-ok state preserved.
+- `persona-crypto`: `state=datasource_smoke_ok`, providers 2/2 readable and already-ok state preserved.
 - PR branch refresh: merged `origin/dev` at `85c4cbd66bc26c8262d396181142f0905270c371` before the final closeout push for PR #2558.
+- PR branch refresh: merged `origin/dev` at `f8f0ba710fe94c1c8a538316f52a4ad022fdb83b` after PR #2558 checks passed but base advanced again.
