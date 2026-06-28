@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 
 type ControlModePayload = Record<string, unknown>;
+type UsageRecord = Record<string, unknown>;
 
 export interface OpenClawLlmAuthApi {
   getProviders: typeof getAssistantProviders;
@@ -71,6 +72,42 @@ function providerReason(provider: AssistantProviderReadiness): string {
 
 function checkedAt(provider: AssistantProviderReadiness): string {
   return textFrom(provider.checkedAt, provider.checked_at);
+}
+
+function providerUsage(provider: AssistantProviderReadiness): UsageRecord {
+  const usage = recordFrom(provider.usage);
+  if (Object.keys(usage).length > 0) return usage;
+  return recordFrom(provider.quota);
+}
+
+function usageValue(usage: UsageRecord, ...keys: string[]): string {
+  return textFrom(...keys.map((key) => usage[key]));
+}
+
+function usageUnit(usage: UsageRecord): string {
+  return usageValue(usage, "unit");
+}
+
+function formatUsageMetric(value: string, unit: string): string {
+  if (!value) return "unknown";
+  return unit ? `${value} ${unit}` : value;
+}
+
+function usageRemaining(usage: UsageRecord): string {
+  const remaining = usageValue(usage, "remaining");
+  const percent = usageValue(usage, "remainingPercent", "remaining_percent");
+  const metric = formatUsageMetric(remaining, usageUnit(usage));
+  return percent && metric !== "unknown" ? `${metric} (${percent}%)` : metric;
+}
+
+function usageStatusText(usage: UsageRecord): string {
+  const status = usageValue(usage, "status", "reason", "unknown");
+  const source = usageValue(usage, "source");
+  return source ? `${status} / ${source}` : status;
+}
+
+function usageReset(usage: UsageRecord): string {
+  return usageValue(usage, "resetAt", "reset_at", "updatedAt", "updated_at") || "unknown";
 }
 
 function reauthSessionId(session: AssistantProviderReauthSession): string {
@@ -286,6 +323,7 @@ export function OpenClawLlmAuthPanel({ api = defaultApi }: { api?: OpenClawLlmAu
             const id = providerId(provider);
             const authStatus = providerAuthStatus(provider);
             const reasonText = providerReason(provider);
+            const usage = providerUsage(provider);
             const session = reauthSessions[id];
             const sessionStatus = textFrom(session?.status);
             const uri = session ? verificationUri(session) : "";
@@ -311,6 +349,11 @@ export function OpenClawLlmAuthPanel({ api = defaultApi }: { api?: OpenClawLlmAu
                   <Info label="Mount" value={textFrom(provider.mountMode, provider.mount_mode, "unknown")} />
                   <Info label="Version" value={textFrom(provider.version, "unknown")} />
                   <Info className="col-span-2" label="Checked" value={checkedAt(provider) || "not checked"} />
+                  <Info label="Remaining" value={usageRemaining(usage)} />
+                  <Info label="Limit" value={formatUsageMetric(usageValue(usage, "limit"), usageUnit(usage))} />
+                  <Info label="Used" value={formatUsageMetric(usageValue(usage, "used"), usageUnit(usage))} />
+                  <Info label="Reset" value={usageReset(usage)} />
+                  <Info className="col-span-2" label="Usage status" value={usageStatusText(usage)} />
                   {reasonText && <Info className="col-span-2" label="Reason" value={reasonText} />}
                 </dl>
 

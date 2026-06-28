@@ -79,6 +79,27 @@ export interface AssistantProviderReadiness {
   checked_at?: string | null;
   checkedAt?: string | null;
   version?: string | null;
+  usage?: AssistantProviderUsage | Record<string, unknown> | null;
+  quota?: AssistantProviderUsage | Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+export interface AssistantProviderUsage {
+  status?: string | null;
+  source?: string | null;
+  remaining?: number | string | null;
+  remaining_percent?: number | string | null;
+  remainingPercent?: number | string | null;
+  limit?: number | string | null;
+  used?: number | string | null;
+  unit?: string | null;
+  reset_at?: string | null;
+  resetAt?: string | null;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+  checked_at?: string | null;
+  checkedAt?: string | null;
+  reason?: string | null;
   [key: string]: unknown;
 }
 

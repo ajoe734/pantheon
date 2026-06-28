@@ -18,6 +18,16 @@ function api(overrides: Partial<OpenClawLlmAuthApi> = {}): OpenClawLlmAuthApi {
           auth_status: "failed",
           degraded_reason: "codex_auth_unavailable",
           mount_mode: "rw",
+          usage: {
+            status: "available",
+            source: "env",
+            remaining: 42,
+            limit: 100,
+            used: 58,
+            unit: "requests",
+            remainingPercent: 42,
+            resetAt: "2026-06-29T00:00:00Z",
+          },
         },
         {
           provider: "claude",
@@ -28,6 +38,11 @@ function api(overrides: Partial<OpenClawLlmAuthApi> = {}): OpenClawLlmAuthApi {
           auth_status: "failed",
           degraded_reason: "claude_auth_failure",
           mount_mode: "rw",
+          usage: {
+            status: "unknown",
+            source: "not_configured",
+            reason: "provider_usage_source_not_configured",
+          },
         },
       ],
     }),
@@ -77,6 +92,11 @@ describe("OpenClawLlmAuthPanel", () => {
     expect(await screen.findByText("codex")).toBeTruthy();
     expect(screen.getByText("codex_auth_unavailable")).toBeTruthy();
     expect(screen.getByText("claude_auth_failure")).toBeTruthy();
+    expect(screen.getByText("42 requests (42%)")).toBeTruthy();
+    expect(screen.getByText("100 requests")).toBeTruthy();
+    expect(screen.getByText("58 requests")).toBeTruthy();
+    expect(screen.getByText("2026-06-29T00:00:00Z")).toBeTruthy();
+    expect(screen.getByText("unknown / not_configured")).toBeTruthy();
     expect(screen.getByText("Activate kernel debug before reauth.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Reauth unsupported" }) as HTMLButtonElement).disabled).toBe(true);
   });
