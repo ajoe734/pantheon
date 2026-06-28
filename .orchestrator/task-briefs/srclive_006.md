@@ -23,3 +23,4 @@ BUG:persona-tw-equity 五個 provider_statuses 全 read_ok(面板 5/5 可讀)但
 - `persona-crypto`: `state=datasource_smoke_ok`, providers 2/2 readable and already-ok state preserved.
 - PR branch refresh: merged `origin/dev` at `85c4cbd66bc26c8262d396181142f0905270c371` before the final closeout push for PR #2558.
 - PR branch refresh: merged `origin/dev` at `f8f0ba710fe94c1c8a538316f52a4ad022fdb83b` after PR #2558 checks passed but base advanced again.
+- PR branch refresh: merged `origin/dev` at `4ecd5f78fe44d5d4cf463a9c05d347819e2e0e34` after PR #2558 checks passed but base advanced to SRCLIVE-004 closeout.
