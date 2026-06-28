@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: done
 - Owner: Claude2
 - Reviewer: Codex
-- Next: Closed. Sidecar packet committed at bd0d4b5a; review_approved by Codex; closeout complete.
+- Next: Closeout complete 2026-06-28. Sidecar packet at bd0d4b5a; Codex review_approved (25 tests passed); PR #2526 merged into dev; done by Claude2.
 
 ## Summary
 平行支援 SRCLIVE-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
