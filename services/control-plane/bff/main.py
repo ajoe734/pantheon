@@ -50173,6 +50173,14 @@ _SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
     "twse": ("tw-twse-tpex-official-market",),
     "tpex": ("tw-twse-tpex-official-market",),
     "mops": ("tw-mops-official-disclosures",),
+    # US research sources (SRCLIVE-002)
+    "stooq": ("us-stooq-daily-ohlcv",),
+    "sec_edgar": ("us-sec-edgar-filings",),
+    "finra": ("us-finra-short-sale",),
+    "fred": ("us-fred-macro",),
+    "polygon": ("us-polygon-daily-ohlcv",),
+    "alphavantage": ("us-alpha-vantage-daily-ohlcv",),
+    # Crypto sources (SRCLIVE-003)
     "coingecko": ("crypto-coingecko-spot",),
 }
 
@@ -50411,11 +50419,38 @@ def _overlay_source_health_truth(
         )
         if connector_id and truth:
             projection = _source_truth_projection(connector_id, truth)
+            has_live_health = bool(projection.get("source_health_available"))
+            original_status = source.get("status")
+            original_reason = source.get("reason")
+            original_secret_ref = source.get("secret_ref")
             source.update(projection)
+            if not has_live_health:
+                # Registry entry present but health-usage-snapshot has no live health;
+                # preserve the honest static defaults so read_unavailable /
+                # credential_unavailable are not silently overwritten.
+                if original_status:
+                    source["status"] = original_status
+                if original_reason is not None:
+                    source["reason"] = original_reason
+                if original_secret_ref is not None:
+                    source["secret_ref"] = original_secret_ref
+            elif original_status == "credential_unavailable":
+                # credential_unavailable is only upgraded when source-ingest confirms
+                # health.status=ok.  A degraded/failed health snapshot (e.g. missing
+                # API key reported by source-ingest) must NOT silently flip the status
+                # to source_health_degraded — the operator must see credential_unavailable
+                # with the secret_ref until the key is present and health is green.
+                if str(projection.get("health_status") or "").strip().lower() != "ok":
+                    source["status"] = original_status
+                    if original_reason is not None:
+                        source["reason"] = original_reason
+                    if original_secret_ref is not None:
+                        source["secret_ref"] = original_secret_ref
             if provider_key:
-                provider_statuses[provider_key] = projection["status"]
-            connector_health.append(projection)
-            live_connector_ids.append(connector_id)
+                provider_statuses[provider_key] = source["status"]
+            if has_live_health:
+                connector_health.append(projection)
+                live_connector_ids.append(connector_id)
         else:
             source.setdefault("health_source", "static_metadata")
             source.setdefault("healthSource", "static_metadata")
