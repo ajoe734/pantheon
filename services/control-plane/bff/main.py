@@ -50432,6 +50432,18 @@ def _overlay_source_health_truth(
                     source["reason"] = original_reason
                 if original_secret_ref is not None:
                     source["secret_ref"] = original_secret_ref
+            elif original_status == "credential_unavailable":
+                # credential_unavailable is only upgraded when source-ingest confirms
+                # health.status=ok.  A degraded/failed health snapshot (e.g. missing
+                # API key reported by source-ingest) must NOT silently flip the status
+                # to source_health_degraded — the operator must see credential_unavailable
+                # with the secret_ref until the key is present and health is green.
+                if str(projection.get("health_status") or "").strip().lower() != "ok":
+                    source["status"] = original_status
+                    if original_reason is not None:
+                        source["reason"] = original_reason
+                    if original_secret_ref is not None:
+                        source["secret_ref"] = original_secret_ref
             if provider_key:
                 provider_statuses[provider_key] = source["status"]
             if has_live_health:

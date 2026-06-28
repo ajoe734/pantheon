@@ -491,3 +491,133 @@ def test_source_health_truth_overlay_projects_connector_panel_fields(monkeypatch
     assert bindings[0]["source_class"] == "live_push"
     assert bindings[0]["selectedConnectorId"] == "tw-finmind-broker-daily-report"
     assert bindings[0]["failureReason"] == "FinMind quota exhausted"
+
+
+def test_overlay_preserves_credential_unavailable_when_health_degraded(monkeypatch):
+    """polygon/alphavantage must stay credential_unavailable when source-ingest
+    reports degraded health (missing key).  The only valid upgrade path is
+    health.status=ok.  Regression probe for SRCLIVE-002 review issue (1)."""
+    dss = {
+        "state": "partial_readback",
+        "provider_statuses": {
+            "polygon": "credential_unavailable",
+            "alphavantage": "credential_unavailable",
+        },
+    }
+    sources = [
+        {
+            "provider_key": "polygon",
+            "status": "credential_unavailable",
+            "reason": "API key not configured; set env://POLYGON_API_KEY",
+            "secret_ref": "env://POLYGON_API_KEY",
+        },
+        {
+            "provider_key": "alphavantage",
+            "status": "credential_unavailable",
+            "reason": "API key not configured; set env://ALPHA_VANTAGE_API_KEY",
+            "secret_ref": "env://ALPHA_VANTAGE_API_KEY",
+        },
+    ]
+    monkeypatch.setattr(
+        bff_main,
+        "_source_ingest_truth_by_connector",
+        lambda: {
+            "us-polygon-daily-ohlcv": {
+                "health": {
+                    "source_id": "us-polygon-daily-ohlcv",
+                    "status": "degraded",
+                    "metadata": {"credential_status": "credential_unavailable"},
+                },
+                "connector": {
+                    "connector_id": "us-polygon-daily-ohlcv",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "degraded"},
+                    "health_metrics": {},
+                },
+            },
+            "us-alpha-vantage-daily-ohlcv": {
+                "health": {
+                    "source_id": "us-alpha-vantage-daily-ohlcv",
+                    "status": "degraded",
+                    "metadata": {"credential_status": "credential_unavailable"},
+                },
+                "connector": {
+                    "connector_id": "us-alpha-vantage-daily-ohlcv",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "degraded"},
+                    "health_metrics": {},
+                },
+            },
+        },
+    )
+
+    out_dss, out_sources, _bindings = bff_main._overlay_source_health_truth(dss, sources)
+
+    by_provider = {s["provider_key"]: s for s in out_sources}
+
+    polygon = by_provider["polygon"]
+    assert polygon["status"] == "credential_unavailable", (
+        "polygon must not be projected as source_health_degraded when credential is missing"
+    )
+    assert polygon.get("secret_ref") == "env://POLYGON_API_KEY"
+    assert "POLYGON_API_KEY" in (polygon.get("reason") or "")
+
+    alphavantage = by_provider["alphavantage"]
+    assert alphavantage["status"] == "credential_unavailable", (
+        "alphavantage must not be projected as source_health_degraded when credential is missing"
+    )
+    assert alphavantage.get("secret_ref") == "env://ALPHA_VANTAGE_API_KEY"
+    assert "ALPHA_VANTAGE_API_KEY" in (alphavantage.get("reason") or "")
+
+    assert out_dss["provider_statuses"]["polygon"] == "credential_unavailable"
+    assert out_dss["provider_statuses"]["alphavantage"] == "credential_unavailable"
+
+
+def test_overlay_upgrades_credential_unavailable_when_health_ok(monkeypatch):
+    """When source-ingest confirms health.status=ok (key is now present and working),
+    credential_unavailable must be upgraded to read_ok."""
+    dss = {
+        "state": "partial_readback",
+        "provider_statuses": {"polygon": "credential_unavailable"},
+    }
+    sources = [
+        {
+            "provider_key": "polygon",
+            "status": "credential_unavailable",
+            "reason": "API key not configured; set env://POLYGON_API_KEY",
+            "secret_ref": "env://POLYGON_API_KEY",
+        },
+    ]
+    monkeypatch.setattr(
+        bff_main,
+        "_source_ingest_truth_by_connector",
+        lambda: {
+            "us-polygon-daily-ohlcv": {
+                "health": {
+                    "source_id": "us-polygon-daily-ohlcv",
+                    "status": "ok",
+                    "last_success_at": "2026-06-28T01:00:00Z",
+                    "row_count_last_run": 500,
+                    "metadata": {},
+                },
+                "connector": {
+                    "connector_id": "us-polygon-daily-ohlcv",
+                    "status": "enabled",
+                    "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
+                    "freshness": {"status": "fresh", "last_success_at": "2026-06-28T01:00:00Z"},
+                    "health_metrics": {},
+                },
+            },
+        },
+    )
+
+    out_dss, out_sources, _bindings = bff_main._overlay_source_health_truth(dss, sources)
+
+    by_provider = {s["provider_key"]: s for s in out_sources}
+    polygon = by_provider["polygon"]
+    assert polygon["status"] == "read_ok", (
+        "polygon must be read_ok when source-ingest confirms health.status=ok"
+    )
+    assert out_dss["provider_statuses"]["polygon"] == "read_ok"

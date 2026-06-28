@@ -1,9 +1,9 @@
 # US Research Source Activation Runbook
 
-Task: SRCLIVE-002  
-Owner: Claude2  
-Reviewer: Codex  
-Status: in_progress → review  
+Task: SRCLIVE-002
+Owner: Claude2
+Reviewer: Codex
+Status: in_progress → review
 
 ## What Was Done
 
