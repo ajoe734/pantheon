@@ -289,14 +289,20 @@ evidence for implementation behavior.
 
 ---
 
-## 9. Handoff Status
+## 9. Handoff and Review Status
 
-This packet is ready for `Codex` review as support material. It should not be
-treated as approval of SRCLIVE-003 canonical implementation, runtime wiring,
-BFF code changes, source-ingest changes, registry/governance changes, or
-frontend code changes.
+At handoff time, this packet was ready for `Codex` review as support material.
+`Codex` approved the packet and returned it to `Codex2` for owner closeout.
+The review notes confirm that this is support-only material, that the packet is
+factually aligned with the parent SRCLIVE-003 surfaces, and that the open PR
+language above is a packet-time snapshot. Parent PR `#2516` and parent task
+`SRCLIVE-003` are now merged/archived done.
 
-Recommended review command:
+This review should not be treated as approval of new canonical implementation,
+runtime wiring, BFF code changes, source-ingest changes, registry/governance
+changes, or frontend code changes from this sidecar.
+
+Original review handoff command, retained for audit:
 
 ```bash
 AI_NAME=Codex REVIEW_FILE=support/sidecars/SRCLIVE-003/SRCLIVE-003-SIDECAR-BFF-HANDOFF-REVIEW.md \
@@ -305,5 +311,29 @@ REVIEW_NOTES_ZH="審查通過：sidecar packet accurately captures PR #2516 BFF/
 "Sidecar packet approved; support-only BFF/frontend handoff returned to owner for closeout."
 ```
 
-If review finds a factual mismatch, reopen with the exact packet correction
-needed instead of changing canonical or parent runtime files from this sidecar.
+If a future reader finds a factual mismatch, open a narrow follow-up with the
+exact packet correction needed instead of changing canonical or parent runtime
+files from this sidecar.
+
+---
+
+## 10. Owner Closeout Note
+
+Owner closeout verified the current state after review approval:
+
+| Check | Result |
+|---|---|
+| Active task state | `SRCLIVE-003-SIDECAR-BFF-HANDOFF` is `review_approved`; owner `Codex2`; reviewer `Codex`. |
+| Sidecar PR | PR `#2519` merged into `dev` at `fdcbc503fd0b3df333ec4e9d85405f34e7021193`. |
+| Parent task state | `SRCLIVE-003` is archived `done`; parent merge commit `73f52ec7410821e25cf3cc3810369f19f24188e8`. |
+| Scope boundary | This closeout changes only the sidecar support packet and task-scoped brief. |
+
+Closeout verification command:
+
+```bash
+git diff --check -- .orchestrator/task-briefs/srclive_003_sidecar_bff_handoff.md support/sidecars/SRCLIVE-003/SRCLIVE-003-SIDECAR-BFF-HANDOFF.md
+```
+
+No runtime tests were needed for the owner closeout because no runtime,
+contract, canonical, registry/governance, source-ingest, BFF, or frontend files
+changed.
