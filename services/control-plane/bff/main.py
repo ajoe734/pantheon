@@ -50393,6 +50393,28 @@ def _source_health_bindings_from_requirements(
     return bindings
 
 
+def _data_source_ok_tone(value: Any) -> bool:
+    token = str(value or "").strip().lower()
+    return any(marker in token for marker in ("read_ok", "readback_ok", "smoke_ok"))
+
+
+def _upgrade_all_green_data_source_state(dss: Dict[str, Any]) -> None:
+    provider_statuses = dss.get("provider_statuses")
+    if not isinstance(provider_statuses, dict) or not provider_statuses:
+        return
+    if _data_source_ok_tone(dss.get("state")):
+        return
+    if not all(_data_source_ok_tone(status) for status in provider_statuses.values()):
+        return
+
+    provider_count = len(provider_statuses)
+    dss["state"] = "live_readback_ok"
+    dss["summary"] = (
+        f"All declared data-source providers ({provider_count}/{provider_count}) "
+        "report readback OK after live source-health overlay."
+    )
+
+
 def _overlay_source_health_truth(
     data_source_status: Any,
     data_sources: Any,
@@ -50473,6 +50495,7 @@ def _overlay_source_health_truth(
     dss["staticSourceLabels"] = dss["static_source_labels"]
     dss["required_source_health"] = json.loads(json.dumps(bindings))
     dss["requiredSourceHealth"] = json.loads(json.dumps(bindings))
+    _upgrade_all_green_data_source_state(dss)
     return dss, srcs, bindings
 
 

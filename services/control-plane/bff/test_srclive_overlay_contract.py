@@ -8,6 +8,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 import main as bff_main
 
 
+def _frontend_data_source_tone(state: str) -> str:
+    token = str(state or "").lower()
+    return "ok" if any(marker in token for marker in ("read_ok", "readback_ok", "smoke_ok")) else "warn"
+
+
 def _truth(connector_id: str, *, status: str = "ok", rows: int = 1) -> dict:
     return {
         "health": {
@@ -26,6 +31,53 @@ def _truth(connector_id: str, *, status: str = "ok", rows: int = 1) -> dict:
             "health_metrics": {},
         },
     }
+
+
+def test_all_green_live_overlay_promotes_summary_badge_state(monkeypatch):
+    dss = {
+        "state": "partial_readback",
+        "summary": (
+            "Shioaji quote readback is present; TWSE, TPEx, MOPS, and FinMind "
+            "default to unavailable repo-local smoke evidence."
+        ),
+        "provider_statuses": {
+            "shioaji": "read_ok",
+            "twse": "read_unavailable",
+            "tpex": "read_unavailable",
+            "mops": "public_reference_unavailable",
+            "finmind": "read_unavailable",
+        },
+    }
+    sources = [
+        {"provider_key": "shioaji", "status": "read_ok"},
+        {"provider_key": "twse", "status": "read_unavailable"},
+        {"provider_key": "tpex", "status": "read_unavailable"},
+        {"provider_key": "mops", "status": "public_reference_unavailable"},
+        {"provider_key": "finmind", "status": "read_unavailable"},
+    ]
+    monkeypatch.setattr(
+        bff_main,
+        "_source_ingest_truth_by_connector",
+        lambda: {
+            "tw-twse-tpex-official-market": _truth("tw-twse-tpex-official-market", rows=1000),
+            "tw-mops-official-disclosures": _truth("tw-mops-official-disclosures", rows=8),
+            "tw-finmind-datasets": _truth("tw-finmind-datasets", rows=120),
+        },
+    )
+
+    out_dss, _, _ = bff_main._overlay_source_health_truth(dss, sources)
+
+    assert out_dss["provider_statuses"] == {
+        "shioaji": "read_ok",
+        "twse": "read_ok",
+        "tpex": "read_ok",
+        "mops": "read_ok",
+        "finmind": "read_ok",
+    }
+    assert out_dss["state"] == "live_readback_ok"
+    assert _frontend_data_source_tone(out_dss["state"]) == "ok"
+    assert "5/5" in out_dss["summary"]
+    assert "default to unavailable" not in out_dss["summary"]
 
 
 def test_tw_official_sources_flip_only_from_source_ingest_health(monkeypatch):
@@ -57,6 +109,7 @@ def test_tw_official_sources_flip_only_from_source_ingest_health(monkeypatch):
     assert out_dss["provider_statuses"]["twse"] == "read_ok"
     assert out_dss["provider_statuses"]["tpex"] == "read_ok"
     assert out_dss["provider_statuses"]["mops"] == "read_ok"
+    assert out_dss["state"] == "live_readback_ok"
     assert {source["connectorId"] for source in out_sources} == {
         "tw-twse-tpex-official-market",
         "tw-mops-official-disclosures",
@@ -88,6 +141,7 @@ def test_missing_source_ingest_health_does_not_fake_green(monkeypatch):
     assert out_dss["source_health_source"] == "static_metadata"
     assert out_dss["provider_statuses"]["twse"] == "read_unavailable"
     assert out_dss["provider_statuses"]["polygon"] == "credential_unavailable"
+    assert out_dss["state"] == "partial_readback"
     assert by_provider["polygon"]["secret_ref"] == "env://POLYGON_API_KEY"
 
 
@@ -142,6 +196,7 @@ def test_us_public_sources_flip_while_key_gated_sources_stay_credential_unavaila
     assert out_dss["provider_statuses"]["fred"] == "read_ok"
     assert out_dss["provider_statuses"]["polygon"] == "credential_unavailable"
     assert out_dss["provider_statuses"]["alphavantage"] == "credential_unavailable"
+    assert out_dss["state"] == "partial_readback"
     by_provider = {source["provider_key"]: source for source in out_sources}
     assert by_provider["polygon"]["secret_ref"] == "env://POLYGON_API_KEY"
     assert by_provider["alphavantage"]["secret_ref"] == "env://ALPHA_VANTAGE_API_KEY"
@@ -160,4 +215,5 @@ def test_crypto_coingecko_flips_from_source_ingest_health(monkeypatch):
 
     assert out_dss["source_health_source"] == "source_ingest"
     assert out_dss["provider_statuses"]["coingecko"] == "read_ok"
+    assert out_dss["state"] == "datasource_smoke_ok"
     assert out_sources[0]["connectorId"] == "crypto-coingecko-spot"
