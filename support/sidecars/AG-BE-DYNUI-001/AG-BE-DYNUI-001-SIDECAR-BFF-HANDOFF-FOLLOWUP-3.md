@@ -6,16 +6,23 @@
 | Helper kind | `bff_handoff_packet` |
 | Parent task | `AG-BE-DYNUI-001` |
 | Prepared by | `Codex` |
-| Reviewer | `Claude` |
+| Reviewer | `Codex2` |
 | Date | 2026-06-28 |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff |
+| Status | Owner closeout finalized for parent absorption |
 
 This packet is a support-only follow-up for the parent owner. It does not edit
 L1 canonical truth, OpenAPI, JSON Schema, BFF runtime, widget registry,
 governance logic, persistence, or frontend code. It converts the already
 identified V11 Trading Room workspace gaps into an implementation handoff card
 that `AG-BE-DYNUI-001` can absorb or reject in the main task.
+
+Closeout note: PR #2565 merged the original packet into `dev` at
+`c3973d715cfc8d8ea97c201e9ab4efbaf540c536`. Review was reassigned from
+`Claude` to `Codex2` in central L0 state; `Codex2` approved the support-only
+packet and returned it to `Codex` for owner finalization. The packet's original
+header named `Claude` as reviewer, but central L0 reviewer truth is now
+`Codex2`.
 
 `current-work.md` and the full `ai-activity-log.jsonl` were not scanned.
 
@@ -26,7 +33,7 @@ that `AG-BE-DYNUI-001` can absorb or reject in the main task.
 | `AI_COLLABORATION_GUIDE.md` | L0 state coordinates task ownership; support packets do not override product or architecture truth. |
 | `.orchestrator/task-briefs/ag_be_dynui_001_sidecar_bff_handoff_followup_3.md` | This sidecar may create support material only and must not modify canonical truth or runtime implementation. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Task-owned doc progress must be preserved with explicit scoped commits when it reaches a handoff state. |
-| `.orchestrator/skills/task-closeout-finalization.md` | This task is not `review_approved`; the correct next lifecycle move is reviewer handoff, not `done`. |
+| `.orchestrator/skills/task-closeout-finalization.md` | Closeout requires task artifacts, focused validation, scoped commit, PR flow, and reviewer approval before `done`. Central L0 state has this task in `review_approved` for owner finalization. |
 | `support/sidecars/AG-BE-DYNUI-001/AG-BE-DYNUI-001-SIDECAR-BFF-HANDOFF.md` | Baseline packet already lists the missing V11 proposal/workspace route family, operator journey, frontend bindings, and no-order guards. |
 | `support/sidecars/AG-BE-DYNUI-001/AG-BE-DYNUI-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md` | Follow-up 2 narrows the absorption order: schema first, proposal lifecycle, workspace read/layout, view/widget mutation, then OpenAPI/type sync. |
 | `docs/04/agora_design_pack_dynui_2026-06-28/README.md` | Joining the Trading Room must create a complete `TradingRoomWorkspaceProposal`, not an empty dashboard. |
@@ -123,10 +130,11 @@ addWidget(workspaceId, widgetSpec)
 updateWidget(workspaceId, widgetId, patch)
 ```
 
-## Review Checklist For Claude
+## Reviewer Approval Record
 
 | Check | Expected result |
 |---|---|
+| Reviewer | `Codex2` approved this support-only packet in central L0 state after reviewer reassignment. |
 | Sidecar boundary | This packet adds support material only and does not change runtime, schemas, OpenAPI, registry, governance logic, frontend code, or canonical truth. |
 | Parent routing | `AG-BE-DYNUI-001` remains the owner for V11 proposal, workspace, view, widget schema and operator route contracts. |
 | Neighbor routing | `AG-BE-DYNUI-002` remains owner for widget revision proposals, workspace versions, change log, and rollback. `AG-BE-DYNUI-003` remains owner for servant generator/validator integration. |
@@ -152,16 +160,38 @@ rg -n "^  /bff/agora/(strategies/.*/trading-room/proposals|trading-room/workspac
 rg -n "@router\.|def .*trading|dashboard_recipe_id|decision-events|stream|intent|workspace|proposal" services/control-plane/bff/agora/trading_room/router.py
 rg -n "@router\.|If-Match|ETag|etag|layout|dashboard-recipes|widgets/validate|proposal|accept|rollback" services/control-plane/bff/agora/dashboard/router.py
 rg -n "TradingRoomWorkspaceProposal|TradingRoomWorkspace|TradingRoomViewSpec|TradingRoomWidgetSpec|/bff/agora|WidgetRevisionProposal|workspace proposal|views|thumbnails|generation" /tmp/ai-trading-desk-design/uploads/Pathreon_Agora_ClaudeDesign_UI_Requirement_V11_WinnerBranch_TradingRoom_2026-06-19.md
+jq '.tasks[] | select(.id=="AG-BE-DYNUI-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3") | {id,status,owner,reviewer,review_file,review_notes_zh}' /home/lupin/code/pantheon/ai-status.json
+gh pr view 2565 --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,title,url,statusCheckRollup
+git merge-base --is-ancestor 4b628307 origin/dev
 ```
 
 Validation conclusion:
 
 - Branch is the expected `task/AG-BE-DYNUI-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3`.
-- Supervisor root L0 state has this task as `in_progress`, owner `Codex`,
-  reviewer `Claude`, and artifact
+- Central `PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon` L0 state has this
+  task as `review_approved`, owner `Codex`, reviewer `Codex2`, and review file
   `support/sidecars/AG-BE-DYNUI-001/AG-BE-DYNUI-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md`.
 - Current BFF/OpenAPI/schema surfaces still lack V11 workspace proposal and
   workspace CRUD contracts.
 - Existing dashboard recipe surfaces are useful references but insufficient
   substitutes.
 - This sidecar produced only support/handoff material.
+- PR #2565 is merged into `dev` at
+  `c3973d715cfc8d8ea97c201e9ab4efbaf540c536`; required checks reported
+  success before merge.
+
+## Owner Closeout
+
+Closeout verification:
+
+| Check | Expected result |
+|---|---|
+| Scope | Only this support packet and the task-scoped brief are changed. |
+| No canonical mutation | No BFF runtime, OpenAPI, schema, registry, frontend, or L1/L2 canonical doc changes are present. |
+| Delta accuracy | The follow-up accurately states that V11 workspace proposal/workspace routes remain absent in the current worktree. |
+| Parent boundary | `AG-BE-DYNUI-001` owns schema/proposal/workspace/view/widget operator routes; `AG-BE-DYNUI-002` owns widget revisions/history/rollback; `AG-BE-DYNUI-003` owns generator integration. |
+| Frontend posture | Capability-not-ready is preferred over dashboard recipe substitution, local fixture fallback, or static prototype state. |
+
+No further sidecar implementation is needed. Parent owner may absorb this packet
+when sequencing `AG-BE-DYNUI-001`; `AG-BE-DYNUI-002` and `AG-BE-DYNUI-003`
+boundaries remain unchanged.
