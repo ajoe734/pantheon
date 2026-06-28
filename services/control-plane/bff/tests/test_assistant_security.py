@@ -53,6 +53,7 @@ def _control_mode_client(
     capabilities: list[str] | None = None,
     mfa_verified: bool = False,
     prepare_repair_worktree=None,
+    provider_list=None,
     provider_reauth=None,
     provider_reauth_status=None,
 ) -> TestClient:
@@ -66,12 +67,15 @@ def _control_mode_client(
         build_context_pack=lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError),
         extract_identity=lambda _authorization: identity,
         require_read_role=lambda _identity: None,
+        bff_error=bff_main._bff_error,
         control_mode_store=store,
+        provider_list=provider_list,
         prepare_repair_worktree=prepare_repair_worktree,
         provider_reauth=provider_reauth,
         provider_reauth_status=provider_reauth_status,
     )
     app = FastAPI()
+    app.add_exception_handler(bff_main.StarletteHTTPException, bff_main._bff_http_exception_handler)
     app.include_router(router)
     return TestClient(app, raise_server_exceptions=True)
 
@@ -504,6 +508,38 @@ def test_provider_reauth_requires_active_kernel_debug_or_repair(monkeypatch) -> 
     assert denied_resp.status_code == 409
     assert denied_resp.json()["error"]["details"]["reason"] == "kernel_debug_or_repair_required"
     assert calls == []
+
+
+def test_provider_list_delegates_to_openclaw_adapter_with_auth_probe(monkeypatch) -> None:
+    calls = []
+
+    def provider_list(auth_probe: bool):
+        calls.append(auth_probe)
+        return {
+            "status": "ok",
+            "data": [
+                {"provider": "codex_cli", "ready": True, "auth_status": "ready"},
+                {"provider": "claude", "ready": False, "auth_status": "failed"},
+            ],
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        provider_list=provider_list,
+    )
+
+    resp = client.get(
+        "/bff/assistant/providers?auth_probe=true",
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert resp.status_code == 200
+    assert calls == [True]
+    assert resp.json()["data"][0]["provider"] == "codex_cli"
 
 
 def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:

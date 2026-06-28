@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 
@@ -202,13 +203,28 @@ def route_key(method: str, path: str) -> str:
     return f"{method.upper()} {normalize_path(path)}"
 
 
+def _route_contexts(app: object) -> Iterator[tuple[str, set[str]]]:
+    """Yield route path/method pairs across FastAPI route table versions."""
+    for route in getattr(app, "routes", []):
+        effective_contexts = getattr(route, "effective_route_contexts", None)
+        if callable(effective_contexts):
+            for context in effective_contexts():
+                yield (
+                    str(getattr(context, "path", "") or ""),
+                    set(getattr(context, "methods", set()) or set()),
+                )
+            continue
+        yield (
+            str(getattr(route, "path", "") or ""),
+            set(getattr(route, "methods", set()) or set()),
+        )
+
+
 def app_route_index(app: object) -> list[dict]:
     """Walk the FastAPI route table and return structured route entries."""
     entries: list[dict] = []
     seen: set[str] = set()
-    for route in getattr(app, "routes", []):
-        path = str(getattr(route, "path", "") or "")
-        methods = getattr(route, "methods", set()) or set()
+    for path, methods in _route_contexts(app):
         for method in sorted(methods):
             method = str(method).upper()
             if method in IGNORED_METHODS:
