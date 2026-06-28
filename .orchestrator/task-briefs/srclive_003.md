@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Crypto CoinGecko 連接器新建 + 接線
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
-- Reviewer: Claude
-- Next: Helper-claimed by Codex2 while Claude is dispatch-paused.
+- Reviewer: Claude2
+- Next: Review approved: CoinGecko connector implementation complete, all tests green, live smoke status:ok, governance metadata correct. Returning to Codex2 for finalization.
 
 ## Summary
 persona-crypto 目前 1/2(kraken=datasource_smoke_ok),coingecko=read_unavailable 釘在離線 smoke。source_ingestion 完全沒有 CoinGecko 連接器→必須新建。工作:(1) 新增 connectors/crypto_coingecko.py:CoinGeckoSpotMarketAdapter(connector_id 'crypto-coingecko-spot',CoinGecko public API /api/v3,免 key,正規化日 OHLC/價格到 source record schema,遵循 SourceConnectorProvider 介面與既有 us_public 連接器同風格);(2) 在 connectors/__init__.py 匯出註冊;(3) active_universe 加 SourceUpdateRule;(4) BFF _SOURCE_PROVIDER_CONNECTOR_CANDIDATES 加 coingecko→crypto-coingecko-spot;(5) 觸發一輪真實 ingest run 並確認 snapshot status:ok;(6) 連接器單元測試(正規化+evidence packet)。kraken 不動。
