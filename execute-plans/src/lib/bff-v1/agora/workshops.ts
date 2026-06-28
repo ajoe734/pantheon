@@ -92,12 +92,23 @@ export interface WorkshopCard {
   updated_at?: string;
 }
 
+export interface WorkshopMessageRequest {
+  content: string;
+  attachment_refs?: string[];
+}
+
 function resolvedBase(baseUrl?: string): string {
   if (baseUrl) return baseUrl.replace(/\/+$/, "");
   if (typeof window !== "undefined" && window.location?.origin) {
     return window.location.origin.replace(/\/+$/, "");
   }
   return "";
+}
+
+function idempotencyKey(): string {
+  const cryptoObj = typeof crypto !== "undefined" ? crypto : undefined;
+  if (cryptoObj?.randomUUID) return cryptoObj.randomUUID();
+  return `workshop-msg-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function recordFrom(value: unknown): Record<string, unknown> {
@@ -185,6 +196,53 @@ export async function getWorkshop(workshopId: string, baseUrl?: string): Promise
   }
   const body = await parseJson(res);
   return workshopFrom(body);
+}
+
+export async function postWorkshopMessage(
+  workshopId: string,
+  request: WorkshopMessageRequest,
+  baseUrl?: string,
+): Promise<Record<string, unknown>> {
+  const base = resolvedBase(baseUrl);
+  const getUrl = `${base}/bff/agora/workshops/${encodeURIComponent(workshopId)}`;
+  const current = await fetch(getUrl, {
+    method: "GET",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  if (current.status === 404) throw new Error("Workshop not found");
+  if (!current.ok) {
+    const body = await parseJson(current);
+    const message = recordFrom(recordFrom(body).error).message ?? `GET ${getUrl} failed ${current.status}`;
+    throw new Error(String(message));
+  }
+  const etag = current.headers.get("ETag") ?? current.headers.get("etag");
+  if (!etag) {
+    throw new Error("Workshop ETag is required before posting a message");
+  }
+
+  const postUrl = `${base}/bff/agora/workshops/${encodeURIComponent(workshopId)}/messages`;
+  const res = await fetch(postUrl, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "If-Match": etag,
+      "Idempotency-Key": idempotencyKey(),
+    },
+    body: JSON.stringify({
+      content: request.content,
+      attachment_refs: request.attachment_refs ?? [],
+    }),
+  });
+  if (!res.ok) {
+    const body = await parseJson(res);
+    const message = recordFrom(recordFrom(body).error).message ?? `POST ${postUrl} failed ${res.status}`;
+    throw new Error(String(message));
+  }
+  const body = await parseJson(res);
+  return recordFrom(recordFrom(body).data ?? body);
 }
 
 export async function getWorkshopCompleteness(workshopId: string, baseUrl?: string): Promise<StrategyCompleteness | null> {

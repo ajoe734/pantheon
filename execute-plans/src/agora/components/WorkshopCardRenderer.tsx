@@ -5,6 +5,7 @@ import { ConsultResultCard } from "./ConsultResultCard";
 import { ResearchRunCard } from "./ResearchRunCard";
 import { BacktestResultCard } from "./BacktestResultCard";
 import { VersionCompareCard } from "./VersionCompareCard";
+import { StrategyReconstructionCard } from "./StrategyReconstructionCard";
 import type {
   PayloadUserStrategyDescription,
   PayloadServantReconstruction,
@@ -99,62 +100,6 @@ function UserStrategyDescriptionCard({ card, onContinueDiscussion }: WorkshopCar
       >
         {p.owner_visible_content}
       </div>
-    </CardShell>
-  );
-}
-
-function ServantReconstructionCard({ card, onContinueDiscussion }: WorkshopCardRendererProps): JSX.Element {
-  const p = card.payload as unknown as PayloadServantReconstruction;
-  return (
-    <CardShell card={card} testId={`workshop-card-servant-${card.card_id}`} onContinueDiscussion={onContinueDiscussion}>
-      {p.causal_chain && p.causal_chain.length > 0 && (
-        <div data-testid={`workshop-card-servant-${card.card_id}-chain`}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-            Causal Chain
-          </div>
-          {p.causal_chain.map((step) => (
-            <div
-              key={step.step_id}
-              style={{
-                fontSize: 12,
-                padding: "4px 8px",
-                borderLeft: "2px solid #e5e7eb",
-                marginBottom: 4,
-                color: "#374151",
-              }}
-            >
-              <span style={{ fontWeight: 500 }}>{step.premise}</span>
-              {" → "}
-              {step.mechanism}
-              <span style={{ color: "#9ca3af", marginLeft: 6 }}>
-                ({Math.round(step.confidence * 100)}%)
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {p.servant_inferences && p.servant_inferences.length > 0 && (
-        <div data-testid={`workshop-card-servant-${card.card_id}-inferences`}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "#92400e", marginBottom: 3 }}>
-            Inferences
-          </div>
-          {p.servant_inferences.map((inf, i) => (
-            <div key={i} style={{ fontSize: 12, color: "#92400e" }}>
-              {inf.needs_confirmation && <span style={{ marginRight: 4 }}>⚠</span>}
-              {inf.statement}
-            </div>
-          ))}
-        </div>
-      )}
-      {p.contradictions && p.contradictions.length > 0 && (
-        <div
-          data-testid={`workshop-card-servant-${card.card_id}-contradictions`}
-          style={{ fontSize: 12, color: "#dc2626" }}
-        >
-          <span style={{ fontWeight: 600 }}>Contradictions: </span>
-          {p.contradictions.join("; ")}
-        </div>
-      )}
     </CardShell>
   );
 }
@@ -497,7 +442,13 @@ export function WorkshopCardRenderer({ card, onContinueDiscussion }: WorkshopCar
     case "user_strategy_description":
       return <UserStrategyDescriptionCard card={card} onContinueDiscussion={onContinueDiscussion} />;
     case "servant_reconstruction":
-      return <ServantReconstructionCard card={card} onContinueDiscussion={onContinueDiscussion} />;
+      return (
+        <StrategyReconstructionCard
+          card={card}
+          payload={card.payload as unknown as PayloadServantReconstruction}
+          onContinueDiscussion={onContinueDiscussion}
+        />
+      );
     case "completeness_update":
       return <CompletenessUpdateCard card={card} onContinueDiscussion={onContinueDiscussion} />;
     case "missing_definition":
