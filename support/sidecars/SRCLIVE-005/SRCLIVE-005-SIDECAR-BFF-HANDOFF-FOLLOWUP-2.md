@@ -4,11 +4,17 @@
 **Parent Owner**: `Codex2`
 **Parent Reviewer**: `Claude2`
 **Parent Status at packet time**: `review_approved`
-**Parent PR**: `https://github.com/ajoe734/pantheon/pull/2543`
-**Parent Merge Commit**: `bfec5636ef96084d7ada26ab75370cd9e986bec4`
+**Parent Status at closeout**: `done`
+**Parent Implementation PR**: `https://github.com/ajoe734/pantheon/pull/2543`
+**Parent Implementation Merge Commit**: `bfec5636ef96084d7ada26ab75370cd9e986bec4`
+**Parent Closeout PR**: `https://github.com/ajoe734/pantheon/pull/2551`
+**Parent Closeout Merge Commit**: `ef68d5ef653cd629fef3ab73d7dc20eea6b2f3cc`
 **Sidecar Task**: `SRCLIVE-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`
 **Sidecar Owner**: `Codex`
-**Sidecar Reviewer**: `Codex2`
+**Sidecar Reviewer**: `Claude2`
+**Sidecar Review Status**: `review_approved`
+**Sidecar PR**: `https://github.com/ajoe734/pantheon/pull/2552`
+**Sidecar Merge Commit**: `e6c98e1f5167e485f67aab066101458354d7899f`
 **Helper Kind**: `bff_handoff_packet`
 **Generated**: `2026-06-28`
 **Mutates canonical**: `no`
@@ -22,38 +28,38 @@ frontend code, or parent `SRCLIVE-005` owner closeout state.
 ## 1. Why This Follow-up Exists
 
 The first SRCLIVE-005 sidecar packet captured the parent branch while it was
-still WIP. Since then, parent PR #2543 merged into `dev` and the parent task was
-review-approved, but the parent lifecycle is still not terminal: `SRCLIVE-005`
-remains `review_approved` until owner `Codex2` completes closeout and marks it
-`done`.
+still WIP. Since then, parent implementation PR #2543 and parent closeout PR
+#2551 merged into `dev`, and owner `Codex2` finalized `SRCLIVE-005` to `done`.
 
 This packet updates the BFF/frontend handoff from "WIP branch expectations" to
-"merged implementation surface plus remaining closeout boundary." Parent owner
-still decides whether and how to absorb this packet into final docs or release
-notes.
+"merged implementation surface plus lifecycle boundary." Parent owner still
+decides whether and how to absorb this packet into future docs or release notes.
 
 Non-goals:
 
 - no new source-ingest, BFF, registry, governance, or frontend implementation;
 - no L1/L2 canonical document edits;
-- no approval of parent task `done`;
+- no approval or mutation of parent task state by this sidecar;
 - no claim that a dev-VM live ingest run or browser smoke has completed beyond
   the review evidence already recorded on the parent task.
 
 ---
 
-## 2. Current Parent State
+## 2. Parent State at Sidecar Closeout
 
 | Item | Current value |
 |---|---|
-| Parent status | `review_approved` in `AI_NAME=Codex ./scripts/ai-status.sh show SRCLIVE-005` |
-| Parent PR | #2543, `SRCLIVE-005: wire US source live drivers` |
-| PR state | `MERGED` into `dev` at `2026-06-28T15:26:16Z` |
-| Parent task commit | `c7b793a1b755acbd78e2feb18fd9a897f18c19b2` |
-| Parent merge commit | `bfec5636ef96084d7ada26ab75370cd9e986bec4` |
+| Parent status | `done` in `AI_NAME=Codex ./scripts/ai-status.sh show SRCLIVE-005` archive output |
+| Implementation PR | #2543, `SRCLIVE-005: wire US source live drivers` |
+| Implementation PR state | `MERGED` into `dev` at `2026-06-28T15:26:16Z` |
+| Implementation task commit | `c7b793a1b755acbd78e2feb18fd9a897f18c19b2` |
+| Implementation merge commit | `bfec5636ef96084d7ada26ab75370cd9e986bec4` |
+| Closeout PR | #2551, `SRCLIVE-005: record closeout PR` |
+| Closeout task commit | `51db21d2425e3e98b12561ca2568274be10e0ceb` |
+| Closeout merge commit | `ef68d5ef653cd629fef3ab73d7dc20eea6b2f3cc` |
 | Visible GitHub checks | `Commit trailers`, `Runtime mirror guard`, `Smoke acceptance`, and `Forward to orchestrator` succeeded |
 | Review note | reviewer accepted Yahoo/Stooq replacement, SEC multi-step fetch, FINRA publication-window handling, FRED key gate, and BFF no-false-green overlay |
-| Remaining lifecycle boundary | parent owner closeout and `done` transition are still pending |
+| Remaining lifecycle boundary | none for parent; this sidecar only needs owner closeout from `review_approved` to `done` |
 
 Parent PR #2543 touched these surfaces:
 
@@ -194,15 +200,19 @@ require Polygon or Alpha Vantage to turn green for SRCLIVE-005 acceptance.
 
 ---
 
-## 7. Remaining Closeout and Absorption Notes
+## 7. Closeout and Absorption Notes
 
-Parent owner closeout should still record the final `SRCLIVE-005` PR/merge and
-status transition. This sidecar should not move the parent to `done`.
+Parent owner closeout has recorded the final `SRCLIVE-005` PR/merge and status
+transition. This sidecar did not move the parent to `done`.
 
-Recommended parent closeout note to preserve:
+Parent closeout facts to preserve if this packet is absorbed elsewhere:
 
 - PR #2543 merged into `dev` at merge commit
   `bfec5636ef96084d7ada26ab75370cd9e986bec4`;
+- closeout PR #2551 merged into `dev` at merge commit
+  `ef68d5ef653cd629fef3ab73d7dc20eea6b2f3cc`;
+- final owner delivery commit was
+  `51db21d2425e3e98b12561ca2568274be10e0ceb`;
 - reviewer gate passed with all visible GitHub checks green;
 - source-ingest/BFF tests were accepted by reviewer notes as 13
   `us_public` tests and 11 BFF/active-universe related tests;
@@ -222,7 +232,7 @@ preserve the BFF-only browser boundary.
 |---|---|
 | Support-only scope | PASS if only this follow-up packet and task-scoped brief are changed |
 | Canonical truth untouched | PASS if no L1/L2 canonical docs or runtime/frontend code changed |
-| Parent lifecycle boundary | PASS if packet says parent is `review_approved`, not `done` |
+| Parent lifecycle boundary | PASS if packet records parent `done` as owner closeout fact and does not claim this sidecar changed it |
 | PR state updated | PASS if packet records PR #2543 and merge commit `bfec5636...` |
 | BFF mapping current | PASS if visible US chip is `yahoo`, with `stooq` as legacy alias only |
 | No false green | PASS if `read_ok` requires source-ingest `health.status == "ok"` |
@@ -236,20 +246,22 @@ preserve the BFF-only browser boundary.
 | Command | Result |
 |---|---|
 | `git status -sb` | Correct branch `task/SRCLIVE-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`; only generated task brief was dirty before this packet |
-| `git fetch origin --prune` | Refreshed remote state; confirmed current branch HEAD equals `origin/dev` at `80ae5544591dad98d2fb1a25fe45fcb9f5abbb26` |
-| `AI_NAME=Codex ./scripts/ai-status.sh show SRCLIVE-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` | Sidecar is active `in_progress`, owner `Codex`, reviewer `Codex2`, support artifact target is this packet |
-| `AI_NAME=Codex ./scripts/ai-status.sh show SRCLIVE-005` | Parent is active `review_approved`, owner `Codex2`, reviewer `Claude2`, review notes accepted the implementation with a non-blocking runbook reviewer-name note |
+| `git diff --check -- support/sidecars/SRCLIVE-005/SRCLIVE-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md .orchestrator/task-briefs/srclive_005_sidecar_bff_handoff_followup_2.md` | PASS; no whitespace errors |
+| `git fetch origin --prune` | Refreshed remote state; current branch HEAD is already an ancestor of `origin/dev` before this final closeout commit |
+| `AI_NAME=Codex ./scripts/ai-status.sh show SRCLIVE-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2` | Sidecar is active `review_approved`, owner `Codex`, reviewer `Claude2`, review notes record all 8 checklist items as PASS |
+| `AI_NAME=Codex ./scripts/ai-status.sh show SRCLIVE-005` | Parent is archived `done`, owner `Codex2`, reviewer `Claude2`, delivery commit `51db21d2`, merge target `ef68d5ef` |
 | `gh pr list --repo ajoe734/pantheon --head task/SRCLIVE-005 --state all --json ...` | PR #2543 is `MERGED` into `dev`; merge commit `bfec5636...`; visible checks succeeded |
+| `gh pr list --repo ajoe734/pantheon --head task/SRCLIVE-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2 --state all --json ...` | Sidecar PR #2552 is `MERGED` into `dev`; merge commit `e6c98e1f...`; visible checks succeeded |
 | `git show --stat --oneline bfec5636ef96084d7ada26ab75370cd9e986bec4` | Confirmed merged parent surfaces: BFF source projection, US source adapters, provider dispatch/catalog, tests, and runbook |
 | `rg`/`sed` reads of BFF and source-ingest files | Confirmed merged provider candidates, `persona-us-equity` static chip order, source-health overlay behavior, and runbook endpoint flow |
 
 No runtime tests were run for this sidecar because it changes only support
-artifacts. Parent `SRCLIVE-005` owns runtime verification and owner closeout.
+artifacts. Parent `SRCLIVE-005` owns runtime verification.
 
 ---
 
 ## 10. Handoff Status
 
-This packet is ready for `Codex2` review as support material. It should be used
-as a post-merge/pre-closeout handoff for frontend and BFF consumers, not as a
-new canonical contract or parent task approval.
+This packet was review-approved by `Claude2` as support material and is ready
+for owner closeout. It should be used as a post-merge handoff for frontend and
+BFF consumers, not as a new canonical contract or parent task approval.
