@@ -203,6 +203,121 @@ def test_provider_owned_dispatch_allowlists_us_public_adapters(tmp_path) -> None
     )
 
 
+def test_provider_owned_dispatch_fetches_sec_payload_when_missing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    sec = SecEdgarFilingAdapter(user_agent="Pantheon source-ingest ops@example.com", max_records=5)
+    store.upsert_config(
+        sec.connector(),
+        {
+            "mode": "provider_owned_adapter",
+            "adapter": "SecEdgarFilingAdapter.records_from_payload",
+            "adapter_config": {
+                "user_agent": "Pantheon source-ingest ops@example.com",
+                "max_records": 5,
+            },
+            "request": {
+                "dataset": "sec_filing_event",
+                "cik": "0000320193",
+                "symbol": "AAPL",
+            },
+            "max_records": 5,
+            "next_watermark": None,
+        },
+    )
+    monkeypatch.setattr(SecEdgarFilingAdapter, "fetch_submissions", lambda self, cik: SEC_SUBMISSIONS)
+
+    batch = ConfiguredConnectorFetcher(store).fetch_batch(SEC_EDGAR_CONNECTOR_ID, None, trace_id="trace-sec-live")
+
+    assert len(batch.records) == 1
+    assert batch.records[0].metadata["dataset"] == "sec_filing_event"
+    assert batch.records[0].metadata["cik"] == "0000320193"
+    assert batch.records[0].metadata["ingest_job"] == {"dataset": "sec_filing_event", "symbol": "AAPL"}
+
+
+def test_provider_owned_dispatch_fetches_fred_csv_when_payload_missing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    fred = FredMacroSeriesAdapter(max_records=5)
+    store.upsert_config(
+        fred.connector(),
+        {
+            "mode": "provider_owned_adapter",
+            "adapter": "FredMacroSeriesAdapter.records_from_observations_payload",
+            "adapter_config": {"max_records": 5},
+            "request": {"series_id": "GDP"},
+            "max_records": 5,
+            "next_watermark": None,
+        },
+    )
+    monkeypatch.setattr(FredMacroSeriesAdapter, "fetch_csv_observations", lambda self, series_id: FRED_CSV)
+
+    batch = ConfiguredConnectorFetcher(store).fetch_batch(FRED_CONNECTOR_ID, None, trace_id="trace-fred-live")
+
+    assert len(batch.records) == 2
+    assert batch.records[0].metadata["fetch_mode"] == "public_csv_fallback"
+    assert batch.records[0].metadata["series_id"] == "GDP"
+    assert batch.records[0].metadata["latest_watermark_key"] == "fred:GDP"
+
+
+def test_provider_owned_dispatch_fetches_finra_text_when_payload_missing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    finra = FinraShortSaleAdapter(max_records=5)
+    store.upsert_config(
+        finra.connector(),
+        {
+            "mode": "provider_owned_adapter",
+            "adapter": "FinraShortSaleAdapter.records_from_short_volume_text",
+            "adapter_config": {"max_records": 5},
+            "request": {"trade_date": "2026-06-10"},
+            "max_records": 5,
+            "next_watermark": None,
+        },
+    )
+    monkeypatch.setattr(FinraShortSaleAdapter, "fetch_short_volume_text", lambda self, trade_date: FINRA_SHORT_VOLUME)
+
+    batch = ConfiguredConnectorFetcher(store).fetch_batch(
+        FINRA_SHORT_SALE_CONNECTOR_ID,
+        None,
+        trace_id="trace-finra-live",
+    )
+
+    assert len(batch.records) == 2
+    assert batch.records[0].metadata["dataset"] == "us_short_volume_daily"
+    assert batch.records[0].metadata["trade_date"] == "2026-06-10"
+
+
+def test_provider_owned_dispatch_fetches_stooq_csv_when_payload_missing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    stooq = StooqDailyOhlcvAdapter(max_records=5, connector_status="enabled")
+    store.upsert_config(
+        stooq.connector(),
+        {
+            "mode": "provider_owned_adapter",
+            "adapter": "StooqDailyOhlcvAdapter.records_from_csv",
+            "adapter_config": {"max_records": 5, "connector_status": "enabled"},
+            "request": {
+                "symbol": "AAPL",
+                "start_date": "2026-06-09",
+                "end_date": "2026-06-10",
+            },
+            "max_records": 5,
+            "next_watermark": None,
+        },
+    )
+    monkeypatch.setattr(StooqDailyOhlcvAdapter, "fetch_daily_csv", lambda self, symbol, **kwargs: STOOQ_DAILY)
+
+    batch = ConfiguredConnectorFetcher(store).fetch_batch(STOOQ_DAILY_OHLCV_CONNECTOR_ID, None, trace_id="trace-stooq-live")
+
+    assert len(batch.records) == 2
+    assert batch.records[0].metadata["dataset"] == "us_price_daily"
+    assert batch.records[0].metadata["ingest_job"]["symbol"] == "AAPL"
+
+
 def test_us_public_adapters_build_source_health_snapshots() -> None:
     assert SecEdgarFilingAdapter().source_health_from_result(
         _completed_result(connector_id=SEC_EDGAR_CONNECTOR_ID)
