@@ -162,6 +162,7 @@ def test_readiness_ready_with_auth_probe(tmp_path: Path) -> None:
     assert result["binary_path"] == "/usr/bin/codex"
     assert result["version"] == "codex 1.2.3"
     assert result["credential_mount"]["container_target"] == "codex_home"
+    assert result["usage"]["status"] == "unknown"
     auth_cmd = calls[1][0]
     assert auth_cmd[:7] == [
         "/usr/bin/codex",
