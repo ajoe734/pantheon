@@ -69,6 +69,8 @@ const gateTitles = {
 const REQUIRED_RBAC_LABELS = ["anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown"];
 const REQUIRED_RBAC_READ_FAMILIES = ["bff-strategies", "bff-ranking-formulas", "bff-agora-signals"];
 const REQUIRED_RBAC_WRITE_FAMILIES = ["strategy", "ranking-formula", "agora-note", "intervention-claim"];
+const REQUIRED_RBAC_WRITE_READBACK_FAMILIES = ["strategy", "ranking-formula", "agora-note"];
+const REQUIRED_RBAC_WRITE_ALLOWED_LABELS = ["operator", "reviewer", "approver", "admin"];
 const REQUIRED_RBAC_READ_PATHS = {
   "bff-strategies": "/bff/strategies",
   "bff-ranking-formulas": "/bff/ranking-formulas",
@@ -769,6 +771,29 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && item?.side_effect_check?.liveCapitalSideEffects === false
     && rbacWriteMarkerLinkedProofs.includes(item)
   );
+  const rbacWriteReadbackRequired = rbacWrite.filter((item) =>
+    REQUIRED_RBAC_WRITE_ALLOWED_LABELS.includes(String(item?.rbac_label || ""))
+    && REQUIRED_RBAC_WRITE_READBACK_FAMILIES.includes(String(item?.rbac_resource || ""))
+  );
+  const rbacWriteReadbackProofs = rbacWriteReadbackRequired.filter((item) => {
+    const resource = String(item?.rbac_resource || "");
+    const readback = item?.side_effect_check?.readback_not_persisted || {};
+    if (resource === "agora-note") {
+      return readback?.ok === true
+        && readback?.kind === "list_readback_not_persisted"
+        && Number(readback?.status ?? 0) === 200
+        && Number(readback?.absent_checks ?? 0) >= 1
+        && typeof readback?.target_id_sha256_12 === "string"
+        && readback.target_id_sha256_12.length > 0;
+    }
+    return readback?.ok === true
+      && readback?.kind === "readback_not_persisted"
+      && Number(readback?.status ?? 0) === 404
+      && readback?.error_envelope === true
+      && notFoundErrorCodes.has(String(readback?.error_code || ""))
+      && typeof readback?.target_id_sha256_12 === "string"
+      && readback.target_id_sha256_12.length > 0;
+  });
   const rbacWriteDeniedNoPersistence = rbacWrite.filter((item) =>
     item?.error_envelope === true
     && item?.side_effect_check?.ok === true
@@ -820,6 +845,8 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
     && rbacWriteSideEffectProofCount === rbacWrite.length
     && rbacWriteMarkerLinkedProofs.length === rbacWrite.length
     && rbacWriteDryRunMetaProofs.length >= 16
+    && rbacWriteReadbackProofs.length === rbacWriteReadbackRequired.length
+    && rbacWriteReadbackRequired.length === REQUIRED_RBAC_WRITE_ALLOWED_LABELS.length * REQUIRED_RBAC_WRITE_READBACK_FAMILIES.length
     && rbacWriteDeniedNoPersistence.length >= 16;
   const fullRbacMatrix = rbacProbeCount >= REQUIRED_RBAC_MATRIX_FAMILIES.length
     && rbacMatrix.length >= REQUIRED_RBAC_MATRIX_FAMILIES.length
@@ -897,7 +924,7 @@ function analyzeStrictAuthEvidence(stepOutcomes) {
       && twoManTokenPair
       && twoManTokenPairDistinct,
     note: {
-      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} detailLinks:${rbacMatrixDetailLinkedFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
+      rbac: `strict:${strict} bearer:${providedBearer} rbac:${rbacMatrix.filter((item) => item?.ok === true).length}/${rbacProbeCount} matrixCoverage:${rbacMatrixCoveredFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} detailLinks:${rbacMatrixDetailLinkedFamilyCount}/${REQUIRED_RBAC_MATRIX_FAMILIES.length} providedCases:${providedRbacCases.length}/${expectedProvidedCases} distinctBearers:${distinctProvidedRbacCaseHashCount}/${expectedProvidedCases} writeSideEffectProofs:${rbacWriteSideEffectProofCount}/${rbacWrite.length} writeReadbackProofs:${rbacWriteReadbackProofs.length}/${rbacWriteReadbackRequired.length} writeMarkerLinks:${rbacWriteMarkerLinkedProofs.length}/${rbacWrite.length}`,
       dryRun: `strict:${strict} dryRun:${dryRun.filter((item) => item?.ok === true).length}/${dryRunProbeCount} familyCoverage:${dryRunCoveredFamilyCount}/${REQUIRED_DRY_RUN_FAMILIES.length} invalidEnvelope:${invalidDryRunsEnvelope} readbackLinked:${readbackNoPersistence} sideEffectProofs:${dryRunSideEffectProofCount}/${dryRun.length} sideEffects:${summary.live_capital_side_effects === false ? "none" : "reported"}`,
       approvalRace: `strict:${strict} bounded:${approvalRace?.bounded === true} accepted:${approvalAcceptedCount} safeErrors:${approvalSafeErrorCount} safeErrorEnvelope:${approvalDetailProof.safeErrorCount}/1 results:${approvalDetailProof.resultCount}/2 targetLinks:${approvalDetailProof.targetLinkedCount}/2 duplicateWinners:${approvalRace?.duplicate_winners === true} tokenPair:${approvalTokenPair} tokenPairDistinct:${approvalTokenPairDistinct}`,
       twoManRace: `strict:${strict} operatorScoped:${twoManRace?.operator_scoped === true} accepted:${twoManAcceptedCount} replayed:${twoManReplayedCount} commandIds:${twoManCommandIdCount}/2 detailAccepted:${twoManDetailProof.acceptedCount}/2 detailReplayed:${twoManDetailProof.replayedCount}/0 detailCommandIds:${twoManDetailProof.commandIdCount}/2 results:${twoManDetailProof.resultCount}/2 targetLinks:${twoManDetailProof.targetLinkedCount}/2 signatureLinks:${twoManDetailProof.signatureLinkedCount}/2 tokenPair:${twoManTokenPair} tokenPairDistinct:${twoManTokenPairDistinct}`,
