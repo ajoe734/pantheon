@@ -168,6 +168,24 @@ def test_active_universe_fanout_keeps_taifex_market_context_unsymbolized() -> No
     assert all(job["metadata"]["symbol_scope"] == "market_context_no_symbol_filter" for job in taifex_jobs)
 
 
+def test_active_universe_fanout_routes_crypto_symbols_to_coingecko() -> None:
+    fanout = build_active_universe_job_fanout(
+        [
+            {"symbol": "btc", "market": "CRYPTO", "tier": "core_universe"},
+            {"symbol": "eth", "market": "CRYPTO", "tier": "candidate_universe"},
+        ],
+        run_date="2026-06-10",
+    )
+
+    job = next(job for job in fanout["jobs"] if job["connector_id"] == "crypto-coingecko-spot")
+
+    assert job["dataset"] == "crypto_spot_ohlc_and_price"
+    assert job["market"] == "CRYPTO"
+    assert job["symbols"] == ["BTC", "ETH"]
+    assert job["metadata"]["provider_owned_adapter"] == "CoinGeckoSpotMarketAdapter.records_from_payload"
+    assert job["metadata"]["symbol_id_mapping"]["BTC"] == "bitcoin"
+
+
 def test_universe_transition_records_required_tier_change_fields() -> None:
     transition = UniverseTransition(
         symbol="2330",

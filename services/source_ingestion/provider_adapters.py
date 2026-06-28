@@ -12,15 +12,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from services.research.adapters.taiwan_market_client import MopsRouteSpec, TejTableSpec
+from services.research.adapters.taiwan_market_client import MopsRouteSpec, TaiwanMarketClient, TejTableSpec
 
 from .connectors.base import SourceConnector, SourceEvidenceError, SourceRecord
+from .connectors.crypto_coingecko import CoinGeckoSpotMarketAdapter, _coin_ids_from_symbols
 from .connectors.finmind_taiwan import (
     FinMindTaiwanBrokerBulkBackfillAdapter,
     FinMindTaiwanBrokerDailyReportAdapter,
     FinMindTaiwanDatasetAdapter,
 )
 from .connectors.taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
+from .connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
 from .connectors.us_public import (
     FinraShortSaleAdapter,
     FredMacroSeriesAdapter,
@@ -53,19 +55,25 @@ class ProviderAdapterSpec:
 
 
 def provider_adapter_tokens() -> tuple[str, ...]:
-    return tuple(sorted(ALLOWED_PROVIDER_ADAPTERS))
+    return tuple(sorted((*ALLOWED_PROVIDER_ADAPTERS, *PROVIDER_ADAPTER_ALIASES)))
 
 
 def is_provider_adapter_allowed(token: str) -> bool:
-    return str(token or "").strip() in ALLOWED_PROVIDER_ADAPTERS
+    return _canonical_provider_adapter_token(token) in ALLOWED_PROVIDER_ADAPTERS
 
 
 def validate_provider_adapter_token(token: str) -> str:
-    normalized = str(token or "").strip()
+    normalized = _canonical_provider_adapter_token(token)
     if normalized not in ALLOWED_PROVIDER_ADAPTERS:
         allowed = ", ".join(provider_adapter_tokens())
-        raise SourceEvidenceError(f"provider-owned adapter is not allowlisted: {normalized or '<missing>'}; allowed={allowed}")
+        raw = str(token or "").strip()
+        raise SourceEvidenceError(f"provider-owned adapter is not allowlisted: {raw or '<missing>'}; allowed={allowed}")
     return normalized
+
+
+def _canonical_provider_adapter_token(token: str) -> str:
+    normalized = str(token or "").strip()
+    return PROVIDER_ADAPTER_ALIASES.get(normalized, normalized)
 
 
 def execute_provider_owned_adapter(
@@ -272,9 +280,48 @@ def _mops_route(payload: Mapping[str, Any]) -> MopsRouteSpec:
     )
 
 
+def _taiwan_official(
+    adapter: TaiwanOfficialMarketDatasetAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    dataset = str(request.get("dataset") or "tw_price_daily")
+    venues = _string_list(request.get("venues") or request.get("venue")) or ["TWSE", "TPEx"]
+    payloads = _mapping(request.get("payloads")) if request.get("payloads") not in (None, "") else {}
+    single_payload = request.get("payload")
+    timeout_seconds = float(request.get("timeout_seconds") or 20.0)
+    records: list[SourceRecord] = []
+    for venue in venues:
+        payload = payloads.get(venue) or payloads.get(str(venue).upper()) or single_payload
+        if payload in (None, ""):
+            payload = adapter.fetch_payload(dataset, venue, timeout_seconds=timeout_seconds)
+        records.extend(
+            adapter.records_from_payload(
+                dataset,
+                venue,
+                payload,
+                source_dataset=request.get("source_dataset"),
+                api_endpoint=request.get("api_endpoint"),
+                trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
+                available_time=request.get("available_time"),
+                universe_tier=str(request.get("universe_tier") or "core_universe"),
+                trace_id=trace_id,
+            )
+        )
+    return tuple(records)
+
+
 def _mops(adapter: MopsSourceIngestAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
-    route = _mops_route(_mapping(_require(request.get("route"), "route")))
-    return adapter.records_from_payload(route, _mapping(_require(request.get("payload"), "payload")), trace_id=trace_id)
+    client = TaiwanMarketClient()
+    if request.get("route") not in (None, ""):
+        route = _mops_route(_mapping(request.get("route")))
+    else:
+        route = client.mops_route(str(request.get("route_id") or "t05sr01_1"))
+    if request.get("payload") not in (None, ""):
+        payload = _mapping(request.get("payload"))
+    else:
+        payload = client.fetch_mops_route(route.route_id, params=_mapping(request.get("params")))
+    return adapter.records_from_payload(route, payload, trace_id=trace_id)
 
 
 def _tej_table(payload: Mapping[str, Any]) -> TejTableSpec:
@@ -345,6 +392,66 @@ def _stooq_daily(adapter: StooqDailyOhlcvAdapter, request: Mapping[str, Any], tr
         source_url=request.get("source_url"),
         trace_id=trace_id,
     )
+
+
+def _coingecko_coin_ids(request: Mapping[str, Any]) -> tuple[str, ...]:
+    coin_id = str(request.get("coin_id") or request.get("id") or "").strip().lower()
+    if coin_id:
+        return (coin_id,)
+    coin_ids = tuple(str(item).strip().lower() for item in _string_list(request.get("coin_ids")) if str(item).strip())
+    if coin_ids:
+        return tuple(dict.fromkeys(coin_ids))
+    return _coin_ids_from_symbols(request.get("symbols") or request.get("symbol"))
+
+
+def _coingecko_spot(
+    adapter: CoinGeckoSpotMarketAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    coin_ids = _coingecko_coin_ids(request) or ("bitcoin",)
+    dataset = str(request.get("dataset") or "crypto_spot_ohlc_and_price")
+    vs_currency = str(request.get("vs_currency") or adapter.vs_currency)
+    days = request.get("ohlc_days") or request.get("days") or adapter.ohlc_days
+    records: list[SourceRecord] = []
+
+    if dataset in {"crypto_spot_ohlc", "crypto_spot_ohlc_and_price"}:
+        for coin_id in coin_ids:
+            payload = request.get("ohlc_payload")
+            if payload is None and dataset == "crypto_spot_ohlc":
+                payload = request.get("payload")
+            if payload is None:
+                payload = adapter.fetch_ohlc(coin_id, vs_currency=vs_currency, days=days)
+            records.extend(
+                adapter.records_from_ohlc_payload(
+                    coin_id,
+                    payload,
+                    vs_currency=vs_currency,
+                    days=days,
+                    source_url=request.get("ohlc_source_url") or request.get("source_url"),
+                    trace_id=trace_id,
+                )
+            )
+
+    if dataset in {"crypto_spot_price", "crypto_spot_ohlc_and_price"}:
+        payload = request.get("price_payload")
+        if payload is None and dataset == "crypto_spot_price":
+            payload = request.get("payload")
+        if payload is None:
+            payload = adapter.fetch_simple_price(coin_ids, vs_currency=vs_currency)
+        records.extend(
+            adapter.records_from_simple_price_payload(
+                payload,
+                coin_ids=coin_ids,
+                vs_currency=vs_currency,
+                source_url=request.get("price_source_url") or request.get("source_url"),
+                trace_id=trace_id,
+            )
+        )
+
+    if not records:
+        raise SourceEvidenceError(f"CoinGecko adapter produced no records for dataset={dataset}")
+    return tuple(records)
 
 
 def _polygon_daily(
@@ -436,7 +543,19 @@ def _shioaji_readback(
     return adapter.records_from_readback_file(file_path, payload, trace_id=trace_id)
 
 
+PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
+    "TaiwanOfficialMarketDatasetAdapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
+    "MopsSourceIngestAdapter": "MopsSourceIngestAdapter.records_from_payload",
+}
+
+
 ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
+    "TaiwanOfficialMarketDatasetAdapter.records_from_payload": ProviderAdapterSpec(
+        token="TaiwanOfficialMarketDatasetAdapter.records_from_payload",
+        adapter_cls=TaiwanOfficialMarketDatasetAdapter,
+        handler=_taiwan_official,
+        config_keys=("max_records",),
+    ),
     "FinMindTaiwanDatasetAdapter.records_from_data_payload": ProviderAdapterSpec(
         token="FinMindTaiwanDatasetAdapter.records_from_data_payload",
         adapter_cls=FinMindTaiwanDatasetAdapter,
@@ -508,6 +627,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=StooqDailyOhlcvAdapter,
         handler=_stooq_daily,
         config_keys=("max_records", "connector_status", "disabled_reason"),
+    ),
+    "CoinGeckoSpotMarketAdapter.records_from_payload": ProviderAdapterSpec(
+        token="CoinGeckoSpotMarketAdapter.records_from_payload",
+        adapter_cls=CoinGeckoSpotMarketAdapter,
+        handler=_coingecko_spot,
+        config_keys=("api_base_url", "vs_currency", "ohlc_days", "max_records", "timeout_seconds", "user_agent"),
     ),
     "PolygonUsEquityDailyAdapter.records_from_aggs_payload": ProviderAdapterSpec(
         token="PolygonUsEquityDailyAdapter.records_from_aggs_payload",

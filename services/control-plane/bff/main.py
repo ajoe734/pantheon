@@ -50180,6 +50180,8 @@ _SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
     "fred": ("us-fred-macro",),
     "polygon": ("us-polygon-daily-ohlcv",),
     "alphavantage": ("us-alpha-vantage-daily-ohlcv",),
+    # Crypto sources (SRCLIVE-003)
+    "coingecko": ("crypto-coingecko-spot",),
 }
 
 
