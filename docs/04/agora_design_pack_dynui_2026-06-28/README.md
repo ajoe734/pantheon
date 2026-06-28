@@ -14,6 +14,8 @@ preview, and workspace versions can be compared or rolled back.
   `/home/lupin/code/pantheon/AI Trading Desk Design.zip`
 - Frozen dynamic UI source/gap/invariant map:
   `docs/04/agora_design_pack_dynui_2026-06-28/source-map-and-gap-map.md`
+- Owner closeout evidence:
+  `docs/04/agora_design_pack_dynui_2026-06-28/closeout.md`
 - Extracted reference used while creating this packet:
   `/tmp/ai-trading-desk-design/`
 - Primary documents:
