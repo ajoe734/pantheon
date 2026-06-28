@@ -74,6 +74,7 @@ ExtractIdentity = Callable[[Optional[str]], Any]
 RequireReadRole = Callable[[Any], None]
 BffErrorFactory = Callable[..., HTTPException]
 ProviderReadiness = Callable[[], Dict[str, Any]]
+ProviderList = Callable[[bool], Dict[str, Any]]
 OpenClawToolPolicy = Callable[[], Dict[str, Any]]
 OpenClawEffectiveTools = Callable[[str], Dict[str, Any]]
 AuthorizeAssistantSkill = Callable[[str, Dict[str, Any], str, Optional[str]], Dict[str, Any]]
@@ -110,6 +111,7 @@ def create_assistant_router(
     dev_docs_repo_root: Optional[str] = None,
     bridge_key_store: Optional[Dict[str, bytes]] = None,
     provider_readiness: Optional[ProviderReadiness] = None,
+    provider_list: Optional[ProviderList] = None,
     openclaw_tool_policy: Optional[OpenClawToolPolicy] = None,
     openclaw_effective_tools: Optional[OpenClawEffectiveTools] = None,
     authorize_assistant_skill: Optional[AuthorizeAssistantSkill] = None,
@@ -438,6 +440,32 @@ def create_assistant_router(
             openclaw_effective_tools=effective_tools,
         )
         return {"data": status.model_dump(mode="json", by_alias=True)}
+
+    @router.get("/providers")
+    async def list_assistant_providers(
+        auth_probe: bool = False,
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Return assistant provider readiness for Management auth surfaces."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        if provider_list is not None:
+            listed = provider_list(auth_probe)
+            if isinstance(listed, dict) and isinstance(listed.get("data"), list):
+                return listed
+            if isinstance(listed, list):
+                return {"status": "ok", "data": listed}
+            return {"status": "ok", "data": [listed]}
+        if provider_readiness is None:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Assistant provider readiness is not configured",
+                "OpenClaw adapter provider readiness is not configured for this BFF.",
+                field="openclaw_adapter",
+            )
+        return {"status": "ok", "data": [provider_readiness()]}
 
     # ------------------------------------------------------------------
     # SA/SD generation and signed dev task packet bridge
