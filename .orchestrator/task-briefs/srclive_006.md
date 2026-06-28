@@ -21,3 +21,4 @@ BUG:persona-tw-equity 五個 provider_statuses 全 read_ok(面板 5/5 可讀)但
   - `persona-tw-equity`: `state=live_readback_ok`, providers 5/5 read_ok.
   - `persona-us-equity`: `state=partial_readback`, providers 4/7 readable with credential gaps preserved.
   - `persona-crypto`: `state=datasource_smoke_ok`, providers 2/2 readable and already-ok state preserved.
+- PR branch refresh: merged `origin/dev` at `85c4cbd66bc26c8262d396181142f0905270c371` before the final closeout push for PR #2558.
