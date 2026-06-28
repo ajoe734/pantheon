@@ -350,9 +350,19 @@ def _tej(adapter: TejSourceIngestAdapter, request: Mapping[str, Any], trace_id: 
 
 
 def _sec_edgar(adapter: SecEdgarFilingAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
+    dataset = str(_require(request.get("dataset"), "dataset"))
+    payload = request.get("payload")
+    if payload in (None, ""):
+        cik = str(_require(request.get("cik"), "cik"))
+        if dataset == "sec_filing_event":
+            payload = adapter.fetch_submissions(cik)
+        elif dataset == "sec_company_fact":
+            payload = adapter.fetch_companyfacts(cik)
+        else:
+            raise SourceEvidenceError(f"unsupported SEC EDGAR dataset: {dataset}")
     return adapter.records_from_payload(
-        str(_require(request.get("dataset"), "dataset")),
-        _mapping(_require(request.get("payload"), "payload")),
+        dataset,
+        _mapping(payload),
         symbol=request.get("symbol"),
         cik=request.get("cik"),
         trace_id=trace_id,
@@ -363,6 +373,13 @@ def _fred(adapter: FredMacroSeriesAdapter, request: Mapping[str, Any], trace_id:
     series_id = str(_require(request.get("series_id"), "series_id"))
     if request.get("csv_text") not in (None, ""):
         return adapter.records_from_csv(series_id, str(request.get("csv_text")), trace_id=trace_id)
+    if request.get("payload") in (None, ""):
+        csv_text = adapter.fetch_csv_observations(series_id)
+        return adapter.records_from_csv(
+            series_id,
+            csv_text,
+            trace_id=trace_id,
+        )
     return adapter.records_from_observations_payload(
         series_id,
         _mapping(_require(request.get("payload"), "payload")),
@@ -377,18 +394,31 @@ def _finra_short_sale(
     request: Mapping[str, Any],
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
+    text = request.get("text") or request.get("payload")
+    trade_date = request.get("trade_date") or request.get("date") or request.get("run_date")
+    if text in (None, ""):
+        trade_date = str(_require(trade_date, "trade_date"))
+        text = adapter.fetch_short_volume_text(trade_date)
     return adapter.records_from_short_volume_text(
-        str(_require(request.get("text") or request.get("payload"), "text")),
-        trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
+        str(_require(text, "text")),
+        trade_date=trade_date,
         source_url=request.get("source_url"),
         trace_id=trace_id,
     )
 
 
 def _stooq_daily(adapter: StooqDailyOhlcvAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
+    symbol = str(_require(request.get("symbol"), "symbol"))
+    csv_text = request.get("csv_text") or request.get("payload")
+    if csv_text in (None, ""):
+        csv_text = adapter.fetch_daily_csv(
+            symbol,
+            start_date=request.get("start_date") or request.get("from_date"),
+            end_date=request.get("end_date") or request.get("to_date"),
+        )
     return adapter.records_from_csv(
-        str(_require(request.get("symbol"), "symbol")),
-        str(_require(request.get("csv_text") or request.get("payload"), "csv_text")),
+        symbol,
+        str(_require(csv_text, "csv_text")),
         source_url=request.get("source_url"),
         trace_id=trace_id,
     )

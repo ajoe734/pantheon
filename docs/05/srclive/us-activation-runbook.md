@@ -88,31 +88,39 @@ No additional `SourceUpdateRule` entries were added.
 ## Operational Steps to Activate No-Key Connectors
 
 After merging this PR, a one-time ingest run will move the connectors from
-`read_unavailable` to `read_ok`:
+`read_unavailable` to `read_ok`. From the dev VM, use the mapped source-ingest
+port:
+
+```bash
+export SOURCE_INGEST_BASE="${SOURCE_INGEST_BASE:-http://127.0.0.1:18097}"
+export TRACE_TS="$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+The configured provider-owned adapters fetch their public payloads from the
+request fields below when no inline payload is supplied.
 
 ```bash
 # SEC EDGAR (requires SEC_EDGAR_USER_AGENT env var with contact email)
-export SEC_EDGAR_USER_AGENT="pantheon-research/0.1 contact@example.com"
-curl -X POST http://localhost:8082/api/source-ingest/run \
+curl -fsS -X POST "$SOURCE_INGEST_BASE/api/source-ingest/jobs" \
   -H "Content-Type: application/json" \
-  -d '{"connector_id": "us-sec-edgar-filings", "dataset": "sec_filing_event"}'
+  -d "{\"connector_id\":\"us-sec-edgar-filings\",\"trace_id\":\"srclive-002-sec-$TRACE_TS\",\"trigger_type\":\"srclive_002_activation\",\"job_parameters\":{\"dataset\":\"sec_filing_event\",\"cik\":\"0000320193\",\"symbol\":\"AAPL\"}}"
 
 # FRED macro
-curl -X POST http://localhost:8082/api/source-ingest/run \
+curl -fsS -X POST "$SOURCE_INGEST_BASE/api/source-ingest/jobs" \
   -H "Content-Type: application/json" \
-  -d '{"connector_id": "us-fred-macro", "dataset": "macro_fred_observation"}'
+  -d "{\"connector_id\":\"us-fred-macro\",\"trace_id\":\"srclive-002-fred-$TRACE_TS\",\"trigger_type\":\"srclive_002_activation\",\"job_parameters\":{\"series_id\":\"GDP\"}}"
 
 # FINRA short-sale (requires a recent trade date string YYYY-MM-DD)
-curl -X POST http://localhost:8082/api/source-ingest/run \
+curl -fsS -X POST "$SOURCE_INGEST_BASE/api/source-ingest/jobs" \
   -H "Content-Type: application/json" \
-  -d '{"connector_id": "us-finra-short-sale", "dataset": "us_short_volume_daily"}'
+  -d "{\"connector_id\":\"us-finra-short-sale\",\"trace_id\":\"srclive-002-finra-$TRACE_TS\",\"trigger_type\":\"srclive_002_activation\",\"job_parameters\":{\"trade_date\":\"2026-06-10\"}}"
 
 # Stooq daily OHLCV (connector disabled by default; see note below)
 # Stooq must be enabled after endpoint smoke verification:
 # update ConnectorStatus to ACTIVE in StooqDailyOhlcvAdapter then run:
-curl -X POST http://localhost:8082/api/source-ingest/run \
+curl -fsS -X POST "$SOURCE_INGEST_BASE/api/source-ingest/jobs" \
   -H "Content-Type: application/json" \
-  -d '{"connector_id": "us-stooq-daily-ohlcv", "dataset": "us_price_daily"}'
+  -d "{\"connector_id\":\"us-stooq-daily-ohlcv\",\"trace_id\":\"srclive-002-stooq-$TRACE_TS\",\"trigger_type\":\"srclive_002_activation\",\"job_parameters\":{\"symbol\":\"AAPL\",\"start_date\":\"2026-06-09\",\"end_date\":\"2026-06-10\"}}"
 ```
 
 After a successful run, the health snapshot will show `status: ok` and the
