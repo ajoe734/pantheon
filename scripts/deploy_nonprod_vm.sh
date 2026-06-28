@@ -800,6 +800,31 @@ prune_dev_docker_storage_for_build() {
   docker_storage_diagnostics "after prune"
 }
 
+remove_dev_paper_runtime_name_conflict() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
+    return
+  fi
+
+  local container="pantheon-pantheon-paper-runtime-1"
+  local container_id
+  local project
+  local service
+
+  container_id="$(docker ps -a --filter "name=^/${container}$" --format '{{.ID}}' | head -n 1)"
+  if [[ -z "$container_id" ]]; then
+    return
+  fi
+
+  project="$(docker inspect "$container_id" --format '{{ index .Config.Labels "com.docker.compose.project" }}' 2>/dev/null || true)"
+  service="$(docker inspect "$container_id" --format '{{ index .Config.Labels "com.docker.compose.service" }}' 2>/dev/null || true)"
+  if [[ "$project" != "pantheon" || "$service" != "pantheon-paper-runtime" ]]; then
+    error "refusing to remove ${container}; labels project=${project:-<missing>} service=${service:-<missing>}"
+  fi
+
+  info "removing stale ${container} before dev root compose up"
+  docker rm -f "$container_id" >/dev/null
+}
+
 cd "${PANTHEON_REMOTE_DIR}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -829,6 +854,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_docker_storage_for_build
+    remove_dev_paper_runtime_name_conflict
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     PANTHEON_ENV=dev \
