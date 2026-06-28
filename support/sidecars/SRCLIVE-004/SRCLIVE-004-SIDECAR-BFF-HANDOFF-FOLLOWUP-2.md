@@ -278,6 +278,8 @@ live-readback oriented.
 | `git status -sb` | Correct branch `task/SRCLIVE-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`; only task-scoped brief was dirty before packet creation |
 | `git fetch origin dev` | Updated local `origin/dev` from GitHub |
 | `git merge --ff-only origin/dev` | Fast-forwarded branch to `356c46ec8aa85f90d40875f5705d80ac87b8e0e9` before writing this packet |
+| `git merge --no-edit origin/dev` | Refreshed branch after `origin/dev` advanced to `e65c1c09685ededf5677d8373fadc316cdd0c1b6`; merge was clean |
+| `git diff --name-status origin/dev...HEAD` | PR diff remains limited to this task brief and follow-up packet |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show SRCLIVE-001` | Dependency remains active `blocked`, waiting for `Human/Ops` |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show SRCLIVE-002` | Dependency is archived `done`; PR `#2514` merged and US BFF/read-store baseline is present |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show SRCLIVE-003` | Dependency is archived `done`; CoinGecko mapping and smoke evidence complete |
