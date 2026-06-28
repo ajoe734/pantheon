@@ -50173,6 +50173,7 @@ _SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
     "twse": ("tw-twse-tpex-official-market",),
     "tpex": ("tw-twse-tpex-official-market",),
     "mops": ("tw-mops-official-disclosures",),
+    "coingecko": ("crypto-coingecko-spot",),
 }
 
 

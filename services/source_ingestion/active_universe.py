@@ -463,6 +463,34 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
             "archive_behavior": "daily_price_only_when_enabled",
         },
     ),
+    SourceUpdateRule(
+        connector_id="crypto-coingecko-spot",
+        dataset="crypto_spot_ohlc_and_price",
+        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
+        cadence="daily_crypto_24x7_poll",
+        market="CRYPTO",
+        priority=55,
+        max_symbols_per_run=100,
+        reason="CoinGecko keyless public API provides crypto spot OHLC and price research evidence for persona-crypto",
+        metadata={
+            "detail_level": "spot_ohlc_and_price_public_reference",
+            "source_role": "public_crypto_market_reference",
+            "provider_owned_adapter": "CoinGeckoSpotMarketAdapter.records_from_payload",
+            "storage_targets": [
+                "raw/coingecko/spot",
+                "normalized/crypto_spot_ohlc",
+                "normalized/crypto_spot_price",
+                "features/crypto_returns",
+            ],
+            "symbol_id_mapping": {
+                "BTC": "bitcoin",
+                "ETH": "ethereum",
+                "SOL": "solana",
+            },
+            "archive_behavior": "daily_price_baseline",
+            "order_capable_provider": False,
+        },
+    ),
 )
 
 
