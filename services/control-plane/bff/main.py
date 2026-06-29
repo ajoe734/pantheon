@@ -8803,7 +8803,7 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     link_type = item.get("link_type")
     route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
     title = source_document.get("title") or display_label
-    return {
+    public_item = {
         "id": ref_id,
         "refId": ref_id,
         "ref_id": ref_id,
@@ -8829,6 +8829,101 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
         "redacted": False,
     }
+    artifact_manifest = item.get("artifact_manifest")
+    if isinstance(artifact_manifest, dict):
+        cloned_manifest = _management_json_clone(artifact_manifest)
+        public_item["artifactManifest"] = cloned_manifest
+        public_item["artifact_manifest"] = cloned_manifest
+    if "overall" in item:
+        public_item["overall"] = item.get("overall")
+    return public_item
+
+
+_BFF_LIVE_EVIDENCE_VERIFY_JSON_ENV = "PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON"
+_BFF_LIVE_EVIDENCE_VERIFY_JSON_NAME = "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json"
+_BFF_LIVE_EVIDENCE_REF_ID = "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY"
+
+
+def _management_live_evidence_verify_candidates() -> List[Path]:
+    candidates: List[Path] = []
+    explicit = str(os.getenv(_BFF_LIVE_EVIDENCE_VERIFY_JSON_ENV) or "").strip()
+    if explicit:
+        candidates.append(Path(explicit))
+    audit_dir = str(os.getenv("PANTHEON_AUDIT_OUT_DIR") or "").strip()
+    if audit_dir:
+        candidates.append(Path(audit_dir) / _BFF_LIVE_EVIDENCE_VERIFY_JSON_NAME)
+    candidates.append(
+        Path(_REPO_ROOT)
+        / ".lovable"
+        / "audits"
+        / "current-run"
+        / _BFF_LIVE_EVIDENCE_VERIFY_JSON_NAME
+    )
+    deduped: List[Path] = []
+    seen: Set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
+    for candidate in _management_live_evidence_verify_candidates():
+        try:
+            if not candidate.is_file():
+                continue
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        manifest = payload.get("artifact_manifest")
+        if not isinstance(manifest, dict):
+            continue
+        try:
+            mtime_captured_at = datetime.fromtimestamp(
+                candidate.stat().st_mtime,
+                timezone.utc,
+            ).isoformat()
+        except OSError:
+            mtime_captured_at = utc_now()
+        captured_at = payload.get("generated_at") or payload.get("created_at") or mtime_captured_at
+        artifact_dir = str(payload.get("artifact_dir") or candidate.parent)
+        return [
+            {
+                "ref_id": _BFF_LIVE_EVIDENCE_REF_ID,
+                "evidence_type": "live_evidence_artifact",
+                "link_type": "provenance",
+                "display_label": "BFF live evidence artifact verifier",
+                "source_document": {
+                    "title": "Strict BFF live evidence artifact verifier",
+                    "source_type": "workflow_artifact",
+                    "source_ref": str(candidate),
+                    "captured_at": captured_at,
+                },
+                "credibility": {
+                    "tier": "primary",
+                    "verified": payload.get("overall") == "pass",
+                },
+                "linked_object_summary": {
+                    "entity_type": "artifact",
+                    "entity_ref": _BFF_LIVE_EVIDENCE_REF_ID,
+                    "display_label": "Current-run BFF live evidence",
+                },
+                "resolved_link": {
+                    "availability": "available",
+                    "route_href": artifact_dir,
+                },
+                "route_href": str(candidate),
+                "overall": payload.get("overall"),
+                "artifact_manifest": _management_json_clone(manifest),
+                "created_at": captured_at,
+            }
+        ]
+    return []
 
 
 def _management_count_by_nested(
@@ -8912,8 +9007,17 @@ def _build_management_evidence_payload(
     )
 
     snapshot_at = utc_now()
-    evidence_refs = read_store.list_evidence_refs()
-    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+    current_run_evidence_refs = _management_current_run_live_evidence_refs()
+    stored_evidence_refs = read_store.list_evidence_refs()
+    evidence_refs = [*current_run_evidence_refs, *stored_evidence_refs]
+    evidence_dataset_source = read_store.dataset_source("evidence_refs")
+    evidence_dataset_available = evidence_dataset_source != "missing" or bool(current_run_evidence_refs)
+    if evidence_dataset_source != "missing":
+        evidence_surface_source = evidence_dataset_source
+    elif current_run_evidence_refs:
+        evidence_surface_source = "bff_current_run_artifact"
+    else:
+        evidence_surface_source = evidence_dataset_source
 
     clean_ref_id = str(ref_id or "").strip()
     if clean_ref_id:
@@ -8959,6 +9063,7 @@ def _build_management_evidence_payload(
         snapshot_at=snapshot_at,
         has_data=evidence_dataset_available,
         missing_message="Evidence reference read surface is unavailable.",
+        source=evidence_surface_source,
     )
     management_surface = _aggregate_group_surface(
         "management_evidence",

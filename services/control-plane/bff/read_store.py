@@ -12943,6 +12943,11 @@ class ReadSurfaceStore:
             },
             "resolved_link": self._kw03_normalize_resolved_link(evidence_ref.get("resolved_link")),
         }
+        artifact_manifest = evidence_ref.get("artifact_manifest")
+        if isinstance(artifact_manifest, dict):
+            payload["artifact_manifest"] = json.loads(json.dumps(artifact_manifest))
+        if "overall" in evidence_ref:
+            payload["overall"] = evidence_ref.get("overall")
         if include_scope_metadata:
             tenant_ids = self._record_tenant_ids(evidence_ref)
             if tenant_ids:
