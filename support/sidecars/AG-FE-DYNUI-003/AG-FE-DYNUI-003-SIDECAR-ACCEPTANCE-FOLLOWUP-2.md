@@ -45,13 +45,16 @@ follow-up should then be corrected or reopened.
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-DYNUI-001`, `AG-BE-DYNUI-002`, `AG-BE-DYNUI-003`, `AG-XR-DYNUI-001` | Workspace proposal/routes, layout/widget mutations, versions/rollback, servant generator, v1.5 OpenAPI, and generated frontend types are archived `done`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-004`, `AG-FE-DYNUI-005`, `AG-E2E-DYNUI-001` | Widget adjustment drawer, visual parity, and full dynamic UI E2E remain downstream and must not be absorbed by `AG-FE-DYNUI-003`. |
 | `support/sidecars/AG-FE-DYNUI-003/AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE.md` | Main packet already defines the detailed 20-point parent acceptance checklist, dependency map, blocker triggers, and verification guidance. |
-| `gh pr list --repo ajoe734/execute-plans --head task/AG-FE-DYNUI-003 --state all ...` | No GitHub-visible execute-plans PR exists for `task/AG-FE-DYNUI-003` at packet preparation time. |
-| `git ls-remote --heads https://github.com/ajoe734/execute-plans.git 'task/AG-FE-DYNUI-003*'` | No matching remote task branch is visible at packet preparation time. |
-| `git -C /home/lupin/code/execute-plans status -sb` | Local frontend branch is `task/AG-FE-DYNUI-003...origin/dev [ahead 3]` and clean. |
-| `git -C /home/lupin/code/execute-plans show --stat --summary --format=fuller --no-renames HEAD` | Local HEAD is `b01f0ef76d3125073ccc30a881730d6d60c70ca9`, subject `AG-FE-DYNUI-003: add trading room grid editor`, touching Trading Room page/tests, `WorkspaceGridEditor.tsx`, and BFF v1.5 Trading Room helpers/tests. Commit message records local validation commands. |
-| `git -C /home/lupin/code/execute-plans rev-parse HEAD origin/main origin/dev` | Local HEAD is `b01f0ef76d3125073ccc30a881730d6d60c70ca9`; `origin/main` is `64a963119e85f2e91efbedbd83c4fbd97c7c2e20`; `origin/dev` is `8bf1aff32df804c654a9016e94fc69b45f913dd7`. |
-| `git -C /home/lupin/code/execute-plans merge-base --is-ancestor origin/main HEAD` | Returned non-zero: the local parent branch is not currently proven to contain `origin/main`. |
-| `git -C /home/lupin/code/execute-plans config --get branch.task/AG-FE-DYNUI-003.merge` | Local branch upstream config points at `refs/heads/dev`, while execute-plans delivery base is expected to be `main`. |
+| `gh pr view 82 --repo ajoe734/execute-plans --json ...` | execute-plans PR `#82` is open, non-draft, title `AG-FE-DYNUI-003: trading room grid editor`, head `task/AG-FE-DYNUI-003` at `e16e6950091eb42ad6754135f0cd291df17efeac`, base `dev`, merge state `UNSTABLE`, with `integration-gate` still `IN_PROGRESS`. |
+| `gh pr list --repo ajoe734/execute-plans --head task/AG-FE-DYNUI-003 --state all ...` | Confirms the GitHub-visible PR for `task/AG-FE-DYNUI-003` is PR `#82` at head `e16e6950091eb42ad6754135f0cd291df17efeac`, updated `2026-06-29T09:03:51Z`. |
+| `git ls-remote --heads https://github.com/ajoe734/execute-plans.git task/AG-FE-DYNUI-003 main dev` | Remote `task/AG-FE-DYNUI-003` is visible at `e16e6950091eb42ad6754135f0cd291df17efeac`; `main` is `64a963119e85f2e91efbedbd83c4fbd97c7c2e20`; `dev` is `8bf1aff32df804c654a9016e94fc69b45f913dd7`. |
+| `git -C /home/lupin/code/execute-plans status -sb` | Local frontend branch is clean and tracks `origin/task/AG-FE-DYNUI-003`. |
+| `git -C /home/lupin/code/execute-plans show --stat --summary --format=fuller --no-renames HEAD` | Local HEAD matches PR `#82` at `e16e6950091eb42ad6754135f0cd291df17efeac`, subject `AG-FE-DYNUI-003: add trading room grid editor`, touching Trading Room page/tests, `WorkspaceGridEditor.tsx`, `workspaceValidation.ts`, and BFF v1.5 Trading Room helpers/tests. Commit message records local validation commands. |
+| `gh pr view 82 --repo ajoe734/execute-plans --json commits,files` | PR `#82` currently includes AG-FE-DYNUI-002 cherry-picked commits plus the AG-FE-DYNUI-003 grid editor commit; changed files include `src/App.tsx`, `WorkspaceProposalPreview.tsx`, Trading Room page/tests, grid editor, validation, and BFF helper/tests. |
+| `git -C /home/lupin/code/execute-plans rev-parse HEAD origin/main origin/dev` | Local HEAD is `e16e6950091eb42ad6754135f0cd291df17efeac`; `origin/main` is `64a963119e85f2e91efbedbd83c4fbd97c7c2e20`; `origin/dev` is `8bf1aff32df804c654a9016e94fc69b45f913dd7`. |
+| `git -C /home/lupin/code/execute-plans merge-base --is-ancestor origin/main HEAD` | Returned non-zero: the parent PR branch is not currently proven to contain `origin/main`. |
+| `git -C /home/lupin/code/execute-plans merge-base --is-ancestor origin/dev HEAD` | Returned zero: the parent PR branch is descended from `origin/dev`, matching PR `#82`'s current base. |
+| `git -C /home/lupin/code/execute-plans config --get branch.task/AG-FE-DYNUI-003.merge` | Local branch upstream config points at `refs/heads/task/AG-FE-DYNUI-003`. |
 
 `current-work.md` and the full `ai-activity-log.jsonl` were not scanned.
 
@@ -63,9 +66,9 @@ follow-up should then be corrected or reopened.
 | Prior sidecar packet | `AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE` is archived `done` and merged. | Use the archived packet as the primary checklist; this follow-up should not duplicate or supersede it. |
 | Upstream FE shell | `AG-FE-DYNUI-002` is archived `done`; execute-plans PR `#81` merged to `main` at `64a963119e85f2e91efbedbd83c4fbd97c7c2e20`. | Parent must compose on top of the final `main` state from PR `#81`, including review fixes and integration-gate repairs. |
 | Backend/XR dependencies | `AG-BE-DYNUI-001`, `AG-BE-DYNUI-002`, `AG-BE-DYNUI-003`, and `AG-XR-DYNUI-001` are archived `done`. | Parent can rely on v1.5 workspace layout, widget mutation, version/rollback, generator, and generated type contracts. |
-| Local parent implementation evidence | `/home/lupin/code/execute-plans` has a clean local `task/AG-FE-DYNUI-003` branch with HEAD `b01f0ef76d3125073ccc30a881730d6d60c70ca9`. | Useful for owner continuity, but not sufficient for reviewer acceptance because no remote branch, PR, or check run is visible. |
-| Parent PR/remote branch | No GitHub PR or remote branch named `task/AG-FE-DYNUI-003*` is visible. | Parent owner must push/open PR before reviewer can verify the implementation in the normal workflow. |
-| Branch base / composition | Local `task/AG-FE-DYNUI-003` tracks `origin/dev`; `origin/main` is not an ancestor of HEAD. | Parent owner should rebase/compose onto execute-plans `main` before PR, or record a concrete blocker. Do not sweep stale `dev` or unrelated route/management drift into the parent PR. |
+| Local parent implementation evidence | `/home/lupin/code/execute-plans` has a clean local `task/AG-FE-DYNUI-003` branch matching PR `#82` head `e16e6950091eb42ad6754135f0cd291df17efeac`. | Useful for owner/reviewer continuity, but not sufficient for parent acceptance until PR checks and review gates pass. |
+| Parent PR/remote branch | execute-plans PR `#82` is open from `task/AG-FE-DYNUI-003` at `e16e6950091eb42ad6754135f0cd291df17efeac` into `dev`; `integration-gate` is still `IN_PROGRESS` and merge state is `UNSTABLE`. | The previous publish/remote-visibility blocker is cleared; formal acceptance still waits on check completion and reviewer validation. |
+| Branch base / composition | PR `#82` is based on `dev`; `origin/dev` is an ancestor of HEAD, but `origin/main` is not. PR commits include AG-FE-DYNUI-002 cherry-picks rather than proving ancestry from `main` merge `64a963119e85f2e91efbedbd83c4fbd97c7c2e20`. | Preserve the main-base composition gate: parent owner/reviewer should prove the PR composes with execute-plans `main` or explicitly record why `dev` is the correct temporary target. Do not sweep unrelated route/Management/workflow drift into parent acceptance. |
 | Downstream FE scope | `AG-FE-DYNUI-004`, `AG-FE-DYNUI-005`, and `AG-E2E-DYNUI-001` remain active future tasks. | Parent should stop at persisted grid editor/personalization and leave widget adjustment drawer, final visual parity, and full E2E proof downstream. |
 
 ## 4. Parent Evidence Gate Delta
@@ -74,25 +77,28 @@ The archived main sidecar packet remains the full acceptance checklist. This
 follow-up adds the current gates that should be checked before `AG-FE-DYNUI-003`
 review:
 
-1. Publish a GitHub-visible execute-plans branch and PR for
-   `task/AG-FE-DYNUI-003`, normally targeting `main`.
-2. Ensure the PR branch composes with execute-plans `main` at or after
+1. Treat GitHub visibility as satisfied but not accepted: execute-plans PR
+   `#82` is open from `task/AG-FE-DYNUI-003` at
+   `e16e6950091eb42ad6754135f0cd291df17efeac`, targeting `dev`.
+2. Wait for PR `#82`'s `integration-gate` to finish and attach reviewer-visible
+   result evidence; current status is `IN_PROGRESS`.
+3. Ensure the PR branch composes with execute-plans `main` at or after
    `64a963119e85f2e91efbedbd83c4fbd97c7c2e20`, the merged `AG-FE-DYNUI-002`
    delivery base.
-3. Remove or explicitly account for branch-base drift from the local
-   `origin/dev` upstream. The parent PR should not carry unrelated historical
-   route, Management, workflow, or AG-FE-DYNUI-002 repair diffs as part of
-   `AG-FE-DYNUI-003`.
-4. Provide reviewer-verifiable validation output or check runs. The local HEAD
+4. Account for branch-base drift explicitly. PR `#82` is based on `dev`, and
+   `origin/main` is not currently proven as an ancestor of HEAD. The parent PR
+   should not carry unrelated historical route, Management, workflow, or
+   already-reviewed AG-FE-DYNUI-002 repair diffs as part of `AG-FE-DYNUI-003`.
+5. Provide reviewer-verifiable validation output or check runs. The local HEAD
    commit message records `npm test`, `eslint`, `git diff --check`, and
    `npm run build`, but commit text alone is not enough for parent acceptance.
-5. Preserve the main packet's behavior gates: `TradingRoomWorkspace` source of
+6. Preserve the main packet's behavior gates: `TradingRoomWorkspace` source of
    truth, real grid placement/drag/resize, explicit dirty save/discard,
    ETag/idempotency guarded layout PATCH, remove/restore, registry-scoped add,
    validator-backed change chart, contract-shaped duplicate or blocker,
    personalization event evidence, typed error states, strict BFF boundary, and
    no unsafe/broker/runtime/capital surfaces.
-6. Keep downstream scope out of the parent PR. Widget-context servant
+7. Keep downstream scope out of the parent PR. Widget-context servant
    adjustment and before/after `WidgetRevisionProposal` UI stay in
    `AG-FE-DYNUI-004`; final visual parity stays in `AG-FE-DYNUI-005`; full
    Winner Branch E2E proof stays in `AG-E2E-DYNUI-001`.
@@ -120,9 +126,9 @@ graph TD
     BE003 --> FE003
     XR001 --> FE003
 
-    FE003["AG-FE-DYNUI-003<br/>in_progress<br/>grid editor + personalization<br/>local HEAD b01f0ef, no remote PR yet"]
-    FE003 --> PUBLISH["parent publish gate<br/>push branch, target main, open PR, provide checks"]
-    PUBLISH --> FE004["AG-FE-DYNUI-004<br/>todo<br/>widget revision drawer"]
+    FE003["AG-FE-DYNUI-003<br/>in_progress<br/>grid editor + personalization<br/>PR #82 open, head e16e695<br/>base dev, gate in progress"]
+    FE003 --> REVIEWGATE["parent review gate<br/>checks complete, main composition proven,<br/>reviewer validates scope"]
+    REVIEWGATE --> FE004["AG-FE-DYNUI-004<br/>todo<br/>widget revision drawer"]
     FE004 --> FE005["AG-FE-DYNUI-005<br/>todo<br/>visual parity"]
     FE005 --> E2E["AG-E2E-DYNUI-001<br/>todo<br/>Winner Branch E2E acceptance"]
 ```
@@ -136,7 +142,7 @@ graph TD
 | `AG-BE-DYNUI-002` | Archived `done`. | Provides layout operations, widget mutation, revision proposals, workspace versions, and rollback. |
 | `AG-BE-DYNUI-003` | Archived `done`. | Provides declarative generator and registry/validator-backed widget specs. |
 | `AG-XR-DYNUI-001` | Archived `done`. | Generated v1.5 frontend types/routes are available for parent client helpers. |
-| Local execute-plans branch | Clean local `task/AG-FE-DYNUI-003` at `b01f0ef76d3125073ccc30a881730d6d60c70ca9`; no remote PR/branch visible. | Parent owner has local continuity but must publish and compose it onto `main` before normal review. |
+| execute-plans PR `#82` / branch | Clean local `task/AG-FE-DYNUI-003` matches remote head `e16e6950091eb42ad6754135f0cd291df17efeac`; PR `#82` is open into `dev`, with `integration-gate` in progress. | Parent owner has published reviewable evidence, but reviewer acceptance still needs check completion and main-base composition proof or an explicit base-target blocker. |
 | `AG-FE-DYNUI-004` | Active `todo`; depends on `AG-FE-DYNUI-003` and `AG-BE-DYNUI-002`. | Owns widget adjustment drawer and before/after revision flow. |
 | `AG-FE-DYNUI-005` | Active `todo`; depends on `AG-FE-DYNUI-001` through `AG-FE-DYNUI-004`. | Owns visual parity on top of completed dynamic runtime. |
 | `AG-E2E-DYNUI-001` | Active `todo`; depends on backend/XR and visual completion. | Owns complete Winner Branch dynamic UI E2E proof. |
@@ -146,21 +152,23 @@ graph TD
 Parent owner should stop and open a blocker or reviewer handoff if any of these
 are true:
 
-1. The implementation remains local-only after the owner claims it is ready for
-   review.
+1. PR `#82`'s `integration-gate` fails, remains unavailable, or lacks
+   reviewer-verifiable logs after the owner claims parent readiness.
 2. The PR cannot target or compose with execute-plans `main` without losing the
    merged `AG-FE-DYNUI-002` fixes from PR `#81`.
-3. The branch diff includes unrelated historical `dev`, Management, route,
+3. The PR remains based on `dev` while `origin/main` is not an ancestor of the
+   head, and no explicit reviewer-acceptable reason is recorded.
+4. The branch diff includes unrelated historical `dev`, Management, route,
    workflow, or already-closed FE/XR work that cannot be separated from
    `AG-FE-DYNUI-003`.
-4. Grid editing requires inventing fields/routes outside
+5. Grid editing requires inventing fields/routes outside
    `WorkspaceLayoutOperation`, view/widget PATCH, or another published v1.5
    route.
-5. Save semantics require bypassing ETag/idempotency or treating stale/invalid
+6. Save semantics require bypassing ETag/idempotency or treating stale/invalid
    writes as successful local state.
-6. Add widget, change chart, duplicate, or personalization cannot be represented
+7. Add widget, change chart, duplicate, or personalization cannot be represented
    by generated types and registry/validator-supported payloads.
-7. The task needs the full widget adjustment drawer, before/after revision
+8. The task needs the full widget adjustment drawer, before/after revision
    lifecycle, final design parity, or full E2E flow to pass. Those are
    downstream scopes.
 
@@ -235,13 +243,16 @@ AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-DYNUI-001
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-004
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-005
 AI_NAME=Codex ./scripts/ai-status.sh show AG-E2E-DYNUI-001
+gh pr view 82 --repo ajoe734/execute-plans --json number,state,title,url,headRefName,baseRefName,headRefOid,updatedAt,isDraft,mergeStateStatus,statusCheckRollup,reviewDecision
 gh pr list --repo ajoe734/execute-plans --head task/AG-FE-DYNUI-003 --state all --json number,state,title,url,headRefName,baseRefName,headRefOid,updatedAt,statusCheckRollup
-git ls-remote --heads https://github.com/ajoe734/execute-plans.git 'task/AG-FE-DYNUI-003*'
+gh pr view 82 --repo ajoe734/execute-plans --json commits,files
+git ls-remote --heads https://github.com/ajoe734/execute-plans.git task/AG-FE-DYNUI-003 main dev
 git -C /home/lupin/code/execute-plans status -sb
 git -C /home/lupin/code/execute-plans branch --show-current
 git -C /home/lupin/code/execute-plans show --stat --summary --format=fuller --no-renames HEAD
 git -C /home/lupin/code/execute-plans rev-parse HEAD origin/main origin/dev
 git -C /home/lupin/code/execute-plans merge-base --is-ancestor origin/main HEAD
+git -C /home/lupin/code/execute-plans merge-base --is-ancestor origin/dev HEAD
 git -C /home/lupin/code/execute-plans config --get branch.task/AG-FE-DYNUI-003.merge
 git diff --check -- .orchestrator/task-briefs/ag_fe_dynui_003_sidecar_acceptance_followup_2.md support/sidecars/AG-FE-DYNUI-003/AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md
 ```
@@ -260,13 +271,19 @@ Observed results:
   `AG-BE-DYNUI-003`, and `AG-XR-DYNUI-001` are archived `done`.
 - Downstream `AG-FE-DYNUI-004`, `AG-FE-DYNUI-005`, and `AG-E2E-DYNUI-001`
   remain active future tasks.
-- No execute-plans PR or remote branch named `task/AG-FE-DYNUI-003*` was
-  visible at packet preparation time.
-- Local execute-plans branch `task/AG-FE-DYNUI-003` is clean at
-  `b01f0ef76d3125073ccc30a881730d6d60c70ca9`; commit message records local
+- execute-plans PR `#82` is open at
+  `https://github.com/ajoe734/execute-plans/pull/82`; head
+  `task/AG-FE-DYNUI-003` is `e16e6950091eb42ad6754135f0cd291df17efeac`, base is
+  `dev`, merge state is `UNSTABLE`, and `integration-gate` is still
+  `IN_PROGRESS`.
+- Local execute-plans branch `task/AG-FE-DYNUI-003` is clean and matches remote
+  head `e16e6950091eb42ad6754135f0cd291df17efeac`; commit message records local
   `npm test`, `eslint`, `git diff --check`, and `npm run build` validation.
-- Local execute-plans branch upstream config points at `origin/dev`; `origin/main`
-  is not currently an ancestor of HEAD.
+- PR `#82` currently includes AG-FE-DYNUI-002 cherry-picked commits plus the
+  AG-FE-DYNUI-003 grid editor commit; reviewer should distinguish necessary
+  carryover from accidental scope drift.
+- `origin/dev` is an ancestor of HEAD; `origin/main` is not currently an
+  ancestor of HEAD, so the main-base composition gate remains open.
 - `git diff --check` passed for this task brief and support packet.
 - No parent runtime tests were run by this sidecar because it changes support
   artifacts only.
@@ -280,17 +297,18 @@ Observed results:
 1. The packet stays support-only and does not redefine canonical contracts.
 2. The packet correctly treats the archived
    `AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE` as the main checklist.
-3. The current parent evidence state is accurate: local execute-plans branch
-   exists, but no remote PR/branch is visible yet.
-4. The branch-base gate is useful and scoped: parent owner should compose onto
-   execute-plans `main` before review, without sweeping unrelated diffs into
-   the parent PR.
+3. The current parent evidence state is accurate: execute-plans PR `#82` is
+   open at head `e16e6950091eb42ad6754135f0cd291df17efeac`, base `dev`, with
+   `integration-gate` still in progress.
+4. The branch-base gate is useful and scoped: `origin/main` is not currently an
+   ancestor of PR `#82` head, so parent owner/reviewer should prove composition
+   with execute-plans `main` or record a concrete base-target blocker.
 5. Downstream AG-FE-DYNUI-004/005 and E2E scopes remain outside this parent.
 
 ### Suggested reviewer command
 
 ```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh approve AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2 "Follow-up acceptance packet approved; support artifact updates AG-FE-DYNUI-003 dependency/evidence gates without changing canonical truth or runtime."
+AI_NAME=Codex2 ./scripts/ai-status.sh approve AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2 "Follow-up acceptance packet approved; support artifact refreshes AG-FE-DYNUI-003 evidence gates for execute-plans PR #82 while preserving the main-base composition gate and without changing canonical truth or runtime."
 ```
 
 If changes are required:
