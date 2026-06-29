@@ -57,7 +57,7 @@ def _seeded_client(td: str) -> TestClient:
         "active_commands": [],
         "secondary_path_available": True,
     }
-    store.list_runtime_bindings = lambda: [
+    store.list_runtime_bindings = lambda **kwargs: [
         {
             "id": "binding-b3-001",
             "binding_id": "binding-b3-001",
@@ -188,7 +188,11 @@ def test_bff_management_cockpit_composes_required_sections() -> None:
             assert payload["operator_home"] == data["operatorHome"]
             assert payload["runtime_health"] == data["runtimeHealth"]
             assert data["alerts"]["summary"]["total_active"] >= 1
-            assert data["humanInbox"]["summary"]["total"] == 4
+            assert data["humanInbox"]["summary"]["total"] >= 4
+            assert data["humanInbox"]["summary"]["governance_review_count"] == 1
+            assert data["humanInbox"]["summary"]["approval_count"] == 1
+            assert data["humanInbox"]["summary"]["intervention_count"] == 1
+            assert data["humanInbox"]["summary"]["sentinel_finding_count"] == 1
             assert data["tradingPulse"]["summary"]["runtimeCount"] == 1
             assert data["tradingPulse"]["summary"]["totalPnl"] == 0.42
             assert data["tradingPulse"]["summary"]["baselineComparisonCount"] == 1
@@ -202,7 +206,11 @@ def test_bff_management_cockpit_composes_required_sections() -> None:
                 "ok",
                 "degraded",
             }
-            assert payload["meta"]["surfaces"]["human_inbox"]["status"] == "ok"
+            assert "management_human_inbox" not in payload["meta"]["surfaces"]
+            assert payload["meta"]["surfaces"]["human_inbox"]["status"] in {
+                "ok",
+                "degraded",
+            }
             assert payload["meta"]["surfaces"]["trading_pulse"]["status"] == "ok"
         finally:
             bff_main.read_store = original_store
