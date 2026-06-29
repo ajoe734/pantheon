@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Review requires packet refresh before approval: execute-plans now has PR #82 and remote branch task/AG-FE-DYNUI-003 at e16e6950, base dev, with integration-gate still in progress; update the support packet/readiness snapshot from local-only/no-remote evidence to the current PR #82 state, preserve the main-base composition gate because origin/main is still not proven as ancestor, then hand off again to Codex2.
+- Next: Reopen for packet refresh: reviewer readback shows execute-plans PR #82 is now merged, integration-gate completed SUCCESS, and remote task/AG-FE-DYNUI-003 is no longer listed; update the follow-up packet/readiness snapshot from open/in-progress/remote-visible to merged evidence before approval. Preserve support-only boundary and main-base composition note as applicable.
 
 ## Summary
 平行支援 AG-FE-DYNUI-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
