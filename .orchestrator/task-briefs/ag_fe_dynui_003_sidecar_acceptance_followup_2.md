@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-DYNUI-003 acceptance packet and dependency map
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Reopen for packet refresh: reviewer readback shows execute-plans PR #82 is now merged, integration-gate completed SUCCESS, and remote task/AG-FE-DYNUI-003 is no longer listed; update the follow-up packet/readiness snapshot from open/in-progress/remote-visible to merged evidence before approval. Preserve support-only boundary and main-base composition note as applicable.
+- Next: Follow-up acceptance packet approved; support artifact refreshes AG-FE-DYNUI-003 evidence gates for merged execute-plans PR #82, successful integration-gate, and closed remote task branch while preserving the main-base composition note and without changing canonical truth or runtime.
 
 ## Summary
 平行支援 AG-FE-DYNUI-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
