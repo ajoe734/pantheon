@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-06-28",
+    "snapshot_date": "2026-06-29",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 584,
+    "total_routes": 598,
     "status_values": [
       "implemented",
       "alias",
@@ -296,6 +296,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/strategies/{param}/trading-room/proposals/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/trading-intents/{param}",
       "family": "agora-core",
       "status": "implemented"
@@ -327,6 +333,18 @@
     {
       "method": "GET",
       "path": "/bff/agora/trading-room/stream",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/{param}/versions",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -399,6 +417,24 @@
     {
       "method": "PATCH",
       "path": "/bff/agora/journal/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/{param}/layout",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/{param}/views/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/{param}/widgets/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -608,6 +644,18 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/strategies/{param}/trading-room/proposals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/strategies/{param}/trading-room/proposals/{param}/accept",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/trading-intents/{param}/handoffs",
       "family": "agora-core",
       "status": "implemented"
@@ -621,6 +669,36 @@
     {
       "method": "POST",
       "path": "/bff/agora/trading-room/decision-events/{param}/decisions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/widget-revision-proposals/{param}/accept",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/versions/{param}/rollback",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/views",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/widgets",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/widgets/{param}/revision-proposals",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -2991,6 +3069,12 @@
     {
       "method": "GET",
       "path": "/bff/assistant/providers",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/assistant/providers/usage-summary",
       "family": "unknown",
       "status": "implemented"
     },

@@ -1053,6 +1053,13 @@
       },
       {
         "family": "agora-core",
+        "key": "GET /bff/agora/strategies/{param}/trading-room/proposals/{param}",
+        "method": "GET",
+        "path": "/bff/agora/strategies/{param}/trading-room/proposals/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "GET /bff/agora/trading-intents/{param}",
         "method": "GET",
         "path": "/bff/agora/trading-intents/{param}",
@@ -1091,6 +1098,20 @@
         "key": "GET /bff/agora/trading-room/stream",
         "method": "GET",
         "path": "/bff/agora/trading-room/stream",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/trading-room/workspaces/{param}",
+        "method": "GET",
+        "path": "/bff/agora/trading-room/workspaces/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/trading-room/workspaces/{param}/versions",
+        "method": "GET",
+        "path": "/bff/agora/trading-room/workspaces/{param}/versions",
         "status": "implemented"
       },
       {
@@ -1196,6 +1217,13 @@
         "key": "GET /bff/assistant/orchestrator/status",
         "method": "GET",
         "path": "/bff/assistant/orchestrator/status",
+        "status": "implemented"
+      },
+      {
+        "family": "unknown",
+        "key": "GET /bff/assistant/providers/usage-summary",
+        "method": "GET",
+        "path": "/bff/assistant/providers/usage-summary",
         "status": "implemented"
       },
       {
@@ -2000,6 +2028,27 @@
         "status": "implemented"
       },
       {
+        "family": "agora-core",
+        "key": "PATCH /bff/agora/trading-room/workspaces/{param}/layout",
+        "method": "PATCH",
+        "path": "/bff/agora/trading-room/workspaces/{param}/layout",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "PATCH /bff/agora/trading-room/workspaces/{param}/views/{param}",
+        "method": "PATCH",
+        "path": "/bff/agora/trading-room/workspaces/{param}/views/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "PATCH /bff/agora/trading-room/workspaces/{param}/widgets/{param}",
+        "method": "PATCH",
+        "path": "/bff/agora/trading-room/workspaces/{param}/widgets/{param}",
+        "status": "implemented"
+      },
+      {
         "family": "evolution-experiment-jobs-events",
         "key": "PATCH /bff/artifacts/{param}",
         "method": "PATCH",
@@ -2450,6 +2499,20 @@
       },
       {
         "family": "agora-core",
+        "key": "POST /bff/agora/strategies/{param}/trading-room/proposals",
+        "method": "POST",
+        "path": "/bff/agora/strategies/{param}/trading-room/proposals",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/strategies/{param}/trading-room/proposals/{param}/accept",
+        "method": "POST",
+        "path": "/bff/agora/strategies/{param}/trading-room/proposals/{param}/accept",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "POST /bff/agora/trading-intents/{param}/handoffs",
         "method": "POST",
         "path": "/bff/agora/trading-intents/{param}/handoffs",
@@ -2467,6 +2530,41 @@
         "key": "POST /bff/agora/trading-room/decision-events/{param}/decisions",
         "method": "POST",
         "path": "/bff/agora/trading-room/decision-events/{param}/decisions",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/trading-room/widget-revision-proposals/{param}/accept",
+        "method": "POST",
+        "path": "/bff/agora/trading-room/widget-revision-proposals/{param}/accept",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/trading-room/workspaces/{param}/versions/{param}/rollback",
+        "method": "POST",
+        "path": "/bff/agora/trading-room/workspaces/{param}/versions/{param}/rollback",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/trading-room/workspaces/{param}/views",
+        "method": "POST",
+        "path": "/bff/agora/trading-room/workspaces/{param}/views",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/trading-room/workspaces/{param}/widgets",
+        "method": "POST",
+        "path": "/bff/agora/trading-room/workspaces/{param}/widgets",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/trading-room/workspaces/{param}/widgets/{param}/revision-proposals",
+        "method": "POST",
+        "path": "/bff/agora/trading-room/workspaces/{param}/widgets/{param}/revision-proposals",
         "status": "implemented"
       },
       {
@@ -3004,7 +3102,7 @@
   },
   "metadata": {
     "backend_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
-    "backend_snapshot_date": "2026-06-28",
+    "backend_snapshot_date": "2026-06-29",
     "frontend_manifest": "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
     "frontend_snapshot_date": "2026-06-28",
     "generator": "scripts/bff_route_diff.py",
@@ -3026,17 +3124,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 584,
-    "failure_count": 415,
+    "backend_routes": 598,
+    "failure_count": 429,
     "failures": {
-      "backend_missing_frontend": 409,
+      "backend_missing_frontend": 423,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 6
     },
     "frontend_routes": 184,
-    "mode_failure_count": 415,
+    "mode_failure_count": 429,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

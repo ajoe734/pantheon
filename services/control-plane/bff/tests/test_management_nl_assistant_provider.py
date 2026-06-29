@@ -52,6 +52,45 @@ class FakeProviderClient:
             "capabilities": {"read": True, "repairWrite": True},
         }
 
+    def list_assistant_providers(self, *, auth_probe: bool = False) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "data": [
+                {
+                    "provider": "codex_cli",
+                    "provider_name": "Codex CLI",
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": True,
+                    "status": "ready",
+                    "auth_status": "ready" if auth_probe else "not_checked",
+                    "usage": {
+                        "status": "captured",
+                        "source": "provider_snapshot",
+                        "remaining": 12,
+                        "remaining_percent": 24,
+                        "limit": 50,
+                        "used": 38,
+                        "unit": "requests",
+                        "reset_at": "2026-06-30T00:00:00Z",
+                    },
+                },
+                {
+                    "provider": "claude",
+                    "provider_name": "Claude CLI",
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": False,
+                    "status": "degraded",
+                    "auth_status": "failed" if auth_probe else "not_checked",
+                    "usage": {
+                        "status": "unknown",
+                        "source": "not_configured",
+                        "reason": "provider_usage_source_not_configured",
+                    },
+                },
+            ],
+            "meta": {"auth_probe": auth_probe},
+        }
+
     def get_tool_policy(self) -> dict[str, Any]:
         return {
             "allowed_tools": ["assistant.command"],
@@ -1524,6 +1563,89 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
+
+
+def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path, monkeypatch) -> None:
+    fake = FakeProviderClient()
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+    client = _seeded_client(tmp_path, monkeypatch)
+    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+
+    bff_main._management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.started",
+            "recorded_at": "2026-06-29T10:00:00Z",
+            "session_id": "usage-session",
+            "message_id": "usage-message",
+            "trace_id": "usage-trace",
+            "provider_run_id": "usage-run-codex",
+            "provider": "codex_cli",
+            "mode": "user",
+            "prompt_bytes": 1200,
+        }
+    )
+    bff_main._management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.completed",
+            "recorded_at": "2026-06-29T10:00:03Z",
+            "session_id": "usage-session",
+            "message_id": "usage-message",
+            "trace_id": "usage-trace",
+            "provider_run_id": "usage-run-codex",
+            "provider": "codex_cli",
+            "provider_state": "completed",
+            "duration_ms": 2500,
+            "output_summary": {
+                "model": "gpt-5-codex",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 4,
+                    "total_tokens": 14,
+                },
+            },
+        }
+    )
+    bff_main._management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.failed",
+            "recorded_at": "2026-06-29T10:01:00Z",
+            "session_id": "usage-session",
+            "message_id": "usage-message-2",
+            "trace_id": "usage-trace-2",
+            "provider_run_id": "usage-run-claude",
+            "provider": "claude",
+            "duration_ms": 900,
+            "error_code": "CLAUDE_AUTH_UNAVAILABLE",
+        }
+    )
+
+    resp = client.get(
+        "/bff/assistant/providers/usage-summary?auth_probe=true&limit=50&window_hours=24",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok"
+    data = body["data"]
+    assert data["totals"]["calls"] == 2
+    assert data["totals"]["successCount"] == 1
+    assert data["totals"]["failedCount"] == 1
+    providers = {row["provider"]: row for row in data["providers"]}
+    codex = providers["codex_cli"]
+    assert codex["liveAuth"] is True
+    assert codex["quota"]["source"] == "provider_snapshot"
+    assert codex["quota"]["remaining"] == 12
+    assert codex["quota"]["used"] == 38
+    assert codex["observedUsage"]["totalTokens"] == 14
+    assert codex["models"][0]["model"] == "gpt-5-codex"
+    assert codex["models"][0]["inputTokens"] == 10
+    claude = providers["claude"]
+    assert claude["liveAuth"] is False
+    assert claude["failedCount"] == 1
+    assert claude["quota"]["source"] == "not_configured"
+    assert data["quota"]["missingSourceMeans"] == "quota remaining is unknown, not zero"
 
 
 def test_management_ai_conversation_reader_returns_full_session_and_ignores_trace_filter(
