@@ -10,7 +10,7 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for `Codex2` support review |
+| Status | `Codex2` approved; owner closeout prepared |
 
 This is a support-only follow-up packet. It does not replace the already
 archived `AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE` packet, and it does not approve
@@ -24,7 +24,7 @@ acceptance sidecar closed.
 |---|---|---|
 | `AG-FE-DYNUI-002-SIDECAR-BFF-HANDOFF` | Merged support artifact, PR `#2570`. | Provides the earlier BFF/client/UI gap map around V11 proposal generation, proposal read, accept, and workspace read. |
 | `AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE` | Archived `done`; packet PR `#2595` and closeout PR `#2596` merged. | Remains the main parent acceptance checklist. This follow-up only adds current readiness/evidence gates and reviewer routing. |
-| `AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Active support sidecar. | Confirms that dependencies are now done, and records the current parent evidence state: execute-plans PR `#81` is visible but its integration gate is failing. |
+| `AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Reviewer approved; owner closeout prepared. | Confirms that dependencies are now done, and records the current parent evidence state: execute-plans PR `#81` is visible but its integration gate is failing. |
 
 Do not treat this packet as canonical contract truth. If it appears to conflict
 with L1/L2 docs, the canonical docs win and this support packet should be
@@ -38,7 +38,7 @@ corrected or reopened.
 | `.orchestrator/task-briefs/ag_fe_dynui_002_sidecar_acceptance_followup_2.md` | Scope is acceptance checklist, dependency map, and support packet only; reviewer requested replacing the stale "no parent implementation PR/branch visible" snapshot with the current PR `#81` evidence state. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Task-owned support/docs changes should be made durable through narrow commits. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Closeout/done is reserved for owner finalization after review approval and merged PR. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Active `in_progress`, owner `Codex`, reviewer `Codex2`, artifact path is this file, helper parent is `AG-FE-DYNUI-002`, and `mutates_canonical` is `false`. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Active `review_approved`, owner `Codex`, reviewer `Codex2`, artifact path is this file, helper parent is `AG-FE-DYNUI-002`, `mutates_canonical` is `false`, and `Codex2` approval notes are recorded. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002` | Parent is active `review`, owner `Codex2`, reviewer `Claude2`, and status records execute-plans PR `#81` at commit `90d2d625010e8d3d793a5d06e36f6c5b2334e450`; local focused tests and `npm run build` passed, but the GitHub integration gate is unstable/failing on broader release evidence aggregation. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE` | Prior acceptance sidecar is archived `done` with reviewer approval and merged closeout record. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-DYNUI-001`, `AG-BE-DYNUI-003`, `AG-FE-DYNUI-001`, `AG-FE-TR-001` | All parent dependencies are archived `done`. |
@@ -127,40 +127,30 @@ graph TD
     FE005 --> E2E["AG-E2E-DYNUI-001<br/>todo<br/>full dynamic UI E2E"]
 ```
 
-## 6. Reviewer Handoff
+## 6. Reviewer Approval And Owner Closeout
 
 Reviewer: `Codex2`
 
-Please verify this follow-up on support-packet terms only:
+`Codex2` approved this follow-up on support-packet terms. The recorded review
+notes confirm that the packet:
 
-1. It stays support-only and does not edit or redefine canonical truth,
-   schemas, OpenAPI, BFF runtime, frontend runtime, registry, governance, or
-   broker authority.
-2. It correctly points to the already archived main acceptance sidecar instead
-   of duplicating or superseding it.
-3. It records that upstream dependencies are done while parent implementation
-   evidence is now visible as execute-plans PR `#81`, but the PR is still
-   blocked by a failing `integration-gate` as of `2026-06-29T06:37:56Z`.
-4. It keeps `AG-FE-DYNUI-002` separated from downstream grid editor, widget
+1. Stays support-only and does not edit or redefine canonical truth, schemas,
+   OpenAPI, BFF runtime, frontend runtime, registry, governance, or broker
+   authority.
+2. Correctly points to the already archived main acceptance sidecar instead of
+   duplicating or superseding it.
+3. Records that upstream dependencies are done while parent implementation
+   evidence is now visible as execute-plans PR `#81`, with the PR still blocked
+   by a failing `integration-gate` as of `2026-06-29T06:37:56Z`.
+4. Keeps `AG-FE-DYNUI-002` separated from downstream grid editor, widget
    revision drawer, visual parity, and E2E tasks.
-5. The parent evidence gate is concrete enough for `Codex2`/`Claude2` to use
-   during parent implementation review.
+5. Leaves a concrete parent evidence gate for `Codex2`/`Claude2` during parent
+   implementation review.
 
-Suggested reviewer approval command:
-
-```bash
-AI_NAME=Codex2 REVIEW_FILE=support/sidecars/AG-FE-DYNUI-002/AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md \
-  REVIEW_NOTES_ZH="審核通過：AG-FE-DYNUI-002 follow-up acceptance packet 保持 support-only，承接已歸檔的主 acceptance packet，更新依賴狀態為 XR/generator/V10 readiness/Trading Room baseline 已 done，同時明確記錄 parent implementation evidence 目前是 execute-plans PR #81 open against main、head commit 90d2d625010e8d3d793a5d06e36f6c5b2334e450，且 integration-gate 於 2026-06-29T06:37:56Z 失敗；parent review gate 聚焦 v1.5 generated types、BFF-derived proposal generation/read/accept/workspace shell、no fixture/no DashboardRecipeV2 substitution、typed error states、screenshot/Playwright evidence，且不擴張到 AG-FE-DYNUI-003/004/005/E2E。" \
-  ./scripts/ai-status.sh approve AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2 \
-  "Follow-up acceptance packet approved; support artifact updates AG-FE-DYNUI-002 dependency/evidence gate without changing canonical truth or runtime."
-```
-
-Suggested reopen command:
-
-```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh reopen AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2 \
-  "Describe the factual correction, missing evidence gate, or scope-boundary issue needed before approval."
-```
+Owner closeout keeps the approved support boundary unchanged. PR `#2598`
+merged the reviewed packet into `dev` at merge commit
+`4ea60710dd04a6681b10d0787e8f3f7e75bd20de`; this finalization note only
+refreshes the packet's status/readback from `review` to owner closeout.
 
 ## 7. Validation Run
 
@@ -185,12 +175,14 @@ gh pr view 81 --repo ajoe734/execute-plans --json number,state,title,url,headRef
 gh pr checks 81 --repo ajoe734/execute-plans
 git ls-remote --heads https://github.com/ajoe734/execute-plans.git 'task/AG-FE-DYNUI-002*'
 git diff --check -- .orchestrator/task-briefs/ag_fe_dynui_002_sidecar_acceptance_followup_2.md support/sidecars/AG-FE-DYNUI-002/AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md
+git show --stat --summary --decorate --no-renames HEAD
 ```
 
 Observed results:
 
 - Branch is `task/AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2`.
-- Sidecar is active `in_progress`, owner `Codex`, reviewer `Codex2`.
+- Sidecar is active `review_approved`, owner `Codex`, reviewer `Codex2`;
+  reviewer approval notes are recorded in `ai-status.json`.
 - Parent `AG-FE-DYNUI-002` is active `review`, owner `Codex2`, reviewer
   `Claude2`; status records execute-plans PR `#81` at commit
   `90d2d625010e8d3d793a5d06e36f6c5b2334e450`, local focused tests and
@@ -210,6 +202,8 @@ Observed results:
 - Matching remote branch `refs/heads/task/AG-FE-DYNUI-002` is visible at
   `90d2d625010e8d3d793a5d06e36f6c5b2334e450`.
 - `git diff --check` passed for the task brief and support packet.
+- PR `#2598` merged the support packet update into Pantheon `dev` at
+  `4ea60710dd04a6681b10d0787e8f3f7e75bd20de`.
 - No parent runtime tests were run by this sidecar because it changes support
   artifacts only.
 
