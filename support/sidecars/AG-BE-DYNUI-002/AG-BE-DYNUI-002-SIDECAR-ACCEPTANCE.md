@@ -1,17 +1,17 @@
 # AG-BE-DYNUI-002 Sidecar Acceptance Packet
 
-**Sidecar task:** `AG-BE-DYNUI-002-SIDECAR-ACCEPTANCE`  
-**Helper parent:** `AG-BE-DYNUI-002`  
-**Helper kind:** `acceptance_packet`  
-**Parent title:** Widget revision proposals and workspace versioning  
-**Parent owner:** `Codex2`  
-**Parent reviewer:** `Claude2`  
+**Sidecar task:** `AG-BE-DYNUI-002-SIDECAR-ACCEPTANCE`
+**Helper parent:** `AG-BE-DYNUI-002`
+**Helper kind:** `acceptance_packet`
+**Parent title:** Widget revision proposals and workspace versioning
+**Parent owner:** `Codex2`
+**Parent reviewer:** `Claude2`
 **Parent status at packet preparation:** `in_progress` in central L0 state on
-2026-06-29  
-**Sidecar owner:** `Codex`  
-**Sidecar reviewer:** `Codex2`  
-**Date:** `2026-06-29`  
-**Status:** ready for sidecar review
+2026-06-29
+**Sidecar owner:** `Codex`
+**Sidecar reviewer:** `Codex2`
+**Date:** `2026-06-29`
+**Status:** review approved; support packet ready for parent absorption
 
 > Scope constraint: support artifact only. This packet packages acceptance
 > criteria, dependency routing, blocker triggers, and verification guidance for
@@ -275,5 +275,14 @@ AI_NAME=Codex2 ./scripts/ai-status.sh reopen AG-BE-DYNUI-002-SIDECAR-ACCEPTANCE 
 - The only intended deliverable is this support packet.
 - This sidecar does not approve the parent implementation. It gives the parent
   owner and reviewer a concrete acceptance surface.
+
+## 10. Owner Closeout Record
+
+- Owner closeout kept the packet support-only and did not add canonical,
+  runtime, registry, governance, OpenAPI, or generated-type changes.
+- Finalization refreshed PR #2582 against `origin/dev` after parent PR #2581
+  merged.
+- Focused validation for closeout is `git diff --name-status origin/dev...HEAD`
+  and `git diff --check origin/dev...HEAD`.
 
 *Prepared by Codex for the `AG-BE-DYNUI-002-SIDECAR-ACCEPTANCE` sidecar slice.*
