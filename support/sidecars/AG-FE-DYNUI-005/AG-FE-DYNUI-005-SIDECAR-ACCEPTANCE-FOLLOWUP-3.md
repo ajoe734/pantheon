@@ -10,13 +10,15 @@
 | Sidecar owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for Claude support review |
+| Status | Review approved; owner closeout prepared |
 
 This is a support-only follow-up packet. It does not replace the archived main
 `AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE` packet or the archived
 `AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-2` packet. It refreshes the parent
 readiness evidence after `AG-FE-DYNUI-005` was re-dispatched, merged through
-Pantheon PR `#2622`, and moved to reviewer gate.
+Pantheon PR `#2622`, and moved to reviewer gate. Claude approved this
+support-only packet after Pantheon PR `#2624` merged into `dev`; this closeout
+update records that review result without changing the support findings.
 
 This packet does not approve the parent implementation, change parent task
 status, edit canonical truth, or modify runtime/contract/frontend code.
@@ -28,7 +30,7 @@ status, edit canonical truth, or modify runtime/contract/frontend code.
 | `AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE` | Archived `done`; PR `#2620` merged into Pantheon `dev` at `cf0e2b4aa25ff6c9332811e9eb7d8e26c73b13d9`. | Remains the primary visual-parity acceptance checklist, dependency map, blocker trigger set, and verification guide. |
 | `AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Archived `done`; PR `#2623` merged into Pantheon `dev` at `6b7652751bef3293dedf96d28169f4b97cdc1f02`. | Remains the previous readiness delta: upstream 001-004 done, no visible 005 frontend PR/branch then, local FE checkout stale, and main/dev composition ambiguous. |
 | `AG-FE-DYNUI-005` | Active `review`; owner `Claude`, reviewer `Codex`; Pantheon PR `#2622` merged into `dev` at `f127bdbedfb4823470ab2453f15485cea001b5a8`; artifacts remain empty in task state. | Parent now needs reviewer evaluation, any requested fixes, `review_approved`, and owner closeout before downstream E2E can proceed. |
-| `AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3` | Active `in_progress` while this file is prepared. | Adds a current evidence refresh only; it should be handed to `Claude` for support review. |
+| `AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3` | `review_approved`; Pantheon PR `#2624` merged into `dev` at `5e4964877a2bdcc2d06a40b14f53a753a81a5878`. | Adds a current evidence refresh only; owner closeout records approval and then archives the sidecar as `done`. |
 
 If this packet conflicts with L1/L2 canonical docs, the archived main acceptance
 packet, or follow-up 2, those sources win. Reopen this follow-up instead of
@@ -42,7 +44,7 @@ widening parent scope.
 | `.orchestrator/task-briefs/ag_fe_dynui_005_sidecar_acceptance_followup_3.md` | Scope is acceptance checklist, dependency map, and support packet only; canonical/runtime changes are out of scope. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Task-owned support/docs changes should be made durable with narrow commits and explicit scope. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Final `done` is owner closeout after review approval and merged task PR, not a simple status flip. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3` | Follow-up 3 is active `in_progress`, owner `Codex2`, reviewer `Claude`, helper parent `AG-FE-DYNUI-005`, artifact path is this file, and `mutates_canonical` is `false`. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3` | Follow-up 3 is `review_approved`, owner `Codex2`, reviewer `Claude`, helper parent `AG-FE-DYNUI-005`, artifact path is this file, and `mutates_canonical` is `false`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-005` | Parent is active `review`, owner `Claude`, reviewer `Codex`, depends on `AG-FE-DYNUI-001` through `004`, and records implementation complete via Pantheon PR `#2622` with relevant tests/build/safety grep summarized in `next`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE` | Main sidecar is archived `done`; reviewer approved the support-only visual-parity criteria, dependency map, dynamic runtime requirements, and E2E routing. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Follow-up 2 is archived `done`; reviewer approved the readiness delta and parent evidence gates. |
@@ -319,21 +321,34 @@ Observed results:
 - No parent runtime tests were run by this sidecar because it changes support
   artifacts only.
 
-Validation to run before owner handoff:
+Closeout validation to run before owner finalization:
 
 ```bash
 git diff --check -- .orchestrator/task-briefs/ag_fe_dynui_005_sidecar_acceptance_followup_3.md support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md
 git diff --check --no-index -- /dev/null support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md
 rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md .orchestrator/task-briefs/ag_fe_dynui_005_sidecar_acceptance_followup_3.md
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3
+gh pr view 2624 --repo ajoe734/pantheon --json number,state,mergeCommit,mergedAt,statusCheckRollup,url
 ```
 
-## 10. Reviewer Handoff Recommendation
+## 10. Review Approval And Owner Closeout
 
-For this sidecar:
+Claude approved this support-only packet with these review conclusions:
+
+- The packet preserves the prior approved support inputs and does not edit
+  canonical truth, runtime, frontend code, or contract surfaces.
+- It refreshes parent evidence after Pantheon PR `#2622`, maps upstream done
+  states, and keeps downstream E2E ownership with `AG-E2E-DYNUI-001`.
+- It correctly flags the execute-plans composition gap, stale local checkout,
+  and remaining visual evidence/composition path decision for the parent
+  `AG-FE-DYNUI-005` review gate.
+
+Owner closeout scope is limited to this packet and the generated sidecar task
+brief. After the closeout PR merges, `Codex2` should run:
 
 ```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh handoff AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3 Claude \
-  "Support-only follow-up 3 packet is ready. It preserves the archived main AG-FE-DYNUI-005 acceptance packet and follow-up 2 as approved support inputs, refreshes evidence after parent PR #2622 merged into Pantheon dev and parent moved to review, confirms upstream 001-004 plus BE/XR dependencies remain done and downstream E2E remains todo, notes no separate execute-plans repo PR/remote task branch is visible and local FE checkout is still on deleted AG-FE-DYNUI-004, and recommends Codex review require visual evidence plus delivery composition notes without changing canonical truth or runtime."
+AI_NAME=Codex2 ./scripts/ai-status.sh done AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3 \
+  "Support-only follow-up 3 accepted and merged; packet handed to parent AG-FE-DYNUI-005 review without canonical/runtime changes."
 ```
 
 Prepared by `Codex2` for the
