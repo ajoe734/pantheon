@@ -317,8 +317,7 @@ export function LoopTruthPanel() {
   const degradedCount = items.length - liveProofCount;
 
   return (
-    <main className="min-h-screen bg-background p-4 text-foreground" data-testid="loop-truth-panel">
-      <section className="mx-auto flex max-w-6xl flex-col gap-4">
+    <section className="flex flex-col gap-4" data-testid="loop-truth-panel">
         <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -381,7 +380,6 @@ export function LoopTruthPanel() {
           </div>
         ) : null}
 
-      </section>
-    </main>
+    </section>
   );
 }
