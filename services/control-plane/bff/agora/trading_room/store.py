@@ -210,18 +210,27 @@ class TradingRoomStore:
         *,
         tenant_id: str,
         user_id: str,
+        generation_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         proposal_id = str(proposal["proposalId"])
+        existing = self._workspace_proposals.get(proposal_id) or {}
+        if generation_meta is None:
+            generation_meta = existing.get("generation_meta") or {}
         self._workspace_proposals[proposal_id] = {
             "tenant_id": tenant_id,
             "user_id": user_id,
             "proposal": copy.deepcopy(proposal),
+            "generation_meta": copy.deepcopy(generation_meta),
         }
         return copy.deepcopy(proposal)
 
     def get_workspace_proposal_record(self, proposal_id: str) -> Optional[Dict[str, Any]]:
         record = self._workspace_proposals.get(proposal_id)
         return copy.deepcopy(record) if record is not None else None
+
+    def get_workspace_proposal_generation_meta(self, proposal_id: str) -> Dict[str, Any]:
+        record = self._workspace_proposals.get(proposal_id) or {}
+        return copy.deepcopy(record.get("generation_meta") or {})
 
     def upsert_workspace(
         self,

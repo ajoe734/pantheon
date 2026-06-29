@@ -602,13 +602,18 @@ def _workspace_schema_validate(payload: dict) -> None:
     jsonschema.Draft7Validator(schema, resolver=resolver).validate(payload)
 
 
-def _create_proposal(client: TestClient) -> dict:
+def _create_proposal_response(client: TestClient, body: dict | None = None):
     resp = client.post(
         "/bff/agora/strategies/strat-wb/trading-room/proposals",
         headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
-        json={"strategyVersion": "V4", "personalizationHints": {"density": "compact"}},
+        json=body or {"strategyVersion": "V4", "personalizationHints": {"density": "compact"}},
     )
     assert resp.status_code == 201, resp.text
+    return resp
+
+
+def _create_proposal(client: TestClient) -> dict:
+    resp = _create_proposal_response(client)
     return resp.json()["data"]
 
 
@@ -647,6 +652,52 @@ def test_workspace_proposal_returns_complete_v11_view_set_and_schema_valid():
     assert all(widget["widgetType"] and widget["chartSpec"]["kind"] for view in proposal["views"] for widget in view["widgets"])
     _workspace_schema_validate(proposal)
     print("✅ workspace proposal: complete V11 view set and schema-valid payload")
+
+
+def test_workspace_proposal_preserves_generator_metadata_on_create_and_get():
+    store = make_trading_room_store()
+    client = _client(store)
+    resp = _create_proposal_response(
+        client,
+        {
+            "strategyVersion": "V4",
+            "tradingRoomReady": True,
+            "evidenceRefs": ["ev-wb-v4-001"],
+            "dataFreshness": {
+                "agora.candidate.members": {
+                    "status": "complete",
+                    "dataCutoff": "2026-06-28T23:00:00Z",
+                }
+            },
+            "personalizationHints": {
+                "density": "compact",
+                "javascript": "alert(1)",
+            },
+        },
+    )
+    body = resp.json()
+    proposal = body["data"]
+    generator = body["meta"]["generator"]
+
+    assert generator["status"] == "completed"
+    assert generator["evidenceRefs"] == ["ev-wb-v4-001"]
+    assert generator["dataFreshness"]["agora.candidate.members"]["dataCutoff"] == "2026-06-28T23:00:00Z"
+    assert proposal["personalizationApplied"]["items"] == [{"key": "density", "value": "compact"}]
+    assert any("Unsafe personalization hints ignored" in warning for warning in proposal["warnings"])
+    candidate_source = next(
+        source for source in proposal["dataAvailability"]["sources"]
+        if source["dataSource"] == "agora.candidate.members"
+    )
+    assert candidate_source["status"] == "complete"
+    assert "ev-wb-v4-001" in candidate_source["reason"]
+
+    get_resp = client.get(
+        f"/bff/agora/strategies/strat-wb/trading-room/proposals/{proposal['proposalId']}",
+        headers={"Authorization": "Bearer test"},
+    )
+    assert get_resp.status_code == 200, get_resp.text
+    assert get_resp.json()["meta"]["generator"]["evidenceRefs"] == ["ev-wb-v4-001"]
+    print("✅ workspace proposal generator metadata: create/get preserve evidence and freshness")
 
 
 def test_workspace_proposal_get_and_accept_materializes_active_workspace():

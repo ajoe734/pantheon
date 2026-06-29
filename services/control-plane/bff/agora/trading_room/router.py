@@ -45,6 +45,12 @@ from ..dashboard.router import (
     _WIDGET_REGISTRY,
     _validate_widget_spec as _validate_registry_widget_spec,
 )
+from integrations.openclaw.skills.agora.trading_room_workspace import (
+    WINNER_BRANCH_VIEW_IDS as _GENERATOR_WINNER_BRANCH_VIEW_IDS,
+    WorkspaceGenerationInput,
+    WorkspaceGenerationResult,
+    generate_trading_room_workspace_proposal,
+)
 from .store import TradingRoomStore, make_trading_room_store
 
 
@@ -311,15 +317,7 @@ class GovernedIntentHandoffRequest(BaseModel):
 
 _WORKSPACE_CAPABILITY = "agora.trading.v1"
 
-_WINNER_BRANCH_VIEW_IDS = (
-    "strategy_overview",
-    "candidates_entry",
-    "winner_branch_intelligence",
-    "related_party_flow_migration",
-    "event_lead",
-    "positions_exit",
-    "evidence_monitoring",
-)
+_WINNER_BRANCH_VIEW_IDS = _GENERATOR_WINNER_BRANCH_VIEW_IDS
 
 _VIEW_ALLOWED_FIELDS = frozenset({
     "id",
@@ -1137,6 +1135,38 @@ def _build_workspace_proposal(
     }
 
 
+def _generate_workspace_proposal(
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    proposal_id: str,
+    now: str,
+    personalization_hints: Dict[str, Any],
+    evidence_refs: List[str],
+    data_freshness: Dict[str, Any],
+    trading_room_ready: bool,
+) -> WorkspaceGenerationResult:
+    return generate_trading_room_workspace_proposal(
+        WorkspaceGenerationInput(
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            proposal_id=proposal_id,
+            generated_at=now,
+            personalization_hints=personalization_hints,
+            evidence_refs=evidence_refs,
+            data_freshness=data_freshness,
+            trading_room_ready=trading_room_ready,
+        ),
+        view_factory=lambda data: _build_winner_branch_views(
+            data.strategy_id,
+            data.strategy_version,
+        ),
+        widget_registry=_WIDGET_REGISTRY,
+        validate_widget=lambda widget: _validate_widget(widget, now=now),
+        required_view_ids=_WINNER_BRANCH_VIEW_IDS,
+    )
+
+
 def _workspace_from_proposal(
     *,
     proposal: Dict[str, Any],
@@ -1725,13 +1755,13 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         """Create a complete V11 TradingRoomWorkspaceProposal preview.
 
-        This is a contract-level proposal surface. The real servant generator is
-        owned by AG-BE-DYNUI-003; this route still returns a complete,
-        registry-validated Winner Branch workspace proposal so the trader never
-        lands in an empty dashboard.
+        The servant generator returns declarative WidgetSpec/ChartSpec payloads
+        only. Unsupported renderers become generator metadata for fallback or a
+        component task request; the route never accepts executable frontend code.
         """
         identity = extract_identity(authorization)
         require_read_role(identity)
+        request_body = body or {}
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -1739,22 +1769,48 @@ def create_trading_room_router(
                 idempotency_key,
             )
 
-        strategy_version = _extract_strategy_version(body or {})
+        strategy_version = _extract_strategy_version(request_body)
         if not strategy_version:
             _validation_failed(["strategyVersion is required"], status_code=400)
 
-        personalization_hints = body.get("personalizationHints") or body.get("personalization_hints") or {}
+        personalization_hints = request_body.get("personalizationHints") or request_body.get("personalization_hints") or {}
         if personalization_hints and not isinstance(personalization_hints, dict):
             _validation_failed(["personalizationHints must be an object"], status_code=400)
 
+        evidence_refs = request_body.get("evidenceRefs") or request_body.get("evidence_refs") or []
+        if evidence_refs and not isinstance(evidence_refs, list):
+            _validation_failed(["evidenceRefs must be an array"], status_code=400)
+
+        data_freshness = request_body.get("dataFreshness") or request_body.get("data_freshness") or {}
+        if data_freshness and not isinstance(data_freshness, dict):
+            _validation_failed(["dataFreshness must be an object keyed by data source"], status_code=400)
+
+        trading_room_ready = request_body.get(
+            "tradingRoomReady",
+            request_body.get("trading_room_ready", True),
+        )
+        if not isinstance(trading_room_ready, bool):
+            _validation_failed(["tradingRoomReady must be a boolean"], status_code=400)
+
         now = utc_now()
-        proposal = _build_workspace_proposal(
+        generation = _generate_workspace_proposal(
             strategy_id=strategy_id,
             strategy_version=strategy_version,
             proposal_id=f"trp_{uuid.uuid4().hex[:12]}",
             now=now,
             personalization_hints=personalization_hints,
+            evidence_refs=evidence_refs,
+            data_freshness=data_freshness,
+            trading_room_ready=trading_room_ready,
         )
+        if generation.status != "completed" or generation.proposal is None:
+            _validation_failed(
+                generation.validation_errors
+                or generation.blocking_reasons
+                or ["workspace proposal generation failed"],
+                status_code=422,
+            )
+        proposal = generation.proposal
         errors: List[str] = []
         if tuple(view["id"] for view in proposal["views"]) != _WINNER_BRANCH_VIEW_IDS:
             errors.append("proposal must include the full V11 Winner Branch view set")
@@ -1768,12 +1824,13 @@ def create_trading_room_router(
             proposal,
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
+            generation_meta=generation.meta(),
         )
         etag = _proposal_etag(proposal)
         response.headers["ETag"] = etag
         return {
             "data": proposal,
-            "meta": _meta(etag=etag, strategy_id=strategy_id),
+            "meta": _meta(etag=etag, strategy_id=strategy_id, generator=generation.meta()),
         }
 
     # ------------------------------------------------------------------
@@ -1798,7 +1855,11 @@ def create_trading_room_router(
         response.headers["ETag"] = etag
         return {
             "data": proposal,
-            "meta": _meta(etag=etag, strategy_id=strategy_id),
+            "meta": _meta(
+                etag=etag,
+                strategy_id=strategy_id,
+                generator=store.get_workspace_proposal_generation_meta(proposal_id),
+            ),
         }
 
     # ------------------------------------------------------------------
