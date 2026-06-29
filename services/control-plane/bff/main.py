@@ -31823,24 +31823,6 @@ async def bff_management_evolution_journal(
     }
 
 
-@app.get("/bff/management/persona-fleet")
-async def bff_management_persona_fleet(
-    state: Optional[str] = None,
-    health: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: compose the Management Persona Fleet aggregate from read surfaces."""
-    return await bff_management_fleet(
-        state=state,
-        health=health,
-        page_token=page_token,
-        page_size=page_size,
-        authorization=authorization,
-    )
-
-
 # ---------------- /bff/management/nl (BFF-B6-001) ----------------
 
 _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
@@ -51484,9 +51466,8 @@ async def bff_persona_league_detail(
     }
 
 
-@app.get("/bff/management/fleet")
 @app.get("/bff/management/persona-fleet")
-async def bff_management_fleet(
+async def bff_management_persona_fleet(
     state: Optional[str] = None,
     health: Optional[str] = None,
     page_token: Optional[str] = None,
