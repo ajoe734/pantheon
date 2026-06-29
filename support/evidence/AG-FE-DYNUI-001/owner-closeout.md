@@ -20,6 +20,11 @@ Implementation PR #2569 merged to `dev` on 2026-06-28 with merge commit
 Claude2 approved the task in
 `support/reviews/AG-FE-DYNUI-001-claude2-review.md`.
 
+Latest `dev` also contains the support-only sidecar review packet at
+`support/sidecars/AG-FE-DYNUI-001/AG-FE-DYNUI-001-SIDECAR-REVIEW.md`. This
+closeout composes with that packet; it does not take ownership of the sidecar
+task or broaden parent scope.
+
 The review recorded these blocking gates as passing:
 
 - dynamic Workshop card stream, not chat/form/static cards
