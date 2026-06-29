@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex2` / `Codex` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Reviewer handoff pending |
+| Status | Reviewer approved; owner closeout pending |
 
 ## Purpose
 
@@ -43,7 +43,7 @@ parent task with a concrete blocker.
 |---|---|
 | `.orchestrator/task-briefs/ag_xr_dynui_001_sidecar_review.md` | Sidecar scope is review packet/evidence summary only; no canonical/runtime changes. |
 | `AI_COLLABORATION_GUIDE.md` | Support artifacts cannot override canonical architecture or product truth. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-DYNUI-001-SIDECAR-REVIEW` | Sidecar is active `in_progress`, owner `Codex2`, reviewer `Codex`, artifact path is this packet. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-DYNUI-001-SIDECAR-REVIEW` | Sidecar is active `review_approved`, owner `Codex2`, reviewer `Codex`, artifact path is this packet, with Codex approval notes recorded. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-DYNUI-001` | Parent is active `review`, owner `Codex`, reviewer `Claude`, and claims v1.5 dynamic Trading Room OpenAPI/schema bundle plus regenerated types are ready. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-XR-DYNUI-001-SIDECAR-ACCEPTANCE` | Acceptance sidecar is archived `done`; PR `#2584` merged at `c7bd20fee399c34b5cf56ca1b147533a8cfbe3af`. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-DYNUI-001` | Upstream workspace proposal/workspace backend task is archived `done`; closeout merge `eac485c90360a93545b5bf023e9324ca50c1b342`. |
@@ -141,33 +141,27 @@ Observed results:
   enum hits; no new XR contract output was visible to assess.
 - `git diff --check` for this sidecar's intended files passed.
 
-## Reviewer Handoff
+## Reviewer Approval And Closeout Handoff
 
-To `Codex`, sidecar reviewer:
+`Codex` approved this support-only packet after reviewing PR `#2589`.
 
-Please review this support-only packet for:
+Approval notes recorded in L0 status:
 
-1. Accuracy of the blocker finding that `AG-XR-DYNUI-001` lacks a visible parent
-   PR, remote branch, implementation commit, or contract/type diff.
-2. Accuracy of the contract-surface findings against current `origin/dev`:
-   no v1.5 bundle/OpenAPI, generated snapshot still v1.1, compatibility
-   manifest still v1.1-oriented, and dynamic Trading Room schema not exposed in
-   OpenAPI/generated types.
-3. Whether the packet stays support-only and avoids changing canonical truth,
-   schemas/OpenAPI, runtime, generated frontend types, drift scripts, or parent
-   status.
+- PR `#2589` only contains the task brief and this support packet; it does not
+  change canonical truth, OpenAPI/schema, runtime, frontend generated types, or
+  compatibility manifests.
+- Latest refs still do not show a parent `AG-XR-DYNUI-001` PR, remote branch,
+  implementation delta, or v1.5 dynamic OpenAPI/generated-type/compat-manifest
+  evidence.
+- Focused verification confirmed the current v1.1 generated-type check passes,
+  the v1.4 extension-chain check fails on the known v1.3 base digest mismatch,
+  compatibility manifest checks pass, and Trading Room backend focused tests
+  pass.
 
-If accurate, approve `AG-XR-DYNUI-001-SIDECAR-REVIEW` and return it to
-`Codex2` for closeout. Parent `AG-XR-DYNUI-001` remains owned by `Codex` with
-reviewer `Claude`; this sidecar does not replace the parent review decision.
-
-Suggested status command after reviewing the packet:
-
-```bash
-AI_NAME=Codex REVIEW_FILE=support/sidecars/AG-XR-DYNUI-001/AG-XR-DYNUI-001-SIDECAR-REVIEW.md \
-  ./scripts/ai-status.sh approve AG-XR-DYNUI-001-SIDECAR-REVIEW \
-  "Review packet approved: support-only evidence shows AG-XR-DYNUI-001 is not reviewable yet because no parent PR/remote branch/implementation commit or v1.5 dynamic OpenAPI/generated-type/compat-manifest evidence is visible."
-```
+Owner closeout is limited to making the approved sidecar artifact durable and
+then moving `AG-XR-DYNUI-001-SIDECAR-REVIEW` from `review_approved` to `done`.
+Parent `AG-XR-DYNUI-001` remains owned by `Codex` with reviewer `Claude`; this
+sidecar does not replace the parent review decision.
 
 ## Support-Only Boundary Confirmation
 
