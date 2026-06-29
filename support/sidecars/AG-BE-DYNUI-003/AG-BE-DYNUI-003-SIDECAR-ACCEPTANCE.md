@@ -7,9 +7,9 @@
 **Parent owner / reviewer:** `Codex2` / `Codex` in central L0 state on
 2026-06-29
 **Parent status at packet preparation:** `in_progress`
-**Sidecar owner / reviewer:** `Codex2` / `Claude`
+**Sidecar owner / reviewer:** `Codex2` / `Codex`
 **Date:** `2026-06-29`
-**Status:** ready for reviewer handoff
+**Status:** review approved; PR #2583 merged; owner closeout in progress
 
 > Scope constraint: support artifact only. This packet packages acceptance
 > criteria, dependency routing, blocker triggers, and verification guidance for
@@ -252,7 +252,11 @@ Recommended assertions:
 
 ## 8. Reviewer Handoff Notes
 
-**Reviewer:** `Claude`
+**Reviewer:** `Codex`
+
+Reviewer assignment moved from the original helper handoff to central L0
+reviewer `Codex` before approval. The commands below reflect the final
+owner/reviewer state recorded in `ai-status.json`.
 
 ### What to verify
 
@@ -271,7 +275,7 @@ Recommended assertions:
 ### Suggested reviewer command
 
 ```bash
-AI_NAME=Claude REVIEW_FILE=support/sidecars/AG-BE-DYNUI-003/AG-BE-DYNUI-003-SIDECAR-ACCEPTANCE.md \
+AI_NAME=Codex REVIEW_FILE=support/sidecars/AG-BE-DYNUI-003/AG-BE-DYNUI-003-SIDECAR-ACCEPTANCE.md \
   ./scripts/ai-status.sh approve AG-BE-DYNUI-003-SIDECAR-ACCEPTANCE \
   "Acceptance packet approved; support artifact gives AG-BE-DYNUI-003 concrete servant workspace generator, validator integration, fallback, dependency routing, blocker trigger, and verification guidance without changing canonical truth."
 ```
@@ -279,13 +283,29 @@ AI_NAME=Claude REVIEW_FILE=support/sidecars/AG-BE-DYNUI-003/AG-BE-DYNUI-003-SIDE
 If changes are required:
 
 ```bash
-AI_NAME=Claude ./scripts/ai-status.sh reopen AG-BE-DYNUI-003-SIDECAR-ACCEPTANCE \
+AI_NAME=Codex ./scripts/ai-status.sh reopen AG-BE-DYNUI-003-SIDECAR-ACCEPTANCE \
   "Describe the exact packet corrections needed."
 ```
 
 ---
 
-## 9. Support-Only Boundary Confirmation
+## 9. Closeout Record
+
+- Review outcome: central L0 status is `review_approved` with reviewer `Codex`.
+- Merged support delivery: PR #2583 merged into `dev` at
+  `2026-06-29T01:26:55Z`.
+- Merge commit: `8200ab69852cb6d821bfb9286d3cac6fac710e00`.
+- Task commit: `8dd4ad764878b5109377d1ad1a2b0371d4e81f26`.
+- GitHub checks observed on PR #2583: Branch CI Gate `Commit trailers`,
+  `Runtime mirror guard`, and `Smoke acceptance` succeeded; Orchestrator Sync
+  `Forward to orchestrator` succeeded.
+- Owner closeout verification:
+  `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-BE-DYNUI-003-SIDECAR-ACCEPTANCE`;
+  `git diff --check -- support/sidecars/AG-BE-DYNUI-003/AG-BE-DYNUI-003-SIDECAR-ACCEPTANCE.md`;
+  `git merge-base --is-ancestor 8200ab69852cb6d821bfb9286d3cac6fac710e00 origin/dev`;
+  `gh pr view 2583 --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,title,url,statusCheckRollup`.
+
+## 10. Support-Only Boundary Confirmation
 
 - No L1/L2 canonical policy or architecture document was edited.
 - No schema, OpenAPI, BFF route, persistence layer, widget registry, OpenClaw
