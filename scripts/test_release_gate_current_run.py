@@ -40,6 +40,25 @@ def _assert_current_run_is_only_uploaded_audit_path(paths: list[str]) -> None:
     assert all("historical" not in path for path in audit_paths)
 
 
+BFF_LIVE_EVIDENCE_UPLOAD_PATHS = [
+    ".lovable/audits/current-run/BFF-LIVE-EVIDENCE-PREFLIGHT.json",
+    ".lovable/audits/current-run/BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json",
+    ".lovable/audits/current-run/release-gate-summary.json",
+    ".lovable/audits/current-run/release-gate-summary.md",
+    ".lovable/audits/current-run/BFF-LUV-AUTHED-LIVE-001-live-smoke.json",
+    ".lovable/audits/current-run/BFF-CONSOL-011-sse-replay-smoke.json",
+]
+
+
+def _assert_bff_live_evidence_upload_allowlist(paths: list[str]) -> None:
+    assert paths == BFF_LIVE_EVIDENCE_UPLOAD_PATHS
+    assert ".lovable/audits/current-run" not in paths
+    assert all(path.startswith(".lovable/audits/current-run/") for path in paths)
+    assert all("*" not in path for path in paths)
+    assert all("historical" not in path for path in paths)
+    assert all("archive" not in path for path in paths)
+
+
 def _strict_dry_run_items(*, with_side_effect_checks: bool = True, mismatched_readback_target: bool = False):
     strategy_id = "strategy-dry-run-001"
     ranking_formula_id = "ranking-formula-dry-run-001"
@@ -1334,15 +1353,14 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "scripts/verify_bff_live_evidence_artifact.py" in text
     assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
-    assert "path: .lovable/audits/current-run" in text
+    assert "path: |" in text
     assert ".lovable/audits/*.md" not in text
     assert ".lovable/audits/historical" not in text
     upload_step = _workflow_step(workflow, "live-evidence", "Upload current-run evidence")
     upload_paths = _upload_artifact_paths(upload_step)
     assert upload_step["uses"] == "actions/upload-artifact@v4"
-    assert upload_paths == [".lovable/audits/current-run"]
     assert upload_step["with"]["if-no-files-found"] == "error"
-    _assert_current_run_is_only_uploaded_audit_path(upload_paths)
+    _assert_bff_live_evidence_upload_allowlist(upload_paths)
 
 
 def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> None:
@@ -1389,15 +1407,14 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
     assert "scripts/verify_bff_live_evidence_artifact.py" in text
     assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
-    assert "path: .lovable/audits/current-run" in text
+    assert "path: |" in text
     assert ".lovable/audits/*.md" not in text
     assert ".lovable/audits/historical" not in text
     upload_step = _workflow_step(workflow, "live-evidence", "Upload current-run evidence")
     upload_paths = _upload_artifact_paths(upload_step)
     assert upload_step["uses"] == "actions/upload-artifact@v4"
-    assert upload_paths == [".lovable/audits/current-run"]
     assert upload_step["with"]["if-no-files-found"] == "error"
-    _assert_current_run_is_only_uploaded_audit_path(upload_paths)
+    _assert_bff_live_evidence_upload_allowlist(upload_paths)
 
 
 def test_release_gate_accepts_strict_authenticated_live_json_evidence(tmp_path: Path) -> None:

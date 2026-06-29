@@ -119,5 +119,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bff-live-evidence-current-run
-          path: .lovable/audits/current-run
+          path: |
+            .lovable/audits/current-run/BFF-LIVE-EVIDENCE-PREFLIGHT.json
+            .lovable/audits/current-run/BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json
+            .lovable/audits/current-run/release-gate-summary.json
+            .lovable/audits/current-run/release-gate-summary.md
+            .lovable/audits/current-run/BFF-LUV-AUTHED-LIVE-001-live-smoke.json
+            .lovable/audits/current-run/BFF-CONSOL-011-sse-replay-smoke.json
           if-no-files-found: error
