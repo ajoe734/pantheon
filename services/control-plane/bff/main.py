@@ -7916,177 +7916,6 @@ _MANAGEMENT_RISK_LEVEL_ORDER = {
 }
 
 
-def _management_human_inbox_item(
-    *,
-    item_id: str,
-    inbox_type: str,
-    source_dataset: str,
-    title: str,
-    status: Optional[str],
-    risk_level: Optional[str],
-    created_at: Optional[str],
-    href: str,
-    source_record: Dict[str, Any],
-) -> Dict[str, Any]:
-    return {
-        "id": item_id,
-        "inboxType": inbox_type,
-        "inbox_type": inbox_type,
-        "sourceDataset": source_dataset,
-        "source_dataset": source_dataset,
-        "title": title,
-        "status": status,
-        "riskLevel": risk_level,
-        "risk_level": risk_level,
-        "createdAt": created_at,
-        "created_at": created_at,
-        "href": href,
-        "sourceRecord": source_record,
-        "source_record": source_record,
-    }
-
-
-def _build_management_human_inbox_payload(snapshot_at: str) -> Dict[str, Any]:
-    review_items = read_store.list_governance_review_queue_items()
-    approval_items = read_store.list_approval_queue_items()
-    interventions = _v5_intervention_records()
-    sentinel_available, sentinel_findings = read_store.list_sentinel_findings()
-
-    items: List[Dict[str, Any]] = []
-    for item in review_items:
-        item_id = str(item.get("item_id") or item.get("id") or "").strip()
-        if not item_id:
-            continue
-        items.append(
-            _management_human_inbox_item(
-                item_id=item_id,
-                inbox_type="governance_review",
-                source_dataset="governance_review_queue_items",
-                title=f"Governance review: {item.get('item_type') or item_id}",
-                status=item.get("status") or item.get("governance_outcome"),
-                risk_level=item.get("risk_level"),
-                created_at=item.get("submitted_at"),
-                href=f"{_GOVERNANCE_REVIEW_QUEUE_ROUTE}?item={item_id}",
-                source_record=item,
-            )
-        )
-    for item in approval_items:
-        decision_id = str(item.get("decision_id") or item.get("id") or "").strip()
-        if not decision_id:
-            continue
-        items.append(
-            _management_human_inbox_item(
-                item_id=decision_id,
-                inbox_type="approval_decision",
-                source_dataset="approval_queue_items",
-                title=f"Approval required: {item.get('decision_type') or decision_id}",
-                status=item.get("decision_state"),
-                risk_level=item.get("risk_level"),
-                created_at=item.get("submitted_at"),
-                href=f"{_GOVERNANCE_APPROVAL_QUEUE_ROUTE}?decision={decision_id}",
-                source_record=item,
-            )
-        )
-    for item in interventions:
-        intervention_id = str(item.get("intervention_id") or item.get("id") or "").strip()
-        if not intervention_id:
-            continue
-        status = str(item.get("status") or "").strip().lower()
-        if status and status not in {"pending", "open", "escalated", "claimed", "in_review"}:
-            continue
-        items.append(
-            _management_human_inbox_item(
-                item_id=intervention_id,
-                inbox_type="intervention",
-                source_dataset="v5_interventions",
-                title=f"Intervention: {item.get('kind') or intervention_id}",
-                status=item.get("status"),
-                risk_level=item.get("severity") or item.get("risk_level"),
-                created_at=item.get("triggered_at") or item.get("created_at"),
-                href=f"/management/interventions?intervention={intervention_id}",
-                source_record=item,
-            )
-        )
-    for item in sentinel_findings:
-        finding_id = str(item.get("id") or item.get("finding_id") or "").strip()
-        if not finding_id:
-            continue
-        status = str(item.get("status") or "").strip().lower()
-        if status and status not in {"pending", "open", "active", "escalated"}:
-            continue
-        items.append(
-            _management_human_inbox_item(
-                item_id=finding_id,
-                inbox_type="sentinel_finding",
-                source_dataset="sentinel_findings",
-                title=f"Sentinel finding: {item.get('kind') or item.get('title') or finding_id}",
-                status=item.get("status"),
-                risk_level=item.get("severity") or item.get("risk_level"),
-                created_at=item.get("triggered_at") or item.get("created_at"),
-                href=f"/management/sentinel?finding={finding_id}",
-                source_record=item,
-            )
-        )
-
-    items = sorted(items, key=_management_record_time, reverse=True)
-
-    review_surface = _dataset_surface_status(
-        "governance_review_queue_items",
-        snapshot_at=snapshot_at,
-    )
-    approval_surface = _dataset_surface_status(
-        "approval_queue_items",
-        snapshot_at=snapshot_at,
-    )
-    intervention_source = "bff_local_registry" if _V5_INTERVENTIONS_STORE else None
-    intervention_surface = _dataset_surface_status(
-        "v5_interventions",
-        snapshot_at=snapshot_at,
-        source=intervention_source,
-    )
-    incident_source = read_store.dataset_source("incidents")
-    sentinel_dataset = "incidents" if incident_source != "missing" else "sentinel_findings"
-    sentinel_surface = _dataset_surface_status(
-        sentinel_dataset,
-        snapshot_at=snapshot_at,
-        source=None if sentinel_available else "missing",
-    )
-    inbox_surface = _aggregate_group_surface(
-        "management_human_inbox",
-        [review_surface, approval_surface, intervention_surface, sentinel_surface],
-        snapshot_at=snapshot_at,
-        unavailable_message="Human inbox aggregate unavailable.",
-        degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
-    )
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {
-        "management_human_inbox": inbox_surface,
-        "governance_review_queue": review_surface,
-        "approval_queue": approval_surface,
-        "v5_interventions": intervention_surface,
-        "sentinel_findings": sentinel_surface,
-    }
-    return {
-        "items": items,
-        "summary": {
-            "total": len(items),
-            "byType": _management_count_by(items, "inboxType"),
-            "by_type": _management_count_by(items, "inboxType"),
-            "byStatus": _management_count_by(items, "status"),
-            "by_status": _management_count_by(items, "status"),
-            "highestRiskLevel": _highest_ranked_value(
-                [str(item.get("riskLevel") or "") for item in items],
-                _MANAGEMENT_RISK_LEVEL_ORDER,
-            ),
-            "highest_risk_level": _highest_ranked_value(
-                [str(item.get("riskLevel") or "") for item in items],
-                _MANAGEMENT_RISK_LEVEL_ORDER,
-            ),
-        },
-        "meta": meta,
-    }
-
-
 def _build_management_trading_pulse_payload(snapshot_at: str) -> Dict[str, Any]:
     runtime_bindings = read_store.list_runtime_bindings()
     runtime_rows = [_project_operator_runtime_state_row(binding) for binding in runtime_bindings]
@@ -9789,7 +9618,7 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
     operator_home = _build_operator_home_payload(snapshot_at)
     runtime_health = _build_operator_health_status_payload(snapshot_at)
     alerts_payload = _build_operator_alerts_payload(snapshot_at)
-    human_inbox = _build_management_human_inbox_payload(snapshot_at)
+    human_inbox = _human_inbox_payload(snapshot_at, page_size=None)
     trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
     anomalies = _build_management_anomalies_payload(snapshot_at)
 
@@ -9802,7 +9631,7 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
         operator_home["meta"]["surfaces"]["operator_home"],
         runtime_health["meta"]["surfaces"]["health_status"],
         alerts_payload["meta"]["surfaces"]["alerts"],
-        human_inbox["meta"]["surfaces"]["management_human_inbox"],
+        human_inbox["meta"]["surfaces"]["human_inbox"],
         trading_pulse["meta"]["surfaces"]["management_trading_pulse"],
         anomalies["meta"]["surfaces"]["management_anomalies"],
     ]
@@ -9846,7 +9675,7 @@ def _build_management_cockpit_payload(snapshot_at: str) -> Dict[str, Any]:
         "operator_home": operator_home["meta"]["surfaces"]["operator_home"],
         "runtime_health": runtime_health["meta"]["surfaces"]["health_status"],
         "alerts": alerts_payload["meta"]["surfaces"]["alerts"],
-        "human_inbox": human_inbox["meta"]["surfaces"]["management_human_inbox"],
+        "human_inbox": human_inbox["meta"]["surfaces"]["human_inbox"],
         "trading_pulse": trading_pulse["meta"]["surfaces"]["management_trading_pulse"],
         "anomalies": anomalies["meta"]["surfaces"]["management_anomalies"],
     }
@@ -29358,6 +29187,14 @@ _HUMAN_INBOX_OPEN_APPROVAL_STATES = {
     "proposed",
 }
 _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES = {"pending", "escalated"}
+_HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES = {
+    "pending",
+    "open",
+    "in_review",
+    "under_review",
+    "reviewed",
+}
+_HUMAN_INBOX_OPEN_SENTINEL_STATUSES = {"pending", "open", "active", "escalated"}
 _HUMAN_INBOX_PRIORITY_RANK = {
     "critical": 4,
     "high": 3,
@@ -29389,6 +29226,90 @@ def _human_inbox_priority(value: Any, *, fallback: str = "medium") -> str:
     return fallback
 
 
+def _human_inbox_attach_common_fields(
+    projected: Dict[str, Any],
+    *,
+    inbox_type: str,
+    source_dataset: str,
+    risk_level: str,
+    created_at: Optional[str],
+    updated_at: Optional[str],
+    href: str,
+    source_record: Dict[str, Any],
+) -> Dict[str, Any]:
+    source_clone = _management_json_clone(source_record)
+    projected.setdefault("kind", inbox_type)
+    projected["inbox_type"] = inbox_type
+    projected["sourceDataset"] = source_dataset
+    projected["source_dataset"] = source_dataset
+    projected["riskLevel"] = risk_level
+    projected["risk_level"] = risk_level
+    projected["createdAt"] = created_at
+    projected["created_at"] = created_at
+    projected["updatedAt"] = updated_at
+    projected["updated_at"] = updated_at
+    projected["href"] = href
+    projected.setdefault("route", href)
+    projected["sourceRecord"] = source_clone
+    projected["source_record"] = source_clone
+    return projected
+
+
+def _human_inbox_action_state(status: str, open_statuses: set[str]) -> str:
+    return "pending" if status in open_statuses else "resolved"
+
+
+def _human_inbox_governance_review_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    item_id = _management_record_id(item, "item_id", "id", "review_id")
+    if not item_id:
+        return None
+    review_type = str(item.get("item_type") or item.get("review_type") or "GovernanceReview").strip()
+    status = str(item.get("status") or item.get("governance_outcome") or "pending").strip().lower() or "pending"
+    risk_level = str(item.get("risk_level") or "unknown").strip().lower() or "unknown"
+    priority = _human_inbox_priority(item.get("priority") or risk_level, fallback="medium")
+    created_at = item.get("submitted_at") or item.get("created_at")
+    updated_at = item.get("updated_at") or created_at
+    route = f"{_GOVERNANCE_REVIEW_QUEUE_ROUTE}?item={item_id}"
+    action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_GOVERNANCE_STATUSES)
+    projected = {
+        "id": f"governance_review:{item_id}",
+        "inbox_id": f"governance_review:{item_id}",
+        "inboxType": "governance_review",
+        "source_type": "governance_review",
+        "source_id": item_id,
+        "review_item_id": item_id,
+        "title": item.get("title") or f"Governance review: {review_type}",
+        "summary": item.get("summary") or item.get("description") or "Governance review awaiting human action.",
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": status,
+        "action_state": action_state,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "submitted_by": item.get("submitted_by"),
+        "target": {
+            "type": review_type,
+            "id": item.get("target_id") or item.get("plan_id") or item.get("artifact_id") or item_id,
+        },
+        "route": route,
+        "bff_detail_path": route,
+        "allowedActions": _management_json_clone(item.get("allowedActions") or {
+            "canReview": action_state == "pending",
+            "canRequestRevision": action_state == "pending",
+        }),
+    }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="governance_review",
+        source_dataset="governance_review_queue_items",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=item,
+    )
+
+
 def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     decision_id = _management_record_id(item, "decision_id", "id", "approval_decision_id")
     if not decision_id:
@@ -29403,7 +29324,10 @@ def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]
     target_type = str(governance_chain.get("target_type") or decision_type or "ApprovalDecision").strip()
     target_id = str(governance_chain.get("target_id") or governance_chain.get("linked_review_item_id") or "").strip()
     action_state = "pending" if state in _HUMAN_INBOX_OPEN_APPROVAL_STATES else "resolved"
-    return {
+    route = f"/management/approvals?approval={decision_id}"
+    created_at = item.get("submitted_at")
+    updated_at = item.get("updated_at") or created_at
+    projected = {
         "id": f"approval:{decision_id}",
         "inbox_id": f"approval:{decision_id}",
         "inboxType": "approval",
@@ -29416,18 +29340,28 @@ def _human_inbox_approval_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "risk_level": risk_level,
         "status": state,
         "action_state": action_state,
-        "created_at": item.get("submitted_at"),
-        "updated_at": item.get("updated_at") or item.get("submitted_at"),
+        "created_at": created_at,
+        "updated_at": updated_at,
         "submitted_by": item.get("submitted_by"),
         "target": {
             "type": target_type,
             "id": target_id or None,
         },
-        "route": f"/management/approvals?approval={decision_id}",
+        "route": route,
         "bff_detail_path": f"/bff/approvals/{decision_id}",
         "decision_context": json.loads(json.dumps(context)),
         "allowedActions": json.loads(json.dumps(item.get("allowedActions") or {})),
     }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="approval",
+        source_dataset="approval_queue_items",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=item,
+    )
 
 
 def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -29450,7 +29384,10 @@ def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str,
         "canRemediate": status in _HUMAN_INBOX_OPEN_INTERVENTION_STATUSES,
         **raw_allowed_actions,
     }
-    return {
+    route = f"/management/interventions?intervention={intervention_id}"
+    created_at = record.get("triggered_at") or record.get("created_at")
+    updated_at = record.get("remediated_at") or record.get("updated_at") or created_at
+    projected = {
         "id": f"intervention:{intervention_id}",
         "inbox_id": f"intervention:{intervention_id}",
         "inboxType": "intervention",
@@ -29463,14 +29400,14 @@ def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str,
         "risk_level": str(record.get("risk_level") or priority).strip().lower(),
         "status": status,
         "action_state": action_state,
-        "created_at": record.get("triggered_at"),
-        "updated_at": record.get("remediated_at") or record.get("updated_at") or record.get("triggered_at"),
+        "created_at": created_at,
+        "updated_at": updated_at,
         "triggered_by": record.get("triggered_by"),
         "target": {
             "type": record.get("target_type"),
             "id": record.get("target_id"),
         },
-        "route": f"/management/interventions?intervention={intervention_id}",
+        "route": route,
         "bff_detail_path": f"/bff/v5/interventions/{intervention_id}",
         "remediation_context": {
             "kind": kind,
@@ -29480,18 +29417,198 @@ def _human_inbox_intervention_item(record: Dict[str, Any]) -> Optional[Dict[str,
         },
         "allowedActions": json.loads(json.dumps(allowed_actions)),
     }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="intervention",
+        source_dataset="v5_interventions",
+        risk_level=str(record.get("risk_level") or priority).strip().lower(),
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=record,
+    )
 
 
-def _human_inbox_all_items() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _human_inbox_sentinel_item(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    finding_id = _management_record_id(record, "id", "finding_id", "incident_id")
+    if not finding_id:
+        return None
+    status = str(record.get("status") or "open").strip().lower() or "open"
+    if status not in _HUMAN_INBOX_OPEN_SENTINEL_STATUSES:
+        return None
+    kind = str(record.get("kind") or "sentinel_finding").strip().lower() or "sentinel_finding"
+    risk_level = str(record.get("severity") or record.get("risk_level") or "high").strip().lower() or "high"
+    priority = _human_inbox_priority(record.get("priority") or risk_level, fallback="high")
+    created_at = record.get("triggered_at") or record.get("created_at") or record.get("opened_at")
+    updated_at = record.get("updated_at") or record.get("last_seen_at") or created_at
+    runtime_id = record.get("runtime_id") or record.get("target_id")
+    persona_id = record.get("persona_id")
+    target_type = "Persona" if persona_id else "Runtime" if runtime_id else record.get("target_type")
+    target_id = persona_id or runtime_id or record.get("target_id") or finding_id
+    route = f"/management/sentinel?finding={finding_id}"
+    action_state = _human_inbox_action_state(status, _HUMAN_INBOX_OPEN_SENTINEL_STATUSES)
+    projected = {
+        "id": f"sentinel_finding:{finding_id}",
+        "inbox_id": f"sentinel_finding:{finding_id}",
+        "inboxType": "sentinel_finding",
+        "source_type": "sentinel_finding",
+        "source_id": finding_id,
+        "finding_id": finding_id,
+        "title": record.get("title") or f"Sentinel finding: {kind}",
+        "summary": record.get("summary") or record.get("description") or "Sentinel finding requires operator review.",
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": status,
+        "action_state": action_state,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "target": {
+            "type": target_type,
+            "id": target_id,
+        },
+        "route": route,
+        "bff_detail_path": f"/bff/v5/sentinel/findings/{finding_id}",
+        "sentinel_context": {
+            "kind": kind,
+            "runtime_id": runtime_id,
+            "persona_id": persona_id,
+            "derived_from_incident_id": record.get("derived_from_incident_id"),
+        },
+        "allowedActions": _management_json_clone(record.get("allowedActions") or {
+            "canReview": action_state == "pending",
+            "canRemediate": action_state == "pending",
+        }),
+    }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="sentinel_finding",
+        source_dataset="sentinel_findings",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=updated_at,
+        href=route,
+        source_record=record,
+    )
+
+
+def _human_inbox_persona_blocking_reasons(row: Dict[str, Any]) -> List[str]:
+    reasons: List[str] = []
+    current_work = str(row.get("current_work") or row.get("currentWork") or "").strip()
+    if current_work:
+        reasons.append(current_work)
+    recommendation = str(row.get("recommendation") or "").strip()
+    if recommendation:
+        reasons.append(f"governance recommendation: {recommendation}")
+    research_status = row.get("research_status") if isinstance(row.get("research_status"), dict) else {}
+    pending_task_ids = research_status.get("pending_task_ids")
+    if isinstance(pending_task_ids, list) and pending_task_ids:
+        reasons.append(f"pending research tasks: {', '.join(str(task_id) for task_id in pending_task_ids)}")
+    if row.get("can_deploy") is False or row.get("canDeploy") is False:
+        reasons.append("deployment is blocked until human review clears")
+    return reasons
+
+
+def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str) -> Optional[Dict[str, Any]]:
+    persona_id = _management_record_id(row, "persona_id", "personaId", "id")
+    if not persona_id or not bool(row.get("human_needed") or row.get("humanNeeded")):
+        return None
+    name = str(row.get("persona_name") or row.get("personaName") or row.get("name") or persona_id).strip()
+    status = str(row.get("state") or row.get("status") or "needs_human_approval").strip().lower()
+    research_status = row.get("research_status") if isinstance(row.get("research_status"), dict) else {}
+    current_projects = row.get("current_research_projects") if isinstance(row.get("current_research_projects"), list) else []
+    blocking_reasons = _human_inbox_persona_blocking_reasons(row)
+    risk_level = "high" if status in {"critical", "needs_human_approval", "blocked"} or blocking_reasons else "medium"
+    priority = _human_inbox_priority(row.get("priority") or risk_level, fallback=risk_level)
+    created_at = row.get("updated_at") or row.get("lastMutation") or row.get("last_mutation") or snapshot_at
+    route = f"/management/fleet?persona={persona_id}"
+    summary = (
+        str(row.get("current_work") or row.get("currentWork") or "").strip()
+        or str(research_status.get("summary") or "").strip()
+        or "Persona readiness is blocked on human governance review."
+    )
+    projected = {
+        "id": f"readiness_blocker:persona:{persona_id}",
+        "inbox_id": f"readiness_blocker:persona:{persona_id}",
+        "inboxType": "readiness_blocker",
+        "source_type": "readiness_blocker",
+        "source_id": persona_id,
+        "persona_id": persona_id,
+        "title": f"Persona needs review: {name}",
+        "summary": summary,
+        "priority": priority,
+        "risk_level": risk_level,
+        "status": status,
+        "action_state": "pending",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "target": {
+            "type": "persona",
+            "id": persona_id,
+        },
+        "route": route,
+        "bff_detail_path": f"/bff/management/human-inbox/readiness_blocker:persona:{persona_id}",
+        "blockingReasons": list(blocking_reasons),
+        "blocking_reasons": list(blocking_reasons),
+        "canProceed": False,
+        "can_proceed": False,
+        "research_context": {
+            "research_status": _management_json_clone(research_status),
+            "current_research_projects": _management_json_clone(current_projects),
+            "recommendation": row.get("recommendation"),
+            "current_work": row.get("current_work") or row.get("currentWork"),
+            "data_source_status": _management_json_clone(row.get("data_source_status") or {}),
+        },
+        "allowedActions": {
+            "canProceed": False,
+            "canDecide": False,
+            "canOpenPersonaFleet": True,
+            "canOpenResearch": bool(current_projects or research_status),
+            "canRequestRevision": True,
+        },
+    }
+    return _human_inbox_attach_common_fields(
+        projected,
+        inbox_type="readiness_blocker",
+        source_dataset="persona_fleet",
+        risk_level=risk_level,
+        created_at=created_at,
+        updated_at=created_at,
+        href=route,
+        source_record=row,
+    )
+
+
+def _human_inbox_all_items(
+    snapshot_at: Optional[str] = None,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    snapshot_at = snapshot_at or utc_now()
+    review_records = read_store.list_governance_review_queue_items() or []
     approval_records = read_store.list_approval_queue_items() or []
     intervention_records = _v5_intervention_records()
+    sentinel_available, sentinel_records = read_store.list_sentinel_findings()
+    persona_rows = _build_persona_health_items(
+        snapshot_at,
+        include_market_persona_defaults=True,
+    )
     items: List[Dict[str, Any]] = []
+    for review in review_records:
+        projected = _human_inbox_governance_review_item(review)
+        if projected is not None:
+            items.append(projected)
     for approval in approval_records:
         projected = _human_inbox_approval_item(approval)
         if projected is not None:
             items.append(projected)
     for intervention in intervention_records:
         projected = _human_inbox_intervention_item(intervention)
+        if projected is not None:
+            items.append(projected)
+    for sentinel in sentinel_records:
+        projected = _human_inbox_sentinel_item(sentinel)
+        if projected is not None:
+            items.append(projected)
+    for persona in persona_rows:
+        projected = _human_inbox_persona_readiness_item(persona, snapshot_at=snapshot_at)
         if projected is not None:
             items.append(projected)
     items.sort(
@@ -29502,7 +29619,14 @@ def _human_inbox_all_items() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]
         ),
         reverse=True,
     )
-    return items, approval_records, intervention_records
+    return items, {
+        "governance_review_records": review_records,
+        "approval_records": approval_records,
+        "intervention_records": intervention_records,
+        "sentinel_available": sentinel_available,
+        "sentinel_records": sentinel_records,
+        "persona_rows": persona_rows,
+    }
 
 
 def _human_inbox_filter_items(
@@ -29538,12 +29662,28 @@ def _human_inbox_filter_items(
 
 def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
     pending_items = [item for item in items if str(item.get("action_state") or "") == "pending"]
+    by_type = _management_count_by(items, "inboxType")
+    by_status = _management_count_by(items, "status")
+    highest_risk_level = _highest_ranked_value(
+        [str(item.get("riskLevel") or item.get("risk_level") or "") for item in items],
+        _MANAGEMENT_RISK_LEVEL_ORDER,
+    )
     return {
+        "total": len(items),
         "total_items": len(items),
         "returned_items": returned_count,
         "pending_items": len(pending_items),
+        "byType": by_type,
+        "by_type": by_type,
+        "byStatus": by_status,
+        "by_status": by_status,
+        "highestRiskLevel": highest_risk_level,
+        "highest_risk_level": highest_risk_level,
+        "governance_review_count": len([item for item in items if item.get("source_type") == "governance_review"]),
         "approval_count": len([item for item in items if item.get("source_type") == "approval"]),
         "intervention_count": len([item for item in items if item.get("source_type") == "intervention"]),
+        "sentinel_finding_count": len([item for item in items if item.get("source_type") == "sentinel_finding"]),
+        "readiness_blocker_count": len([item for item in items if item.get("source_type") == "readiness_blocker"]),
         "critical_count": len([item for item in items if item.get("priority") == "critical"]),
         "high_count": len([item for item in items if item.get("priority") == "high"]),
     }
@@ -29552,9 +29692,19 @@ def _human_inbox_summary(items: List[Dict[str, Any]], returned_count: int) -> Di
 def _human_inbox_surfaces(
     *,
     snapshot_at: str,
+    governance_review_records: List[Dict[str, Any]],
     approval_records: List[Dict[str, Any]],
     intervention_records: List[Dict[str, Any]],
+    sentinel_available: bool,
+    sentinel_records: List[Dict[str, Any]],
+    persona_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    review_surface = _dataset_surface_status(
+        "governance_review_queue_items",
+        snapshot_at=snapshot_at,
+        has_data=bool(governance_review_records),
+        missing_message="Governance review queue has no readable source records.",
+    )
     approval_surface = _dataset_surface_status(
         "approval_queue_items",
         snapshot_at=snapshot_at,
@@ -29570,20 +29720,88 @@ def _human_inbox_surfaces(
     if intervention_records and intervention_surface.get("status") == "unavailable":
         intervention_surface = dict(_surface_status())
         intervention_surface["source"] = "bff_local_registry"
-    source_available = (
-        approval_surface.get("status") != "unavailable"
-        or intervention_surface.get("status") != "unavailable"
-        or bool(approval_records)
-        or bool(intervention_records)
+    incidents_source = read_store.dataset_source("incidents")
+    sentinel_dataset = "incidents" if incidents_source != "missing" else "sentinel_findings"
+    sentinel_surface = _dataset_surface_status(
+        sentinel_dataset,
+        snapshot_at=snapshot_at,
+        has_data=bool(sentinel_records),
+        missing_message="Sentinel findings have no readable source records.",
+        source=None if sentinel_available else "missing",
     )
+    persona_surface = _composed_dataset_surface_status(
+        "persona_fleet",
+        persona_rows,
+        snapshot_at=snapshot_at,
+        source="bff_composed",
+    )
+    source_surfaces = [
+        review_surface,
+        approval_surface,
+        intervention_surface,
+        sentinel_surface,
+        persona_surface,
+    ]
     return {
-        "human_inbox": _composed_surface_status(
+        "human_inbox": _aggregate_group_surface(
+            "human_inbox",
+            source_surfaces,
             snapshot_at=snapshot_at,
-            available=source_available,
-            missing_message="Human inbox has no readable approval or intervention source records.",
+            unavailable_message="Human inbox aggregate unavailable.",
+            degraded_message="Human inbox aggregate is available, but one or more contributing surfaces are degraded.",
         ),
+        "governance_review_queue": review_surface,
         "approval_queue": approval_surface,
         "v5_interventions": intervention_surface,
+        "sentinel_findings": sentinel_surface,
+        "persona_readiness": persona_surface,
+    }
+
+
+def _human_inbox_payload(
+    snapshot_at: str,
+    *,
+    source_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: Optional[int] = 20,
+) -> Dict[str, Any]:
+    items, sources = _human_inbox_all_items(snapshot_at)
+    filtered = _human_inbox_filter_items(
+        items,
+        source_type=source_type,
+        status=status,
+        priority=priority,
+    )
+    total = len(filtered)
+    if page_size is None:
+        page_items = filtered
+        next_page_token = None
+        returned_page_size = len(page_items)
+    else:
+        page_items, next_page_token = _page_slice(filtered, page_token, page_size)
+        returned_page_size = page_size
+    meta = _snapshot_meta(snapshot_at)
+    meta["surfaces"] = _human_inbox_surfaces(
+        snapshot_at=snapshot_at,
+        governance_review_records=sources["governance_review_records"],
+        approval_records=sources["approval_records"],
+        intervention_records=sources["intervention_records"],
+        sentinel_available=bool(sources["sentinel_available"]),
+        sentinel_records=sources["sentinel_records"],
+        persona_rows=sources["persona_rows"],
+    )
+    return {
+        "data": page_items,
+        "items": page_items,
+        "summary": _human_inbox_summary(filtered, len(page_items)),
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": total,
+            "page_size": returned_page_size,
+        },
+        "meta": meta,
     }
 
 
@@ -29595,6 +29813,9 @@ def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
         str(item.get("source_id") or ""),
         str(item.get("approval_decision_id") or ""),
         str(item.get("intervention_id") or ""),
+        str(item.get("review_item_id") or ""),
+        str(item.get("finding_id") or ""),
+        str(item.get("persona_id") or ""),
     }
     return clean in candidates
 
@@ -29898,7 +30119,7 @@ def _management_hiq_backlog_response(
     priorities = _hiq_backlog_filter_values(priority)
     kinds = _hiq_backlog_filter_values(kind, default=_HIQ_BACKLOG_DEFAULT_KINDS)
 
-    human_inbox_items, approval_records, inbox_intervention_records = _human_inbox_all_items()
+    human_inbox_items, inbox_sources = _human_inbox_all_items(snapshot_at)
     inbox_by_source_id = {
         str(item.get("source_id") or ""): item
         for item in human_inbox_items
@@ -29988,8 +30209,12 @@ def _management_hiq_backlog_response(
         )
     human_inbox_surfaces = _human_inbox_surfaces(
         snapshot_at=snapshot_at,
-        approval_records=approval_records,
-        intervention_records=inbox_intervention_records,
+        governance_review_records=inbox_sources["governance_review_records"],
+        approval_records=inbox_sources["approval_records"],
+        intervention_records=inbox_sources["intervention_records"],
+        sentinel_available=bool(inbox_sources["sentinel_available"]),
+        sentinel_records=inbox_sources["sentinel_records"],
+        persona_rows=inbox_sources["persona_rows"],
     )
     hiq_surface = _aggregate_group_surface(
         "hiq_backlog",
@@ -31449,37 +31674,18 @@ async def bff_management_human_inbox(
     page_size: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
 ):
-    """BFF: compose human-action inbox rows from approvals and interventions."""
+    """BFF: compose human-action inbox rows from governed human-review sources."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
 
-    snapshot_at = utc_now()
-    items, approval_records, intervention_records = _human_inbox_all_items()
-    filtered = _human_inbox_filter_items(
-        items,
+    return _human_inbox_payload(
+        utc_now(),
         source_type=source_type,
         status=status,
         priority=priority,
+        page_token=page_token,
+        page_size=page_size,
     )
-    total = len(filtered)
-    page_items, next_page_token = _page_slice(filtered, page_token, page_size)
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = _human_inbox_surfaces(
-        snapshot_at=snapshot_at,
-        approval_records=approval_records,
-        intervention_records=intervention_records,
-    )
-    return {
-        "data": page_items,
-        "items": page_items,
-        "summary": _human_inbox_summary(filtered, len(page_items)),
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "page_size": page_size,
-        },
-        "meta": meta,
-    }
 
 
 @app.get("/bff/management/human-inbox/{item_id}")
@@ -31492,15 +31698,19 @@ async def bff_management_human_inbox_detail(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
-    items, approval_records, intervention_records = _human_inbox_all_items()
+    items, sources = _human_inbox_all_items(snapshot_at)
     for item in items:
         if _human_inbox_detail_match(item, item_id):
             detail = json.loads(json.dumps(item))
             meta = _snapshot_meta(snapshot_at)
             meta["surfaces"] = _human_inbox_surfaces(
                 snapshot_at=snapshot_at,
-                approval_records=approval_records,
-                intervention_records=intervention_records,
+                governance_review_records=sources["governance_review_records"],
+                approval_records=sources["approval_records"],
+                intervention_records=sources["intervention_records"],
+                sentinel_available=bool(sources["sentinel_available"]),
+                sentinel_records=sources["sentinel_records"],
+                persona_rows=sources["persona_rows"],
             )
             return {"data": detail, "meta": meta}
     raise _bff_error(
@@ -33617,7 +33827,7 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 list(alerts_payload.get("alerts") or []),
                 tenant_id,
             )
-            human_inbox_payload = _build_management_human_inbox_payload(snapshot_at)
+            human_inbox_payload = _human_inbox_payload(snapshot_at, page_size=None)
             inbox_items = _mgmt_nl_filter_tenant_records(
                 list(human_inbox_payload.get("items") or []),
                 tenant_id,
@@ -33633,12 +33843,13 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             )
             trading_pulse = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
             _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
-            _mgmt_nl_add_record_entities(evidence_entities, inbox_items, "approval", "id", "item_id")
+            _mgmt_nl_add_record_entities(evidence_entities, inbox_items, "human_inbox", "id", "item_id")
             _mgmt_nl_add_record_entities(evidence_entities, anomalies, "incident", "id")
             evidence_source_types.update({
                 "alert",
                 "incident",
                 "approval",
+                "human_inbox",
                 "runtime",
                 "runtime_binding",
                 "telemetry",

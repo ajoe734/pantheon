@@ -1,9 +1,9 @@
 """
 BFF-B3-003: contract tests for GET /bff/management/human-inbox.
 
-The route is a read-only Management aggregate. It composes pending human
-approval queue rows with v5 intervention rows, then exposes a detail route for
-the composed inbox item identity.
+The route is a read-only Management aggregate. It composes governance review,
+approval, intervention, sentinel, and persona readiness blocker rows, then
+exposes a detail route for the composed inbox item identity.
 """
 from __future__ import annotations
 
@@ -82,6 +82,68 @@ def test_human_inbox_composes_approvals_and_interventions() -> None:
             bff_main.read_store = original_store
             bff_main._V5_INTERVENTIONS_STORE.clear()
             bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
+def test_human_inbox_includes_persona_readiness_blockers(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            monkeypatch.setattr(
+                bff_main,
+                "_build_persona_health_items",
+                lambda snapshot_at, include_market_persona_defaults=False: [
+                    {
+                        "id": "persona-tw-equity",
+                        "persona_id": "persona-tw-equity",
+                        "name": "TW Equity",
+                        "human_needed": True,
+                        "humanNeeded": True,
+                        "state": "needs_human_approval",
+                        "current_work": "TW corporate-action and session-boundary evidence review",
+                        "recommendation": "hold_for_risk_owner_review",
+                        "can_deploy": False,
+                        "updated_at": "2026-06-07T00:00:00Z",
+                        "research_status": {
+                            "summary": "Registry admission is blocked by upstream tasks.",
+                            "pending_task_ids": ["MGMT-QLIB-003", "MGMT-QLIB-005"],
+                        },
+                        "current_research_projects": [
+                            {
+                                "project_id": "MGMT-QLIB-006",
+                                "status": "completed",
+                                "route": "/bff/research-experiments/exp-mgmt-qlib-006",
+                            }
+                        ],
+                        "data_source_status": {"live": "read_ok"},
+                    }
+                ],
+            )
+
+            resp = client.get(
+                "/bff/management/human-inbox?source_type=readiness_blocker",
+                headers=OPERATOR_HEADERS,
+            )
+
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["summary"]["readiness_blocker_count"] == 1
+            item = body["items"][0]
+            assert item["id"] == "readiness_blocker:persona:persona-tw-equity"
+            assert item["source_type"] == "readiness_blocker"
+            assert item["route"] == "/management/fleet?persona=persona-tw-equity"
+            assert item["allowedActions"]["canProceed"] is False
+            assert item["research_context"]["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
+            assert "MGMT-QLIB-003" in " ".join(item["blocking_reasons"])
+
+            detail_resp = client.get(
+                "/bff/management/human-inbox/readiness_blocker:persona:persona-tw-equity",
+                headers=OPERATOR_HEADERS,
+            )
+            assert detail_resp.status_code == 200, detail_resp.text
+            assert detail_resp.json()["data"]["persona_id"] == "persona-tw-equity"
+        finally:
+            bff_main.read_store = original_store
 
 
 def test_human_inbox_supports_filters_pagination_and_detail() -> None:
