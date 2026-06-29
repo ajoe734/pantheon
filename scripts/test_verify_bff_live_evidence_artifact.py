@@ -1443,6 +1443,35 @@ def test_verifier_rejects_non_current_run_sibling_paths_even_without_forbidden_n
     assert "outside current-run scope: old-runs/old-audit.json" in item["note"]
 
 
+def test_verifier_rejects_current_run_bundle_with_too_many_files_even_when_paths_are_allowed(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "downloaded"
+    current_run = artifact_root / "bff-live-evidence-current-run"
+    write_passing_artifact(current_run)
+    for index in range(33):
+        (artifact_root / f"extra-{index:02d}.json").write_text("{}", encoding="utf-8")
+
+    result = run_verifier(artifact_root)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["current_run_only"]
+    assert item["status"] == "fail"
+    assert item["note"].startswith("current-run artifact file count ")
+
+
+def test_verifier_rejects_current_run_bundle_with_oversized_file_even_when_paths_are_allowed(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "downloaded"
+    current_run = artifact_root / "bff-live-evidence-current-run"
+    write_passing_artifact(current_run)
+    (artifact_root / "large-current-run-evidence.json").write_text("x" * (4 * 1024 * 1024 + 1), encoding="utf-8")
+
+    result = run_verifier(artifact_root)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["current_run_only"]
+    assert item["status"] == "fail"
+    assert item["note"] == "oversized current-run files: large-current-run-evidence.json"
+
+
 def test_verifier_rejects_historical_audit_paths_even_when_checks_pass(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifact"
     write_passing_artifact(artifact_dir)
