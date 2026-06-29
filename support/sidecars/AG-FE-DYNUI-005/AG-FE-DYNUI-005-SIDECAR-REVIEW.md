@@ -14,8 +14,10 @@
 
 This is a support-only review packet for `AG-FE-DYNUI-005`. It summarizes the
 current implementation evidence and review caveats after parent PR `#2622`
-merged. It does not approve the parent task, change canonical truth, edit
-runtime/contracts, or replace the archived sidecar acceptance packets.
+merged. It also composes with follow-up 3, which reached `review_approved`
+after Pantheon PR `#2624` merged. It does not approve the parent task, change
+canonical truth, edit runtime/contracts, or replace the archived sidecar
+acceptance packets.
 
 ## 1. Review Summary
 
@@ -48,7 +50,9 @@ major states named by the archived acceptance packet.
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-E2E-DYNUI-001` | Full Winner Branch dynamic UI E2E proof remains active `todo`; parent 005 must not claim this boundary. |
 | `support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE.md` | Archived main acceptance checklist remains the full parent review rubric. |
 | `support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md` | Earlier follow-up recorded that no visible 005 implementation PR existed; that is now superseded by Pantheon PR `#2622`, but execute-plans repo evidence remains absent. |
+| `support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3.md` | Follow-up 3 is merged via Pantheon PR `#2624` and `review_approved`; it preserves the main checklist, refreshes parent `#2622` evidence, and keeps visual evidence plus delivery composition as the parent reviewer gate. |
 | `gh pr view 2622 --repo ajoe734/pantheon ...` | PR `#2622` is merged to `dev` at merge commit `f127bdbedfb4823470ab2453f15485cea001b5a8`; head commit is `784c78a2d9bf2f7bdbd381316bd72497b7fa61ff`. |
+| `gh pr view 2624 --repo ajoe734/pantheon ...` | PR `#2624` merged follow-up 3 into `dev` at `5e4964877a2bdcc2d06a40b14f53a753a81a5878`; branch checks completed `SUCCESS`. |
 | `gh pr list --repo ajoe734/execute-plans --search "AG-FE-DYNUI-005"` | No matching execute-plans PR is visible. |
 | `git -C /home/lupin/code/execute-plans ls-remote --heads origin 'task/AG-FE-DYNUI-005*' main dev` | No matching 005 branch is visible; `main` is `64a963119e85f2e91efbedbd83c4fbd97c7c2e20`, `dev` is `ff1b3a3bb744f40939a9c025bcef2b58ba796fb3`. |
 | `git -C /home/lupin/code/execute-plans status -sb` | Local frontend checkout is still on deleted `task/AG-FE-DYNUI-004`; do not use it as 005 delivery evidence. |
@@ -63,6 +67,7 @@ major states named by the archived acceptance packet.
 | Evidence | Current state | Review consequence |
 |---|---|---|
 | Parent lifecycle | `AG-FE-DYNUI-005` is in `review`, owner `Claude`, reviewer `Codex`. | This packet supports review; it is not parent approval. |
+| Latest support packet | `AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE-FOLLOWUP-3` is `review_approved` after PR `#2624` merged to Pantheon `dev`. | It confirms the same parent evidence refresh and leaves visual evidence/composition judgment to parent review. |
 | Parent PR | `https://github.com/ajoe734/pantheon/pull/2622` merged into `dev` on `2026-06-29T13:34:23Z`. | Code is durable in Pantheon `dev`; reviewer can inspect merged diff. |
 | Parent merge commit | `f127bdbedfb4823470ab2453f15485cea001b5a8`. | This is the commit to cite for Pantheon-side evidence. |
 | Parent implementation commit | `784c78a2d9bf2f7bdbd381316bd72497b7fa61ff`. | Contains the actual dark visual parity changes before merge refresh. |
