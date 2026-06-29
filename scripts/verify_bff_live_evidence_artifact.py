@@ -691,6 +691,36 @@ def allowed_current_run_artifact_path(path: Path, root: Path) -> bool:
     return len(parts) >= 4 and parts[:3] == (".lovable", "audits", "current-run")
 
 
+def artifact_manifest(root: Path) -> dict[str, Any]:
+    files = list_files(root)
+    entries: list[dict[str, Any]] = []
+    total_bytes = 0
+    for path in files:
+        size = path.stat().st_size
+        total_bytes += size
+        parts = path.relative_to(root).parts
+        forbidden_audit_scope = any(part.lower() in FORBIDDEN_AUDIT_DIR_NAMES for part in parts[:-1])
+        entries.append(
+            {
+                "path": rel(path, root),
+                "bytes": size,
+                "current_run_allowed": allowed_current_run_artifact_path(path, root),
+                "forbidden_audit_scope": forbidden_audit_scope,
+                "oversized": size > MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES,
+            }
+        )
+    return {
+        "file_count": len(files),
+        "total_bytes": total_bytes,
+        "limits": {
+            "max_files": MAX_CURRENT_RUN_ARTIFACT_FILES,
+            "max_total_bytes": MAX_CURRENT_RUN_ARTIFACT_BYTES,
+            "max_file_bytes": MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES,
+        },
+        "files": entries,
+    }
+
+
 def artifact_scope_item(root: Path, summary: Any) -> dict[str, str]:
     files = list_files(root)
     forbidden = [
@@ -1699,6 +1729,7 @@ def verify(root: Path) -> dict[str, Any]:
         "artifact_dir": str(root),
         "overall": overall,
         "criteria": criteria,
+        "artifact_manifest": artifact_manifest(root),
         "summary_file": rel(summary_file, root) if summary_file else "",
     }
 

@@ -27,6 +27,9 @@ BEARER_SHAPE_REQUIRED_SOURCES = (
 CROSS_SECRET_REQUIRED_SOURCES = BEARER_SHAPE_REQUIRED_SOURCES
 RBAC_REQUIRED_LABELS = ("viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
 MIN_BEARER_TOKEN_LENGTH = 12
+MAX_CURRENT_RUN_ARTIFACT_FILES = 32
+MAX_CURRENT_RUN_ARTIFACT_BYTES = 8 * 1024 * 1024
+MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES = 4 * 1024 * 1024
 TARGET_URL = "https://pantheon-bff-dev.example.test"
 
 
@@ -638,6 +641,26 @@ def test_verifier_accepts_complete_strict_live_artifact(tmp_path: Path) -> None:
     assert payload["criteria"]["sse_reconnect_soak"]["status"] == "pass"
     assert payload["criteria"]["current_run_only"]["status"] == "pass"
     assert payload["criteria"]["raw_secret_scan"]["status"] == "pass"
+    manifest = payload["artifact_manifest"]
+    entries = {entry["path"]: entry for entry in manifest["files"]}
+    expected_paths = {
+        "BFF-CONSOL-011-sse-replay-smoke.json",
+        "BFF-LIVE-EVIDENCE-PREFLIGHT.json",
+        "BFF-LUV-AUTHED-LIVE-001-live-smoke.json",
+        "release-gate-summary.json",
+    }
+    assert manifest["file_count"] == len(expected_paths)
+    assert set(entries) == expected_paths
+    assert manifest["total_bytes"] == sum(entry["bytes"] for entry in entries.values())
+    assert manifest["limits"] == {
+        "max_files": MAX_CURRENT_RUN_ARTIFACT_FILES,
+        "max_total_bytes": MAX_CURRENT_RUN_ARTIFACT_BYTES,
+        "max_file_bytes": MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES,
+    }
+    assert all(entry["bytes"] > 0 for entry in entries.values())
+    assert all(entry["current_run_allowed"] is True for entry in entries.values())
+    assert all(entry["forbidden_audit_scope"] is False for entry in entries.values())
+    assert all(entry["oversized"] is False for entry in entries.values())
 
 
 def test_verifier_rejects_summary_run_url_from_different_run_even_when_evidence_matches(tmp_path: Path) -> None:
@@ -1426,6 +1449,10 @@ def test_verifier_accepts_downloaded_current_run_bundle_root(tmp_path: Path) -> 
     payload = json.loads(result.stdout)
     assert payload["overall"] == "pass"
     assert payload["criteria"]["current_run_only"]["status"] == "pass"
+    manifest = payload["artifact_manifest"]
+    assert manifest["file_count"] == 4
+    assert all(entry["path"].startswith("bff-live-evidence-current-run/") for entry in manifest["files"])
+    assert all(entry["current_run_allowed"] is True for entry in manifest["files"])
 
 
 def test_verifier_rejects_non_current_run_sibling_paths_even_without_forbidden_names(tmp_path: Path) -> None:
@@ -1441,6 +1468,8 @@ def test_verifier_rejects_non_current_run_sibling_paths_even_without_forbidden_n
     item = payload["criteria"]["current_run_only"]
     assert item["status"] == "fail"
     assert "outside current-run scope: old-runs/old-audit.json" in item["note"]
+    manifest_entry = next(entry for entry in payload["artifact_manifest"]["files"] if entry["path"] == "old-runs/old-audit.json")
+    assert manifest_entry["current_run_allowed"] is False
 
 
 def test_verifier_rejects_current_run_bundle_with_too_many_files_even_when_paths_are_allowed(tmp_path: Path) -> None:
@@ -1456,6 +1485,10 @@ def test_verifier_rejects_current_run_bundle_with_too_many_files_even_when_paths
     item = payload["criteria"]["current_run_only"]
     assert item["status"] == "fail"
     assert item["note"].startswith("current-run artifact file count ")
+    manifest = payload["artifact_manifest"]
+    assert manifest["file_count"] == 37
+    assert manifest["limits"]["max_files"] == MAX_CURRENT_RUN_ARTIFACT_FILES
+    assert "extra-32.json" in {entry["path"] for entry in manifest["files"]}
 
 
 def test_verifier_rejects_current_run_bundle_with_oversized_file_even_when_paths_are_allowed(tmp_path: Path) -> None:
@@ -1470,6 +1503,12 @@ def test_verifier_rejects_current_run_bundle_with_oversized_file_even_when_paths
     item = payload["criteria"]["current_run_only"]
     assert item["status"] == "fail"
     assert item["note"] == "oversized current-run files: large-current-run-evidence.json"
+    manifest_entry = next(
+        entry for entry in payload["artifact_manifest"]["files"] if entry["path"] == "large-current-run-evidence.json"
+    )
+    assert manifest_entry["bytes"] == MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES + 1
+    assert manifest_entry["current_run_allowed"] is True
+    assert manifest_entry["oversized"] is True
 
 
 def test_verifier_rejects_historical_audit_paths_even_when_checks_pass(tmp_path: Path) -> None:
