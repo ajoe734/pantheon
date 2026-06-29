@@ -8,7 +8,9 @@
     {"$ref": "#/definitions/TradingRoomWorkspace"},
     {"$ref": "#/definitions/TradingRoomViewSpec"},
     {"$ref": "#/definitions/TradingRoomWidgetSpec"},
-    {"$ref": "#/definitions/WorkspaceLayoutOperation"}
+    {"$ref": "#/definitions/WorkspaceLayoutOperation"},
+    {"$ref": "#/definitions/WidgetRevisionProposal"},
+    {"$ref": "#/definitions/TradingRoomDashboardVersion"}
   ],
   "definitions": {
     "TradingRoomWorkspaceProposal": {
@@ -237,6 +239,105 @@
         },
         "widgetId": {"type": "string"},
         "payload": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    },
+    "WidgetRevisionProposal": {
+      "type": "object",
+      "required": [
+        "id",
+        "workspaceId",
+        "viewId",
+        "widgetId",
+        "instruction",
+        "beforeSpec",
+        "proposedSpec",
+        "rationale",
+        "warnings",
+        "dataAvailability",
+        "status"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "workspaceId": {"type": "string", "minLength": 1},
+        "viewId": {"type": "string", "minLength": 1},
+        "widgetId": {"type": "string", "minLength": 1},
+        "instruction": {"type": "string", "minLength": 1},
+        "beforeSpec": {"$ref": "#/definitions/TradingRoomWidgetSpec"},
+        "proposedSpec": {"$ref": "#/definitions/TradingRoomWidgetSpec"},
+        "rationale": {"type": "string", "minLength": 1},
+        "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "dataAvailability": {"enum": ["complete", "partial", "unavailable"]},
+        "status": {"enum": ["preview", "accepted", "rejected", "superseded"]}
+      },
+      "additionalProperties": false
+    },
+    "TradingRoomDashboardVersion": {
+      "type": "object",
+      "required": [
+        "id",
+        "userId",
+        "strategyId",
+        "strategyVersion",
+        "dashboardVersion",
+        "generatedBy",
+        "previousVersionId",
+        "changeSummary",
+        "views",
+        "createdAt",
+        "status",
+        "changeLog"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "userId": {"type": "string", "minLength": 1},
+        "strategyId": {"type": "string", "minLength": 1},
+        "strategyVersion": {"type": "string", "minLength": 1},
+        "dashboardVersion": {"type": "integer", "minimum": 1},
+        "generatedBy": {"enum": ["trading_servant", "user_modified", "learned_personalization"]},
+        "previousVersionId": {"type": ["string", "null"]},
+        "changeSummary": {"type": "string", "minLength": 1},
+        "views": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/definitions/TradingRoomViewSpec"}
+        },
+        "createdAt": {"type": "string", "format": "date-time"},
+        "status": {"enum": ["active", "superseded", "rolled_back", "archived"]},
+        "changeLog": {"$ref": "#/definitions/WorkspaceChangeLogEntry"}
+      },
+      "additionalProperties": false
+    },
+    "WorkspaceChangeLogEntry": {
+      "type": "object",
+      "required": [
+        "changedAt",
+        "changedBy",
+        "reason",
+        "affectedViews",
+        "affectedWidgets",
+        "effectEvaluation",
+        "rollbackAvailable"
+      ],
+      "properties": {
+        "changedAt": {"type": "string", "format": "date-time"},
+        "changedBy": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1},
+        "affectedViews": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "affectedWidgets": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "effectEvaluation": {"type": "string", "minLength": 1},
+        "rollbackAvailable": {"type": "boolean"},
+        "sourceRevisionProposalId": {"type": ["string", "null"]},
+        "rollbackOfVersionId": {"type": ["string", "null"]}
       },
       "additionalProperties": false
     },

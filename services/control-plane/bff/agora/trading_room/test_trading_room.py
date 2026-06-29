@@ -816,6 +816,144 @@ def test_workspace_cross_user_read_is_forbidden():
     print("✅ workspace scope: cross-user reads are forbidden")
 
 
+def _make_revised_widget(widget: dict, *, title_suffix: str = "Revised") -> dict:
+    proposed = json.loads(json.dumps(widget))
+    proposed["title"] = f"{widget['title']} {title_suffix}"
+    proposed["purpose"] = f"{widget['purpose']} Revised for faster comparison."
+    proposed["whyIncluded"] = f"{widget['whyIncluded']} Revision keeps the same allowlisted data source."
+    proposed["chartSpec"] = {
+        **proposed["chartSpec"],
+        "kind": "bar",
+        "encodings": {
+            "x": {"field": "label", "type": "nominal"},
+            "y": {"field": "value", "type": "quantitative"},
+        },
+    }
+    return proposed
+
+
+def test_widget_revision_proposal_apply_preserves_before_after_and_records_version():
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+    widget = next(w for v in workspace["views"] for w in v["widgets"] if w["id"] == "overview_candidate_funnel")
+    proposed = _make_revised_widget(widget, title_suffix="Bar")
+
+    create = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget['id']}/revision-proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": "idem-widget-revision-create"},
+        json={
+            "instruction": "改成長條圖，方便快速比較候選狀態。",
+            "proposedSpec": proposed,
+            "rationale": "目前漏斗適合流程探索，長條圖較適合快速比較各狀態數量。",
+            "warnings": ["兩個候選狀態仍為推定資料。"],
+            "dataAvailability": "partial",
+        },
+    )
+    assert create.status_code == 201, create.text
+    proposal = create.json()["data"]
+    assert proposal["status"] == "preview"
+    assert proposal["beforeSpec"] == widget
+    assert proposal["proposedSpec"]["title"].endswith("Bar")
+    assert proposal["rationale"]
+    assert proposal["warnings"]
+    assert proposal["dataAvailability"] == "partial"
+    _workspace_schema_validate(proposal)
+
+    accept = client.post(
+        f"/bff/agora/trading-room/widget-revision-proposals/{proposal['id']}/accept",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-widget-revision-accept"},
+        json={"acceptanceAction": "apply"},
+    )
+    assert accept.status_code == 200, accept.text
+    data = accept.json()["data"]
+    assert data["proposal"]["status"] == "accepted"
+    assert data["proposal"]["beforeSpec"] == widget
+    assert data["proposal"]["proposedSpec"] == proposed
+    assert data["workspace"]["dashboardVersion"] == 2
+    applied = next(w for v in data["workspace"]["views"] for w in v["widgets"] if w["id"] == widget["id"])
+    assert applied["title"].endswith("Bar")
+    assert data["version"]["changeLog"]["sourceRevisionProposalId"] == proposal["id"]
+    assert data["version"]["changeLog"]["affectedWidgets"] == [widget["id"]]
+    _workspace_schema_validate(data["version"])
+
+    versions = client.get(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/versions",
+        headers={"Authorization": "Bearer test"},
+    )
+    assert versions.status_code == 200, versions.text
+    assert [v["dashboardVersion"] for v in versions.json()["data"]] == [1, 2]
+    assert versions.json()["data"][1]["changeSummary"].startswith("accepted widget revision")
+    print("✅ widget revision: apply preserves before/proposed specs and records change log")
+
+
+def test_widget_revision_keep_original_adds_copy_and_rollback_creates_new_version():
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+    widget = next(w for v in workspace["views"] for w in v["widgets"] if w["id"] == "overview_strategy_health")
+    proposed = _make_revised_widget(widget, title_suffix="Copy")
+
+    create = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget['id']}/revision-proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": "idem-widget-copy-create"},
+        json={
+            "instruction": "保留原圖，再新增長條圖版本。",
+            "proposedSpec": proposed,
+            "rationale": "原始 gauge 適合單點狀態，長條圖適合拆解健康度來源。",
+            "warnings": [],
+            "dataAvailability": "partial",
+        },
+    )
+    assert create.status_code == 201, create.text
+    proposal = create.json()["data"]
+
+    keep_copy = client.post(
+        f"/bff/agora/trading-room/widget-revision-proposals/{proposal['id']}/accept",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-widget-copy-accept"},
+        json={
+            "acceptanceAction": "keep_original_add_modified_copy",
+            "copyWidgetId": "overview_strategy_health_copy",
+        },
+    )
+    assert keep_copy.status_code == 200, keep_copy.text
+    copied_workspace = keep_copy.json()["data"]["workspace"]
+    copied_widgets = [w for v in copied_workspace["views"] for w in v["widgets"]]
+    assert any(w["id"] == widget["id"] and w["title"] == widget["title"] for w in copied_widgets)
+    assert any(w["id"] == "overview_strategy_health_copy" and w["title"].endswith("Copy") for w in copied_widgets)
+    assert keep_copy.json()["data"]["version"]["changeLog"]["affectedWidgets"] == [
+        widget["id"],
+        "overview_strategy_health_copy",
+    ]
+
+    versions = client.get(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/versions",
+        headers={"Authorization": "Bearer test"},
+    )
+    assert versions.status_code == 200, versions.text
+    first_version_id = versions.json()["data"][0]["id"]
+    assert [v["dashboardVersion"] for v in versions.json()["data"]] == [1, 2]
+
+    rollback = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/versions/{first_version_id}/rollback",
+        headers={
+            "Authorization": "Bearer test",
+            "If-Match": keep_copy.headers["etag"],
+            "Idempotency-Key": "idem-widget-copy-rollback",
+        },
+        json={"reason": "回到交易僕人的初始提案。"},
+    )
+    assert rollback.status_code == 200, rollback.text
+    restored = rollback.json()["data"]["workspace"]
+    assert restored["dashboardVersion"] == 3
+    assert not any(w["id"] == "overview_strategy_health_copy" for v in restored["views"] for w in v["widgets"])
+    assert rollback.json()["data"]["version"]["changeLog"]["rollbackOfVersionId"] == first_version_id
+    _workspace_schema_validate(rollback.json()["data"]["version"])
+    print("✅ widget revision: keep-original-copy and rollback are append-only versioned")
+
+
 # ---------------------------------------------------------------------------
 # Regression: jsonschema compliance (Fix 1)
 # ---------------------------------------------------------------------------
@@ -991,6 +1129,10 @@ def test_router_creation_smoke():
     assert "/bff/agora/trading-room/workspaces/{workspace_id}/views/{view_id}" in routes
     assert "/bff/agora/trading-room/workspaces/{workspace_id}/widgets" in routes
     assert "/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}" in routes
+    assert "/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}/revision-proposals" in routes
+    assert "/bff/agora/trading-room/widget-revision-proposals/{proposal_id}/accept" in routes
+    assert "/bff/agora/trading-room/workspaces/{workspace_id}/versions" in routes
+    assert "/bff/agora/trading-room/workspaces/{workspace_id}/versions/{version_id}/rollback" in routes
     print(f"✅ router: created with {len(routes)} routes")
     print(f"   Routes: {sorted(routes)}")
 
@@ -1035,6 +1177,8 @@ if __name__ == "__main__":
     test_workspace_view_and_widget_mutations_are_registry_validated()
     test_workspace_rejects_servant_direct_patch_and_code_injection()
     test_workspace_cross_user_read_is_forbidden()
+    test_widget_revision_proposal_apply_preserves_before_after_and_records_version()
+    test_widget_revision_keep_original_adds_copy_and_rollback_creates_new_version()
     test_model_dump_exclude_none_passes_schema()
     test_model_dump_without_exclude_none_emits_null_fields_that_fail_schema()
     test_store_rejects_invalid_no_order_route_proof()
