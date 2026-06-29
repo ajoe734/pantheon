@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-FE-DYNUI-003 acceptance packet and dependency map
-- Status: todo
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: You have exceeded your monthly quota (Request ID: 9556:1C7FF6:41C9C38:4B3534F:6A4233A9). Task returned to todo until Codex starts a fresh run.
+- Next: Reopen for packet refresh: reviewer readback shows execute-plans PR #82 is now merged, integration-gate completed SUCCESS, and remote task/AG-FE-DYNUI-003 is no longer listed; update the follow-up packet/readiness snapshot from open/in-progress/remote-visible to merged evidence before approval. Preserve support-only boundary and main-base composition note as applicable.
 
 ## Summary
 平行支援 AG-FE-DYNUI-003，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。
