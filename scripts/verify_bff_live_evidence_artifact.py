@@ -18,6 +18,9 @@ PREFLIGHT_JSON_NAME = "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
 SUMMARY_JSON_NAME = "release-gate-summary.json"
 FORBIDDEN_AUDIT_DIR_NAMES = {"historical", "archive", "archives", "baseline"}
 CURRENT_RUN_OUTPUT_SCOPE = ".lovable/audits/current-run"
+MAX_CURRENT_RUN_ARTIFACT_FILES = 32
+MAX_CURRENT_RUN_ARTIFACT_BYTES = 8 * 1024 * 1024
+MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES = 4 * 1024 * 1024
 ALLOWED_LIVE_EVIDENCE_ENVIRONMENTS = {"dev", "staging-live"}
 ALLOWED_DEV_REFS = {"dev", "refs/heads/dev"}
 GIT_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z", re.IGNORECASE)
@@ -700,11 +703,32 @@ def artifact_scope_item(root: Path, summary: Any) -> dict[str, str]:
         for path in files
         if not allowed_current_run_artifact_path(path, root)
     ]
-    summary_status, summary_note = summary_check_status(summary, "current_run_only")
     if forbidden:
         return status_item("fail", CHECK_LABELS["current_run_only"], note="forbidden audit paths: " + ",".join(forbidden[:5]))
     if out_of_scope:
         return status_item("fail", CHECK_LABELS["current_run_only"], note="outside current-run scope: " + ",".join(out_of_scope[:5]))
+    if len(files) > MAX_CURRENT_RUN_ARTIFACT_FILES:
+        return status_item(
+            "fail",
+            CHECK_LABELS["current_run_only"],
+            note=f"current-run artifact file count {len(files)}/{MAX_CURRENT_RUN_ARTIFACT_FILES}",
+        )
+    file_sizes = [(path, path.stat().st_size) for path in files]
+    oversized = [rel(path, root) for path, size in file_sizes if size > MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES]
+    if oversized:
+        return status_item(
+            "fail",
+            CHECK_LABELS["current_run_only"],
+            note="oversized current-run files: " + ",".join(oversized[:5]),
+        )
+    total_bytes = sum(size for _path, size in file_sizes)
+    if total_bytes > MAX_CURRENT_RUN_ARTIFACT_BYTES:
+        return status_item(
+            "fail",
+            CHECK_LABELS["current_run_only"],
+            note=f"current-run artifact bytes {total_bytes}/{MAX_CURRENT_RUN_ARTIFACT_BYTES}",
+        )
+    summary_status, summary_note = summary_check_status(summary, "current_run_only")
     if summary_status == "pass":
         return status_item("pass", CHECK_LABELS["current_run_only"], note=summary_note)
     if isinstance(summary, dict):
