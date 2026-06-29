@@ -526,6 +526,7 @@ def preflight_item(root: Path) -> dict[str, str]:
     if not GIT_SHA_RE.fullmatch(sha):
         provenance_failures.append("sha")
     provenance_failures.extend(preflight_run_provenance_failures(payload))
+    provenance_failures.extend(summary_run_provenance_failures(root, payload))
     if provenance_failures:
         return status_item(
             "fail",
@@ -603,6 +604,23 @@ def preflight_run_provenance_failures(payload: dict[str, Any]) -> list[str]:
         if str(run.get(key) or "") != value and f"strict_live_evidence_run.{key}" not in failures:
             failures.append(f"strict_live_evidence_run.{key}")
     return failures
+
+
+def summary_run_provenance_failures(root: Path, payload: dict[str, Any]) -> list[str]:
+    summary_file = find_file(root, SUMMARY_JSON_NAME)
+    summary = read_json(summary_file) if summary_file else None
+    if not isinstance(summary, dict):
+        return []
+    run_url = str(summary.get("runUrl") or "")
+    if not run_url:
+        return []
+    match = re.search(r"/actions/runs/([0-9]+)(?:\b|/|\?|#|\Z)", run_url)
+    if not match:
+        return ["summary.runUrl"]
+    run = payload.get("strict_live_evidence_run") if isinstance(payload.get("strict_live_evidence_run"), dict) else {}
+    if str(run.get("github_run_id") or "") != match.group(1):
+        return ["summary.runUrl"]
+    return []
 
 
 def preflight_payload(root: Path) -> dict[str, Any] | None:
