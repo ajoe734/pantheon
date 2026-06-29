@@ -10,7 +10,7 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for `Codex2` review |
+| Status | `Codex2` review approved; PR `#2608` merged; owner closeout evidence recorded |
 
 This is a support-only packet. It packages acceptance criteria, dependency
 routing, blocker triggers, and verification guidance for the parent
@@ -328,3 +328,38 @@ AI_NAME=Codex2 ./scripts/ai-status.sh reopen AG-FE-DYNUI-004-SIDECAR-ACCEPTANCE 
 
 Prepared by `Codex` for the
 `AG-FE-DYNUI-004-SIDECAR-ACCEPTANCE` support slice.
+
+## 11. Owner Closeout Evidence
+
+Owner closeout was resumed for `owned_finalize_dispatch` after reviewer
+approval. The approved support scope is still unchanged: this sidecar only
+adds task-scoped support material for the parent `AG-FE-DYNUI-004` task and
+does not alter canonical truth, backend contracts, runtime code, generated
+types, governance, registry semantics, or parent implementation files.
+
+Closeout readbacks:
+
+- `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-004-SIDECAR-ACCEPTANCE`
+  returned `status: review_approved`, owner `Codex`, reviewer `Codex2`,
+  artifact path `support/sidecars/AG-FE-DYNUI-004/AG-FE-DYNUI-004-SIDECAR-ACCEPTANCE.md`,
+  and reviewer notes approving the support-only packet.
+- `gh pr view 2608 --json number,state,mergedAt,mergeCommit,url,baseRefName,headRefName,reviewDecision,statusCheckRollup,title`
+  returned `state: MERGED`, base `dev`, head
+  `task/AG-FE-DYNUI-004-SIDECAR-ACCEPTANCE`, merge commit
+  `a725cc4acc6c06b43a20bdf1bfd8a8586ba61ec4`, and successful Branch CI Gate
+  and Orchestrator Sync check runs.
+- `git rev-parse HEAD origin/dev origin/task/AG-FE-DYNUI-004-SIDECAR-ACCEPTANCE`
+  confirmed local `HEAD` and `origin/dev` at
+  `a725cc4acc6c06b43a20bdf1bfd8a8586ba61ec4` before this closeout evidence
+  commit, with the original packet head at
+  `266fee0b87d7bee453a5909b0da5b6e9f29af061`.
+- `git diff --check -- .orchestrator/task-briefs/ag_fe_dynui_004_sidecar_acceptance.md support/sidecars/AG-FE-DYNUI-004/AG-FE-DYNUI-004-SIDECAR-ACCEPTANCE.md`
+  emitted no diagnostics for the closeout evidence edits.
+
+Final owner `done` must be run only after this task-scoped closeout evidence
+commit is merged into `dev`, using:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh done AG-FE-DYNUI-004-SIDECAR-ACCEPTANCE \
+  "Support acceptance packet finalized after Codex2 approval and merged PR evidence; parent AG-FE-DYNUI-004 remains responsible for implementation proof."
+```
