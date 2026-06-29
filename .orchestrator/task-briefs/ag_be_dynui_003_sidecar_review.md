@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare AG-BE-DYNUI-003 review packet and evidence summary
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Auto-reassigned ownership from Copilot to Codex after repeated Copilot quota terminal: You have exceeded your monthly quota (Request ID: D83C:391CEF:E157C8:1135B28:6A41CC6B). Task returned to todo until Codex starts a fresh run.
+- Next: Reviewer accepted packet; owner closeout is recording support-only approval and merge evidence before done.
 
 ## Summary
 平行支援 AG-BE-DYNUI-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。
