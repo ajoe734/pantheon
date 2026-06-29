@@ -11,13 +11,18 @@
 | Sidecar owner / reviewer | `Codex2` / `Codex` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for `Codex` support review |
+| Status | Support review approved; owner closeout in progress |
 
 This packet is support material only. It summarizes the visible parent PR
 evidence, review risks, and reviewer handoff for `AG-FE-DYNUI-002`. It does
 not approve the parent implementation and does not edit canonical truth,
 schemas, OpenAPI, BFF runtime, frontend runtime, registry/governance, or
 broker/capital authority.
+
+`Codex` approved this packet as a support artifact in `ai-status.json` on
+`2026-06-29`, with `review_file` set to this file. That approval is scoped only
+to the sidecar review packet and explicitly does not approve the parent
+`AG-FE-DYNUI-002` implementation.
 
 ## 1. Scope
 
@@ -173,11 +178,11 @@ for `AG-FE-DYNUI-002`. It does mean the parent task cannot be considered
 merge-ready until the check is repaired, rerun green, or the repository policy
 explicitly marks the aggregate gate non-blocking for this PR.
 
-## 6. Reviewer Handoff
+## 6. Reviewer Handoff And Approval
 
 Reviewer: `Codex`
 
-Please review this packet on support-packet terms only:
+Reviewer approval is recorded for support-packet terms only:
 
 1. It stays support-only and does not modify canonical truth or runtime.
 2. It correctly summarizes the visible parent PR evidence.
@@ -187,21 +192,11 @@ Please review this packet on support-packet terms only:
 5. It records that PR `#81` remains open/unstable and is not a completed parent
    delivery.
 
-Suggested reviewer approval command:
-
-```bash
-AI_NAME=Codex REVIEW_FILE=support/sidecars/AG-FE-DYNUI-002/AG-FE-DYNUI-002-SIDECAR-REVIEW.md \
-  REVIEW_NOTES_ZH="審核通過：AG-FE-DYNUI-002 sidecar review packet 保持 support-only，整理 execute-plans PR #81 的 parent evidence，指出核心 preview/generation/shell tests pass，但 accept response envelope 與 real BFF data.workspace 形狀不符是 parent blocker，proposal/workspace status-typed error coverage 仍不足，且 PR #81 integration-gate aggregate release gate 仍 UNSTABLE；此 packet 不批准 parent implementation，也不修改 canonical/runtime。" \
-  ./scripts/ai-status.sh approve AG-FE-DYNUI-002-SIDECAR-REVIEW \
-  "Review packet approved; parent AG-FE-DYNUI-002 still needs parent PR fixes/check resolution before merge-ready."
-```
-
-Suggested reopen command:
-
-```bash
-AI_NAME=Codex ./scripts/ai-status.sh reopen AG-FE-DYNUI-002-SIDECAR-REVIEW \
-  "Describe the missing evidence, incorrect finding, or support-scope issue to correct before approval."
-```
+The approval note says the packet remains support-only, confirms the
+execute-plans PR `#81` parent evidence was spot-checked, confirms the real BFF
+accept-envelope mismatch is correctly marked as a parent blocker, and leaves
+status-typed proposal/workspace error coverage plus PR `#81` aggregate gate
+resolution with the parent owner/reviewer.
 
 ## 7. Validation Run
 
@@ -233,6 +228,9 @@ git diff --check -- .orchestrator/task-briefs/ag_fe_dynui_002_sidecar_review.md 
 Observed results:
 
 - Sidecar branch is `task/AG-FE-DYNUI-002-SIDECAR-REVIEW`.
+- Sidecar status is `review_approved`; `review_file` points to this packet.
+- Support packet PR `#2599` merged into `dev` at
+  `658326cac01e30a1fe3d052967099b4b690c2c63`.
 - Parent `AG-FE-DYNUI-002` is in `review`; parent PR `#81` is open/unstable at
   `90d2d625010e8d3d793a5d06e36f6c5b2334e450`.
 - Dependencies `AG-XR-DYNUI-001`, `AG-BE-DYNUI-003`, `AG-FE-DYNUI-001`, and
