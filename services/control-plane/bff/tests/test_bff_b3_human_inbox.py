@@ -131,7 +131,8 @@ def test_human_inbox_includes_persona_readiness_blockers(monkeypatch) -> None:
             item = body["items"][0]
             assert item["id"] == "readiness_blocker:persona:persona-tw-equity"
             assert item["source_type"] == "readiness_blocker"
-            assert item["route"] == "/management/fleet?persona=persona-tw-equity"
+            assert item["route"] == "/management/persona-fleet?persona=persona-tw-equity"
+            assert "/management/fleet" not in item["route"]
             assert item["allowedActions"]["canProceed"] is False
             assert item["research_context"]["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
             assert "MGMT-QLIB-003" in " ".join(item["blocking_reasons"])
