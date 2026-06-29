@@ -32166,6 +32166,373 @@ def _management_ai_list_audit_events(
     return filtered[-limit:]
 
 
+def _management_ai_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        clean = str(value).strip()
+        return float(clean) if clean else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _management_ai_usage_number(usage: Any, *keys: str) -> Optional[float]:
+    if not isinstance(usage, dict):
+        return None
+    for key in keys:
+        value = _management_ai_number(usage.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _management_ai_provider_key(value: Any) -> str:
+    clean = str(value or "").strip().lower()
+    return clean or "unknown"
+
+
+def _management_ai_provider_display(provider: str) -> str:
+    labels = {
+        "codex": "Codex CLI",
+        "codex_cli": "Codex CLI",
+        "claude": "Claude CLI",
+        "claude_cli": "Claude CLI",
+        "openclaw": "OpenClaw",
+    }
+    return labels.get(provider, provider)
+
+
+def _management_ai_event_model(event: Dict[str, Any]) -> str:
+    output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
+    usage = output_summary.get("usage") if isinstance(output_summary.get("usage"), dict) else {}
+    for value in (
+        event.get("model"),
+        event.get("model_id"),
+        event.get("modelId"),
+        event.get("provider_model"),
+        event.get("providerModel"),
+        output_summary.get("model"),
+        output_summary.get("model_id"),
+        output_summary.get("modelId"),
+        usage.get("model"),
+        usage.get("model_id"),
+        usage.get("modelId"),
+    ):
+        clean = str(value or "").strip()
+        if clean:
+            return clean
+    return "default"
+
+
+def _management_ai_quota_snapshot(provider: Dict[str, Any]) -> Dict[str, Any]:
+    usage = provider.get("usage") if isinstance(provider.get("usage"), dict) else None
+    quota = provider.get("quota") if isinstance(provider.get("quota"), dict) else None
+    source = usage or quota or {}
+    return {
+        "status": str(source.get("status") or "unknown"),
+        "source": str(source.get("source") or "not_configured"),
+        "remaining": source.get("remaining"),
+        "remainingPercent": source.get("remainingPercent", source.get("remaining_percent")),
+        "remaining_percent": source.get("remaining_percent", source.get("remainingPercent")),
+        "limit": source.get("limit"),
+        "used": source.get("used"),
+        "unit": source.get("unit"),
+        "resetAt": source.get("resetAt", source.get("reset_at")),
+        "reset_at": source.get("reset_at", source.get("resetAt")),
+        "updatedAt": source.get("updatedAt", source.get("updated_at")),
+        "updated_at": source.get("updated_at", source.get("updatedAt")),
+        "checkedAt": source.get("checkedAt", source.get("checked_at")),
+        "checked_at": source.get("checked_at", source.get("checkedAt")),
+        "reason": source.get("reason") or (
+            "provider_usage_source_not_configured" if not source else None
+        ),
+    }
+
+
+def _management_ai_empty_usage_row(provider: str) -> Dict[str, Any]:
+    return {
+        "provider": provider,
+        "providerName": _management_ai_provider_display(provider),
+        "provider_name": _management_ai_provider_display(provider),
+        "runtime": None,
+        "ready": None,
+        "authStatus": None,
+        "auth_status": None,
+        "status": "unknown",
+        "liveAuth": False,
+        "live_auth": False,
+        "calls": 0,
+        "successCount": 0,
+        "success_count": 0,
+        "failedCount": 0,
+        "failed_count": 0,
+        "startedCount": 0,
+        "started_count": 0,
+        "promptBytes": 0,
+        "prompt_bytes": 0,
+        "inputTokens": 0,
+        "input_tokens": 0,
+        "outputTokens": 0,
+        "output_tokens": 0,
+        "totalTokens": 0,
+        "total_tokens": 0,
+        "durationMs": 0,
+        "duration_ms": 0,
+        "averageDurationMs": None,
+        "average_duration_ms": None,
+        "lastUsedAt": None,
+        "last_used_at": None,
+        "lastStatus": None,
+        "last_status": None,
+        "lastError": None,
+        "last_error": None,
+        "quota": _management_ai_quota_snapshot({}),
+        "observedUsage": {"source": "management_ai_audit"},
+        "observed_usage": {"source": "management_ai_audit"},
+        "models": {},
+    }
+
+
+def _management_ai_empty_model_row(model: str) -> Dict[str, Any]:
+    return {
+        "model": model,
+        "calls": 0,
+        "successCount": 0,
+        "success_count": 0,
+        "failedCount": 0,
+        "failed_count": 0,
+        "promptBytes": 0,
+        "prompt_bytes": 0,
+        "inputTokens": 0,
+        "input_tokens": 0,
+        "outputTokens": 0,
+        "output_tokens": 0,
+        "totalTokens": 0,
+        "total_tokens": 0,
+        "durationMs": 0,
+        "duration_ms": 0,
+        "averageDurationMs": None,
+        "average_duration_ms": None,
+        "lastUsedAt": None,
+        "last_used_at": None,
+        "lastStatus": None,
+        "last_status": None,
+    }
+
+
+def _management_ai_touch_last(row: Dict[str, Any], event: Dict[str, Any], status: str) -> None:
+    recorded_at = str(event.get("recorded_at") or "")
+    current = _audit_datetime(row.get("lastUsedAt"))
+    candidate = _audit_datetime(recorded_at)
+    if candidate is None or current is None or candidate >= current:
+        row["lastUsedAt"] = recorded_at
+        row["last_used_at"] = recorded_at
+        row["lastStatus"] = status
+        row["last_status"] = status
+
+
+def _management_ai_finalize_usage_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    calls = int(row.get("calls") or 0)
+    duration = int(row.get("durationMs") or 0)
+    avg = round(duration / calls) if calls else None
+    row["averageDurationMs"] = avg
+    row["average_duration_ms"] = avg
+    observed = {
+        "source": "management_ai_audit",
+        "calls": row["calls"],
+        "successCount": row["successCount"],
+        "success_count": row["success_count"],
+        "failedCount": row["failedCount"],
+        "failed_count": row["failed_count"],
+        "promptBytes": row["promptBytes"],
+        "prompt_bytes": row["prompt_bytes"],
+        "inputTokens": row["inputTokens"],
+        "input_tokens": row["input_tokens"],
+        "outputTokens": row["outputTokens"],
+        "output_tokens": row["output_tokens"],
+        "totalTokens": row["totalTokens"],
+        "total_tokens": row["total_tokens"],
+    }
+    row["observedUsage"] = observed
+    row["observed_usage"] = observed
+    models = []
+    for model_row in row["models"].values():
+        model_calls = int(model_row.get("calls") or 0)
+        model_duration = int(model_row.get("durationMs") or 0)
+        model_avg = round(model_duration / model_calls) if model_calls else None
+        model_row["averageDurationMs"] = model_avg
+        model_row["average_duration_ms"] = model_avg
+        models.append(model_row)
+    row["models"] = sorted(models, key=lambda item: (-int(item.get("calls") or 0), str(item.get("model") or "")))
+    return row
+
+
+def _assistant_provider_usage_summary(
+    *,
+    auth_probe: bool = False,
+    limit: int = 500,
+    window_hours: Optional[int] = 168,
+) -> Dict[str, Any]:
+    event_limit = min(max(limit, 1), 500)
+    now_dt = datetime.now(timezone.utc)
+    since_dt = (
+        now_dt - timedelta(hours=max(1, int(window_hours)))
+        if window_hours is not None and int(window_hours) > 0
+        else None
+    )
+    rows: Dict[str, Dict[str, Any]] = {}
+
+    def ensure_provider(provider_value: Any) -> Dict[str, Any]:
+        provider = _management_ai_provider_key(provider_value)
+        if provider not in rows:
+            rows[provider] = _management_ai_empty_usage_row(provider)
+        return rows[provider]
+
+    def ensure_model(row: Dict[str, Any], model: str) -> Dict[str, Any]:
+        model_key = str(model or "default")
+        models = row["models"]
+        if model_key not in models:
+            models[model_key] = _management_ai_empty_model_row(model_key)
+        return models[model_key]
+
+    provider_list_payload = _assistant_provider_list(auth_probe=auth_probe)
+    provider_items = provider_list_payload.get("data") if isinstance(provider_list_payload, dict) else []
+    if not isinstance(provider_items, list):
+        provider_items = []
+    for item in provider_items:
+        if not isinstance(item, dict):
+            continue
+        row = ensure_provider(item.get("provider") or item.get("provider_id") or item.get("providerName"))
+        provider_name = str(item.get("provider_name") or item.get("providerName") or row["providerName"])
+        row["providerName"] = provider_name
+        row["provider_name"] = provider_name
+        row["runtime"] = item.get("runtime")
+        row["ready"] = item.get("ready")
+        auth_status = item.get("auth_status") or item.get("authStatus") or item.get("auth") or item.get("status")
+        row["authStatus"] = auth_status
+        row["auth_status"] = auth_status
+        row["status"] = item.get("status") or row["status"]
+        live_auth = bool(item.get("ready") is True and str(auth_status or "").lower() in {"ready", "account_session", "authorized"})
+        row["liveAuth"] = live_auth
+        row["live_auth"] = live_auth
+        row["quota"] = _management_ai_quota_snapshot(item)
+
+    started_by_run: Dict[str, Dict[str, Any]] = {}
+    events = _management_ai_list_audit_events(limit=event_limit)
+    considered_events = 0
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_dt = _audit_datetime(event.get("recorded_at"))
+        if since_dt is not None and event_dt is not None and event_dt < since_dt:
+            continue
+        event_type = str(event.get("event_type") or "")
+        if not event_type.startswith("management_ai.provider."):
+            continue
+        considered_events += 1
+        provider = event.get("provider") or "unknown"
+        run_id = str(event.get("provider_run_id") or event.get("trace_id") or event.get("message_id") or "")
+        row = ensure_provider(provider)
+        model = _management_ai_event_model(event)
+        model_row = ensure_model(row, model)
+        if event_type == "management_ai.provider.started":
+            if run_id:
+                started_by_run[run_id] = event
+            prompt_bytes = int(_management_ai_number(event.get("prompt_bytes")) or 0)
+            row["startedCount"] += 1
+            row["started_count"] += 1
+            row["promptBytes"] += prompt_bytes
+            row["prompt_bytes"] += prompt_bytes
+            model_row["promptBytes"] += prompt_bytes
+            model_row["prompt_bytes"] += prompt_bytes
+            _management_ai_touch_last(row, event, "started")
+            _management_ai_touch_last(model_row, event, "started")
+            continue
+
+        if event_type not in {"management_ai.provider.completed", "management_ai.provider.failed"}:
+            continue
+        source_started = started_by_run.get(run_id)
+        if source_started is not None:
+            prompt_bytes = int(_management_ai_number(source_started.get("prompt_bytes")) or 0)
+            if row["startedCount"] == 0:
+                row["promptBytes"] += prompt_bytes
+                row["prompt_bytes"] += prompt_bytes
+                model_row["promptBytes"] += prompt_bytes
+                model_row["prompt_bytes"] += prompt_bytes
+        duration_ms = int(_management_ai_number(event.get("duration_ms")) or 0)
+        output_summary = event.get("output_summary") if isinstance(event.get("output_summary"), dict) else {}
+        usage = output_summary.get("usage") if isinstance(output_summary.get("usage"), dict) else {}
+        input_tokens = int(_management_ai_usage_number(usage, "input_tokens", "inputTokens", "prompt_tokens", "promptTokens") or 0)
+        output_tokens = int(_management_ai_usage_number(usage, "output_tokens", "outputTokens", "completion_tokens", "completionTokens") or 0)
+        total_tokens = int(_management_ai_usage_number(usage, "total_tokens", "totalTokens") or 0)
+        if total_tokens == 0:
+            total_tokens = input_tokens + output_tokens
+        failed = event_type == "management_ai.provider.failed"
+        status = "failed" if failed else str(event.get("provider_state") or "completed")
+        for target in (row, model_row):
+            target["calls"] += 1
+            target["durationMs"] += duration_ms
+            target["duration_ms"] += duration_ms
+            target["inputTokens"] += input_tokens
+            target["input_tokens"] += input_tokens
+            target["outputTokens"] += output_tokens
+            target["output_tokens"] += output_tokens
+            target["totalTokens"] += total_tokens
+            target["total_tokens"] += total_tokens
+            if failed:
+                target["failedCount"] += 1
+                target["failed_count"] += 1
+            else:
+                target["successCount"] += 1
+                target["success_count"] += 1
+            _management_ai_touch_last(target, event, status)
+        if failed:
+            row["lastError"] = event.get("error_code") or event.get("error_message")
+            row["last_error"] = row["lastError"]
+
+    provider_rows = [_management_ai_finalize_usage_row(row) for row in rows.values()]
+    provider_rows.sort(key=lambda item: (not bool(item.get("liveAuth")), -int(item.get("calls") or 0), str(item.get("provider") or "")))
+    totals = {
+        "providers": len(provider_rows),
+        "liveAuthCount": sum(1 for row in provider_rows if row.get("liveAuth")),
+        "live_auth_count": sum(1 for row in provider_rows if row.get("liveAuth")),
+        "calls": sum(int(row.get("calls") or 0) for row in provider_rows),
+        "successCount": sum(int(row.get("successCount") or 0) for row in provider_rows),
+        "success_count": sum(int(row.get("successCount") or 0) for row in provider_rows),
+        "failedCount": sum(int(row.get("failedCount") or 0) for row in provider_rows),
+        "failed_count": sum(int(row.get("failedCount") or 0) for row in provider_rows),
+        "inputTokens": sum(int(row.get("inputTokens") or 0) for row in provider_rows),
+        "input_tokens": sum(int(row.get("inputTokens") or 0) for row in provider_rows),
+        "outputTokens": sum(int(row.get("outputTokens") or 0) for row in provider_rows),
+        "output_tokens": sum(int(row.get("outputTokens") or 0) for row in provider_rows),
+        "totalTokens": sum(int(row.get("totalTokens") or 0) for row in provider_rows),
+        "total_tokens": sum(int(row.get("totalTokens") or 0) for row in provider_rows),
+    }
+    return {
+        "status": "ok",
+        "data": {
+            "providers": provider_rows,
+            "totals": totals,
+            "quota": {
+                "truthPolicy": "provider_snapshot_only",
+                "truth_policy": "provider_snapshot_only",
+                "missingSourceMeans": "quota remaining is unknown, not zero",
+                "missing_source_means": "quota remaining is unknown, not zero",
+            },
+        },
+        "meta": {
+            "auth_probe": auth_probe,
+            "event_limit": event_limit,
+            "event_count": considered_events,
+            "window_hours": window_hours,
+            "since": since_dt.isoformat().replace("+00:00", "Z") if since_dt is not None else None,
+            "provider_snapshot_status": provider_list_payload.get("status") if isinstance(provider_list_payload, dict) else None,
+        },
+    }
+
+
 def _management_ai_href(route: str, **params: Optional[str]) -> str:
     clean_params = {
         key: str(value)
@@ -35906,6 +36273,23 @@ async def bff_management_ai_audit(
             },
         },
     }
+
+
+@app.get("/bff/assistant/providers/usage-summary")
+async def bff_assistant_provider_usage_summary(
+    auth_probe: bool = False,
+    limit: int = Query(default=500, ge=1, le=500),
+    window_hours: int = Query(default=168, ge=1, le=24 * 90),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return provider/model usage history plus provider-reported quota snapshots."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    return _assistant_provider_usage_summary(
+        auth_probe=auth_probe,
+        limit=limit,
+        window_hours=window_hours,
+    )
 
 
 @app.get("/bff/management/ai/conversations")
