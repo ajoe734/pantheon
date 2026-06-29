@@ -69,3 +69,40 @@ rg -n "dangerouslySetInnerHTML|eval\(|new Function|place_order|enable_live|chang
 Result: one expected hit in `integrations/openclaw/skills/agora/trading_room_workspace/skill.py`
 where `"eval("` is listed as a forbidden executable-content pattern; no executable
 call site was introduced.
+
+## Closeout Evidence
+
+- Implementation PR: <https://github.com/ajoe734/pantheon/pull/2585>
+- Task commit: `b72678e87fd85fa594dec3e54d7517ab6cfe4a53`
+- Merge commit on `dev`: `ef246b2da4d6d48f2fd47ca55dc2465415c71efd`
+- GitHub checks observed on PR #2585: `Commit trailers`, `Runtime mirror guard`,
+  `Smoke acceptance`, and `Forward to orchestrator` succeeded.
+
+Owner closeout verification on 2026-06-29:
+
+```bash
+python3 -m pytest integrations/openclaw/skills/agora/trading_room_workspace/test_skill.py -q
+```
+
+Result: `4 passed in 0.63s`.
+
+```bash
+python3 -m pytest services/control-plane/bff/agora/trading_room/test_trading_room.py -q
+```
+
+Result: `40 passed in 13.57s`.
+
+```bash
+python3 -m pytest integrations/openclaw/adapter/test_agora_context_bundle.py -q
+```
+
+Result: `21 passed in 3.05s`.
+
+```bash
+rg -n "dangerouslySetInnerHTML|eval\(|new Function|place_order|enable_live|change_capital_binding|write_runtime_binding|open_management_route" \
+  integrations/openclaw/skills/agora/trading_room_workspace services/control-plane/bff/agora/trading_room
+```
+
+Result: one expected hit in `integrations/openclaw/skills/agora/trading_room_workspace/skill.py`
+where `"eval("` is listed as a forbidden executable-content pattern; no executable
+call site was introduced.
