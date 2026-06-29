@@ -29520,7 +29520,7 @@ def _human_inbox_persona_readiness_item(row: Dict[str, Any], *, snapshot_at: str
     risk_level = "high" if status in {"critical", "needs_human_approval", "blocked"} or blocking_reasons else "medium"
     priority = _human_inbox_priority(row.get("priority") or risk_level, fallback=risk_level)
     created_at = row.get("updated_at") or row.get("lastMutation") or row.get("last_mutation") or snapshot_at
-    route = f"/management/fleet?persona={persona_id}"
+    route = f"/management/persona-fleet?persona={persona_id}"
     summary = (
         str(row.get("current_work") or row.get("currentWork") or "").strip()
         or str(research_status.get("summary") or "").strip()
