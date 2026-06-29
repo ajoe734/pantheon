@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff |
+| Status | Reviewer approved; owner closeout in progress |
 
 ## Purpose
 
@@ -43,6 +43,8 @@ any capital-affecting surface.
 | `services/control-plane/bff/agora/trading_room/router.py` | Proposal route wiring, route-level `_validate_view` / `_validate_widget` gate, scoped proposal readback, accept route composition. |
 | `services/control-plane/bff/agora/trading_room/store.py` | Proposal generation metadata persistence/readback. |
 | `services/control-plane/bff/agora/trading_room/test_trading_room.py` | Focused BFF coverage for proposal generation, metadata, accept, scope, registry validation, revision boundary, and safety guards. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-BE-DYNUI-003-SIDECAR-REVIEW` during closeout | Reviewer approval note and owner closeout state. |
+| GitHub PR `#2586` | Sidecar packet merge facts and required check results. |
 
 ## Parent Delivery Facts
 
@@ -57,6 +59,17 @@ any capital-affecting surface.
 | Parent commit non-goals | V11 schema field semantics, OpenAPI/generated frontend types, frontend runtime, visual parity, broker/runtime/capital authority. |
 | Required checks observed on PR `#2585` | Commit trailers, Runtime mirror guard, Smoke acceptance, and Forward to orchestrator all concluded `SUCCESS`. |
 | Parent active state | `review`; next says implementation merged in PR `#2585` and reviewer approval is needed before owner closeout. |
+
+## Sidecar Delivery Facts
+
+| Item | Evidence |
+|---|---|
+| Sidecar packet PR | `https://github.com/ajoe734/pantheon/pull/2586` |
+| Sidecar PR state | `MERGED` into `dev` at `2026-06-29T01:44:33Z` |
+| Sidecar merge commit | `83cacb55352ab6f2ca8c5639f3175c3d2cb3399a` |
+| Sidecar task commit | `3dca216a34d421957cd33953e47bcfcf8e9e5285` - `AG-BE-DYNUI-003-SIDECAR-REVIEW: add review packet` |
+| Reviewer approval | `Codex2` accepted the support-only packet and recorded that it matches PR `#2585` / `#2586` merge facts, scoped artifacts, focused validation, safety boundary, and residual readiness/fallback caveats. |
+| Required checks observed on PR `#2586` | Commit trailers, Runtime mirror guard, Smoke acceptance, and Forward to orchestrator all concluded `SUCCESS`. |
 
 ## Review Matrix
 
@@ -134,45 +147,23 @@ Observed results:
   `router.py`, and test payloads asserting `<script>` rejection. No live
   order/capital/runtime/Management path was introduced in reviewed paths.
 
-## Reviewer Handoff
+## Reviewer Approval And Owner Closeout
 
-To `Codex2`, sidecar reviewer:
+`Codex2` approved this sidecar review packet. The approved sidecar state is:
 
-Please review this support-only packet for:
-
-1. Accuracy of parent PR `#2585` merge facts, changed-file scope, and check
-   summary.
-2. Accuracy of the evidence matrix against the current merged generator,
-   router, store, and tests.
-3. Whether the readiness-source and route-level fallback caveats are framed
-   strongly enough for parent review of `AG-BE-DYNUI-003`.
-4. Whether the packet stays support-only and avoids changing canonical truth or
-   parent status.
-
-If accurate, approve `AG-BE-DYNUI-003-SIDECAR-REVIEW` and return it to `Codex`
-for owner closeout. Parent `AG-BE-DYNUI-003` remains a separate review decision:
-this sidecar does not replace the parent reviewer approval.
-
-Suggested approval command:
-
-```bash
-AI_NAME=Codex2 REVIEW_FILE=support/sidecars/AG-BE-DYNUI-003/AG-BE-DYNUI-003-SIDECAR-REVIEW.md \
-  ./scripts/ai-status.sh approve AG-BE-DYNUI-003-SIDECAR-REVIEW \
-  "Review packet accepted; support artifact accurately summarizes AG-BE-DYNUI-003 generator evidence, validation, safety boundary, and residual readiness/fallback caveats without changing canonical truth."
-```
-
-If changes are required:
-
-```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh reopen AG-BE-DYNUI-003-SIDECAR-REVIEW \
-  "Describe the exact review packet corrections needed."
-```
+- Review packet accepted.
+- Support artifact accurately summarizes `AG-BE-DYNUI-003` generator evidence,
+  validation, safety boundary, and residual readiness/fallback caveats.
+- The packet remains support-only and does not change canonical truth.
+- Parent `AG-BE-DYNUI-003` remains a separate owner closeout and this sidecar
+  does not replace that parent decision.
 
 ## Scope Boundary
 
 This sidecar changes only support material:
 
 ```text
+.orchestrator/task-briefs/ag_be_dynui_003_sidecar_review.md
 support/sidecars/AG-BE-DYNUI-003/AG-BE-DYNUI-003-SIDECAR-REVIEW.md
 ```
 
@@ -185,4 +176,5 @@ It intentionally does not:
 - create broker order, live enablement, capital-binding, RuntimeBinding, or
   Management-plane authority.
 
-Prepared by `Codex` for the `AG-BE-DYNUI-003-SIDECAR-REVIEW` support slice.
+Prepared and closed out by `Codex` for the
+`AG-BE-DYNUI-003-SIDECAR-REVIEW` support slice.
