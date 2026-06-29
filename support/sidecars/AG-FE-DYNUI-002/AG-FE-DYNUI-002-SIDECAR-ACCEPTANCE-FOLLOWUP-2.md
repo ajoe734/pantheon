@@ -24,7 +24,7 @@ acceptance sidecar closed.
 |---|---|---|
 | `AG-FE-DYNUI-002-SIDECAR-BFF-HANDOFF` | Merged support artifact, PR `#2570`. | Provides the earlier BFF/client/UI gap map around V11 proposal generation, proposal read, accept, and workspace read. |
 | `AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE` | Archived `done`; packet PR `#2595` and closeout PR `#2596` merged. | Remains the main parent acceptance checklist. This follow-up only adds current readiness/evidence gates and reviewer routing. |
-| `AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Active support sidecar. | Confirms that dependencies are now done, but parent implementation evidence is not yet visible from GitHub PR/branch checks. |
+| `AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Active support sidecar. | Confirms that dependencies are now done, and records the current parent evidence state: execute-plans PR `#81` is visible but its integration gate is failing. |
 
 Do not treat this packet as canonical contract truth. If it appears to conflict
 with L1/L2 docs, the canonical docs win and this support packet should be
@@ -35,11 +35,11 @@ corrected or reopened.
 | Source | Relevant finding |
 |---|---|
 | `AI_COLLABORATION_GUIDE.md` | L0 state coordinates task work; support packets do not override canonical architecture or policy truth. |
-| `.orchestrator/task-briefs/ag_fe_dynui_002_sidecar_acceptance_followup_2.md` | Scope is acceptance checklist, dependency map, and support packet only; do not edit canonical truth. |
+| `.orchestrator/task-briefs/ag_fe_dynui_002_sidecar_acceptance_followup_2.md` | Scope is acceptance checklist, dependency map, and support packet only; reviewer requested replacing the stale "no parent implementation PR/branch visible" snapshot with the current PR `#81` evidence state. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Task-owned support/docs changes should be made durable through narrow commits. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Closeout/done is reserved for owner finalization after review approval and merged PR. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Active `in_progress`, owner `Codex`, reviewer `Codex2`, artifact path is this file, helper parent is `AG-FE-DYNUI-002`, and `mutates_canonical` is `false`. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002` | Parent is active `in_progress`, owner `Codex2`, reviewer `Claude2`, and depends on XR, generator, V10 readiness, and FE Trading Room baseline. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002` | Parent is active `review`, owner `Codex2`, reviewer `Claude2`, and status records execute-plans PR `#81` at commit `90d2d625010e8d3d793a5d06e36f6c5b2334e450`; local focused tests and `npm run build` passed, but the GitHub integration gate is unstable/failing on broader release evidence aggregation. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE` | Prior acceptance sidecar is archived `done` with reviewer approval and merged closeout record. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-XR-DYNUI-001`, `AG-BE-DYNUI-003`, `AG-FE-DYNUI-001`, `AG-FE-TR-001` | All parent dependencies are archived `done`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-003`, `AG-FE-DYNUI-004`, `AG-FE-DYNUI-005`, `AG-E2E-DYNUI-001` | Downstream edit/revision/visual/E2E scopes remain active future work and should not be absorbed into `AG-FE-DYNUI-002`. |
@@ -47,8 +47,9 @@ corrected or reopened.
 | `docs/04/agora_design_pack_dynui_2026-06-28/source-map-and-gap-map.md` | V11 requires generation progress, full workspace proposal preview, all view thumbnails/counts, accept-to-workspace shell, and no static dashboard substitution. |
 | `support/sidecars/AG-FE-DYNUI-002/AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE.md` | Main acceptance checklist already covers V11 generated types, BFF proposal/workspace routes, no fixtures, no `DashboardRecipeV2` substitution, and downstream boundaries. |
 | `support/sidecars/AG-FE-DYNUI-002/AG-FE-DYNUI-002-SIDECAR-BFF-HANDOFF.md` | Earlier handoff documented the frontend client/UI gap before XR and backend dependencies finished. |
-| `gh pr list --repo ajoe734/execute-plans --state all --search "AG-FE-DYNUI-002"` | No visible execute-plans PR for the parent implementation at the time of this follow-up. |
-| `git ls-remote --heads https://github.com/ajoe734/execute-plans.git 'task/AG-FE-DYNUI-002*'` | No visible execute-plans remote parent branch at the time of this follow-up. |
+| `gh pr view 81 --repo ajoe734/execute-plans --json number,state,title,url,headRefName,baseRefName,headRefOid,mergeCommit,mergedAt,updatedAt,statusCheckRollup` | Parent implementation PR `#81` is visible and open against `main`; head branch is `task/AG-FE-DYNUI-002` at `90d2d625010e8d3d793a5d06e36f6c5b2334e450`; `integration-gate` failed at `2026-06-29T06:37:56Z`. |
+| `gh pr checks 81 --repo ajoe734/execute-plans` | `integration-gate` is failing for PR `#81`. |
+| `git ls-remote --heads https://github.com/ajoe734/execute-plans.git 'task/AG-FE-DYNUI-002*'` | Remote branch `refs/heads/task/AG-FE-DYNUI-002` is visible at `90d2d625010e8d3d793a5d06e36f6c5b2334e450`. |
 
 `current-work.md` and the full `ai-activity-log.jsonl` were not scanned.
 
@@ -56,8 +57,8 @@ corrected or reopened.
 
 | Surface | Current state | Consequence for parent review |
 |---|---|---|
-| Parent task | `AG-FE-DYNUI-002` is active `in_progress`. | Parent review is not ready until a parent implementation branch/PR and evidence are visible. |
-| Parent implementation PR/branch | No execute-plans PR or remote branch matching `AG-FE-DYNUI-002` was visible from the checks above. | Reviewer should not infer runtime readiness from support packets alone. |
+| Parent task | `AG-FE-DYNUI-002` is active `review`. | Parent review now has an implementation PR to inspect, but this sidecar still does not approve or implement the parent runtime. |
+| Parent implementation PR/branch | execute-plans PR `#81` is open against `main` from `task/AG-FE-DYNUI-002` at commit `90d2d625010e8d3d793a5d06e36f6c5b2334e450`; GitHub `integration-gate` failed at `2026-06-29T06:37:56Z`, and `gh pr checks` reports `integration-gate fail`. | Parent PR is visible but not mergeable/acceptance-ready until the failing integration gate and any broader release evidence gaps are resolved or explicitly accepted by the parent reviewer. |
 | Prior acceptance sidecar | `AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE` is archived `done`. | Use that packet as the main checklist; do not ask this follow-up to restate every criterion. |
 | XR/generated types | `AG-XR-DYNUI-001` archived `done`; Pantheon PR `#2593` and execute-plans PR `#80` are recorded in status as merged. | Parent FE should build on the v1.5 generated contract surface, not local durable type guesses. |
 | Servant generator | `AG-BE-DYNUI-003` archived `done`; status records validator-backed generated proposal evidence. | Parent can expect generated proposal payloads, but must still show BFF-derived state in its own implementation evidence. |
@@ -67,8 +68,11 @@ corrected or reopened.
 
 ## 4. Parent Evidence Gate
 
-`AG-FE-DYNUI-002` is reviewable only when the parent owner can point to a
-frontend implementation PR/branch with evidence for all of these items:
+`AG-FE-DYNUI-002` now has a visible frontend implementation PR
+(`ajoe734/execute-plans#81`), but this sidecar does not review that diff or
+approve the runtime. The parent acceptance gate remains whether the parent
+owner/reviewer can point to evidence for all of these items, with the current
+PR `#81` integration-gate failure treated as unresolved evidence:
 
 1. A ready Strategy Workshop handoff or Trading Room strategy action calls the
    V11 proposal generation route through a typed BFF client helper.
@@ -116,7 +120,7 @@ graph TD
     XR001["AG-XR-DYNUI-001<br/>done<br/>v1.5 OpenAPI + generated FE types"] --> FE002
     BE003["AG-BE-DYNUI-003<br/>done<br/>servant generator + validator"] --> FE002
 
-    FE002["AG-FE-DYNUI-002<br/>in_progress<br/>proposal preview + workspace shell"]
+    FE002["AG-FE-DYNUI-002<br/>review<br/>proposal preview + workspace shell"]
     FE002 --> FE003["AG-FE-DYNUI-003<br/>todo<br/>grid editor + personalization"]
     FE003 --> FE004["AG-FE-DYNUI-004<br/>todo<br/>widget revision drawer"]
     FE004 --> FE005["AG-FE-DYNUI-005<br/>todo<br/>visual parity"]
@@ -135,18 +139,18 @@ Please verify this follow-up on support-packet terms only:
 2. It correctly points to the already archived main acceptance sidecar instead
    of duplicating or superseding it.
 3. It records that upstream dependencies are done while parent implementation
-   evidence is still not visible from the checked execute-plans PR/branch
-   surfaces.
+   evidence is now visible as execute-plans PR `#81`, but the PR is still
+   blocked by a failing `integration-gate` as of `2026-06-29T06:37:56Z`.
 4. It keeps `AG-FE-DYNUI-002` separated from downstream grid editor, widget
    revision drawer, visual parity, and E2E tasks.
 5. The parent evidence gate is concrete enough for `Codex2`/`Claude2` to use
-   when the parent implementation becomes reviewable.
+   during parent implementation review.
 
 Suggested reviewer approval command:
 
 ```bash
 AI_NAME=Codex2 REVIEW_FILE=support/sidecars/AG-FE-DYNUI-002/AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md \
-  REVIEW_NOTES_ZH="審核通過：AG-FE-DYNUI-002 follow-up acceptance packet 保持 support-only，承接已歸檔的主 acceptance packet，更新依賴狀態為 XR/generator/V10 readiness/Trading Room baseline 已 done，同時明確記錄 parent implementation PR/branch evidence 尚未 visible；parent review gate 聚焦 v1.5 generated types、BFF-derived proposal generation/read/accept/workspace shell、no fixture/no DashboardRecipeV2 substitution、typed error states、screenshot/Playwright evidence，且不擴張到 AG-FE-DYNUI-003/004/005/E2E。" \
+  REVIEW_NOTES_ZH="審核通過：AG-FE-DYNUI-002 follow-up acceptance packet 保持 support-only，承接已歸檔的主 acceptance packet，更新依賴狀態為 XR/generator/V10 readiness/Trading Room baseline 已 done，同時明確記錄 parent implementation evidence 目前是 execute-plans PR #81 open against main、head commit 90d2d625010e8d3d793a5d06e36f6c5b2334e450，且 integration-gate 於 2026-06-29T06:37:56Z 失敗；parent review gate 聚焦 v1.5 generated types、BFF-derived proposal generation/read/accept/workspace shell、no fixture/no DashboardRecipeV2 substitution、typed error states、screenshot/Playwright evidence，且不擴張到 AG-FE-DYNUI-003/004/005/E2E。" \
   ./scripts/ai-status.sh approve AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2 \
   "Follow-up acceptance packet approved; support artifact updates AG-FE-DYNUI-002 dependency/evidence gate without changing canonical truth or runtime."
 ```
@@ -177,7 +181,8 @@ AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-003
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-004
 AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-005
 AI_NAME=Codex ./scripts/ai-status.sh show AG-E2E-DYNUI-001
-gh pr list --repo ajoe734/execute-plans --state all --search "AG-FE-DYNUI-002" --json number,state,mergedAt,mergeCommit,url,title,headRefName,baseRefName,statusCheckRollup,updatedAt --limit 20
+gh pr view 81 --repo ajoe734/execute-plans --json number,state,title,url,headRefName,baseRefName,headRefOid,mergeCommit,mergedAt,updatedAt,statusCheckRollup
+gh pr checks 81 --repo ajoe734/execute-plans
 git ls-remote --heads https://github.com/ajoe734/execute-plans.git 'task/AG-FE-DYNUI-002*'
 git diff --check -- .orchestrator/task-briefs/ag_fe_dynui_002_sidecar_acceptance_followup_2.md support/sidecars/AG-FE-DYNUI-002/AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2.md
 ```
@@ -186,15 +191,25 @@ Observed results:
 
 - Branch is `task/AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE-FOLLOWUP-2`.
 - Sidecar is active `in_progress`, owner `Codex`, reviewer `Codex2`.
-- Parent `AG-FE-DYNUI-002` is active `in_progress`, owner `Codex2`,
-  reviewer `Claude2`.
+- Parent `AG-FE-DYNUI-002` is active `review`, owner `Codex2`, reviewer
+  `Claude2`; status records execute-plans PR `#81` at commit
+  `90d2d625010e8d3d793a5d06e36f6c5b2334e450`, local focused tests and
+  `npm run build` passed, and the GitHub integration gate is unstable/failing
+  on broader release evidence aggregation.
 - Prior acceptance sidecar is archived `done`.
 - Upstream dependencies `AG-XR-DYNUI-001`, `AG-BE-DYNUI-003`,
   `AG-FE-DYNUI-001`, and `AG-FE-TR-001` are archived `done`.
 - Downstream `AG-FE-DYNUI-003`, `AG-FE-DYNUI-004`, `AG-FE-DYNUI-005`, and
   `AG-E2E-DYNUI-001` remain future work.
-- No execute-plans `AG-FE-DYNUI-002` PR or matching remote branch was visible
-  from the GitHub/remote checks.
+- execute-plans PR `#81` is visible and open against `main`; head branch is
+  `task/AG-FE-DYNUI-002` at
+  `90d2d625010e8d3d793a5d06e36f6c5b2334e450`.
+- GitHub `integration-gate` for PR `#81` failed at
+  `2026-06-29T06:37:56Z`; `gh pr checks` returned the expected non-zero
+  result while reporting `integration-gate fail`.
+- Matching remote branch `refs/heads/task/AG-FE-DYNUI-002` is visible at
+  `90d2d625010e8d3d793a5d06e36f6c5b2334e450`.
+- `git diff --check` passed for the task brief and support packet.
 - No parent runtime tests were run by this sidecar because it changes support
   artifacts only.
 
