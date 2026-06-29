@@ -17,6 +17,30 @@ import type { DashboardRecipeV2, WidgetSpecV2 } from "@/lib/bff-v1/agora/types";
 import { DashboardGridEditor } from "@/agora/dashboard/DashboardGridEditor";
 import type { WidgetPlacement } from "@/agora/dashboard/DashboardGridEditor";
 
+/* ── Dark AGORA palette ─────────────────────────────────────────────────────── */
+const C = {
+  bg: "#111417",
+  surface: "#171b22",
+  elevated: "#1e2330",
+  expandedRow: "#1a2030",
+  border: "#2a2e38",
+  text: "#f0ece4",
+  secondary: "#8c96a6",
+  muted: "#737d8e",
+  amber: "#e8b750",
+  green: "#4ade80",
+  red: "#f87171",
+  riskWatch: "#1e1c0e",
+  riskWarning: "#231808",
+  riskCritical: "#230e0e",
+  riskNoteCritical: "#2a1010",
+  riskNoteWatch: "#1e1a0a",
+  approveBtn: "rgba(74,222,128,0.12)",
+  approveBtnText: "#4ade80",
+  rejectBtn: "rgba(248,113,113,0.12)",
+  rejectBtnText: "#f87171",
+} as const;
+
 // ── Strategy Lens Switcher ────────────────────────────────────────────────────
 
 interface StrategyLensSwitcherProps {
@@ -40,7 +64,8 @@ function StrategyLensSwitcher({
         alignItems: "center",
         gap: 8,
         padding: "0 16px",
-        borderBottom: "1px solid #e2e8f0",
+        background: C.surface,
+        borderBottom: `1px solid ${C.border}`,
         overflowX: "auto",
         flexShrink: 0,
       }}
@@ -55,8 +80,10 @@ function StrategyLensSwitcher({
           background: "none",
           border: "none",
           cursor: "pointer",
+          fontSize: 13,
           fontWeight: activeStrategyId === undefined ? 600 : 400,
-          borderBottom: activeStrategyId === undefined ? "2px solid #2563eb" : "2px solid transparent",
+          color: activeStrategyId === undefined ? C.amber : C.secondary,
+          borderBottom: activeStrategyId === undefined ? `2px solid ${C.amber}` : "2px solid transparent",
           whiteSpace: "nowrap",
         }}
       >
@@ -74,10 +101,12 @@ function StrategyLensSwitcher({
             background: "none",
             border: "none",
             cursor: "pointer",
+            fontSize: 13,
             fontWeight: activeStrategyId === s.strategy_id ? 600 : 400,
+            color: activeStrategyId === s.strategy_id ? C.amber : C.secondary,
             borderBottom:
               activeStrategyId === s.strategy_id
-                ? "2px solid #2563eb"
+                ? `2px solid ${C.amber}`
                 : "2px solid transparent",
             whiteSpace: "nowrap",
           }}
@@ -91,11 +120,10 @@ function StrategyLensSwitcher({
 
 // ── Risk Banner ───────────────────────────────────────────────────────────────
 
-const RISK_COLORS: Record<string, string> = {
-  normal: "#f0fdf4",
-  watch: "#fefce8",
-  warning: "#fff7ed",
-  critical: "#fef2f2",
+const RISK_BG: Record<string, string> = {
+  watch: C.riskWatch,
+  warning: C.riskWarning,
+  critical: C.riskCritical,
 };
 
 interface RiskBannerProps {
@@ -112,9 +140,10 @@ function RiskBanner({ state, summary, alerts }: RiskBannerProps): JSX.Element | 
       data-risk-state={state}
       style={{
         padding: "6px 16px",
-        background: RISK_COLORS[state] ?? RISK_COLORS.warning,
-        borderBottom: "1px solid #e2e8f0",
+        background: RISK_BG[state] ?? C.riskWarning,
+        borderBottom: `1px solid ${C.border}`,
         fontSize: 13,
+        color: C.text,
       }}
     >
       <strong>Risk: {state}</strong>
@@ -148,9 +177,10 @@ function QueueSummaryStrip({ entry, add, reduce, exit, review }: QueueSummaryStr
         display: "flex",
         gap: 16,
         padding: "4px 16px",
-        borderBottom: "1px solid #e2e8f0",
+        background: C.surface,
+        borderBottom: `1px solid ${C.border}`,
         fontSize: 12,
-        color: "#64748b",
+        color: C.muted,
       }}
     >
       <span data-testid="queue-entry-count">Entry: {entry}</span>
@@ -203,12 +233,12 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
 
   return (
     <tr data-testid={`event-detail-${ev.decision_event_id}`}>
-      <td colSpan={5} style={{ padding: "8px 16px", background: "#f8fafc", borderBottom: "2px solid #e2e8f0" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, fontSize: 12 }}>
+      <td colSpan={5} style={{ padding: "8px 16px", background: C.expandedRow, borderBottom: `2px solid ${C.border}` }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, fontSize: 12, color: C.text }}>
 
           {/* Signal Quality */}
           <div data-testid="detail-confidence">
-            <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>Signal Quality</div>
+            <div style={{ fontWeight: 600, color: C.secondary, marginBottom: 4 }}>Signal Quality</div>
             <div>Confidence: {(ev.confidence.value * 100).toFixed(0)}% ({ev.confidence.basis})</div>
             <div data-testid="detail-calibration">Calibration: {ev.confidence.calibration_state}</div>
             {ev.confidence.sample_size != null && (
@@ -227,7 +257,7 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
 
           {/* Expected Value */}
           <div data-testid="detail-expected-value">
-            <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>Expected Value</div>
+            <div style={{ fontWeight: 600, color: C.secondary, marginBottom: 4 }}>Expected Value</div>
             <div>Horizon: {ev.expected_value.horizon} ({ev.expected_value.unit})</div>
             <div>Gross: {ev.expected_value.gross > 0 ? "+" : ""}{ev.expected_value.gross.toFixed(4)}</div>
             <div>Cost: {ev.expected_value.cost.toFixed(4)}</div>
@@ -237,7 +267,7 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
 
           {/* Suggested Action */}
           <div data-testid="detail-suggested-action">
-            <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>Suggested Action</div>
+            <div style={{ fontWeight: 600, color: C.secondary, marginBottom: 4 }}>Suggested Action</div>
             <div style={{ textTransform: "capitalize", fontWeight: 500 }}>{ev.suggested_action}</div>
             {ev.suggested_size && (
               <>
@@ -245,15 +275,15 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
                 {ev.suggested_size.portfolio_pct != null && (
                   <div>Portfolio %: {(ev.suggested_size.portfolio_pct * 100).toFixed(1)}%</div>
                 )}
-                <div style={{ color: "#94a3b8", fontSize: 11 }}>Non-binding</div>
+                <div style={{ color: C.muted, fontSize: 11 }}>Non-binding</div>
               </>
             )}
             {ev.data_cutoff && (
-              <div style={{ marginTop: 4, color: "#64748b" }}>Data cutoff: {ev.data_cutoff}</div>
+              <div style={{ marginTop: 4, color: C.secondary }}>Data cutoff: {ev.data_cutoff}</div>
             )}
             <div
               data-testid="detail-no-order-route"
-              style={{ marginTop: 4, fontSize: 11, color: "#22c55e", fontWeight: 500 }}
+              style={{ marginTop: 4, fontSize: 11, color: C.green, fontWeight: 500 }}
             >
               {ev.no_order_route_proof}
             </div>
@@ -261,7 +291,7 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
 
           {/* Invalidation */}
           <div data-testid="detail-invalidation">
-            <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>Invalidation</div>
+            <div style={{ fontWeight: 600, color: C.secondary, marginBottom: 4 }}>Invalidation</div>
             <div>State: <span style={{ fontWeight: 500 }}>{ev.invalidation.current_state}</span></div>
             {ev.invalidation.conditions.length > 0 && (
               <ul style={{ margin: "4px 0 0 12px", padding: 0 }}>
@@ -276,11 +306,11 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
 
         {/* Rationale */}
         {ev.rationale.length > 0 && (
-          <div data-testid="detail-rationale" style={{ marginTop: 10, fontSize: 12 }}>
-            <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>Rationale</div>
+          <div data-testid="detail-rationale" style={{ marginTop: 10, fontSize: 12, color: C.text }}>
+            <div style={{ fontWeight: 600, color: C.secondary, marginBottom: 4 }}>Rationale</div>
             {ev.rationale.map((r, i) => (
               <div key={i} style={{ display: "flex", gap: 8, marginBottom: 2 }}>
-                <span style={{ color: "#94a3b8", minWidth: 32 }}>{(r.confidence * 100).toFixed(0)}%</span>
+                <span style={{ color: C.muted, minWidth: 32 }}>{(r.confidence * 100).toFixed(0)}%</span>
                 <span>{r.claim}</span>
               </div>
             ))}
@@ -290,19 +320,20 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
         {/* Risk Notes */}
         {ev.risk_notes.length > 0 && (
           <div data-testid="detail-risk-notes" style={{ marginTop: 10, fontSize: 12 }}>
-            <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>Risk Notes</div>
+            <div style={{ fontWeight: 600, color: C.secondary, marginBottom: 4 }}>Risk Notes</div>
             {ev.risk_notes.map((rn, i) => (
               <div
                 key={i}
                 style={{
                   padding: "4px 8px",
-                  background: rn.severity === "critical" || rn.severity === "high" ? "#fef2f2" : "#fefce8",
+                  background: rn.severity === "critical" || rn.severity === "high" ? C.riskNoteCritical : C.riskNoteWatch,
                   borderRadius: 4,
                   marginBottom: 2,
+                  color: C.text,
                 }}
               >
                 <span style={{ fontWeight: 500 }}>[{rn.severity}] {rn.domain}:</span> {rn.summary}
-                {rn.mitigation && <span style={{ color: "#64748b" }}> — {rn.mitigation}</span>}
+                {rn.mitigation && <span style={{ color: C.secondary }}> — {rn.mitigation}</span>}
               </div>
             ))}
           </div>
@@ -311,12 +342,12 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
         {/* Evidence Refs */}
         {ev.evidence_refs.length > 0 && (
           <div data-testid="detail-evidence-refs" style={{ marginTop: 10, fontSize: 12 }}>
-            <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>
+            <div style={{ fontWeight: 600, color: C.secondary, marginBottom: 4 }}>
               Evidence ({ev.evidence_refs.length})
             </div>
             {ev.evidence_refs.map((ref, i) => (
-              <div key={i} style={{ color: "#475569" }}>
-                <span style={{ color: "#94a3b8" }}>{ref.ref_type}</span> {ref.ref_id}
+              <div key={i} style={{ color: C.secondary }}>
+                <span style={{ color: C.muted }}>{ref.ref_type}</span> {ref.ref_id}
                 {ref.summary ? ` — ${ref.summary}` : null}
               </div>
             ))}
@@ -326,12 +357,12 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
         {/* Trader Decision Actions */}
         <div data-testid="detail-trader-actions" style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
           {callState === "success" ? (
-            <span data-testid="detail-decision-confirmed" style={{ fontSize: 12, color: "#22c55e", fontWeight: 500 }}>
+            <span data-testid="detail-decision-confirmed" style={{ fontSize: 12, color: C.green, fontWeight: 500 }}>
               Decision recorded: {decidedChoice}
             </span>
           ) : (
             <>
-              <span style={{ fontSize: 12, color: "#64748b", marginRight: 4 }}>Trader decision:</span>
+              <span style={{ fontSize: 12, color: C.secondary, marginRight: 4 }}>Trader decision:</span>
               {(["approve", "reject", "defer", "modify"] as DecisionChoice[]).map((choice) => (
                 <button
                   key={choice}
@@ -341,11 +372,11 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
                   style={{
                     padding: "3px 10px",
                     fontSize: 12,
-                    border: "1px solid #e2e8f0",
+                    border: `1px solid ${C.border}`,
                     borderRadius: 4,
                     cursor: canDecide ? "pointer" : "not-allowed",
-                    background: choice === "approve" ? "#f0fdf4" : choice === "reject" ? "#fef2f2" : "#fff",
-                    color: choice === "approve" ? "#16a34a" : choice === "reject" ? "#dc2626" : "#475569",
+                    background: choice === "approve" ? C.approveBtn : choice === "reject" ? C.rejectBtn : C.elevated,
+                    color: choice === "approve" ? C.approveBtnText : choice === "reject" ? C.rejectBtnText : C.secondary,
                     opacity: canDecide ? 1 : 0.5,
                   }}
                 >
@@ -353,12 +384,12 @@ function DecisionEventDetailPanel({ event, etag }: DecisionEventDetailPanelProps
                 </button>
               ))}
               {callState === "loading" && (
-                <span data-testid="detail-decision-loading" style={{ fontSize: 12, color: "#94a3b8" }}>
+                <span data-testid="detail-decision-loading" style={{ fontSize: 12, color: C.muted }}>
                   Sending…
                 </span>
               )}
               {callState === "error" && callError && (
-                <span data-testid="detail-decision-error" style={{ fontSize: 12, color: "#dc2626" }}>
+                <span data-testid="detail-decision-error" style={{ fontSize: 12, color: C.red }}>
                   {callError}
                 </span>
               )}
@@ -406,29 +437,29 @@ function TradingEventQueue({ events, loading, eventsEtag }: TradingEventQueuePro
 
   return (
     <div data-testid="trading-event-queue" style={{ flex: 1, overflow: "auto" }}>
-      <div style={{ padding: "8px 16px", fontWeight: 600, fontSize: 13, borderBottom: "1px solid #e2e8f0" }}>
+      <div style={{ padding: "8px 16px", fontWeight: 600, fontSize: 13, borderBottom: `1px solid ${C.border}`, color: C.text }}>
         Decision Event Queue
       </div>
       {loading ? (
-        <div data-testid="event-queue-loading" style={{ padding: 16, fontSize: 13, color: "#94a3b8" }}>
+        <div data-testid="event-queue-loading" style={{ padding: 16, fontSize: 13, color: C.muted }}>
           Loading events…
         </div>
       ) : events.length === 0 ? (
-        <div data-testid="event-queue-empty" style={{ padding: 16, fontSize: 13, color: "#94a3b8" }}>
+        <div data-testid="event-queue-empty" style={{ padding: 16, fontSize: 13, color: C.muted }}>
           No pending decision events.
         </div>
       ) : (
         <table
           data-testid="event-queue-table"
-          style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}
+          style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, color: C.text }}
         >
           <thead>
-            <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
-              <th style={{ textAlign: "left", padding: "6px 16px", fontWeight: 500, color: "#64748b" }}>Symbol</th>
-              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: "#64748b" }}>Kind</th>
-              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: "#64748b" }}>State</th>
-              <th style={{ textAlign: "right", padding: "6px 8px", fontWeight: 500, color: "#64748b" }}>Confidence</th>
-              <th style={{ textAlign: "right", padding: "6px 16px", fontWeight: 500, color: "#64748b" }}>EV (net)</th>
+            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+              <th style={{ textAlign: "left", padding: "6px 16px", fontWeight: 500, color: C.secondary }}>Symbol</th>
+              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: C.secondary }}>Kind</th>
+              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: C.secondary }}>State</th>
+              <th style={{ textAlign: "right", padding: "6px 8px", fontWeight: 500, color: C.secondary }}>Confidence</th>
+              <th style={{ textAlign: "right", padding: "6px 16px", fontWeight: 500, color: C.secondary }}>EV (net)</th>
             </tr>
           </thead>
           <tbody>
@@ -438,9 +469,9 @@ function TradingEventQueue({ events, loading, eventsEtag }: TradingEventQueuePro
                   data-testid={`event-row-${ev.decision_event_id}`}
                   aria-expanded={expandedId === ev.decision_event_id}
                   style={{
-                    borderBottom: expandedId === ev.decision_event_id ? "none" : "1px solid #f1f5f9",
+                    borderBottom: expandedId === ev.decision_event_id ? "none" : `1px solid ${C.border}`,
                     cursor: "pointer",
-                    background: expandedId === ev.decision_event_id ? "#f8fafc" : undefined,
+                    background: expandedId === ev.decision_event_id ? C.expandedRow : undefined,
                   }}
                   onClick={() => toggleExpand(ev.decision_event_id)}
                 >
@@ -477,17 +508,17 @@ function PositionActionQueue({ positionSummaries }: PositionActionQueueProps): J
   return (
     <div
       data-testid="position-action-queue"
-      style={{ borderLeft: "1px solid #e2e8f0", width: 240, overflow: "auto", flexShrink: 0 }}
+      style={{ borderLeft: `1px solid ${C.border}`, width: 240, overflow: "auto", flexShrink: 0, background: C.surface }}
     >
-      <div style={{ padding: "8px 12px", fontWeight: 600, fontSize: 13, borderBottom: "1px solid #e2e8f0" }}>
+      <div style={{ padding: "8px 12px", fontWeight: 600, fontSize: 13, borderBottom: `1px solid ${C.border}`, color: C.text }}>
         Position Actions
       </div>
       {positionSummaries.length === 0 ? (
-        <div style={{ padding: 12, fontSize: 13, color: "#94a3b8" }}>No open positions.</div>
+        <div style={{ padding: 12, fontSize: 13, color: C.muted }}>No open positions.</div>
       ) : (
         <ul style={{ margin: 0, padding: "8px 12px", listStyle: "none" }}>
           {positionSummaries.map((p, i) => (
-            <li key={i} style={{ fontSize: 13, borderBottom: "1px solid #f1f5f9", padding: "4px 0" }}>
+            <li key={i} style={{ fontSize: 13, borderBottom: `1px solid ${C.border}`, padding: "4px 0", color: C.text }}>
               {JSON.stringify(p)}
             </li>
           ))}
@@ -508,20 +539,20 @@ function StrategyList({ strategies, onSelect }: StrategyListProps): JSX.Element 
   return (
     <div data-testid="strategy-list" style={{ padding: "8px 16px" }}>
       {strategies.length === 0 ? (
-        <div data-testid="strategy-list-empty" style={{ fontSize: 13, color: "#94a3b8" }}>
+        <div data-testid="strategy-list-empty" style={{ fontSize: 13, color: C.muted }}>
           No strategies in the Trading Room.
         </div>
       ) : (
         <table
           data-testid="strategy-list-table"
-          style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}
+          style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, color: C.text }}
         >
           <thead>
-            <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
-              <th style={{ textAlign: "left", padding: "6px 0", fontWeight: 500, color: "#64748b" }}>Strategy</th>
-              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: "#64748b" }}>Readiness</th>
-              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: "#64748b" }}>Monitoring</th>
-              <th style={{ textAlign: "right", padding: "6px 0", fontWeight: 500, color: "#64748b" }}>Pending</th>
+            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+              <th style={{ textAlign: "left", padding: "6px 0", fontWeight: 500, color: C.secondary }}>Strategy</th>
+              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: C.secondary }}>Readiness</th>
+              <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 500, color: C.secondary }}>Monitoring</th>
+              <th style={{ textAlign: "right", padding: "6px 0", fontWeight: 500, color: C.secondary }}>Pending</th>
             </tr>
           </thead>
           <tbody>
@@ -536,7 +567,7 @@ function StrategyList({ strategies, onSelect }: StrategyListProps): JSX.Element 
                 <tr
                   key={s.strategy_id}
                   data-testid={`strategy-row-${s.strategy_id}`}
-                  style={{ borderBottom: "1px solid #f1f5f9", cursor: "pointer" }}
+                  style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}
                   onClick={() => onSelect(s.strategy_id)}
                 >
                   <td style={{ padding: "6px 0" }}>{s.title}</td>
@@ -615,7 +646,7 @@ function StrategyRecipeSection({ recipe }: StrategyRecipeSectionProps): JSX.Elem
       {recipe.views.length > 1 && (
         <div
           data-testid="recipe-view-tabs"
-          style={{ display: "flex", gap: 4, marginBottom: 8, borderBottom: "1px solid #e2e8f0", paddingBottom: 4 }}
+          style={{ display: "flex", gap: 4, marginBottom: 8, borderBottom: `1px solid ${C.border}`, paddingBottom: 4 }}
         >
           {recipe.views.map((v, idx) => (
             <button
@@ -630,7 +661,8 @@ function StrategyRecipeSection({ recipe }: StrategyRecipeSectionProps): JSX.Elem
                 cursor: "pointer",
                 fontSize: 12,
                 fontWeight: idx === activeViewIdx ? 600 : 400,
-                borderBottom: idx === activeViewIdx ? "2px solid #2563eb" : "2px solid transparent",
+                color: idx === activeViewIdx ? C.amber : C.secondary,
+                borderBottom: idx === activeViewIdx ? `2px solid ${C.amber}` : "2px solid transparent",
               }}
             >
               {v.title}
@@ -714,10 +746,10 @@ function StrategyWorkspaceView({
       data-testid={`strategy-workspace-${strategyId}`}
       style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}
     >
-      <div style={{ padding: "8px 16px", borderBottom: "1px solid #e2e8f0", fontSize: 13, flexShrink: 0 }}>
+      <div style={{ padding: "8px 16px", borderBottom: `1px solid ${C.border}`, fontSize: 13, flexShrink: 0, color: C.text }}>
         <strong>{strategy?.title ?? strategyId}</strong>
         {strategy && (
-          <span style={{ marginLeft: 12, color: "#64748b" }}>
+          <span style={{ marginLeft: 12, color: C.secondary }}>
             {strategy.readiness_state} · {strategy.monitoring_state}
           </span>
         )}
@@ -733,7 +765,7 @@ function StrategyWorkspaceView({
           {recipeLoading ? (
             <div
               data-testid="strategy-recipe-loading"
-              style={{ padding: 16, fontSize: 13, color: "#94a3b8" }}
+              style={{ padding: 16, fontSize: 13, color: C.muted }}
             >
               Loading strategy workspace…
             </div>
@@ -742,7 +774,7 @@ function StrategyWorkspaceView({
           ) : (
             <div
               data-testid="strategy-recipe-unavailable"
-              style={{ padding: 16, fontSize: 13, color: "#94a3b8" }}
+              style={{ padding: 16, fontSize: 13, color: C.muted }}
             >
               Dashboard recipe unavailable for this strategy.
             </div>
@@ -819,7 +851,7 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
     return (
       <div
         data-testid="trading-room-loading"
-        style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#94a3b8" }}
+        style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", fontSize: 13, color: C.muted }}
       >
         Loading Trading Room…
       </div>
@@ -830,7 +862,7 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
     return (
       <div
         data-testid="trading-room-error"
-        style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#ef4444" }}
+        style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", fontSize: 13, color: C.red }}
       >
         Failed to load Trading Room.
       </div>
@@ -844,7 +876,7 @@ export function TradingRoomPage({ strategyId, onStrategySelect }: TradingRoomPag
   return (
     <div
       data-testid="trading-room-page"
-      style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}
+      style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: C.bg }}
     >
       <StrategyLensSwitcher
         strategies={aggregate.strategies}

@@ -131,14 +131,14 @@ function AddWidgetPanel({ onSelect, onClose }: AddWidgetPanelProps) {
 
   return (
     <div
-      className="absolute right-0 top-10 z-50 w-72 rounded-lg border border-slate-200 bg-white shadow-lg"
+      className="absolute right-0 top-10 z-50 w-72 rounded-lg border border-border bg-popover shadow-lg"
       data-testid="add-widget-panel"
     >
-      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
-        <span className="text-sm font-semibold text-slate-900">Add Widget</span>
+      <div className="flex items-center justify-between border-b border-border px-4 py-2">
+        <span className="text-sm font-semibold text-foreground">Add Widget</span>
         <button
           aria-label="Close add widget panel"
-          className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
           onClick={onClose}
           type="button"
         >
@@ -156,14 +156,14 @@ function AddWidgetPanel({ onSelect, onClose }: AddWidgetPanelProps) {
             return (
               <li key={wt}>
                 <button
-                  className="w-full rounded px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                  className="w-full rounded px-3 py-2 text-left text-xs text-foreground hover:bg-muted"
                   data-testid={`widget-type-option-${wt}`}
                   onClick={() => setSelectedType(wt)}
                   type="button"
                 >
                   <span className="font-medium">{e?.display_name ?? wt}</span>
                   {e?.description ? (
-                    <span className="ml-2 text-slate-400">{e.description}</span>
+                    <span className="ml-2 text-muted-foreground">{e.description}</span>
                   ) : null}
                 </button>
               </li>
@@ -173,13 +173,13 @@ function AddWidgetPanel({ onSelect, onClose }: AddWidgetPanelProps) {
       ) : (
         <div className="p-3">
           <button
-            className="mb-2 text-xs text-slate-400 hover:text-slate-700"
+            className="mb-2 text-xs text-muted-foreground hover:text-foreground"
             onClick={() => setSelectedType(null)}
             type="button"
           >
             ← Back
           </button>
-          <p className="mb-2 text-xs font-semibold text-slate-700">
+          <p className="mb-2 text-xs font-semibold text-foreground">
             Chart kind for{" "}
             {getWidgetRegistryEntry(selectedType)?.display_name ?? selectedType}:
           </p>
@@ -187,7 +187,7 @@ function AddWidgetPanel({ onSelect, onClose }: AddWidgetPanelProps) {
             {allowedKinds.map((kind) => (
               <li key={kind}>
                 <button
-                  className="w-full rounded border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                  className="w-full rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-muted"
                   data-testid={`chart-kind-option-${kind}`}
                   onClick={() => onSelect(selectedType, kind)}
                   type="button"
@@ -217,14 +217,14 @@ function ChangeChartPanel({ widget, onSelect, onClose }: ChangeChartPanelProps) 
 
   return (
     <div
-      className="absolute right-0 top-8 z-50 w-48 rounded-lg border border-slate-200 bg-white shadow-lg"
+      className="absolute right-0 top-8 z-50 w-48 rounded-lg border border-border bg-popover shadow-lg"
       data-testid={`change-chart-panel-${widget.widget_id}`}
     >
-      <div className="flex items-center justify-between border-b border-slate-100 px-3 py-1.5">
-        <span className="text-xs font-semibold text-slate-700">Change chart</span>
+      <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
+        <span className="text-xs font-semibold text-foreground">Change chart</span>
         <button
           aria-label="Close change chart panel"
-          className="rounded p-0.5 text-slate-400 hover:bg-slate-100"
+          className="rounded p-0.5 text-muted-foreground hover:bg-muted"
           onClick={onClose}
           type="button"
         >
@@ -235,10 +235,10 @@ function ChangeChartPanel({ widget, onSelect, onClose }: ChangeChartPanelProps) 
         {allowedKinds.map((kind) => (
           <li key={kind}>
             <button
-              className={`w-full rounded px-3 py-1 text-left text-xs hover:bg-slate-50 ${
+              className={`w-full rounded px-3 py-1 text-left text-xs hover:bg-muted ${
                 widget.chart_spec.kind === kind
-                  ? "font-semibold text-slate-900"
-                  : "text-slate-600"
+                  ? "font-semibold text-foreground"
+                  : "text-muted-foreground"
               }`}
               data-testid={`chart-kind-change-${kind}`}
               onClick={() => onSelect(kind)}
@@ -378,7 +378,7 @@ export function DashboardGridEditor({
         </h2>
         <div className="relative ml-auto">
           <button
-            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            className="rounded border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
             data-testid="add-widget-button"
             onClick={() => setShowAddPanel((v) => !v)}
             type="button"
@@ -411,17 +411,17 @@ export function DashboardGridEditor({
           return (
             <div
               key={placement.widget_id}
-              className="flex flex-col overflow-hidden rounded-md border border-slate-200 bg-white"
+              className="flex flex-col overflow-hidden rounded-md border border-border bg-card"
               data-testid={`grid-cell-${placement.widget_id}`}
             >
-              <div className="widget-drag-handle flex shrink-0 cursor-grab items-center justify-between border-b border-slate-100 px-3 py-1.5 active:cursor-grabbing">
-                <span className="truncate text-xs font-medium text-slate-700">
+              <div className="widget-drag-handle flex shrink-0 cursor-grab items-center justify-between border-b border-border px-3 py-1.5 active:cursor-grabbing">
+                <span className="truncate text-xs font-medium text-foreground">
                   {widget.title}
                 </span>
                 <div className="relative flex shrink-0 items-center gap-1">
                   <button
                     aria-label={`Change chart for ${widget.title}`}
-                    className="rounded p-1 text-[11px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                    className="rounded p-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
                     data-testid={`change-chart-button-${placement.widget_id}`}
                     onClick={() =>
                       setChangeChartWidgetId((id) =>
@@ -435,7 +435,7 @@ export function DashboardGridEditor({
                   {!placement.pinned ? (
                     <button
                       aria-label={`Remove ${widget.title}`}
-                      className="rounded p-1 text-[11px] text-slate-400 hover:bg-red-50 hover:text-red-600"
+                      className="rounded p-1 text-[11px] text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       data-testid={`remove-widget-button-${placement.widget_id}`}
                       onClick={() => handleRemoveWidget(placement.widget_id)}
                       type="button"

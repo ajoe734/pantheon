@@ -73,27 +73,27 @@ function ConcurrencyNotice({ error }: { error?: DashboardConcurrencyError | null
   if (!error) return null;
   const details = error.details ?? {};
   return (
-    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" data-testid="dashboard-changelog-concurrency-error">
-      <div className="flex items-center gap-2 font-semibold">
+    <div className="rounded-md border border-primary bg-primary/10 p-3 text-sm text-foreground" data-testid="dashboard-changelog-concurrency-error">
+      <div className="flex items-center gap-2 font-semibold text-primary">
         <AlertTriangle className="h-4 w-4" />
         {error.code ?? "CONCURRENT_MODIFICATION"}
       </div>
       <p className="mt-1">{error.message}</p>
       <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
         <div>
-          <dt className="text-amber-800">Expected version</dt>
+          <dt className="text-primary">Expected version</dt>
           <dd className="font-medium">{stableString(details.expected_version)}</dd>
         </div>
         <div>
-          <dt className="text-amber-800">Current version</dt>
+          <dt className="text-primary">Current version</dt>
           <dd className="font-medium">{stableString(details.current_version)}</dd>
         </div>
         <div>
-          <dt className="text-amber-800">Current ETag</dt>
+          <dt className="text-primary">Current ETag</dt>
           <dd className="break-all font-medium">{stableString(details.current_etag)}</dd>
         </div>
         <div>
-          <dt className="text-amber-800">Latest</dt>
+          <dt className="text-primary">Latest</dt>
           <dd className="break-all font-medium">{stableString(details.latest_href)}</dd>
         </div>
       </dl>
@@ -103,10 +103,10 @@ function ConcurrencyNotice({ error }: { error?: DashboardConcurrencyError | null
 
 function VersionStatusBadge({ status }: { status: DashboardRecipeVersionSummary["status"] }) {
   const classes: Record<DashboardRecipeVersionSummary["status"], string> = {
-    active: "border-emerald-300 bg-emerald-50 text-emerald-800",
-    archived: "border-slate-300 bg-slate-50 text-slate-700",
-    proposal: "border-blue-300 bg-blue-50 text-blue-800",
-    rolled_back: "border-amber-300 bg-amber-50 text-amber-800",
+    active: "border-primary bg-primary/10 text-primary",
+    archived: "border-border bg-muted text-muted-foreground",
+    proposal: "border-ring bg-ring/10 text-foreground",
+    rolled_back: "border-primary bg-primary/10 text-primary",
   };
   return (
     <Badge className={classes[status]} variant="outline">
@@ -160,25 +160,25 @@ export function DashboardChangeLog({
   };
 
   return (
-    <section className={cn("space-y-4 rounded-md border border-slate-200 bg-slate-50 p-4", className)} data-testid="dashboard-change-log">
+    <section className={cn("space-y-4 rounded-md border border-border bg-card p-4", className)} data-testid="dashboard-change-log">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <History className="h-4 w-4 text-slate-700" />
-            <h2 className="text-base font-semibold text-slate-950">Dashboard Change Log</h2>
+            <History className="h-4 w-4 text-foreground" />
+            <h2 className="text-base font-semibold text-foreground">Dashboard Change Log</h2>
           </div>
-          <p className="mt-1 text-sm text-slate-600">{recipeId}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{recipeId}</p>
         </div>
-        <Badge className="border-slate-300 bg-white text-slate-700" variant="outline">
+        <Badge className="border-border bg-muted text-foreground" variant="outline">
           active v{activeVersion}
         </Badge>
       </div>
 
       <ConcurrencyNotice error={concurrencyError} />
 
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-md border border-border bg-background">
         <table className="w-full border-collapse text-left text-xs" data-testid="dashboard-version-table">
-          <thead className="bg-slate-100 text-slate-600">
+          <thead className="bg-muted text-muted-foreground">
             <tr>
               <th className="w-24 px-3 py-2 font-semibold">Version</th>
               <th className="px-3 py-2 font-semibold">Status</th>
@@ -197,27 +197,27 @@ export function DashboardChangeLog({
               return (
                 <tr
                   className={cn(
-                    "border-t border-slate-200 align-top",
-                    checked ? "bg-blue-50" : "",
-                    isActive ? "bg-emerald-50/40" : "",
+                    "border-t border-border align-top",
+                    checked ? "bg-accent" : "",
+                    isActive ? "bg-primary/5" : "",
                   )}
                   key={version.version}
                 >
-                  <td className="px-3 py-2 font-medium text-slate-950">
+                  <td className="px-3 py-2 font-medium text-foreground">
                     v{version.version}
-                    {isActive ? <span className="ml-1 text-emerald-700">(active)</span> : null}
+                    {isActive ? <span className="ml-1 text-primary">(active)</span> : null}
                   </td>
                   <td className="px-3 py-2">
                     <VersionStatusBadge status={version.status} />
                   </td>
-                  <td className="break-words px-3 py-2 text-slate-700">{version.change_reason ?? "-"}</td>
-                  <td className="px-3 py-2 text-slate-700">{version.generated_by ?? "-"}</td>
-                  <td className="px-3 py-2 text-slate-700">{formatTimestamp(version.created_at)}</td>
-                  <td className="px-3 py-2 font-mono text-slate-700">{shortSha(version.content_sha256)}</td>
+                  <td className="break-words px-3 py-2 text-muted-foreground">{version.change_reason ?? "-"}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{version.generated_by ?? "-"}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{formatTimestamp(version.created_at)}</td>
+                  <td className="px-3 py-2 font-mono text-muted-foreground">{shortSha(version.content_sha256)}</td>
                   <td className="px-3 py-2">
                     <button
                       aria-pressed={checked}
-                      className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={!isHistorical}
                       onClick={() => setSelectedVersion(version.version)}
                       type="button"
@@ -233,21 +233,21 @@ export function DashboardChangeLog({
         </table>
       </div>
 
-      <div className="rounded-md border border-slate-200 bg-white p-3">
+      <div className="rounded-md border border-border bg-card p-3">
         <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
           <div>
-            <label className="text-xs font-medium uppercase text-slate-500" htmlFor="dashboard-rollback-reason">
+            <label className="text-xs font-medium uppercase text-muted-foreground" htmlFor="dashboard-rollback-reason">
               Rollback reason
             </label>
             <textarea
-              className="mt-2 min-h-20 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              className="mt-2 min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30"
               id="dashboard-rollback-reason"
               onChange={(event) => setReason(event.target.value)}
               value={reason}
             />
           </div>
           <button
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-primary bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
             disabled={!canRollback}
             onClick={runRollback}
             type="button"
@@ -256,7 +256,7 @@ export function DashboardChangeLog({
             Rollback
           </button>
         </div>
-        <p className="mt-2 text-xs text-slate-600" data-testid="dashboard-rollback-selection">
+        <p className="mt-2 text-xs text-muted-foreground" data-testid="dashboard-rollback-selection">
           Target version: {selected ? `v${selected.version}` : "-"}
         </p>
       </div>
