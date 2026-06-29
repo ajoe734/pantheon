@@ -1,3 +1,4 @@
+import "@/agora/agora.css";
 import { StrictMode, useState, useCallback, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { TradingDeskLayout, type AgoraTab } from "@/agora/TradingDeskLayout";
