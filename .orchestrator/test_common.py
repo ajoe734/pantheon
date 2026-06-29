@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,6 +48,44 @@ class PlanningSharedFilesTests(unittest.TestCase):
 
 
 class JsonLoadResilienceTests(unittest.TestCase):
+    def test_load_json_still_allows_empty_optional_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "optional.json"
+            path.write_text("", encoding="utf-8")
+
+            result = common.load_json(path, default={"fallback": True})
+
+        self.assertEqual(result, {"fallback": True})
+
+    def test_load_status_rejects_empty_status_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_file = Path(tmpdir) / "ai-status.json"
+            status_file.write_text("", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "status file is empty"):
+                common.load_status({"paths": {"status_file": str(status_file)}})
+
+    def test_ai_status_sync_rejects_empty_existing_status_file(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir)
+            status_file = status_root / "ai-status.json"
+            status_file.write_text("", encoding="utf-8")
+            env = os.environ.copy()
+            env["PANTHEON_STATUS_ROOT"] = str(status_root)
+
+            result = subprocess.run(
+                [sys.executable, str(repo_root / "scripts" / "ai_status.py"), "sync"],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Refusing to initialize from empty status file", result.stderr + result.stdout)
+
     def test_load_json_retries_after_transient_decode_error(self) -> None:
         payload = {"ok": True}
         with (

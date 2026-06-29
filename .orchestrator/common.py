@@ -89,6 +89,14 @@ def load_json(path: Path, default: Any | None = None) -> Any:
     return deepcopy(default)
 
 
+def load_nonempty_json(path: Path, *, label: str, default: Any | None = None) -> Any:
+    if not path.exists():
+        return deepcopy(default)
+    if not path.read_text(encoding="utf-8").strip():
+        raise RuntimeError(f"{label} file is empty: {path}")
+    return load_json(path, default=default)
+
+
 def write_json(path: Path, payload: Any) -> None:
     ensure_parent(path)
     serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
@@ -621,7 +629,7 @@ def snapshot_task(task: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any
 
 
 def load_status(config: dict[str, Any]) -> dict[str, Any]:
-    return load_json(config_path(config, "status_file"), default={}) or {}
+    return load_nonempty_json(config_path(config, "status_file"), label="status", default={}) or {}
 
 
 def planning_shared_files(planning_state: dict[str, Any] | None = None) -> list[Path]:
