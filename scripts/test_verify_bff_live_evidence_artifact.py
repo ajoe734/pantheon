@@ -56,7 +56,7 @@ def run_verifier(artifact_dir: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def write_summary(artifact_dir: Path, *, status: str = "pass") -> None:
+def write_summary(artifact_dir: Path, *, status: str = "pass", run_id: str = "123456789") -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     gate3 = [
         {"label": SSE_LABEL, "status": status, "note": "sse evidence"},
@@ -67,7 +67,13 @@ def write_summary(artifact_dir: Path, *, status: str = "pass") -> None:
     ]
     gate7 = [{"label": CURRENT_RUN_LABEL, "status": "pass", "note": "3 audit file(s) found"}]
     (artifact_dir / "release-gate-summary.json").write_text(
-        json.dumps({"overall": status, "gates": {"3": gate3, "7": gate7}}),
+        json.dumps(
+            {
+                "overall": status,
+                "runUrl": f"https://github.com/ajoe734/pantheon/actions/runs/{run_id}",
+                "gates": {"3": gate3, "7": gate7},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -632,6 +638,22 @@ def test_verifier_accepts_complete_strict_live_artifact(tmp_path: Path) -> None:
     assert payload["criteria"]["sse_reconnect_soak"]["status"] == "pass"
     assert payload["criteria"]["current_run_only"]["status"] == "pass"
     assert payload["criteria"]["raw_secret_scan"]["status"] == "pass"
+
+
+def test_verifier_rejects_summary_run_url_from_different_run_even_when_evidence_matches(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    summary_path = artifact_dir / "release-gate-summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["runUrl"] = "https://github.com/ajoe734/pantheon/actions/runs/987654321"
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["preflight_ready"]
+    assert item["status"] == "fail"
+    assert item["note"] == "provenance:summary.runUrl"
 
 
 def test_verifier_rejects_auth_json_from_stale_sha_even_when_summary_passes(tmp_path: Path) -> None:
