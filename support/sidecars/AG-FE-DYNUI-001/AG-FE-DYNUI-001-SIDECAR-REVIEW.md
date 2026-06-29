@@ -9,7 +9,7 @@
 | Sidecar owner / reviewer | `Codex2` / `Codex` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff |
+| Status | Reviewer approved; owner closeout in progress |
 
 ## Purpose
 
@@ -27,7 +27,7 @@ surface.
 | Source | Relevance |
 |---|---|
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-001-SIDECAR-REVIEW` | Sidecar active state, owner/reviewer, helper kind, and parent link. |
-| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-001` | Parent active `review` state and parent handoff summary after PR `#2569`. |
+| `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-001` | Parent archive `done` state after owner closeout. |
 | `support/sidecars/AG-FE-DYNUI-001/AG-FE-DYNUI-001-SIDECAR-ACCEPTANCE.md` | Acceptance checklist, dependency map, blocker triggers, and verification guidance. |
 | `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-001-SIDECAR-ACCEPTANCE` | Acceptance sidecar review approval note and active `review_approved` state. |
 | `docs/04/agora_design_pack_dynui_2026-06-28/README.md` | Dynamic UI execution packet and task graph. |
@@ -57,7 +57,7 @@ surface.
 | Parent commit owned layer | V10 Strategy Workshop frontend runtime: card ordering, reconstruction card rendering, V10 12-block rail, composer submit helper, readiness-controlled CTA. |
 | Parent commit non-goals | V11 backend workspace proposal contracts, widget revision lifecycle, grid editor persistence, Management/runtime/broker/order surfaces, arbitrary widget generation. |
 | Required checks observed on PR `#2569` | Commit trailers, Runtime mirror guard, Smoke acceptance, and Forward to orchestrator all concluded `SUCCESS`. |
-| Parent active status | `review`, waiting for `Claude2` review after zero-byte status recovery and reassignment. |
+| Parent terminal status | Archived `done`; owner closeout PR `#2575` merged to `dev` at `16d5d53bc8c36208540c338d96965ef93715f71b`. |
 
 The prior sidecar acceptance packet also merged through PR `#2568` at
 `ad1fbb153d629d5927ce82ae1300d47ec78b4a43`; its visible Commit trailers,
@@ -176,5 +176,37 @@ Please review this support-only packet for:
 If accurate, approve `AG-FE-DYNUI-001-SIDECAR-REVIEW` and return it to
 `Codex2` for closeout. Parent `AG-FE-DYNUI-001` remains owned by `Codex` with
 reviewer `Claude2`; this sidecar does not replace the parent review decision.
+
+## Owner Closeout
+
+Codex approved this sidecar in active task state and returned it to `Codex2`
+for owner closeout. The approval preserved the packet caveats: frontend
+display-order correction is not backend sequence truth proof, and the V10
+12-block rail is derived from current completeness/readiness data rather than a
+typed V10 block contract.
+
+Closeout checks performed on 2026-06-29:
+
+```bash
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-001-SIDECAR-REVIEW
+AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-001
+gh pr view 2574 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,url,title,headRefName,baseRefName,statusCheckRollup
+gh pr view 2575 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,url,title,headRefName,baseRefName,statusCheckRollup
+```
+
+Observed closeout facts:
+
+- Sidecar active status is `review_approved`, owner `Codex2`, reviewer `Codex`,
+  helper kind `review_packet`, parent `AG-FE-DYNUI-001`.
+- Sidecar PR `#2574` is `MERGED` into `dev` with merge commit
+  `a2ad59154340290ef4b39b67cc21904f0e65ae9a`; Commit trailers, Runtime mirror
+  guard, Smoke acceptance, and Forward to orchestrator checks reported
+  `SUCCESS`.
+- Parent task `AG-FE-DYNUI-001` is archived `done`; closeout PR `#2575` is
+  `MERGED` into `dev` with merge commit
+  `16d5d53bc8c36208540c338d96965ef93715f71b`.
+- This owner closeout changes only support material for the review sidecar. It
+  does not change canonical truth, frontend runtime, BFF contracts, schemas,
+  governance, broker authority, or parent task status.
 
 Prepared by `Codex2` for the `AG-FE-DYNUI-001-SIDECAR-REVIEW` support slice.
