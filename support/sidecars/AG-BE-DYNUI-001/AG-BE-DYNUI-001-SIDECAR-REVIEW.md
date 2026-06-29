@@ -70,9 +70,9 @@ Observed result:
 | Command | Result |
 |---|---|
 | `py_compile` | Passed. |
-| `test_trading_room.py -q` | `37 passed in 18.48s`. |
-| `test_agora_router.py -q` | `18 passed in 20.74s`; existing FastAPI `on_event` deprecation warnings only. |
-| `test_route_resolution_no_shadowing.py -q` | `2 passed in 13.22s`; existing FastAPI `on_event` deprecation warnings only. |
+| `test_trading_room.py -q` | `37 passed in 9.89s`. |
+| `test_agora_router.py -q` | `18 passed in 8.37s`; existing FastAPI `on_event` deprecation warnings only. |
+| `test_route_resolution_no_shadowing.py -q` | `2 passed in 5.08s`; existing FastAPI `on_event` deprecation warnings only. |
 
 ## Review Findings
 
