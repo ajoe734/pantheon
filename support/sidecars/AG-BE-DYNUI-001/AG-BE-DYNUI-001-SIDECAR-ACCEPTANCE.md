@@ -6,7 +6,9 @@
 **Parent title:** Trading Room workspace proposal contract  
 **Parent owner:** `Codex`  
 **Parent reviewer:** `Claude2`  
-**Parent status:** `in_progress` in central L0 state on 2026-06-29  
+**Parent status at packet preparation:** `in_progress` in central L0 state on
+2026-06-29; parent implementation later merged to `dev` before sidecar
+closeout
 **Sidecar owner:** `Codex2`  
 **Sidecar reviewer:** `Codex`  
 **Date:** `2026-06-29`  
@@ -73,9 +75,13 @@ for this packet.
 
 ---
 
-## 3. Current Gap Snapshot
+## 3. Pre-Absorption Gap Snapshot
 
-| Surface | Current observation | Parent implication |
+These observations were captured during sidecar packet preparation before the
+parent implementation merged to `dev`. They are retained as acceptance context,
+not as a live statement about the post-merge tree.
+
+| Surface | Preparation observation | Parent implication |
 | --- | --- | --- |
 | `services/control-plane/specs/agora/trading_room_workspace.schema.json` | Not present. | Parent must add the V11 workspace proposal/workspace schema before claiming route completeness. |
 | `services/control-plane/bff/agora/trading_room/router.py` | Implements aggregate, strategy detail, decision events, decisions, stream, and governed-intent handoff/withdraw. | Parent must add a distinct workspace proposal/workspace route family without weakening existing no-order routes. |
