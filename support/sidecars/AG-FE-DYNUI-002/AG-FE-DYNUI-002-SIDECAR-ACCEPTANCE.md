@@ -10,7 +10,7 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for reviewer handoff |
+| Status | Review approved; PR #2595 merged; owner closeout in progress |
 
 This packet is support material only. It packages acceptance criteria,
 dependency routing, blocker triggers, and verification guidance for
@@ -286,5 +286,28 @@ If changes are required:
 AI_NAME=Codex2 ./scripts/ai-status.sh reopen AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE \
   "Describe the exact packet correction, dependency-state issue, or missing acceptance detail needed before approval."
 ```
+
+## 11. Closeout Record
+
+- Review outcome: central L0 status is `review_approved` with reviewer
+  `Codex2`, and review notes approve the support-only acceptance packet for
+  AG-FE-DYNUI-002.
+- Merged support delivery: PR #2595 merged into `dev` at
+  `2026-06-29T06:21:20Z`.
+- Merge commit: `a336e8ad765c9fcd5c483cb3280363ab9cb8586c`.
+- Task commit: `bbe2a088c53fe02aadc63282c5a14c1f6779f23e`.
+- GitHub checks observed on PR #2595: Branch CI Gate `Commit trailers`,
+  `Runtime mirror guard`, and `Smoke acceptance` succeeded; Orchestrator Sync
+  `Forward to orchestrator` succeeded.
+- Owner closeout verification:
+  `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE`;
+  `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002`;
+  `gh pr view 2595 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,url,title,headRefName,baseRefName,statusCheckRollup,isDraft`;
+  `git merge-base --is-ancestor bbe2a088c53fe02aadc63282c5a14c1f6779f23e origin/dev`;
+  `git merge-base --is-ancestor HEAD origin/dev`;
+  `git diff --check -- .orchestrator/task-briefs/ag_fe_dynui_002_sidecar_acceptance.md support/sidecars/AG-FE-DYNUI-002/AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE.md`.
+- Final parent handoff: the packet remains support material for parent owner
+  `Codex2` to absorb into `AG-FE-DYNUI-002`; it does not approve the parent
+  implementation or widen downstream FE/E2E scopes.
 
 Prepared by `Codex` for the `AG-FE-DYNUI-002-SIDECAR-ACCEPTANCE` support slice.
