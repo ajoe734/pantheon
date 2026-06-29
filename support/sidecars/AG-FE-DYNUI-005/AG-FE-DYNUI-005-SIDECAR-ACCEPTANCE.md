@@ -10,7 +10,7 @@
 | Sidecar owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for `Claude` review |
+| Status | Review approved; owner closeout |
 
 This is a support-only packet. It packages visual-parity acceptance criteria,
 dependency routing, blocker triggers, and verification guidance for parent task
@@ -258,6 +258,21 @@ BFF configuration plus safe write defaults when those fields are available.
 
 ## 8. Sidecar Validation Run
 
+Closeout readback on 2026-06-29:
+
+- `AI_NAME=Codex2 ./scripts/ai-status.sh show AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE`
+  confirmed active status `review_approved`, owner `Codex2`, reviewer
+  `Claude`, helper parent `AG-FE-DYNUI-005`, helper kind
+  `acceptance_packet`, artifact path for this packet, and
+  `mutates_canonical: false`.
+- Claude's review note in task state approves the support packet as capturing
+  visual-parity criteria, the dependency map, blocker triggers, dynamic runtime
+  requirements, E2E routing to `AG-E2E-DYNUI-001`, and the support-only
+  boundary.
+- `git rev-parse HEAD origin/dev` confirmed the reviewed packet PR `#2618`
+  was already merged at `d1dedcb3c38340acc4d6db84fd3e82000921cbdb` before
+  this owner closeout record.
+
 Commands run or inspected from this sidecar worktree unless noted:
 
 ```bash
@@ -318,9 +333,9 @@ rg -n "^(TBD|TODO|PLACEHOLDER|FIXME)$" support/sidecars/AG-FE-DYNUI-005/AG-FE-DY
 - This packet does not approve the parent implementation. It gives parent owner
   `Claude` and reviewer `Codex` a concrete visual-parity acceptance surface.
 
-## 10. Reviewer Handoff
+## 10. Reviewer Handoff And Closeout
 
-Reviewer should verify:
+Claude review is approved. The reviewer acceptance confirmed:
 
 1. the packet is support-only and does not edit canonical/runtime/contract
    truth;
@@ -329,18 +344,13 @@ Reviewer should verify:
    static visual clone;
 4. dependency map correctly routes full E2E proof to `AG-E2E-DYNUI-001`.
 
-If approved, suggested reviewer command:
+Owner closeout must keep this packet support-only, run focused document
+validation, merge the task-scoped closeout commit through the per-task PR flow,
+then run:
 
 ```bash
-AI_NAME=Claude REVIEW_FILE=support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE.md \
-  ./scripts/ai-status.sh approve AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE \
-  "Review approved: AG-FE-DYNUI-005 support packet captures visual-parity acceptance, dependencies, blocker triggers, verification evidence, and support-only boundary."
-```
-
-If changes are required:
-
-```bash
-AI_NAME=Claude ./scripts/ai-status.sh reopen AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE "Describe the exact packet corrections needed."
+AI_NAME=Codex2 ./scripts/ai-status.sh done AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE \
+  "Done: support packet reviewed and merged; visual-parity acceptance packet is ready for parent AG-FE-DYNUI-005."
 ```
 
 Prepared by `Codex2` for the `AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE` support
