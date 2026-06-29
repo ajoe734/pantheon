@@ -10,7 +10,7 @@
 | Sidecar owner / reviewer | `Codex2` / `Claude` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for `Claude` sidecar review; parent remains `in_progress` |
+| Status | `Claude` review approved; parent remains `in_progress` |
 
 This is a support-only follow-up packet. It does not replace the archived
 `AG-FE-DYNUI-005-SIDECAR-ACCEPTANCE` packet, approve the parent implementation,
@@ -18,6 +18,13 @@ or change canonical/runtime/contract truth. Its purpose is to refresh the
 parent evidence gate after the main acceptance packet closed and while
 `AG-FE-DYNUI-005` has started but has no GitHub-visible implementation branch
 or PR yet.
+
+Closeout note, 2026-06-29: `Claude` approved this sidecar as support-only
+follow-up evidence. The approved packet continues to defer to the archived main
+acceptance packet, records that upstream `AG-FE-DYNUI-001` through `004` are
+done, keeps downstream `AG-E2E-DYNUI-001` as `todo`, and requires parent owner
+implementation evidence before `AG-FE-DYNUI-005` review. This note does not
+approve the parent implementation or widen sidecar scope.
 
 If this packet conflicts with L1/L2 canonical docs or the archived main
 acceptance packet, those sources win. Reopen this follow-up instead of widening
