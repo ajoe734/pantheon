@@ -387,6 +387,14 @@ def _workspace_etag(workspace: Dict[str, Any]) -> str:
     return f'"tr-workspace:{workspace["id"]}:v{workspace["dashboardVersion"]}:{_stable_hash(workspace)[:8]}"'
 
 
+def _revision_proposal_etag(proposal: Dict[str, Any]) -> str:
+    return f'"tr-widget-revision:{proposal["id"]}:{proposal["status"]}:{_stable_hash(proposal)[:8]}"'
+
+
+def _version_etag(version: Dict[str, Any]) -> str:
+    return f'"tr-dashboard-version:{version["id"]}:{_stable_hash(version)[:8]}"'
+
+
 def _chart_spec(kind: str, *, click_kind: str = "request_widget_revision") -> Dict[str, Any]:
     encodings_by_kind: Dict[str, Dict[str, Dict[str, str]]] = {
         "bar": {
@@ -1413,6 +1421,25 @@ def create_trading_room_router(
             _raise_workspace_forbidden("workspace", workspace_id)
         return record["workspace"], scope
 
+    def _load_revision_proposal_for_identity(
+        *,
+        proposal_id: str,
+        identity: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], Dict[str, str]]:
+        ErrorCode = _error_code_enum()
+        record = store.get_widget_revision_proposal_record(proposal_id)
+        if record is None:
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"WidgetRevisionProposal {proposal_id!r} not found",
+                "widget_revision_proposal_not_found",
+            )
+        scope = _workspace_scope(identity)
+        if not _record_visible_to_scope(record, scope):
+            _raise_workspace_forbidden("widget_revision_proposal", proposal_id)
+        return record["proposal"], scope
+
     def _require_workspace_etag(if_match: Optional[str], workspace: Dict[str, Any]) -> str:
         ErrorCode = _error_code_enum()
         current = _workspace_etag(workspace)
@@ -1439,6 +1466,83 @@ def create_trading_room_router(
                 },
             )
         return current
+
+    def _record_workspace_version(
+        workspace: Dict[str, Any],
+        *,
+        scope: Dict[str, str],
+        change_summary: str,
+        generated_by: Optional[str] = None,
+        changed_by: Optional[str] = None,
+        reason: Optional[str] = None,
+        affected_views: Optional[List[str]] = None,
+        affected_widgets: Optional[List[str]] = None,
+        effect_evaluation: Optional[str] = None,
+        source_revision_proposal_id: Optional[str] = None,
+        rollback_of_version_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return store.record_workspace_version(
+            workspace,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            created_at=utc_now(),
+            change_summary=change_summary,
+            generated_by=generated_by,
+            changed_by=changed_by,
+            reason=reason,
+            affected_views=affected_views,
+            affected_widgets=affected_widgets,
+            effect_evaluation=effect_evaluation,
+            source_revision_proposal_id=source_revision_proposal_id,
+            rollback_of_version_id=rollback_of_version_id,
+        )
+
+    def _persist_workspace_with_version(
+        workspace: Dict[str, Any],
+        *,
+        scope: Dict[str, str],
+        change_summary: str,
+        generated_by: Optional[str] = None,
+        changed_by: Optional[str] = None,
+        reason: Optional[str] = None,
+        affected_views: Optional[List[str]] = None,
+        affected_widgets: Optional[List[str]] = None,
+        effect_evaluation: Optional[str] = None,
+        source_revision_proposal_id: Optional[str] = None,
+        rollback_of_version_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        store.upsert_workspace(
+            workspace,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+        return _record_workspace_version(
+            workspace,
+            scope=scope,
+            change_summary=change_summary,
+            generated_by=generated_by,
+            changed_by=changed_by,
+            reason=reason,
+            affected_views=affected_views,
+            affected_widgets=affected_widgets,
+            effect_evaluation=effect_evaluation,
+            source_revision_proposal_id=source_revision_proposal_id,
+            rollback_of_version_id=rollback_of_version_id,
+        )
+
+    def _affected_widgets_from_operations(operations: List[Dict[str, Any]]) -> List[str]:
+        affected: List[str] = []
+        for op in operations:
+            if not isinstance(op, dict):
+                continue
+            widget_id = str(op.get("widgetId") or op.get("widget_id") or "").strip()
+            if not widget_id:
+                payload = op.get("payload") or {}
+                if isinstance(payload, dict):
+                    widget_id = str(payload.get("widgetId") or payload.get("widget_id") or "").strip()
+            if widget_id and widget_id not in affected:
+                affected.append(widget_id)
+        return affected
 
     def _handoff_stage_rule(stage: str) -> Dict[str, str]:
         return {
@@ -1743,10 +1847,19 @@ def create_trading_room_router(
             user_id=scope["user_id"],
             now=utc_now(),
         )
-        store.upsert_workspace(
+        version = _persist_workspace_with_version(
             workspace,
-            tenant_id=scope["tenant_id"],
-            user_id=scope["user_id"],
+            scope=scope,
+            change_summary="v1 - trading servant initial workspace proposal",
+            generated_by="trading_servant",
+            changed_by="trading_servant",
+            reason=proposal.get("rationale"),
+            affected_views=[view["id"] for view in workspace.get("views") or []],
+            affected_widgets=[
+                widget["id"]
+                for view in workspace.get("views") or []
+                for widget in view.get("widgets") or []
+            ],
         )
 
         proposal["status"] = "accepted"
@@ -1762,6 +1875,7 @@ def create_trading_room_router(
             "data": {
                 "workspaceId": workspace["id"],
                 "workspace": workspace,
+                "version": version,
             },
             "meta": _meta(etag=etag, strategy_id=strategy_id, proposal_id=proposal_id),
         }
@@ -1818,12 +1932,20 @@ def create_trading_room_router(
         updated, errors = _apply_workspace_layout_ops(workspace, operations, now=now)
         if errors or updated is None:
             _validation_failed(errors)
-        store.upsert_workspace(updated, tenant_id=scope["tenant_id"], user_id=scope["user_id"])
+        version = _persist_workspace_with_version(
+            updated,
+            scope=scope,
+            change_summary="trader adjusted widget layout",
+            generated_by="user_modified",
+            changed_by=scope["user_id"],
+            reason="layout operations accepted by trader",
+            affected_widgets=_affected_widgets_from_operations(operations),
+        )
         etag = _workspace_etag(updated)
         response.headers["ETag"] = etag
         return {
             "data": updated,
-            "meta": _meta(etag=etag, workspace_id=workspace_id),
+            "meta": _meta(etag=etag, workspace_id=workspace_id, version_id=version["id"]),
         }
 
     # ------------------------------------------------------------------
@@ -1870,12 +1992,20 @@ def create_trading_room_router(
         updated = copy.deepcopy(workspace)
         updated.setdefault("views", []).append(view)
         updated = _touch_workspace(updated, now=now)
-        store.upsert_workspace(updated, tenant_id=scope["tenant_id"], user_id=scope["user_id"])
+        version = _persist_workspace_with_version(
+            updated,
+            scope=scope,
+            change_summary=f"trader added view {view.get('id')}",
+            generated_by="user_modified",
+            changed_by=scope["user_id"],
+            reason="manual workspace view addition",
+            affected_views=[str(view.get("id") or "")],
+        )
         etag = _workspace_etag(updated)
         response.headers["ETag"] = etag
         return {
             "data": updated,
-            "meta": _meta(etag=etag, workspace_id=workspace_id),
+            "meta": _meta(etag=etag, workspace_id=workspace_id, version_id=version["id"]),
         }
 
     # ------------------------------------------------------------------
@@ -1926,12 +2056,20 @@ def create_trading_room_router(
                 updated["views"][index] = view
                 break
         updated = _touch_workspace(updated, now=now)
-        store.upsert_workspace(updated, tenant_id=scope["tenant_id"], user_id=scope["user_id"])
+        version = _persist_workspace_with_version(
+            updated,
+            scope=scope,
+            change_summary=f"trader updated view {view_id}",
+            generated_by="user_modified",
+            changed_by=scope["user_id"],
+            reason="manual workspace view update",
+            affected_views=[view_id],
+        )
         etag = _workspace_etag(updated)
         response.headers["ETag"] = etag
         return {
             "data": updated,
-            "meta": _meta(etag=etag, workspace_id=workspace_id),
+            "meta": _meta(etag=etag, workspace_id=workspace_id, version_id=version["id"]),
         }
 
     # ------------------------------------------------------------------
@@ -1980,12 +2118,21 @@ def create_trading_room_router(
         view.setdefault("widgets", []).append(copy.deepcopy(widget))
         view["widgetCount"] = len(view.get("widgets") or [])
         updated = _touch_workspace(updated, now=now)
-        store.upsert_workspace(updated, tenant_id=scope["tenant_id"], user_id=scope["user_id"])
+        version = _persist_workspace_with_version(
+            updated,
+            scope=scope,
+            change_summary=f"trader added widget {widget.get('id')}",
+            generated_by="user_modified",
+            changed_by=scope["user_id"],
+            reason="manual workspace widget addition",
+            affected_views=[view_id],
+            affected_widgets=[str(widget.get("id") or "")],
+        )
         etag = _workspace_etag(updated)
         response.headers["ETag"] = etag
         return {
             "data": updated,
-            "meta": _meta(etag=etag, workspace_id=workspace_id),
+            "meta": _meta(etag=etag, workspace_id=workspace_id, version_id=version["id"]),
         }
 
     # ------------------------------------------------------------------
@@ -2045,12 +2192,398 @@ def create_trading_room_router(
         if errors:
             _validation_failed(errors)
         updated = _touch_workspace(updated, now=now)
-        store.upsert_workspace(updated, tenant_id=scope["tenant_id"], user_id=scope["user_id"])
+        version = _persist_workspace_with_version(
+            updated,
+            scope=scope,
+            change_summary=f"trader updated widget {widget_id}",
+            generated_by="user_modified",
+            changed_by=scope["user_id"],
+            reason="manual workspace widget update",
+            affected_views=[str((_view or {}).get("id") or "")],
+            affected_widgets=[widget_id],
+        )
         etag = _workspace_etag(updated)
         response.headers["ETag"] = etag
         return {
             "data": updated,
-            "meta": _meta(etag=etag, workspace_id=workspace_id),
+            "meta": _meta(etag=etag, workspace_id=workspace_id, version_id=version["id"]),
+        }
+
+    # ------------------------------------------------------------------
+    # POST /bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}/revision-proposals
+    # ------------------------------------------------------------------
+
+    @router.post(
+        "/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}/revision-proposals",
+        status_code=201,
+    )
+    def create_widget_revision_proposal(
+        workspace_id: str,
+        widget_id: str,
+        body: Dict[str, Any],
+        response: Response,
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        if idempotency_key:
+            _check_idempotency(
+                identity,
+                f"POST:/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}/revision-proposals",
+                idempotency_key,
+            )
+        workspace, scope = _load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
+        view, before_widget = _find_widget(workspace, widget_id)
+        if view is None or before_widget is None:
+            ErrorCode = _error_code_enum()
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"Widget {widget_id!r} not found",
+                "workspace_widget_not_found",
+            )
+
+        payload = body or {}
+        instruction = str(payload.get("instruction") or "").strip()
+        rationale = str(payload.get("rationale") or "").strip()
+        data_availability = str(payload.get("dataAvailability") or payload.get("data_availability") or "").strip()
+        proposed_spec = payload.get("proposedSpec") or payload.get("proposed_spec")
+        warnings = payload.get("warnings", [])
+        errors: List[str] = []
+        if not instruction:
+            errors.append("instruction is required")
+        if not rationale:
+            errors.append("rationale is required")
+        if data_availability not in {"complete", "partial", "unavailable"}:
+            errors.append("dataAvailability must be complete, partial, or unavailable")
+        if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
+            errors.append("warnings must be an array of strings")
+        if not isinstance(proposed_spec, dict):
+            errors.append("proposedSpec must be a TradingRoomWidgetSpec object")
+        else:
+            if proposed_spec.get("id") != widget_id:
+                errors.append("proposedSpec.id must match widgetId; keep-copy acceptance creates a new copy id")
+            errors.extend(_validate_widget(proposed_spec, now=utc_now(), path="proposedSpec"))
+        supplied_view_id = str(payload.get("viewId") or payload.get("view_id") or "").strip()
+        if supplied_view_id and supplied_view_id != view.get("id"):
+            errors.append("viewId must match the widget's current view")
+        supplied_status = str(payload.get("status") or "preview").strip()
+        if supplied_status != "preview":
+            errors.append("new WidgetRevisionProposal status must be preview")
+        if errors:
+            _validation_failed(errors)
+
+        proposal = {
+            "id": f"wrp_{uuid.uuid4().hex[:12]}",
+            "workspaceId": workspace_id,
+            "viewId": view["id"],
+            "widgetId": widget_id,
+            "instruction": instruction,
+            "beforeSpec": copy.deepcopy(before_widget),
+            "proposedSpec": copy.deepcopy(proposed_spec),
+            "rationale": rationale,
+            "warnings": list(warnings),
+            "dataAvailability": data_availability,
+            "status": "preview",
+        }
+        store.upsert_widget_revision_proposal(
+            proposal,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+        etag = _revision_proposal_etag(proposal)
+        response.headers["ETag"] = etag
+        return {
+            "data": proposal,
+            "meta": _meta(
+                etag=etag,
+                workspace_id=workspace_id,
+                widget_id=widget_id,
+                before_after_preview=True,
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # POST /bff/agora/trading-room/widget-revision-proposals/{proposal_id}/accept
+    # ------------------------------------------------------------------
+
+    @router.post("/bff/agora/trading-room/widget-revision-proposals/{proposal_id}/accept")
+    def accept_widget_revision_proposal(
+        proposal_id: str,
+        response: Response,
+        body: Optional[Dict[str, Any]] = None,
+        authorization: Optional[str] = Header(default=None),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        if idempotency_key:
+            _check_idempotency(
+                identity,
+                f"POST:/bff/agora/trading-room/widget-revision-proposals/{proposal_id}/accept",
+                idempotency_key,
+            )
+
+        proposal, proposal_scope = _load_revision_proposal_for_identity(
+            proposal_id=proposal_id,
+            identity=identity,
+        )
+        if proposal.get("status") != "preview":
+            ErrorCode = _error_code_enum()
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Only preview WidgetRevisionProposal resources can be accepted",
+                "widget_revision_proposal_not_preview",
+                details_extra={"proposal_status": proposal.get("status")},
+            )
+
+        workspace_id = proposal["workspaceId"]
+        workspace, scope = _load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
+        if scope != proposal_scope:
+            _raise_workspace_forbidden("widget_revision_proposal", proposal_id)
+        _require_workspace_etag(if_match, workspace)
+
+        body = body or {}
+        action = str(
+            body.get("acceptanceAction")
+            or body.get("acceptance_action")
+            or body.get("action")
+            or "apply"
+        ).strip()
+        keep_copy_actions = {
+            "keep_original_add_modified_copy",
+            "keep_original_and_add_modified_copy",
+            "add_modified_copy",
+            "keep_copy",
+        }
+        if action not in {"apply"} | keep_copy_actions:
+            _validation_failed(
+                ["acceptanceAction must be apply or keep_original_add_modified_copy"],
+                status_code=400,
+            )
+
+        current_view, current_widget = _find_widget(workspace, proposal["widgetId"])
+        if current_view is None or current_widget is None:
+            ErrorCode = _error_code_enum()
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"Widget {proposal['widgetId']!r} not found",
+                "workspace_widget_not_found",
+            )
+        if current_view.get("id") != proposal.get("viewId"):
+            _validation_failed(["proposal viewId no longer matches the widget location"], status_code=409)
+        if _stable_hash(current_widget) != _stable_hash(proposal["beforeSpec"]):
+            ErrorCode = _error_code_enum()
+            raise bff_error(
+                412,
+                ErrorCode.PRECONDITION_FAILED,
+                "Widget changed after the revision proposal preview was created.",
+                "widget_revision_before_spec_mismatch",
+                details_extra={"workspace_id": workspace_id, "widget_id": proposal["widgetId"]},
+            )
+
+        updated = copy.deepcopy(workspace)
+        updated_view, updated_widget = _find_widget(updated, proposal["widgetId"])
+        if updated_view is None or updated_widget is None:
+            _validation_failed(["proposal target widget no longer exists"], status_code=409)
+
+        proposed = copy.deepcopy(proposal["proposedSpec"])
+        affected_widgets = [proposal["widgetId"]]
+        copied_widget_id: Optional[str] = None
+        if action in keep_copy_actions:
+            copied_widget_id = str(
+                body.get("copyWidgetId")
+                or body.get("copy_widget_id")
+                or f"{proposal['widgetId']}_copy_{uuid.uuid4().hex[:6]}"
+            ).strip()
+            if not copied_widget_id:
+                _validation_failed(["copyWidgetId cannot be empty"], status_code=400)
+            if _find_widget(updated, copied_widget_id)[1] is not None:
+                ErrorCode = _error_code_enum()
+                raise bff_error(
+                    409,
+                    ErrorCode.RESOURCE_CONFLICT,
+                    f"Widget {copied_widget_id!r} already exists",
+                    "workspace_widget_already_exists",
+                )
+            proposed["id"] = copied_widget_id
+            updated_view.setdefault("widgets", []).append(proposed)
+            affected_widgets.append(copied_widget_id)
+            change_summary = (
+                f"accepted widget revision {proposal_id}; kept original "
+                f"{proposal['widgetId']} and added modified copy {copied_widget_id}"
+            )
+            applied_action = "keep_original_add_modified_copy"
+        else:
+            proposed["id"] = proposal["widgetId"]
+            for index, widget in enumerate(updated_view.get("widgets") or []):
+                if widget.get("id") == proposal["widgetId"]:
+                    updated_view["widgets"][index] = proposed
+                    break
+            change_summary = f"accepted widget revision {proposal_id} for {proposal['widgetId']}"
+            applied_action = "apply"
+
+        updated_view["widgetCount"] = len(updated_view.get("widgets") or [])
+        errors = _validate_view(updated_view, now=utc_now(), path="updatedView")
+        if errors:
+            _validation_failed(errors)
+
+        updated = _touch_workspace(updated, now=utc_now(), generated_by="trading_servant")
+        version = _persist_workspace_with_version(
+            updated,
+            scope=scope,
+            change_summary=change_summary,
+            generated_by="trading_servant",
+            changed_by="trading_servant",
+            reason=proposal["rationale"],
+            affected_views=[proposal["viewId"]],
+            affected_widgets=affected_widgets,
+            source_revision_proposal_id=proposal_id,
+        )
+        proposal["status"] = "accepted"
+        store.upsert_widget_revision_proposal(
+            proposal,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+
+        etag = _workspace_etag(updated)
+        response.headers["ETag"] = etag
+        return {
+            "data": {
+                "proposal": proposal,
+                "workspace": updated,
+                "version": version,
+                "appliedAction": applied_action,
+                "copiedWidgetId": copied_widget_id,
+            },
+            "meta": _meta(
+                etag=etag,
+                revision_proposal_etag=_revision_proposal_etag(proposal),
+                workspace_id=workspace_id,
+                proposal_id=proposal_id,
+                version_id=version["id"],
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # GET /bff/agora/trading-room/workspaces/{workspace_id}/versions
+    # ------------------------------------------------------------------
+
+    @router.get("/bff/agora/trading-room/workspaces/{workspace_id}/versions")
+    def list_workspace_versions(
+        workspace_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        _workspace, scope = _load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
+        versions = store.list_workspace_version_records(
+            workspace_id,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+        return {
+            "data": versions,
+            "meta": _meta(
+                workspace_id=workspace_id,
+                total=len(versions),
+                latest_version_id=versions[-1]["id"] if versions else None,
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # POST /bff/agora/trading-room/workspaces/{workspace_id}/versions/{version_id}/rollback
+    # ------------------------------------------------------------------
+
+    @router.post("/bff/agora/trading-room/workspaces/{workspace_id}/versions/{version_id}/rollback")
+    def rollback_workspace_version(
+        workspace_id: str,
+        version_id: str,
+        response: Response,
+        body: Optional[Dict[str, Any]] = None,
+        authorization: Optional[str] = Header(default=None),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        if idempotency_key:
+            _check_idempotency(
+                identity,
+                f"POST:/bff/agora/trading-room/workspaces/{workspace_id}/versions/{version_id}/rollback",
+                idempotency_key,
+            )
+        workspace, scope = _load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
+        _require_workspace_etag(if_match, workspace)
+        target = store.get_workspace_version_record(
+            workspace_id,
+            version_id,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+        if target is None:
+            ErrorCode = _error_code_enum()
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"TradingRoomDashboardVersion {version_id!r} not found",
+                "workspace_version_not_found",
+            )
+
+        restored_views = copy.deepcopy(target.get("views") or [])
+        validation_errors: List[str] = []
+        for view_index, view in enumerate(restored_views):
+            validation_errors.extend(_validate_view(view, now=utc_now(), path=f"views[{view_index}]"))
+        if validation_errors:
+            _validation_failed(validation_errors)
+
+        now = utc_now()
+        updated = copy.deepcopy(workspace)
+        updated["views"] = restored_views
+        updated["dashboardVersion"] = int(workspace.get("dashboardVersion") or 0) + 1
+        updated["generatedBy"] = "user_modified"
+        updated["status"] = "active"
+        updated["updatedAt"] = now
+        view_ids = [str(view.get("id") or "") for view in restored_views]
+        if updated.get("activeViewId") not in view_ids:
+            updated["activeViewId"] = view_ids[0] if view_ids else ""
+
+        reason = str((body or {}).get("reason") or "").strip() or f"rollback to {version_id}"
+        version = _persist_workspace_with_version(
+            updated,
+            scope=scope,
+            change_summary=f"rollback to dashboard version {target.get('dashboardVersion')}",
+            generated_by="user_modified",
+            changed_by=scope["user_id"],
+            reason=reason,
+            affected_views=view_ids,
+            affected_widgets=[
+                widget["id"]
+                for view in restored_views
+                for widget in view.get("widgets") or []
+            ],
+            rollback_of_version_id=version_id,
+        )
+        etag = _workspace_etag(updated)
+        response.headers["ETag"] = etag
+        return {
+            "data": {
+                "workspace": updated,
+                "version": version,
+                "rollbackOfVersion": target,
+            },
+            "meta": _meta(
+                etag=etag,
+                workspace_id=workspace_id,
+                version_id=version["id"],
+                rollback_of_version_id=version_id,
+                rollback_of_version_etag=_version_etag(target),
+            ),
         }
 
     # ------------------------------------------------------------------
