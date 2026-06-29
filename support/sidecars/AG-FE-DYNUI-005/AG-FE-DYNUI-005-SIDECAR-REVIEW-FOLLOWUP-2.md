@@ -10,7 +10,7 @@
 | Sidecar owner / reviewer | `Codex` / `Claude` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for Claude sidecar review after task PR publication |
+| Status | Review approved; owner closeout finalization in progress |
 
 This is a support-only follow-up packet for `AG-FE-DYNUI-005`. It refreshes the
 review/evidence handoff after the parent reached reviewer approval and the
@@ -39,6 +39,7 @@ downstream `AG-E2E-DYNUI-001`.
 | `.orchestrator/skills/worker-anchor-commit.md` | Task-owned support artifacts should be committed through a narrow task-scoped commit. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Final `done` requires merged PR and owner closeout, not a status-only flip. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-005-SIDECAR-REVIEW-FOLLOWUP-2` | This sidecar is active `in_progress`, owner `Codex`, reviewer `Claude`, helper parent `AG-FE-DYNUI-005`, artifact path is this packet, and `mutates_canonical` is `false`. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-005-SIDECAR-REVIEW-FOLLOWUP-2` after review approval | Sidecar is `review_approved`, owner `Codex`, reviewer `Claude`, and review file is `support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-REVIEW-FOLLOWUP-2-review.md`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-005` before branch fast-forward | Parent was `review_approved`; reviewer notes approved PR `#2622` with scoped tests, `build:agora`, browser smoke, and safety grep, while preserving E2E/persistence residual gaps. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-005` after branch fast-forward | The active/archive resolver returned `Unknown task: AG-FE-DYNUI-005`; no `AG-FE-DYNUI-005.json` archive was visible in status root or this worktree. |
 | `.orchestrator/task-briefs/ag_fe_dynui_005.md` on `origin/dev` | Parent task brief says status `review_approved` and next action was owner finalization from merged PR `#2622`, preserving residual E2E/persistence gaps. |
@@ -128,6 +129,7 @@ gh pr view 2622 --repo ajoe734/pantheon --json number,title,state,url,mergedAt,m
 gh pr view 2625 --repo ajoe734/pantheon --json number,title,state,url,mergedAt,mergeCommit,headRefName,baseRefName,statusCheckRollup,files
 gh pr view 2627 --repo ajoe734/pantheon --json number,title,state,url,mergedAt,mergeCommit,headRefName,baseRefName,statusCheckRollup,files
 gh pr view 2628 --repo ajoe734/pantheon --json number,title,state,url,mergedAt,mergeCommit,headRefName,baseRefName,statusCheckRollup,files
+gh pr view 2629 --repo ajoe734/pantheon --json number,title,state,url,mergedAt,mergeCommit,headRefName,baseRefName,statusCheckRollup,files
 git show --stat --format=fuller a04248ba --
 git show --stat --format=fuller b6c6678 --
 git diff --check
@@ -140,3 +142,13 @@ Focused result:
 - Branch was fast-forwarded to `origin/dev` before this packet was written.
 - `git diff --check` passed after this packet was written.
 - No runtime tests were run because this sidecar only adds support artifacts.
+
+## 8. Closeout Addendum
+
+Claude approved this sidecar review packet in
+`support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-REVIEW-FOLLOWUP-2-review.md`.
+The approval records that the packet accurately preserves parent PR evidence,
+maintains canonical/runtime/E2E boundaries, and requires no follow-up changes.
+Owner closeout is limited to publishing that review artifact, the updated
+task-scoped brief, and this support-packet status update before moving the task
+from `review_approved` to `done`.
