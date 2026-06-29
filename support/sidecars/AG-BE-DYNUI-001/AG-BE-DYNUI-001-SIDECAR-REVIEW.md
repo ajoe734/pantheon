@@ -26,8 +26,8 @@ handoff questions for the assigned sidecar reviewer.
 |---|---|
 | `.orchestrator/task-briefs/ag_be_dynui_001_sidecar_review.md` | This sidecar may create support material only and must not modify canonical truth or runtime implementation. |
 | Central `PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon` L0 state | `AG-BE-DYNUI-001-SIDECAR-REVIEW` is `in_progress`, owner `Codex`, reviewer `Codex2`, artifact `support/sidecars/AG-BE-DYNUI-001/AG-BE-DYNUI-001-SIDECAR-REVIEW.md`. |
-| Central `PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon` L0 state | Parent `AG-BE-DYNUI-001` is `review_approved`; review note says V11 workspace proposal schema/routes/store/tests were delivered with `37+18+2` tests passing. |
-| Current task branch | `task/AG-BE-DYNUI-001-SIDECAR-REVIEW`, based on the parent merge commit `cb8b0319` (`Merge pull request #2577 from ajoe734/task/AG-BE-DYNUI-001`). |
+| Central `PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon` archive | Parent `AG-BE-DYNUI-001` is `done`; closeout notes say implementation PR #2577 and closeout PR #2579 merged to `dev`, with focused validation `37 + 18 + 2` passed. |
+| Current task branch | `task/AG-BE-DYNUI-001-SIDECAR-REVIEW`, based on parent closeout merge `eac485c90360a93545b5bf023e9324ca50c1b342` (`Merge pull request #2579 from ajoe734/task/AG-BE-DYNUI-001`). |
 
 ## Sources Read
 
