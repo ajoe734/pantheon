@@ -173,9 +173,9 @@ def _write_headers(idempotency_key: str = "idem-001") -> dict:
     }
 
 
-def _client(store: TradingRoomStore) -> TestClient:
+def _client(store: TradingRoomStore, *, user_id: str = "user-001", tenant_id: str = "tenant-001") -> TestClient:
     def _extract_identity(_auth: str | None) -> dict:
-        return {"user_id": "user-001", "tenant_id": "tenant-001", "session_id": "session-001"}
+        return {"user_id": user_id, "tenant_id": tenant_id, "session_id": "session-001"}
 
     def _require_read_role(_identity: dict) -> None:
         pass
@@ -578,6 +578,245 @@ def test_withdraw_marks_pending_handoff_withdrawn():
 
 
 # ---------------------------------------------------------------------------
+# AG-BE-DYNUI-001: V11 Trading Room workspace proposals and workspace routes
+# ---------------------------------------------------------------------------
+
+def _workspace_schema_validate(payload: dict) -> None:
+    import jsonschema
+    from pathlib import Path
+
+    schema_path = Path(_WORKSPACE_SCHEMA_PATH).resolve()
+    with schema_path.open() as f:
+        schema = json.load(f)
+    chart_schema_path = schema_path.parent / "v2" / "chart_spec_v1.schema.json"
+    with chart_schema_path.open() as f:
+        chart_schema = json.load(f)
+    resolver = jsonschema.RefResolver(
+        base_uri=schema_path.parent.as_uri() + "/",
+        referrer=schema,
+        store={
+            chart_schema_path.as_uri(): chart_schema,
+            chart_schema.get("$id"): chart_schema,
+        },
+    )
+    jsonschema.Draft7Validator(schema, resolver=resolver).validate(payload)
+
+
+def _create_proposal(client: TestClient) -> dict:
+    resp = client.post(
+        "/bff/agora/strategies/strat-wb/trading-room/proposals",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-proposal-{uuid.uuid4()}"},
+        json={"strategyVersion": "V4", "personalizationHints": {"density": "compact"}},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["data"]
+
+
+def _accept_workspace(client: TestClient, proposal: dict) -> tuple[dict, str]:
+    resp = client.post(
+        f"/bff/agora/strategies/strat-wb/trading-room/proposals/{proposal['proposalId']}/accept",
+        headers={"Authorization": "Bearer test", "Idempotency-Key": f"idem-accept-{uuid.uuid4()}"},
+        json={"expectedStatus": "preview"},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["workspace"], resp.headers["etag"]
+
+
+def test_workspace_proposal_returns_complete_v11_view_set_and_schema_valid():
+    store = make_trading_room_store()
+    client = _client(store)
+    proposal = _create_proposal(client)
+
+    assert proposal["strategyId"] == "strat-wb"
+    assert proposal["strategyVersion"] == "V4"
+    assert proposal["status"] == "preview"
+    assert [view["id"] for view in proposal["views"]] == [
+        "strategy_overview",
+        "candidates_entry",
+        "winner_branch_intelligence",
+        "related_party_flow_migration",
+        "event_lead",
+        "positions_exit",
+        "evidence_monitoring",
+    ]
+    assert proposal["rationale"]
+    assert proposal["dataAvailability"]["status"] == "partial"
+    assert proposal["warnings"]
+    assert proposal["personalizationApplied"]["status"] == "applied"
+    assert all(view["widgetCount"] == len(view["widgets"]) for view in proposal["views"])
+    assert all(widget["widgetType"] and widget["chartSpec"]["kind"] for view in proposal["views"] for widget in view["widgets"])
+    _workspace_schema_validate(proposal)
+    print("✅ workspace proposal: complete V11 view set and schema-valid payload")
+
+
+def test_workspace_proposal_get_and_accept_materializes_active_workspace():
+    store = make_trading_room_store()
+    client = _client(store)
+    proposal = _create_proposal(client)
+
+    get_resp = client.get(
+        f"/bff/agora/strategies/strat-wb/trading-room/proposals/{proposal['proposalId']}",
+        headers={"Authorization": "Bearer test"},
+    )
+    assert get_resp.status_code == 200, get_resp.text
+    assert get_resp.headers["etag"].startswith('"tr-proposal:')
+    assert get_resp.json()["data"]["proposalId"] == proposal["proposalId"]
+
+    workspace, etag = _accept_workspace(client, proposal)
+    assert workspace["status"] == "active"
+    assert workspace["generatedBy"] == "trading_servant"
+    assert workspace["dashboardVersion"] == 1
+    assert workspace["activeViewId"] == "strategy_overview"
+    assert len(workspace["views"]) == 7
+    assert etag.startswith('"tr-workspace:')
+    _workspace_schema_validate(workspace)
+    print("✅ workspace accept: preview proposal materializes active workspace")
+
+
+def test_workspace_layout_requires_etag_and_supports_remove_restore():
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+    widget_id = "overview_candidate_funnel"
+
+    missing = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/layout",
+        headers={"Authorization": "Bearer test"},
+        json={"operations": [{"kind": "move_widget", "widgetId": widget_id, "payload": {"x": 1}}]},
+    )
+    assert missing.status_code == 428, missing.text
+
+    moved = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/layout",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-layout-move"},
+        json={"operations": [{"kind": "move_widget", "widgetId": widget_id, "payload": {"x": 1, "y": 1}}]},
+    )
+    assert moved.status_code == 200, moved.text
+    moved_workspace = moved.json()["data"]
+    assert moved_workspace["dashboardVersion"] == 2
+    moved_widget = next(w for v in moved_workspace["views"] for w in v["widgets"] if w["id"] == widget_id)
+    assert moved_widget["placement"]["x"] == 1
+    assert moved_widget["placement"]["y"] == 1
+
+    stale = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/layout",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-layout-stale"},
+        json={"operations": [{"kind": "resize_widget", "widgetId": widget_id, "payload": {"width": 5}}]},
+    )
+    assert stale.status_code == 412, stale.text
+
+    remove = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/layout",
+        headers={"Authorization": "Bearer test", "If-Match": moved.headers["etag"], "Idempotency-Key": "idem-layout-remove"},
+        json={"operations": [{"kind": "remove_widget", "widgetId": widget_id, "payload": {}}]},
+    )
+    assert remove.status_code == 200, remove.text
+    removed_widget = next(w for v in remove.json()["data"]["views"] for w in v["widgets"] if w["id"] == widget_id)
+    assert removed_widget["visible"] is False
+
+    restore = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/layout",
+        headers={"Authorization": "Bearer test", "If-Match": remove.headers["etag"], "Idempotency-Key": "idem-layout-restore"},
+        json={"operations": [{"kind": "add_registered_widget", "payload": {"widgetId": widget_id}}]},
+    )
+    assert restore.status_code == 200, restore.text
+    restored_widget = next(w for v in restore.json()["data"]["views"] for w in v["widgets"] if w["id"] == widget_id)
+    assert restored_widget["visible"] is True
+    print("✅ workspace layout: ETag, stale-write, remove, and restore semantics")
+
+
+def test_workspace_view_and_widget_mutations_are_registry_validated():
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+    view = dict(workspace["views"][0])
+    view["id"] = "custom_evidence"
+    view["title"] = "Custom Evidence"
+    view["order"] = 8
+    view["widgets"] = []
+    view["widgetCount"] = 0
+
+    add_view = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/views",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-add-view"},
+        json={"viewSpec": view},
+    )
+    assert add_view.status_code == 201, add_view.text
+
+    widget = dict(workspace["views"][0]["widgets"][0])
+    widget["id"] = "custom_candidate_funnel"
+    add_widget = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets",
+        headers={"Authorization": "Bearer test", "If-Match": add_view.headers["etag"], "Idempotency-Key": "idem-add-widget"},
+        json={"viewId": "custom_evidence", "widgetSpec": widget},
+    )
+    assert add_widget.status_code == 201, add_widget.text
+    custom_view = next(v for v in add_widget.json()["data"]["views"] if v["id"] == "custom_evidence")
+    assert custom_view["widgetCount"] == 1
+
+    bad_widget = dict(widget)
+    bad_widget["id"] = "bad_widget"
+    bad_widget["widgetType"] = "not_allowlisted"
+    bad = client.post(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets",
+        headers={"Authorization": "Bearer test", "If-Match": add_widget.headers["etag"], "Idempotency-Key": "idem-add-widget-bad"},
+        json={"viewId": "custom_evidence", "widgetSpec": bad_widget},
+    )
+    assert bad.status_code == 422, bad.text
+    assert "not found in widget_registry.v1" in bad.text
+    print("✅ workspace view/widget mutation: add routes and registry validation")
+
+
+def test_workspace_rejects_servant_direct_patch_and_code_injection():
+    store = make_trading_room_store()
+    client = _client(store)
+    workspace, etag = _accept_workspace(client, _create_proposal(client))
+    workspace_id = workspace["id"]
+    widget = workspace["views"][0]["widgets"][0]
+    widget_id = widget["id"]
+
+    servant = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}",
+        headers={"Authorization": "Bearer test", "If-Match": etag, "Idempotency-Key": "idem-servant-direct"},
+        json={"initiatedBy": "trading_servant", "title": "Servant direct mutation"},
+    )
+    assert servant.status_code == 409, servant.text
+    assert servant.json()["detail"]["reason"] == "servant_direct_widget_patch_not_allowed"
+
+    fresh = client.get(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}",
+        headers={"Authorization": "Bearer test"},
+    )
+    bad_chart = dict(widget["chartSpec"])
+    bad_chart["options"] = {"formatter": "<script>alert(1)</script>"}
+    injected = client.patch(
+        f"/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}",
+        headers={"Authorization": "Bearer test", "If-Match": fresh.headers["etag"], "Idempotency-Key": "idem-code-injection"},
+        json={"chartSpec": bad_chart},
+    )
+    assert injected.status_code == 422, injected.text
+    assert "Forbidden content pattern" in injected.text
+    print("✅ workspace widget patch: servant direct mutation and code injection rejected")
+
+
+def test_workspace_cross_user_read_is_forbidden():
+    store = make_trading_room_store()
+    owner_client = _client(store, user_id="owner-user", tenant_id="tenant-001")
+    other_client = _client(store, user_id="other-user", tenant_id="tenant-001")
+    workspace, _etag = _accept_workspace(owner_client, _create_proposal(owner_client))
+
+    resp = other_client.get(
+        f"/bff/agora/trading-room/workspaces/{workspace['id']}",
+        headers={"Authorization": "Bearer test"},
+    )
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"]["reason"] == "cross_user_workspace_access_forbidden"
+    print("✅ workspace scope: cross-user reads are forbidden")
+
+
+# ---------------------------------------------------------------------------
 # Regression: jsonschema compliance (Fix 1)
 # ---------------------------------------------------------------------------
 
@@ -592,6 +831,10 @@ _TRADING_INTENT_SCHEMA_PATH = os.path.join(
 _GOVERNED_HANDOFF_SCHEMA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "..", "..", "..", "specs", "agora", "v4", "governed_intent_handoff.schema.json",
+)
+_WORKSPACE_SCHEMA_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "..", "..", "specs", "agora", "trading_room_workspace.schema.json",
 )
 
 
@@ -739,6 +982,15 @@ def test_router_creation_smoke():
     assert "/bff/agora/trading-intents/{intent_id}" in routes
     assert "/bff/agora/trading-intents/{intent_id}/handoffs" in routes
     assert "/bff/agora/trading-intents/{intent_id}/withdraw" in routes
+    assert "/bff/agora/strategies/{strategy_id}/trading-room/proposals" in routes
+    assert "/bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}" in routes
+    assert "/bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/accept" in routes
+    assert "/bff/agora/trading-room/workspaces/{workspace_id}" in routes
+    assert "/bff/agora/trading-room/workspaces/{workspace_id}/layout" in routes
+    assert "/bff/agora/trading-room/workspaces/{workspace_id}/views" in routes
+    assert "/bff/agora/trading-room/workspaces/{workspace_id}/views/{view_id}" in routes
+    assert "/bff/agora/trading-room/workspaces/{workspace_id}/widgets" in routes
+    assert "/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}" in routes
     print(f"✅ router: created with {len(routes)} routes")
     print(f"   Routes: {sorted(routes)}")
 
@@ -777,6 +1029,12 @@ if __name__ == "__main__":
     test_handoff_rejects_mismatched_stage_type()
     test_handoff_requires_idempotency_key()
     test_withdraw_marks_pending_handoff_withdrawn()
+    test_workspace_proposal_returns_complete_v11_view_set_and_schema_valid()
+    test_workspace_proposal_get_and_accept_materializes_active_workspace()
+    test_workspace_layout_requires_etag_and_supports_remove_restore()
+    test_workspace_view_and_widget_mutations_are_registry_validated()
+    test_workspace_rejects_servant_direct_patch_and_code_injection()
+    test_workspace_cross_user_read_is_forbidden()
     test_model_dump_exclude_none_passes_schema()
     test_model_dump_without_exclude_none_emits_null_fields_that_fail_schema()
     test_store_rejects_invalid_no_order_route_proof()

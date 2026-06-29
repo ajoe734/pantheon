@@ -9,6 +9,7 @@ handoff record has the canonical no_order_route_proof for its schema.
 """
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, List, Optional
 
 
@@ -23,6 +24,8 @@ class TradingRoomStore:
         self._handoffs_by_intent: Dict[str, List[str]] = {}
         self._trader_decisions: Dict[str, List[Dict[str, Any]]] = {}
         self._idempotency_keys: Dict[str, bool] = {}
+        self._workspace_proposals: Dict[str, Dict[str, Any]] = {}
+        self._workspaces: Dict[str, Dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Decision events
@@ -194,6 +197,48 @@ class TradingRoomStore:
             return True
         self._idempotency_keys[composite] = True
         return False
+
+    # ------------------------------------------------------------------
+    # Trading Room workspace proposals and workspaces
+    # ------------------------------------------------------------------
+
+    def upsert_workspace_proposal(
+        self,
+        proposal: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        proposal_id = str(proposal["proposalId"])
+        self._workspace_proposals[proposal_id] = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "proposal": copy.deepcopy(proposal),
+        }
+        return copy.deepcopy(proposal)
+
+    def get_workspace_proposal_record(self, proposal_id: str) -> Optional[Dict[str, Any]]:
+        record = self._workspace_proposals.get(proposal_id)
+        return copy.deepcopy(record) if record is not None else None
+
+    def upsert_workspace(
+        self,
+        workspace: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        workspace_id = str(workspace["id"])
+        self._workspaces[workspace_id] = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "workspace": copy.deepcopy(workspace),
+        }
+        return copy.deepcopy(workspace)
+
+    def get_workspace_record(self, workspace_id: str) -> Optional[Dict[str, Any]]:
+        record = self._workspaces.get(workspace_id)
+        return copy.deepcopy(record) if record is not None else None
 
 
 def make_trading_room_store() -> TradingRoomStore:
