@@ -10,7 +10,7 @@
 **Sidecar owner:** `Codex2`  
 **Sidecar reviewer:** `Codex`  
 **Date:** `2026-06-29`  
-**Status:** `ready for review`
+**Status:** `review approved; owner closeout`
 
 > Scope constraint: support artifact only. This packet packages acceptance
 > criteria, dependency routing, blocker triggers, and verification guidance for
