@@ -26,6 +26,7 @@ Recorded by `Codex2` on `2026-06-29` for owner finalization.
 | Dev merge gate | Dev push workflow `Pantheon FE-BFF Integration Gate` run `28373203243` passed for merge commit `ff1b3a3bb744f40939a9c025bcef2b58ba796fb3`. |
 | Dev deploy | `Pantheon Dev FE Deploy` run `28373203144` passed for the same commit. |
 | Hosted deployment readback | `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json` reports commit `ff1b3a3bb744f40939a9c025bcef2b58ba796fb3`, source branch `dev`, `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, and `VITE_BFF_REAL_WRITES=false`. |
+| Pantheon closeout base | Closeout branch was refreshed over Pantheon `dev` merge `388207db03b6d8b595c0377b3f3d51d8099e5db7` after sidecar review approval PR #2615 merged. |
 | Pantheon closeout artifact | `support/evidence/AG-FE-DYNUI-004/owner-closeout.md` records full PR, review, workflow, deployment, validation, and boundary evidence. |
 
 Status closeout should run after this owner closeout evidence PR merges:

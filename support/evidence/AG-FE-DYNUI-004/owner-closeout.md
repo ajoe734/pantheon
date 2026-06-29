@@ -49,6 +49,14 @@ a4ccb61543b37ebb6ce35b91e3b2b7c558b3c460
 | Dev deploy | `Pantheon Dev FE Deploy` run `28373203144` completed `success` for the same merge commit. |
 | Hosted deployment readback | `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json` reports commit `ff1b3a3bb744f40939a9c025bcef2b58ba796fb3`, source branch `dev`, `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, and `VITE_BFF_REAL_WRITES=false`. |
 
+## Pantheon Closeout Base Refresh
+
+After closeout PR `#2616` opened, Pantheon `dev` advanced to merge commit
+`388207db03b6d8b595c0377b3f3d51d8099e5db7` through sidecar review approval PR
+`#2615`. The closeout branch was merged forward to that `dev` head before the
+final closeout evidence commit, so the owner closeout composes with the
+approved sidecar review record instead of remaining behind the merge target.
+
 ## Validation Recorded For The Parent PR
 
 The parent implementation commit and reviewer approval recorded these focused
