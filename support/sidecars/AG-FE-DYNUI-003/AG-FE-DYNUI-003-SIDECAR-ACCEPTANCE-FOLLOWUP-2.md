@@ -10,7 +10,7 @@
 | Sidecar owner / reviewer | `Codex` / `Codex2` |
 | Date | `2026-06-29` |
 | Mutates canonical truth | `false` |
-| Status | Ready for `Codex2` support review |
+| Status | `review_approved`; ready for owner closeout |
 
 This is a support-only follow-up packet. It does not replace the archived
 `AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE` packet, and it does not approve or
@@ -24,7 +24,7 @@ sidecar closed and while the parent implementation is still in progress.
 |---|---|---|
 | `AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE` | Archived `done`; PR `#2603` merged into Pantheon `dev` at `ffb5dc1cb8b4e711647bb579376c88cab2531d2d`. | Remains the main acceptance checklist for grid editor and personalization behavior. This follow-up adds current parent evidence routing and branch/readiness gates. |
 | `AG-FE-DYNUI-003` | Active `in_progress`; owner `Codex2`, reviewer `Codex`; execute-plans PR `#82` is merged into `dev`. | Parent implementation now has merged PR/check evidence, but still needs parent owner/reviewer status closeout before it can be accepted. |
-| `AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Active `in_progress`; support artifact is this file. | Provides a narrow handoff packet for `Codex2` review; it does not change canonical truth or parent code. |
+| `AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | `review_approved`; support artifact is this file. | Provides a narrow accepted support packet for owner closeout; it does not change canonical truth or parent code. |
 
 If this packet appears to conflict with L1/L2 canonical docs or the archived
 main acceptance packet, the canonical docs and archived main packet win. This
@@ -38,7 +38,7 @@ follow-up should then be corrected or reopened.
 | `.orchestrator/task-briefs/ag_fe_dynui_003_sidecar_acceptance_followup_2.md` | Scope is acceptance checklist, dependency map, and support packet only; canonical/runtime changes are out of scope; reviewer readback requires refreshing PR `#82` from open/in-progress evidence to merged evidence. |
 | `.orchestrator/skills/worker-anchor-commit.md` | Task-owned support/docs changes should be made durable through narrow commits. |
 | `.orchestrator/skills/task-closeout-finalization.md` | Final `done` closeout is reserved for owner finalization after review approval and merged task PR. |
-| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Active `in_progress`, owner `Codex`, reviewer `Codex2`, helper parent `AG-FE-DYNUI-003`, artifact path is this file, and `mutates_canonical` is `false`. |
+| `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2` | Closeout readback is `review_approved`, owner `Codex`, reviewer `Codex2`, helper parent `AG-FE-DYNUI-003`, artifact path is this file, and `mutates_canonical` is `false`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-003` | Parent remains active `in_progress`, owner `Codex2`, reviewer `Codex`; external execute-plans PR evidence has advanced to merged, but parent status has not yet been owner/reviewer-closed. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE` | Prior acceptance sidecar is archived `done` with `Codex2` review approval and merged PR `#2603`. |
 | `AI_NAME=Codex ./scripts/ai-status.sh show AG-FE-DYNUI-002` | Upstream proposal preview/workspace shell is archived `done`; execute-plans PR `#81` merged into `main` at `64a963119e85f2e91efbedbd83c4fbd97c7c2e20`. |
@@ -268,8 +268,8 @@ git diff --check -- .orchestrator/task-briefs/ag_fe_dynui_003_sidecar_acceptance
 Observed results:
 
 - Branch is `task/AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2`.
-- Sidecar is active `in_progress`, owner `Codex`, reviewer `Codex2`, and
-  support-only.
+- Sidecar is `review_approved`, owner `Codex`, reviewer `Codex2`, and
+  support-only; supervisor resumed the owner for finalization.
 - Parent `AG-FE-DYNUI-003` is active `in_progress`, owner `Codex2`, reviewer
   `Codex`; its execute-plans PR evidence is merged, but Pantheon task status is
   not yet closed.
@@ -298,11 +298,11 @@ Observed results:
 - No parent runtime tests were run by this sidecar because it changes support
   artifacts only.
 
-## 10. Reviewer Handoff Notes
+## 10. Closeout Notes
 
-**Reviewer:** `Codex2`
+**Reviewer:** `Codex2` approved this support packet for owner closeout.
 
-### What to verify
+### Reviewed support scope
 
 1. The packet stays support-only and does not redefine canonical contracts.
 2. The packet correctly treats the archived
@@ -317,16 +317,10 @@ Observed results:
    execute-plans `main`.
 5. Downstream AG-FE-DYNUI-004/005 and E2E scopes remain outside this parent.
 
-### Suggested reviewer command
+### Owner closeout command
 
 ```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh approve AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2 "Follow-up acceptance packet approved; support artifact refreshes AG-FE-DYNUI-003 evidence gates for merged execute-plans PR #82, successful integration-gate, and closed remote task branch while preserving the main-base composition note and without changing canonical truth or runtime."
-```
-
-If changes are required:
-
-```bash
-AI_NAME=Codex2 ./scripts/ai-status.sh reopen AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2 "Describe the exact packet corrections needed."
+AI_NAME=Codex ./scripts/ai-status.sh done AG-FE-DYNUI-003-SIDECAR-ACCEPTANCE-FOLLOWUP-2 "Follow-up acceptance packet approved and merged; support artifact refreshes AG-FE-DYNUI-003 evidence gates for merged execute-plans PR #82, successful integration-gate, and closed remote task branch while preserving the main-base composition note and without changing canonical truth or runtime."
 ```
 
 Prepared by `Codex` for the
