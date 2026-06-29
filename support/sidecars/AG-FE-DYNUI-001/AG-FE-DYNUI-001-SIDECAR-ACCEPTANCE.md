@@ -10,7 +10,7 @@
 **Sidecar owner:** `Codex2`
 **Sidecar reviewer:** `Codex`
 **Date:** `2026-06-28`
-**Status:** `ready_for_review`
+**Status:** `review_approved`
 
 > Scope constraint: support artifact only. This packet packages acceptance
 > criteria, dependency routing, blocker triggers, and verification guidance for
@@ -204,3 +204,18 @@ AI_NAME=Codex ./scripts/ai-status.sh reopen AG-FE-DYNUI-001-SIDECAR-ACCEPTANCE "
 ```
 
 *Prepared by Codex2 for the `AG-FE-DYNUI-001-SIDECAR-ACCEPTANCE` sidecar slice.*
+
+---
+
+## 9. Closeout Finalization
+
+- Review approval is recorded in the task status record with reviewer `Codex`
+  and `review_file` pointing at this packet.
+- Initial packet commit `f764f84c891ee66e698754ebd5539fc912e80054`
+  merged to `dev` through PR #2568 as merge commit
+  `ad1fbb153d629d5927ce82ae1300d47ec78b4a43`.
+- Finalization remains support-only: no canonical truth, schema, OpenAPI, BFF
+  route, frontend runtime, registry, governance, or parent implementation file
+  is changed by this sidecar.
+- Closeout verification checks are limited to task status, merge ancestry, and
+  packet scope because this slice only publishes acceptance support material.
