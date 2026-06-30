@@ -4,6 +4,7 @@ Owner: Codex2
 Reviewer: Claude
 Batch: 1
 Fleet lane: Frontend IA and route cleanup
+Status: done
 
 ## Problem
 
@@ -40,3 +41,26 @@ canonical `/management/deployments` family.
   has a production readiness note.
 - Tests cover route redirects and old aliases.
 - Hosted FE after merge proves the final paths.
+
+## Closeout Evidence
+
+Closed by `ajoe734/execute-plans` PR #120:
+`https://github.com/ajoe734/execute-plans/pull/120`.
+
+| Item | Evidence |
+|---|---|
+| Implementation commit | `806f53fe5e9ac6e0e909621ba0c13b775679adc7` |
+| FE merge/deploy commit | `6218e67d4119bcfc663681935d2a98e5af73e55a` |
+| Dev integration gate | `https://github.com/ajoe734/execute-plans/actions/runs/28452500411` |
+| Dev deploy | `https://github.com/ajoe734/execute-plans/actions/runs/28452499928` |
+| Hosted deployment | `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json` |
+| BFF health | `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz` |
+| Archive | `docs/04/pantheon_management_console_gap_2026-06-30/archive/mgmt-gap-001-closeout-2026-06-30.md` |
+
+Hosted browser probe after deploy proved:
+
+- `/management/control-room-legacy -> /management/cockpit`
+- `/management/deployment -> /management/deployments`
+- `/management/deployment/dep-9?tab=events -> /management/deployments/dep-9?tab=events`
+- primary nav excludes Formula Studio, Skill Sandbox, and loop subpages;
+  `/management/loops` remains.
