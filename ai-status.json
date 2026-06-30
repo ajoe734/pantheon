@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-06-27T06:45:10Z",
+  "updated_at": "2026-06-30T13:56:33Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -98,11 +98,12 @@
       "current_task_ids": [
         "LOOP-AUTO-002",
         "LOOP-AUTO-RT-001",
-        "LOOP-AUTO-DEP-001"
+        "LOOP-AUTO-DEP-001",
+        "MGMT-GAP-002"
       ],
       "branch": "task/LSP-002-V2",
       "next": "Assignment created",
-      "last_update": "2026-06-02T13:10:43Z"
+      "last_update": "2026-06-30T13:54:50Z"
     },
     {
       "name": "Gemini",
@@ -116,11 +117,12 @@
       "current_task_ids": [
         "LOOP-AUTO-SRC-003",
         "LOOP-AUTO-RT-002",
-        "LOOP-AUTO-EVO-003"
+        "LOOP-AUTO-EVO-003",
+        "MGMT-GAP-005"
       ],
       "branch": "feat/gemini-research-runtime",
       "next": "Assignment created",
-      "last_update": "2026-06-02T01:20:16Z"
+      "last_update": "2026-06-30T13:54:52Z"
     },
     {
       "name": "Codex",
@@ -130,13 +132,15 @@
         "schema",
         "acceptance"
       ],
-      "status": "ready",
+      "status": "waiting",
       "current_task_ids": [
-        "LOOP-AUTO-000"
+        "LOOP-AUTO-000",
+        "MGMT-GAP-004",
+        "MGMT-GAP-007"
       ],
       "branch": "task/ASST-OCGW-001",
       "next": "Assignment created",
-      "last_update": "2026-06-27T06:44:26Z"
+      "last_update": "2026-06-30T13:54:54Z"
     },
     {
       "name": "Codex2",
@@ -150,11 +154,12 @@
       "current_task_ids": [
         "LOOP-AUTO-001",
         "LOOP-AUTO-SRC-004",
-        "LOOP-AUTO-RT-005"
+        "LOOP-AUTO-RT-005",
+        "MGMT-GAP-001"
       ],
       "branch": "task/ASST-OCGW-004",
       "next": "Assignment created",
-      "last_update": "2026-06-02T03:56:50Z"
+      "last_update": "2026-06-30T13:54:46Z"
     },
     {
       "name": "Copilot",
@@ -185,11 +190,12 @@
       "current_task_ids": [
         "LOOP-AUTO-DEP-002",
         "LOOP-AUTO-TEL-003",
-        "LOOP-AUTO-EVO-001"
+        "LOOP-AUTO-EVO-001",
+        "MGMT-GAP-003"
       ],
       "branch": "feat/claude2-execution-control",
       "next": "Assignment created",
-      "last_update": "2026-06-02T04:46:37Z"
+      "last_update": "2026-06-30T13:54:49Z"
     },
     {
       "name": "Gemini2",
@@ -203,11 +209,12 @@
       "current_task_ids": [
         "LOOP-AUTO-RT-004",
         "LOOP-AUTO-TEL-005",
-        "LOOP-AUTO-EVO-005"
+        "LOOP-AUTO-EVO-005",
+        "MGMT-GAP-006"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
       "next": "Assignment created",
-      "last_update": "2026-06-01T00:47:46Z",
+      "last_update": "2026-06-30T13:54:53Z",
       "last_action_at": "2026-05-20T11:29:47Z",
       "last_action_note": "Manual ai-status sync by Claude: cleared ['LOVABLE-STRICT-PUBLISH', 'OSS-QUANTLIB-V2-001'] after push-auth failure."
     },
@@ -2506,6 +2513,248 @@
       ],
       "wave_id": "Wave 7 BFF Operator Truth",
       "mutates_canonical": true
+    },
+    {
+      "id": "MGMT-GAP-001",
+      "title": "Management route and IA cleanup",
+      "summary_zh": "清除 management console 真重複入口: control-room-legacy 不再 render 舊 ControlRoom; deployment/deployment/:id 改 canonical deployments redirect; 收斂一級 nav 中非 production 的 studios/empty registry/loop 子頁。",
+      "phase": "MGMT Console Production Gap / Batch 1 route IA",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "frontend-checkout:src/App.tsx",
+        "frontend-checkout:src/management/ManagementLayout.tsx",
+        "frontend-checkout:e2e",
+        "docs/04/pantheon_management_console_gap_2026-06-30"
+      ],
+      "acceptance": [
+        "control-room-legacy 不再 render 舊頁; deployment singular routes redirect; nav 收斂或每項有 production readiness; route tests + hosted probe 綠"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-30T13:54:46Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 1,
+      "fleet_lane": "frontend-route-ia",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+      "auto_generated": true
+    },
+    {
+      "id": "MGMT-GAP-003",
+      "title": "BFF management DTO contract hardening",
+      "summary_zh": "為 /bff/management/data-sources、permissions、memory-governance、consult-rules、/bff/lineage、/bff/workflows、/bff/hooks、/bff/knowledge 補齊 DTO 契約、degraded envelope、OpenAPI schema 與 contract tests。",
+      "phase": "MGMT Console Production Gap / Batch 2 BFF contracts",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "services/control-plane/bff",
+        "docs/04/pantheon_management_console_gap_2026-06-30"
+      ],
+      "acceptance": [
+        "所有端點 OpenAPI + contract test + hosted curl 200; 空資料為明確 degraded/unavailable 而不是 ambiguous []"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-30T13:54:49Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 2,
+      "fleet_lane": "bff-contract",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+      "auto_generated": true
+    },
+    {
+      "id": "MGMT-GAP-002",
+      "title": "Frontend canonical management read wiring",
+      "summary_zh": "將 Data Sources、permissions、memory、consult、lineage、workflows、hooks、ranking 改接 canonical management endpoints；移除 strict live seed/mock 偽裝。",
+      "phase": "MGMT Console Production Gap / Batch 2 FE canonical reads",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-GAP-003"
+      ],
+      "artifacts": [
+        "frontend-checkout:src/lib/bff-v1",
+        "frontend-checkout:src/management",
+        "frontend-checkout:e2e",
+        "docs/04/pantheon_management_console_gap_2026-06-30"
+      ],
+      "acceptance": [
+        "hosted browser probe 捕捉每頁 intended endpoint; success/degraded 測試綠; 無 seed/mock 被顯示為 live truth"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-30T13:54:50Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 2,
+      "fleet_lane": "frontend-bff-integration",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+      "auto_generated": true
+    },
+    {
+      "id": "MGMT-GAP-004",
+      "title": "Management command receipts and write truth",
+      "summary_zh": "盤點 ranking/governance/workflows/hooks/settings/detail panels 的 write-like CTA；全部改為 governed command receipt/audit flow，或明確 disabled non-production。",
+      "phase": "MGMT Console Production Gap / Batch 3 command truth",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-GAP-002",
+        "MGMT-GAP-003"
+      ],
+      "artifacts": [
+        "frontend-checkout:src/management",
+        "frontend-checkout:src/lib/bff",
+        "services/control-plane/bff",
+        "docs/04/pantheon_management_console_gap_2026-06-30"
+      ],
+      "acceptance": [
+        "無 in-scope CTA 只靠 toast/local state 成功; dry-run/real-writes-off probe 證明無隱性 side effect; high-risk action 有 confirm + command/audit evidence"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-30T13:54:51Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 3,
+      "fleet_lane": "command-governance",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+      "auto_generated": true
+    },
+    {
+      "id": "MGMT-GAP-005",
+      "title": "Studios and capabilities to production level",
+      "summary_zh": "Formula Studio/Skill Sandbox 接真 backtest/skill runner 或從一級 nav 降級；Tools/MCP/Skills create/import/publish/retire actions 全部 governed 或 disabled。",
+      "phase": "MGMT Console Production Gap / Batch 4 studios capabilities",
+      "owner": "Gemini",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-GAP-003"
+      ],
+      "artifacts": [
+        "frontend-checkout:src/management/pages/studios",
+        "frontend-checkout:src/management/pages",
+        "services/control-plane/bff",
+        "docs/04/pantheon_management_console_gap_2026-06-30"
+      ],
+      "acceptance": [
+        "hosted probe 無 mock trace/backtest 被標成 live success; runner contracts 有 tests/limits; capability actions 有 command/job id 或 disabled"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-30T13:54:52Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 4,
+      "fleet_lane": "runtime-capability",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+      "auto_generated": true
+    },
+    {
+      "id": "MGMT-GAP-006",
+      "title": "Hosted management production acceptance harness",
+      "summary_zh": "建立 hosted management probe: visible nav、hidden aliases、canonical final paths、endpoint capture、strict-live no seed fallback、write CTA mock detection、console/CORS failures。",
+      "phase": "MGMT Console Production Gap / Batch 5 acceptance harness",
+      "owner": "Gemini2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-GAP-001",
+        "MGMT-GAP-002",
+        "MGMT-GAP-004",
+        "MGMT-GAP-005"
+      ],
+      "artifacts": [
+        "frontend-checkout:scripts",
+        "frontend-checkout:e2e",
+        "scripts/aggregate-release-gate.mjs",
+        "docs/04/pantheon_management_console_gap_2026-06-30/archive"
+      ],
+      "acceptance": [
+        "probe 覆蓋所有 visible management nav + hidden aliases; 輸出 JSON/Markdown evidence; release gate 可 fail legacy render/missing endpoint/mock write success"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-30T13:54:53Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 5,
+      "fleet_lane": "integration-qa",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+      "auto_generated": true
+    },
+    {
+      "id": "MGMT-GAP-007",
+      "title": "Management production closeout and archive proof",
+      "summary_zh": "緊盯 MGMT-GAP 全任務到 done/superseded；確認 PR/merge/deploy/probe evidence；歸檔最終 production proof 與 residual risk owner/expiry。",
+      "phase": "MGMT Console Production Gap / Batch 5 oversight closeout",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "todo",
+      "depends_on": [
+        "MGMT-GAP-006"
+      ],
+      "artifacts": [
+        "ai-status.json",
+        "docs/04/pantheon_management_console_gap_2026-06-30/archive",
+        "docs/bff/execution-tasks/2026-06-30-management-console-production-gap"
+      ],
+      "acceptance": [
+        "所有 MGMT-GAP 任務 done 或 reviewed superseded; final archive 含 FE deploy/BFF/OpenAPI/hosted probe/PR SHA; closeout 清楚列 completion 或 blocker"
+      ],
+      "next": "Assignment created",
+      "last_update": "2026-06-30T13:54:54Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 5,
+      "fleet_lane": "oversight-closeout",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+      "auto_generated": true
     }
   ],
   "handoffs": [
