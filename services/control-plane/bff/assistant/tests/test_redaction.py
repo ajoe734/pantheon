@@ -80,6 +80,22 @@ def test_redact_payload_preserves_structured_shape_and_counts_fields() -> None:
     assert result.summary.categories["database_credentials"] >= 1
 
 
+def test_redact_payload_keeps_reauth_tracking_id_but_not_general_session_id() -> None:
+    payload = {
+        "reauth_session_id": "claude_reauth_123",
+        "reauthSessionId": "claude_reauth_123",
+        "session_id": "browser-session-should-redact",
+        "access_token": "provider-token-should-redact",
+    }
+
+    result = redact_payload(payload)
+
+    assert result.value["reauth_session_id"] == "claude_reauth_123"
+    assert result.value["reauthSessionId"] == "claude_reauth_123"
+    assert result.value["session_id"] == "[REDACTED_SESSION]"
+    assert result.value["access_token"] == "[REDACTED_TOKEN]"
+
+
 class BrokenMapping(dict):
     def items(self):  # type: ignore[override]
         raise RuntimeError("cannot iterate")
