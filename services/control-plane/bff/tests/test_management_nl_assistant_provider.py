@@ -582,6 +582,49 @@ def test_openclaw_client_starts_provider_reauth_device_flow(monkeypatch) -> None
     assert recorded["timeout"] == 4.0
 
 
+def test_openclaw_client_starts_claude_provider_reauth_device_flow(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "claude_reauth_1",
+                    "provider": "claude",
+                    "status": "pending",
+                    "verification_uri": "https://claude.ai/login",
+                    "user_code": None,
+                },
+            },
+            status_code=202,
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).start_assistant_provider_reauth(
+            provider="claude",
+            payload={"reason": "expired"},
+            operator_id="operator-1",
+            trace_id="trace-claude-reauth-1",
+        )
+
+    assert result["status"] == "ok"
+    assert result["data"]["reauth_session_id"] == "claude_reauth_1"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/claude/reauth"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-claude-reauth-1"
+    assert recorded["body"] == {"reason": "expired", "provider": "claude"}
+    assert recorded["timeout"] == 4.0
+
+
 def test_openclaw_client_reads_provider_reauth_status(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
     recorded: dict[str, Any] = {}
@@ -610,6 +653,40 @@ def test_openclaw_client_reads_provider_reauth_status(monkeypatch) -> None:
     assert result["data"]["status"] == "completed"
     assert recorded["url"] == (
         "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/codex/reauth/codex_reauth_1"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+
+
+def test_openclaw_client_reads_claude_provider_reauth_status(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "claude_reauth_1",
+                    "provider": "claude",
+                    "status": "completed",
+                    "readiness": {"ready": True},
+                },
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).get_assistant_provider_reauth_status(
+            provider="claude",
+            session_id="claude_reauth_1",
+            operator_id="operator-1",
+        )
+
+    assert result["data"]["status"] == "completed"
+    assert result["data"]["provider"] == "claude"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/claude/reauth/claude_reauth_1"
     )
     assert recorded["headers"]["X-operator-id"] == "operator-1"
 

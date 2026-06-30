@@ -624,6 +624,88 @@ def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
     assert status_resp.json()["data"]["operator"] == "op-security"
 
 
+def test_provider_reauth_delegates_claude_to_openclaw_adapter(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    calls = []
+    status_calls = []
+
+    def reauth(payload, operator_id, trace_id):
+        calls.append((payload, operator_id, trace_id))
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": "claude_reauth_1",
+                "provider": "claude",
+                "status": "pending",
+                "verification_uri": "https://claude.ai/login",
+                "credential_exchange": {
+                    "bff_handles_credentials": False,
+                    "frontend_handles_credentials": False,
+                },
+            },
+        }
+
+    def reauth_status(provider, session_id, operator_id):
+        status_calls.append((provider, session_id, operator_id))
+        return {
+            "status": "ok",
+            "data": {
+                "reauth_session_id": session_id,
+                "provider": provider,
+                "status": "completed",
+                "readiness": {"ready": True},
+                "operator": operator_id,
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        provider_reauth=reauth,
+        provider_reauth_status=reauth_status,
+    )
+    activate_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "mode": "kernel_debug",
+            "reason": "reauth provider",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert activate_resp.status_code == 202, activate_resp.text
+
+    resp = client.post(
+        "/bff/assistant/provider/reauth",
+        json={"provider": "claude", "reason": "expired", "traceId": "trace-claude-reauth-1"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 202, resp.text
+    assert len(calls) == 1
+    payload, operator_id, trace_id = calls[0]
+    assert operator_id == "op-security"
+    assert trace_id == "trace-claude-reauth-1"
+    assert payload["provider"] == "claude"
+    assert payload["mode"] == "kernel_debug"
+    assert payload["operator_role"] == "operator"
+    assert payload["confirmed"] is True
+    assert payload["control_mode"]["active"] is True
+    assert resp.json()["data"]["provider"] == "claude"
+    assert resp.json()["data"]["verification_uri"] == "https://claude.ai/login"
+
+    status_resp = client.get(
+        "/bff/assistant/provider/reauth/claude_reauth_1?provider=claude",
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert status_resp.status_code == 200
+    assert status_resp.json()["data"]["status"] == "completed"
+    assert status_resp.json()["data"]["provider"] == "claude"
+    assert status_calls == [("claude", "claude_reauth_1", "op-security")]
+
+
 def test_provider_registration_requires_control_and_delegates(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     calls = []
