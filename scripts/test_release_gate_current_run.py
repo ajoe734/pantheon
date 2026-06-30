@@ -582,7 +582,7 @@ def test_release_gate_ignores_step_outcome_evidence_outside_current_run(tmp_path
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -882,7 +882,7 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -936,7 +936,7 @@ def test_release_gate_accepts_strict_sse_soak_evidence(tmp_path: Path) -> None:
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "pass"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:true observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp_path: Path) -> None:
@@ -958,7 +958,7 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -1012,7 +1012,7 @@ def test_release_gate_rejects_strict_sse_soak_with_only_two_reconnect_cycles(tmp
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:2/5 attemptDetails:false attemptLineage:false observed:2/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:2/5 attemptDetails:false attemptLineage:false observed:2/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp_path: Path) -> None:
@@ -1034,7 +1034,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -1091,7 +1091,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_detail_proof(tmp
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:false attemptLineage:false observed:5/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:false attemptLineage:false observed:5/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_lineage(tmp_path: Path) -> None:
@@ -1113,7 +1113,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -1167,7 +1167,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_reconnect_attempt_li
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tmp_path: Path) -> None:
@@ -1189,7 +1189,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -1243,7 +1243,7 @@ def test_release_gate_rejects_strict_sse_soak_with_unlinked_event_type_detail(tm
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:5/5 attemptDetails:true attemptLineage:false observed:5/5 observedSequence:true duplicates:0 missingReplay:0"
 
 
 def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_path: Path) -> None:
@@ -1265,7 +1265,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "missing_expected_event_ids": [],
@@ -1316,7 +1316,7 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
         if check["label"] == "Authenticated: strict SSE soak observes heartbeat and no duplicate replay."
     )
     assert sse_check["status"] == "fail"
-    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/1 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
+    assert sse_check["note"] == "strict:true soak:75s heartbeat:2/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
 def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> None:
@@ -1347,7 +1347,7 @@ def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> Non
     assert "--approval-race-id" in text
     assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
     assert "scripts/probe_bff_sse_stream.py" in text
-    assert "--soak-min-heartbeats 1" in text
+    assert "--soak-min-heartbeats 2" in text
     assert "--reconnect-attempts 7" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text
@@ -1401,7 +1401,7 @@ def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> 
     assert "--approval-race-id" in text
     assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
     assert "scripts/probe_bff_sse_stream.py" in text
-    assert "--soak-min-heartbeats 1" in text
+    assert "--soak-min-heartbeats 2" in text
     assert "--reconnect-attempts 7" in text
     assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
     assert "execute-plans/scripts/aggregate-release-gate.mjs" in text

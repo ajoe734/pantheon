@@ -246,7 +246,7 @@ jobs:
             --base-url "$PANTHEON_BFF_BASE_URL" \
             --strict-live-evidence \
             --soak-seconds "${{ inputs.soak_seconds }}" \
-            --soak-min-heartbeats 1 \
+            --soak-min-heartbeats 2 \
             --reconnect-attempts 7 \
             --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json"
 

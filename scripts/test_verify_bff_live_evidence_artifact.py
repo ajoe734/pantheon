@@ -506,14 +506,14 @@ def write_strict_sse_json(artifact_dir: Path) -> None:
                 "auth_source": {"kind": "provided_bearer", "token_sha256_12": "abcdef123456"},
                 "strict_live_evidence_requirements": {
                     "min_soak_seconds": 75,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "min_reconnect_attempts": 5,
                 },
                 "summary": {"passed": True},
                 "soak": {
                     "enabled": True,
                     "seconds": 75.0,
-                    "min_heartbeats": 1,
+                    "min_heartbeats": 2,
                     "bearer_polyfill": {
                         "ok": True,
                         "request_headers": {
@@ -695,6 +695,24 @@ def test_verifier_rejects_auth_json_from_stale_sha_even_when_summary_passes(tmp_
         item = payload["criteria"][key]
         assert item["status"] == "fail"
         assert "runProvenance:sha" in item["note"]
+
+
+def test_verifier_rejects_strict_sse_with_single_heartbeat_even_when_artifact_min_is_one(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    write_passing_artifact(artifact_dir)
+    sse_path = artifact_dir / "BFF-CONSOL-011-sse-replay-smoke.json"
+    sse = json.loads(sse_path.read_text(encoding="utf-8"))
+    sse["strict_live_evidence_requirements"]["min_heartbeats"] = 1
+    sse["soak"]["min_heartbeats"] = 1
+    sse["soak"]["bearer_polyfill"]["blocks"]["heartbeat_count"] = 1
+    sse_path.write_text(json.dumps(sse), encoding="utf-8")
+
+    result = run_verifier(artifact_dir)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    item = payload["criteria"]["sse_reconnect_soak"]
+    assert item["status"] == "fail"
+    assert "heartbeat:1/2" in item["note"]
 
 
 def test_verifier_rejects_sse_json_from_stale_run_id_even_when_summary_passes(tmp_path: Path) -> None:
@@ -1597,7 +1615,7 @@ def test_verifier_rejects_sse_without_heartbeat_or_duplicate_proof(tmp_path: Pat
     payload = json.loads(result.stdout)
     item = payload["criteria"]["sse_reconnect_soak"]
     assert item["status"] == "fail"
-    assert "heartbeat:0/1" in item["note"]
+    assert "heartbeat:0/2" in item["note"]
     assert "duplicates:1" in item["note"]
 
 

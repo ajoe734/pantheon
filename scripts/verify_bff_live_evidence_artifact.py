@@ -21,6 +21,7 @@ CURRENT_RUN_OUTPUT_SCOPE = ".lovable/audits/current-run"
 MAX_CURRENT_RUN_ARTIFACT_FILES = 32
 MAX_CURRENT_RUN_ARTIFACT_BYTES = 8 * 1024 * 1024
 MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES = 4 * 1024 * 1024
+STRICT_LIVE_SSE_MIN_HEARTBEATS = 2
 ALLOWED_LIVE_EVIDENCE_ENVIRONMENTS = {"dev", "staging-live"}
 ALLOWED_DEV_REFS = {"dev", "refs/heads/dev"}
 GIT_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z", re.IGNORECASE)
@@ -1625,7 +1626,7 @@ def sse_detail_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
     seconds = safe_float(soak.get("seconds"))
     min_soak_seconds = max(75.0, safe_float(requirements.get("min_soak_seconds")))
     min_heartbeats = max(
-        1,
+        STRICT_LIVE_SSE_MIN_HEARTBEATS,
         safe_int(requirements.get("min_heartbeats")),
         safe_int(soak.get("min_heartbeats") or bearer_soak.get("min_heartbeats")),
     )
