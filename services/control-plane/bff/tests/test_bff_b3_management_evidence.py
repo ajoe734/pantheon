@@ -87,6 +87,18 @@ def _evidence_client() -> Iterator[TestClient]:
                                 },
                             ],
                         },
+                        "criteria": {
+                            "rbac_matrix": {
+                                "status": "pass",
+                                "label": "RBAC matrix",
+                                "note": "all role/path cases matched expected status",
+                            },
+                            "current_run_only": {
+                                "status": "pass",
+                                "label": "Current-run artifact scope",
+                                "note": "2 artifact file(s); current-run scope only",
+                            },
+                        },
                         "created_at": "2026-05-23T09:00:00Z",
                     },
                     "evref-b3-alert-001": {
@@ -191,6 +203,8 @@ def test_management_evidence_preserves_artifact_manifest_from_store() -> None:
             "release-gate-summary.json",
         ]
         assert all(entry["current_run_allowed"] is True for entry in manifest["files"])
+        assert item["criteria"]["rbac_matrix"]["status"] == "pass"
+        assert item["criteria"]["current_run_only"]["note"] == "2 artifact file(s); current-run scope only"
 
 
 @contextmanager
@@ -229,10 +243,16 @@ def _write_live_evidence_verifier(path: Path, *, manifest: dict) -> None:
                 "overall": "pass",
                 "artifact_manifest": manifest,
                 "criteria": {
+                    "rbac_matrix": {
+                        "status": "fail",
+                        "label": "RBAC matrix",
+                        "note": "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON",
+                    },
                     "current_run_only": {
                         "status": "pass",
                         "label": "Evidence written to `.lovable/audits/current-run`.",
-                    }
+                        "note": "4 artifact file(s); current-run scope only",
+                    },
                 },
             },
             indent=2,
@@ -313,6 +333,9 @@ def test_management_evidence_projects_current_run_verifier_when_store_missing(tm
     assert item["overall"] == "pass"
     assert item["artifactManifest"] == manifest
     assert item["artifact_manifest"] == manifest
+    assert item["criteria"]["rbac_matrix"]["status"] == "fail"
+    assert item["criteria"]["rbac_matrix"]["note"] == "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON"
+    assert item["criteria"]["current_run_only"]["status"] == "pass"
 
 
 def test_management_evidence_ignores_malformed_current_run_verifier(tmp_path: Path) -> None:

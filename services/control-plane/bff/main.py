@@ -8834,6 +8834,9 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
         cloned_manifest = _management_json_clone(artifact_manifest)
         public_item["artifactManifest"] = cloned_manifest
         public_item["artifact_manifest"] = cloned_manifest
+    criteria = item.get("criteria")
+    if isinstance(criteria, dict):
+        public_item["criteria"] = _management_json_clone(criteria)
     if "overall" in item:
         public_item["overall"] = item.get("overall")
     return public_item
@@ -8883,6 +8886,9 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
         manifest = payload.get("artifact_manifest")
         if not isinstance(manifest, dict):
             continue
+        criteria = payload.get("criteria")
+        if not isinstance(criteria, dict):
+            criteria = {}
         try:
             mtime_captured_at = datetime.fromtimestamp(
                 candidate.stat().st_mtime,
@@ -8920,6 +8926,7 @@ def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
                 "route_href": str(candidate),
                 "overall": payload.get("overall"),
                 "artifact_manifest": _management_json_clone(manifest),
+                "criteria": _management_json_clone(criteria),
                 "created_at": captured_at,
             }
         ]

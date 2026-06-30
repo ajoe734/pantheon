@@ -25,6 +25,13 @@ export interface LiveEvidenceManifestFile {
   oversized: boolean;
 }
 
+export interface LiveEvidenceCriterionView {
+  key: string;
+  label: string;
+  status: string;
+  note: string;
+}
+
 export interface LiveEvidenceManifestView {
   id: string;
   title: string;
@@ -35,6 +42,7 @@ export interface LiveEvidenceManifestView {
   maxTotalBytes: number;
   maxFileBytes: number;
   files: LiveEvidenceManifestFile[];
+  criteria: LiveEvidenceCriterionView[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -111,6 +119,52 @@ function findArtifactManifest(value: unknown): Record<string, unknown> | null {
   return null;
 }
 
+function findVerificationCriteria(value: unknown): unknown {
+  const record = asRecord(value);
+  for (const key of ["criteria", "verificationCriteria"]) {
+    const candidate = record[key];
+    if (Array.isArray(candidate) && candidate.length > 0) return candidate;
+    const criteria = asRecord(candidate);
+    if (Object.keys(criteria).length > 0) return criteria;
+  }
+  for (const key of ["payload", "data", "metadata", "meta", "details", "resolvedLink", "resolved_link"]) {
+    const nested = findVerificationCriteria(record[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function normalizeCriterion(key: string, value: unknown): LiveEvidenceCriterionView | null {
+  if (typeof value === "string") {
+    return {
+      key,
+      label: labelFrom(key),
+      status: textFrom(value, "unknown"),
+      note: "",
+    };
+  }
+  const record = asRecord(value);
+  const normalizedKey = textFrom(record.key ?? record.id ?? key, key);
+  if (!normalizedKey && Object.keys(record).length === 0) return null;
+  return {
+    key: normalizedKey,
+    label: textFrom(record.label ?? record.title ?? labelFrom(normalizedKey), labelFrom(normalizedKey)),
+    status: textFrom(record.status ?? record.state ?? record.outcome, "unknown"),
+    note: textFrom(record.note ?? record.reason ?? record.message ?? record.detail ?? record.details, ""),
+  };
+}
+
+function normalizeCriteria(value: unknown): LiveEvidenceCriterionView[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item, index) => normalizeCriterion(`criterion-${index}`, item))
+      .filter((item): item is LiveEvidenceCriterionView => item !== null);
+  }
+  return Object.entries(asRecord(value))
+    .map(([key, item]) => normalizeCriterion(key, item))
+    .filter((item): item is LiveEvidenceCriterionView => item !== null);
+}
+
 function manifestTitle(item: ManagementEvidenceItem, fallbackId: string): string {
   return textFrom(
     item.title ?? item.displayLabel ?? item.display_label ?? item.refId ?? item.ref_id ?? item.id,
@@ -124,6 +178,7 @@ function normalizeManifestView(item: ManagementEvidenceItem, index: number): Liv
   const files = normalizeManifestFiles(manifest.files);
   const limits = asRecord(manifest.limits);
   const itemPayload = asRecord(item.payload);
+  const criteria = normalizeCriteria(findVerificationCriteria(item));
   const id = textFrom(item.refId ?? item.ref_id ?? item.id, `live-evidence-${index}`);
   return {
     id,
@@ -135,6 +190,7 @@ function normalizeManifestView(item: ManagementEvidenceItem, index: number): Liv
     maxTotalBytes: asNumber(limits.max_total_bytes ?? manifest.max_total_bytes ?? manifest.maxTotalBytes, 0),
     maxFileBytes: asNumber(limits.max_file_bytes ?? manifest.max_file_bytes ?? manifest.maxFileBytes, 0),
     files,
+    criteria,
   };
 }
 
@@ -218,6 +274,33 @@ function ManifestRow({ manifest }: { manifest: LiveEvidenceManifestView }) {
           <div className="font-medium">{manifest.maxFileBytes ? formatBytes(manifest.maxFileBytes) : "-"}</div>
         </div>
       </div>
+
+      {manifest.criteria.length > 0 ? (
+        <div className="mt-3 overflow-x-auto" data-testid={`live-evidence-criteria-${manifest.id}`}>
+          <table className="w-full min-w-[560px] text-left text-xs">
+            <thead className="text-muted-foreground">
+              <tr>
+                <th className="py-1 pr-3 font-medium">Criterion</th>
+                <th className="py-1 pr-3 font-medium">Status</th>
+                <th className="py-1 pr-3 font-medium">Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {manifest.criteria.map((criterion) => (
+                <tr key={criterion.key} className="border-t border-border">
+                  <td className="py-1.5 pr-3 font-medium">{criterion.label}</td>
+                  <td className="py-1.5 pr-3">
+                    <Badge variant="outline" className={cn("capitalize", statusTone(criterion.status))}>
+                      {labelFrom(criterion.status)}
+                    </Badge>
+                  </td>
+                  <td className="py-1.5 pr-3 text-muted-foreground break-words">{criterion.note || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
 
       {manifest.files.length > 0 ? (
         <div className="mt-3 overflow-x-auto">
