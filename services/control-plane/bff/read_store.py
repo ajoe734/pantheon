@@ -12946,6 +12946,9 @@ class ReadSurfaceStore:
         artifact_manifest = evidence_ref.get("artifact_manifest")
         if isinstance(artifact_manifest, dict):
             payload["artifact_manifest"] = json.loads(json.dumps(artifact_manifest))
+        criteria = evidence_ref.get("criteria")
+        if isinstance(criteria, dict):
+            payload["criteria"] = json.loads(json.dumps(criteria))
         if "overall" in evidence_ref:
             payload["overall"] = evidence_ref.get("overall")
         if include_scope_metadata:

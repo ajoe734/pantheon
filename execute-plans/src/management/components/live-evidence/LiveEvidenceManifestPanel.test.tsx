@@ -23,6 +23,18 @@ const response: ManagementEvidenceResponse = {
       credibility: { tier: "primary", verified: true },
       redacted: false,
       overall: "fail",
+      criteria: {
+        rbac_matrix: {
+          status: "fail",
+          label: "RBAC matrix",
+          note: "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON",
+        },
+        current_run_only: {
+          status: "pass",
+          label: "Current-run artifact scope",
+          note: "4 artifact file(s); current-run scope only",
+        },
+      },
       artifact_manifest: {
         file_count: 4,
         total_bytes: 39730,
@@ -125,6 +137,20 @@ describe("LiveEvidenceManifestPanel", () => {
       "release-gate-summary.json",
       "release-gate-summary.md",
     ]);
+    expect(manifests[0].criteria).toEqual([
+      {
+        key: "rbac_matrix",
+        label: "RBAC matrix",
+        status: "fail",
+        note: "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON",
+      },
+      {
+        key: "current_run_only",
+        label: "Current-run artifact scope",
+        status: "pass",
+        note: "4 artifact file(s); current-run scope only",
+      },
+    ]);
   });
 
   it("renders manifest file counts, byte limits, current-run scope, and file paths", async () => {
@@ -146,6 +172,10 @@ describe("LiveEvidenceManifestPanel", () => {
     expect(within(manifest).getByTestId("live-evidence-current-run-BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY").textContent).toContain("Current-run 4/4");
     expect(within(manifest).getByText("BFF-LIVE-EVIDENCE-PREFLIGHT.json")).toBeTruthy();
     expect(within(manifest).getByText("release-gate-summary.json")).toBeTruthy();
+    expect(within(manifest).getByText("RBAC matrix")).toBeTruthy();
+    expect(within(manifest).getByText("missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON")).toBeTruthy();
+    expect(within(manifest).getByText("Current-run artifact scope")).toBeTruthy();
+    expect(within(manifest).getByText("4 artifact file(s); current-run scope only")).toBeTruthy();
     expect(within(manifest).getAllByText("current-run")).toHaveLength(4);
     expect(within(manifest).getAllByText("clean")).toHaveLength(4);
   });
