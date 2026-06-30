@@ -504,7 +504,7 @@ services:
       OPENCLAW_LIVE_ADAPTER_ENABLED: "false"
       OPENCLAW_CANARY_ADAPTER_ENABLED: "false"
       OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
-      OPENCLAW_ALLOWED_TOOLS: ${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}
+      OPENCLAW_ALLOWED_TOOLS: ${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.provider.reauth,assistant.provider.register,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}
       OPENCLAW_BROKER_SIDECAR_URL: http://broker:8102
       OPENCLAW_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal

@@ -54,6 +54,7 @@ def _control_mode_client(
     mfa_verified: bool = False,
     prepare_repair_worktree=None,
     provider_list=None,
+    provider_register=None,
     provider_reauth=None,
     provider_reauth_status=None,
 ) -> TestClient:
@@ -70,6 +71,7 @@ def _control_mode_client(
         bff_error=bff_main._bff_error,
         control_mode_store=store,
         provider_list=provider_list,
+        provider_register=provider_register,
         prepare_repair_worktree=prepare_repair_worktree,
         provider_reauth=provider_reauth,
         provider_reauth_status=provider_reauth_status,
@@ -620,6 +622,75 @@ def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
     assert status_resp.status_code == 200
     assert status_resp.json()["data"]["status"] == "completed"
     assert status_resp.json()["data"]["operator"] == "op-security"
+
+
+def test_provider_registration_requires_control_and_delegates(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    calls = []
+
+    def register(payload, operator_id, trace_id):
+        calls.append((payload, operator_id, trace_id))
+        return {
+            "status": "ok",
+            "data": {
+                "provider": "gemini_cli",
+                "provider_name": "Gemini CLI",
+                "status": "registered",
+                "ready": False,
+                "reauth_supported": False,
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        provider_register=register,
+    )
+
+    denied = client.post(
+        "/bff/assistant/providers",
+        json={"provider": "gemini_cli", "providerName": "Gemini CLI"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert denied.status_code == 409
+
+    activate_resp = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "mode": "kernel_debug",
+            "reason": "register provider",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert activate_resp.status_code == 202, activate_resp.text
+
+    resp = client.post(
+        "/bff/assistant/providers",
+        json={
+            "provider": "gemini_cli",
+            "providerName": "Gemini CLI",
+            "model": "gemini-2.5-pro",
+            "traceId": "trace-register-provider-1",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert resp.status_code == 201, resp.text
+    assert len(calls) == 1
+    payload, operator_id, trace_id = calls[0]
+    assert operator_id == "op-security"
+    assert trace_id == "trace-register-provider-1"
+    assert payload["provider"] == "gemini_cli"
+    assert payload["providerName"] == "Gemini CLI"
+    assert payload["model"] == "gemini-2.5-pro"
+    assert payload["mode"] == "kernel_debug"
+    assert payload["operator_role"] == "operator"
+    assert payload["confirmed"] is True
+    assert payload["control_mode"]["active"] is True
+    assert resp.json()["data"]["provider"] == "gemini_cli"
 
 
 def test_provider_reauth_response_redacts_adapter_credential_leak(monkeypatch) -> None:

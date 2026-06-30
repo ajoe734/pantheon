@@ -86,7 +86,7 @@ Use this when you can access the host path that backs the container mount.
 3. Refresh Claude on the host:
 
    ```bash
-   sudo -u pantheon-assistant env CLAUDE_CONFIG_DIR=/srv/pantheon-assistant/.claude claude login
+   sudo -u pantheon-assistant env CLAUDE_CONFIG_DIR=/srv/pantheon-assistant/.claude claude auth login
    sudo -u pantheon-assistant env CLAUDE_CONFIG_DIR=/srv/pantheon-assistant/.claude claude -p "Reply with exactly: smoke-ok"
    ```
 
@@ -113,7 +113,7 @@ mounted credential directory.
 3. Refresh Claude inside the adapter container:
 
    ```bash
-   docker compose exec openclaw-gateway-adapter sh -lc 'test "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}" = rw && CLAUDE_CONFIG_DIR="${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}" claude login'
+   docker compose exec openclaw-gateway-adapter sh -lc 'test "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}" = rw && CLAUDE_CONFIG_DIR="${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}" claude auth login'
    ```
 
 4. Re-run `./scripts/openclaw-assistant-provider-smoke.sh`.
