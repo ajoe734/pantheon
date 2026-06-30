@@ -18,6 +18,7 @@ on:
         options:
           - auto
           - root
+          - bff
           - control
           - exec
           - all
@@ -84,7 +85,7 @@ jobs:
       - name: Validate target and compose contract
         run: |
           case "${TARGET_ENV}:${TARGET_COMPONENT}" in
-            dev:auto|dev:root)
+            dev:auto|dev:root|dev:bff)
               docker compose -f docker-compose.yml config --quiet
               ;;
             staging-live:auto|staging-live:control|staging-live:exec|staging-live:all)
