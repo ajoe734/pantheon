@@ -635,11 +635,13 @@ def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
     assert payload["operator_role"] == "operator"
     assert payload["confirmed"] is True
     assert payload["control_mode"] == {"active": False, "mode": "user", "activation_id": None}
+    reauth_session_id = resp.json()["data"]["reauth_session_id"]
+    assert reauth_session_id == "codex_reauth_1"
     assert resp.json()["data"]["verification_uri"] == "https://auth.openai.com/device"
     assert resp.json()["data"]["credential_exchange"]["bff_handles_credentials"] is False
 
     status_resp = client.get(
-        "/bff/assistant/provider/reauth/codex_reauth_1?provider=codex",
+        f"/bff/assistant/provider/reauth/{reauth_session_id}?provider=codex",
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert status_resp.status_code == 200
@@ -707,10 +709,12 @@ def test_provider_reauth_delegates_claude_to_openclaw_adapter(monkeypatch) -> No
     assert payload["confirmed"] is True
     assert payload["control_mode"] == {"active": False, "mode": "user", "activation_id": None}
     assert resp.json()["data"]["provider"] == "claude"
+    reauth_session_id = resp.json()["data"]["reauth_session_id"]
+    assert reauth_session_id == "claude_reauth_1"
     assert resp.json()["data"]["verification_uri"] == "https://claude.ai/login"
 
     status_resp = client.get(
-        "/bff/assistant/provider/reauth/claude_reauth_1?provider=claude",
+        f"/bff/assistant/provider/reauth/{reauth_session_id}?provider=claude",
         headers=OPERATOR_TOOL_HEADERS,
     )
     assert status_resp.status_code == 200
@@ -821,6 +825,7 @@ def test_provider_reauth_response_redacts_adapter_credential_leak(monkeypatch) -
     )
 
     assert resp.status_code == 202, resp.text
+    assert resp.json()["data"]["reauth_session_id"] == "codex_reauth_leak"
     rendered = repr(resp.json())
     assert "provider-token-should-not-leak" not in rendered
     assert "refresh-token-should-not-leak" not in rendered

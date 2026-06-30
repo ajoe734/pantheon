@@ -228,6 +228,9 @@ def _redact_value(value: JsonValue, *, stats: _RedactionStats, path: tuple[str, 
         result: dict[Any, Any] = {}
         for key, child in value.items():
             key_label = str(key)
+            if _is_public_reauth_tracking_key(key_label):
+                result[key] = _redact_value(child, stats=stats, path=(*path, key_label))
+                continue
             category = _category_for_key(key_label)
             if category:
                 result[key] = _redact_sensitive_field(key_label, child, category=category, stats=stats)
@@ -260,6 +263,11 @@ def _category_for_key(key: str) -> str | None:
         if pattern.search(normalized):
             return category
     return None
+
+
+def _is_public_reauth_tracking_key(key: str) -> bool:
+    normalized = key.strip().replace("-", "_").lower()
+    return normalized in {"reauth_session_id", "reauthsessionid"}
 
 
 def _redact_auth_header_line(match: re.Match[str]) -> str:
