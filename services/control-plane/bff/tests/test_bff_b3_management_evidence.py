@@ -371,6 +371,25 @@ def test_management_evidence_preserves_capability_redaction() -> None:
         assert item["reason"] == "insufficient_capability"
 
 
+def test_knowledge_evidence_detail_exposes_linked_object_summary() -> None:
+    with _evidence_client() as client:
+        response = client.get(
+            "/api/v1/knowledge/evidence/evref-b3-alert-001",
+            headers=ADMIN_HEADERS,
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["ref_id"] == "evref-b3-alert-001"
+        assert payload["linked_object_summary"] == {
+            "entity_type": "artifact",
+            "entity_ref": "artifact-b3-alpha",
+            "display_label": "Runtime artifact",
+        }
+        assert payload["resolved_link"]["route_href"] == "/alerts/risk-alpha"
+        assert payload["meta"]["surfaces"]["evidence_ref_detail"] in {"ok", "degraded"}
+
+
 def test_management_evidence_requires_read_authentication() -> None:
     with _evidence_client() as client:
         response = client.get("/bff/management/evidence")

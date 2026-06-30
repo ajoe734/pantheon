@@ -17101,6 +17101,7 @@ async def get_evidence_ref_detail(
         "link_type": evidence_ref.get("link_type"),
         "credibility": json.loads(json.dumps(evidence_ref.get("credibility") or {})),
         "resolved_link": json.loads(json.dumps(evidence_ref.get("resolved_link") or {})),
+        "linked_object_summary": json.loads(json.dumps(evidence_ref.get("linked_object_summary") or {})),
         "linked_decisions": linked_decisions,
         "source_note_context": json.loads(json.dumps(evidence_ref.get("source_note_context"))),
         "source_memory_context": json.loads(json.dumps(evidence_ref.get("source_memory_context"))),
