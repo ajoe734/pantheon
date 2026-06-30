@@ -37,7 +37,7 @@ DEFAULT_OUTPUT = "support/evidence/BFF-CONSOL-011-sse-replay-smoke.json"
 DEFAULT_CHANNEL = "approval"
 DEFAULT_COOKIE_NAME = "pantheon_session"
 STRICT_LIVE_SOAK_MIN_SECONDS = 75.0
-STRICT_LIVE_SOAK_MIN_HEARTBEATS = 1
+STRICT_LIVE_SOAK_MIN_HEARTBEATS = 2
 STRICT_LIVE_MIN_RECONNECT_ATTEMPTS = 5
 SSE_HEADER_KEYS = (
     "Content-Type",
@@ -820,7 +820,7 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Optional long-running SSE soak duration. Use >=35s to observe server heartbeat.",
     )
-    parser.add_argument("--soak-min-heartbeats", type=int, default=1)
+    parser.add_argument("--soak-min-heartbeats", type=int, default=2)
     parser.add_argument(
         "--reconnect-attempts",
         type=int,
@@ -1053,7 +1053,7 @@ def main() -> int:
         "commands": [
             "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> "
             "scripts/probe_bff_sse_stream.py --base-url <bff-url> "
-            "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 1 "
+            "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 2 "
             "--reconnect-attempts 7"
         ],
         "publish": published_events,
