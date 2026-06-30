@@ -52699,9 +52699,34 @@ async def bff_approvals_batch_decide(
 @app.post("/bff/incidents/{id}/resolve", status_code=202)
 @app.post("/bff/incidents/{id}/rollback-deployment", status_code=202)
 @app.post("/bff/incidents/{id}/start-mitigation", status_code=202)
-async def sem_final_generic_id_command_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_operator_role(_extract_identity(authorization))
-    return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": utc_now()}})
+async def sem_final_generic_id_command_alias(
+    id: str,
+    request: Request,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+):
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    snapshot_at = utc_now()
+    if _request_dry_run_requested(x_dry_run):
+        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        route_path = str(getattr(request.scope.get("route"), "path", "") or request.url.path)
+        return _dry_run_success_response(
+            {
+                "id": id,
+                "status": "accepted",
+                "route": route_path,
+                "params": jsonable_encoder(payload or {}),
+                "submitted_by": identity.operator_id,
+            },
+            snapshot_at=snapshot_at,
+            idempotency_key=resolved_key,
+            evidence_kind="generic_id_command.preview",
+        )
+    return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": snapshot_at}})
 
 
 @app.post("/bff/artifacts", status_code=201)
