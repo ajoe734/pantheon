@@ -554,6 +554,10 @@ services:
       PORT: "8102"
       BROKER_PAPER_ENABLED: "${BROKER_PAPER_ENABLED:-false}"
       BROKER_PAPER_STORE_PATH: /data/broker/paper_orders.jsonl
+      BROKER_SHIOAJI_SANDBOX_ENABLED: "${BROKER_SHIOAJI_SANDBOX_ENABLED:-false}"
+      BROKER_SHIOAJI_API_KEY: "${BROKER_SHIOAJI_API_KEY:-}"
+      BROKER_SHIOAJI_SECRET_KEY: "${BROKER_SHIOAJI_SECRET_KEY:-}"
+      BROKER_TW_QUOTE_SEED: "${BROKER_TW_QUOTE_SEED:-2330,2317,2454}"
     volumes:
       - broker-data:/data/broker
     ports:
