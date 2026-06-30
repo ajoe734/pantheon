@@ -80,3 +80,16 @@ def test_nonprod_deploy_prunes_dev_docker_storage_before_root_build() -> None:
         deploy.index("    prune_dev_docker_storage_for_build")
         < deploy.index("docker compose -p pantheon -f docker-compose.yml up -d --build")
     )
+
+
+def test_nonprod_deploy_prunes_dev_postgres_telemetry_before_root_build() -> None:
+    deploy = _read("scripts/deploy_nonprod_vm.sh")
+
+    assert "PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE" in deploy
+    assert "prune_dev_management_ai_telemetry_for_disk" in deploy
+    assert "TRUNCATE TABLE %I.%I" in deploy
+    assert "telemetry_events" in deploy
+    assert (
+        deploy.index("    prune_dev_management_ai_telemetry_for_disk")
+        < deploy.index("docker compose -p pantheon -f docker-compose.yml up -d --build")
+    )
