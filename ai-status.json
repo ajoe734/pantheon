@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-06-30T13:56:33Z",
+  "updated_at": "2026-06-30T14:45:55Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -154,12 +154,11 @@
       "current_task_ids": [
         "LOOP-AUTO-001",
         "LOOP-AUTO-SRC-004",
-        "LOOP-AUTO-RT-005",
-        "MGMT-GAP-001"
+        "LOOP-AUTO-RT-005"
       ],
       "branch": "task/ASST-OCGW-004",
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:46Z"
+      "next": "MGMT-GAP-001 closed by execute-plans PR #120; continue remaining LOOP assignments.",
+      "last_update": "2026-06-30T14:45:55Z"
     },
     {
       "name": "Copilot",
@@ -2521,7 +2520,7 @@
       "phase": "MGMT Console Production Gap / Batch 1 route IA",
       "owner": "Codex2",
       "reviewer": "Claude",
-      "status": "todo",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
         "frontend-checkout:src/App.tsx",
@@ -2532,12 +2531,29 @@
       "acceptance": [
         "control-room-legacy 不再 render 舊頁; deployment singular routes redirect; nav 收斂或每項有 production readiness; route tests + hosted probe 綠"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:46Z",
+      "next": "Closed by execute-plans PR #120; deployed commit 6218e67d4119bcfc663681935d2a98e5af73e55a verified on pantheon-dev-fe.",
+      "last_update": "2026-06-30T14:45:55Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
         "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "completion_evidence": {
+        "implementation_repo": "ajoe734/execute-plans",
+        "implementation_pr": "https://github.com/ajoe734/execute-plans/pull/120",
+        "implementation_commit": "806f53fe5e9ac6e0e909621ba0c13b775679adc7",
+        "merge_commit": "6218e67d4119bcfc663681935d2a98e5af73e55a",
+        "dev_deploy_run": "https://github.com/ajoe734/execute-plans/actions/runs/28452499928",
+        "dev_integration_gate_run": "https://github.com/ajoe734/execute-plans/actions/runs/28452500411",
+        "deployment_json": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json",
+        "deployed_at": "20260630T143840Z",
+        "bff_healthz": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz",
+        "hosted_probe": [
+          "/management/control-room-legacy -> /management/cockpit",
+          "/management/deployment -> /management/deployments",
+          "/management/deployment/dep-9?tab=events -> /management/deployments/dep-9?tab=events",
+          "primary nav excludes /management/studios/formula, /management/studios/skill-sandbox, /management/loops/research, /management/loops/execution, /management/loops/optimization; /management/loops remains"
+        ]
       },
       "delivery_layer": "primary",
       "mutates_canonical": true,

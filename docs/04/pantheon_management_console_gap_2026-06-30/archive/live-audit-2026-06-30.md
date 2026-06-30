@@ -91,6 +91,11 @@ The following source checks were taken from active FE `origin/dev`.
 
 Hosted route probe results from the re-audit:
 
+Update: `MGMT-GAP-001` closed the route/IA defects from this section in
+`ajoe734/execute-plans` PR #120 and deployed FE commit
+`6218e67d4119bcfc663681935d2a98e5af73e55a`. See
+`archive/mgmt-gap-001-closeout-2026-06-30.md` for the post-merge hosted probe.
+
 | Route | Final route | Observed page | Action |
 |---|---|---|---|
 | `/management` | `/management/cockpit` | Pathreon Management cockpit | keep redirect |
