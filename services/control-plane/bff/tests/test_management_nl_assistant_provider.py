@@ -614,6 +614,51 @@ def test_openclaw_client_reads_provider_reauth_status(monkeypatch) -> None:
     assert recorded["headers"]["X-operator-id"] == "operator-1"
 
 
+def test_openclaw_client_registers_assistant_provider_metadata(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "provider": "gemini_cli",
+                    "provider_name": "Gemini CLI",
+                    "status": "registered",
+                    "ready": False,
+                },
+            },
+            status_code=201,
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).register_assistant_provider(
+            {
+                "provider": "gemini_cli",
+                "providerName": "Gemini CLI",
+                "model": "gemini-2.5-pro",
+                "mode": "kernel_debug",
+                "operator_role": "operator",
+            },
+            operator_id="operator-1",
+            trace_id="trace-provider-register-1",
+        )
+
+    assert result["status"] == "ok"
+    assert recorded["url"] == "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers"
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-provider-register-1"
+    assert recorded["headers"]["X-operator-role"] == "operator"
+    assert recorded["headers"]["X-assistant-mode"] == "kernel_debug"
+    assert recorded["body"]["provider"] == "gemini_cli"
+    assert recorded["body"]["model"] == "gemini-2.5-pro"
+
+
 def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     fake = FakeProviderClient()

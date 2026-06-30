@@ -24,7 +24,7 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["environment"]["OPENCLAW_CAPITAL_BINDING_ENABLED"] == "false"
     assert (
         adapter["environment"]["OPENCLAW_ALLOWED_TOOLS"]
-        == "${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}"
+        == "${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.provider.reauth,assistant.provider.register,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}"
     )
     assert adapter["ports"] == ["${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"]
     assert adapter["cap_add"] == ["SYS_ADMIN"]
@@ -100,7 +100,7 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     broker = services["broker"]
     assert broker["build"]["dockerfile"] == "services/broker/Dockerfile"
     assert broker["environment"]["PORT"] == "8102"
-    assert broker["environment"]["BROKER_PAPER_ENABLED"] == "false"
+    assert broker["environment"]["BROKER_PAPER_ENABLED"] == "${BROKER_PAPER_ENABLED:-false}"
     assert "profiles" not in broker
 
     smoke = services["smoke-stack"]

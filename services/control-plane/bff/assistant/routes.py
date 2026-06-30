@@ -79,6 +79,7 @@ OpenClawToolPolicy = Callable[[], Dict[str, Any]]
 OpenClawEffectiveTools = Callable[[str], Dict[str, Any]]
 AuthorizeAssistantSkill = Callable[[str, Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 PrepareRepairWorktree = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
+ProviderRegister = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 ProviderReauth = Callable[[Dict[str, Any], str, Optional[str]], Dict[str, Any]]
 ProviderReauthStatus = Callable[[str, str, str], Dict[str, Any]]
 
@@ -116,6 +117,7 @@ def create_assistant_router(
     openclaw_effective_tools: Optional[OpenClawEffectiveTools] = None,
     authorize_assistant_skill: Optional[AuthorizeAssistantSkill] = None,
     prepare_repair_worktree: Optional[PrepareRepairWorktree] = None,
+    provider_register: Optional[ProviderRegister] = None,
     provider_reauth: Optional[ProviderReauth] = None,
     provider_reauth_status: Optional[ProviderReauthStatus] = None,
 ) -> APIRouter:
@@ -466,6 +468,52 @@ def create_assistant_router(
                 field="openclaw_adapter",
             )
         return {"status": "ok", "data": [provider_readiness()]}
+
+    @router.post("/providers", status_code=201)
+    async def register_assistant_provider(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Register assistant provider metadata through the OpenClaw adapter."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        control_status = _require_active_control_mode(
+            identity,
+            _control_mode_store,
+            bff_error=bff_error,
+        )
+        _require_provider_reauth_control(control_status, bff_error=bff_error)
+        if provider_register is None:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Assistant provider registration is not configured",
+                "OpenClaw adapter provider registration is not configured for this BFF.",
+                field="openclaw_adapter",
+            )
+
+        request_payload = dict(payload or {})
+        request_payload["mode"] = str(control_status.get("mode") or "")
+        request_payload["operator_role"] = _operator_role_from_identity(identity)
+        request_payload["confirmed"] = True
+        request_payload["control_mode"] = {
+            "active": True,
+            "mode": control_status.get("mode"),
+            "activation_id": control_status.get("activation_id") or control_status.get("activationId"),
+        }
+        trace_id = str(request_payload.get("traceId") or request_payload.get("trace_id") or "").strip() or None
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        registered = provider_register(request_payload, actor_id, trace_id)
+        if isinstance(registered, dict) and isinstance(registered.get("data"), dict):
+            return {
+                "data": registered["data"],
+                "meta": {
+                    "openclawAdapterStatus": registered.get("status"),
+                    "openclaw_adapter_status": registered.get("status"),
+                },
+            }
+        return {"data": registered}
 
     # ------------------------------------------------------------------
     # SA/SD generation and signed dev task packet bridge

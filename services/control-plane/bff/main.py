@@ -53420,6 +53420,21 @@ def _assistant_prepare_repair_worktree(
         raise _openclaw_client_error(exc) from exc
 
 
+def _assistant_provider_register(
+    payload: Dict[str, Any],
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().register_assistant_provider(
+            payload=payload,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
 def _assistant_provider_reauth(
     payload: Dict[str, Any],
     operator_id: str,
@@ -53499,6 +53514,7 @@ def _include_assistant_routes() -> None:
             openclaw_effective_tools=_assistant_openclaw_effective_tools,
             authorize_assistant_skill=_assistant_authorize_skill,
             prepare_repair_worktree=_assistant_prepare_repair_worktree,
+            provider_register=_assistant_provider_register,
             provider_reauth=_assistant_provider_reauth,
             provider_reauth_status=_assistant_provider_reauth_status,
         )

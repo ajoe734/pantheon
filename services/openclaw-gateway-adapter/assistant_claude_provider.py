@@ -11,8 +11,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import threading
+import time
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
@@ -24,9 +29,48 @@ from assistant_credential_mounts import (
 from assistant_provider_usage import provider_usage_snapshot
 
 _DEFAULT_TIMEOUT = int(os.getenv("ASSISTANT_CLAUDE_PROVIDER_TIMEOUT", "60"))
+_DEFAULT_REAUTH_CAPTURE_TIMEOUT_SECONDS = 20
+_DEFAULT_REAUTH_MAX_WAIT_SECONDS = 900
+_DEFAULT_REAUTH_POLL_INTERVAL_SECONDS = 5
 _BINARY_NAME = "claude"
 _BINARY_ENV = "PANTHEON_ASSISTANT_CLAUDE_BIN"
 _PROVIDER_NAME = "claude"
+_RUNTIME = "openclaw_gateway_cli_mount"
+
+PopenFunc = Callable[..., subprocess.Popen[str]]
+ClockFunc = Callable[[], datetime]
+
+
+class ClaudeProviderError(RuntimeError):
+    """Raised when Claude CLI provider auth cannot complete safely."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status_code: int = 500,
+        retryable: bool = False,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+        self.retryable = retryable
+        self.details = dict(details or {})
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "status": "provider_error",
+            "provider": _PROVIDER_NAME,
+            "runtime": _RUNTIME,
+            "error_code": self.code,
+            "message": str(self),
+            "retryable": self.retryable,
+        }
+        if self.details:
+            payload["details"] = self.details
+        return payload
 
 
 @dataclass(frozen=True)
@@ -63,9 +107,15 @@ class AssistantClaudeProvider:
         environ: Mapping[str, str] | None = None,
         *,
         mounts: AssistantCredentialMounts | None = None,
+        popen_func: PopenFunc | None = None,
+        clock: ClockFunc | None = None,
     ) -> None:
         self._environ = dict(environ if environ is not None else os.environ)
         self._mounts = mounts or AssistantCredentialMounts(self._environ)
+        self._popen = popen_func or subprocess.Popen
+        self._clock = clock or _utc_now
+        self._reauth_lock = threading.Lock()
+        self._reauth_sessions: dict[str, dict[str, Any]] = {}
 
     def readiness(self, *, auth_probe: bool = False) -> dict[str, Any]:
         checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -80,7 +130,7 @@ class AssistantClaudeProvider:
         base = {
             "provider": _PROVIDER_NAME,
             "provider_name": _PROVIDER_NAME,
-            "runtime": "openclaw_gateway_cli_mount",
+            "runtime": _RUNTIME,
             "checked_at": checked_at,
             "binary_path": binary or self._configured_binary(),
             "version": "unknown",
@@ -156,6 +206,276 @@ class AssistantClaudeProvider:
     def _configured_binary(self) -> str:
         return self._environ.get(_BINARY_ENV, _BINARY_NAME).strip() or _BINARY_NAME
 
+    def start_device_reauth(
+        self,
+        *,
+        operator_id: str,
+        trace_id: str | None = None,
+        reason: str | None = None,
+        capture_timeout_seconds: int | None = None,
+        poll_interval_seconds: int | None = None,
+        max_wait_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        """Start ``claude auth login`` and return only browser-safe fields."""
+        clean_operator = str(operator_id or "").strip()
+        if not clean_operator:
+            raise ClaudeProviderError(
+                "OPERATOR_REQUIRED",
+                "Claude provider reauth requires X-Operator-Id.",
+                status_code=401,
+                retryable=False,
+            )
+        binary = self._require_binary()
+        self._ensure_reauth_mount_ready()
+        capture_timeout = _positive_int(
+            capture_timeout_seconds,
+            _DEFAULT_REAUTH_CAPTURE_TIMEOUT_SECONDS,
+            minimum=1,
+            maximum=120,
+        )
+        poll_interval = _positive_int(
+            poll_interval_seconds,
+            _DEFAULT_REAUTH_POLL_INTERVAL_SECONDS,
+            minimum=1,
+            maximum=60,
+        )
+        max_wait = _positive_int(
+            max_wait_seconds,
+            _DEFAULT_REAUTH_MAX_WAIT_SECONDS,
+            minimum=30,
+            maximum=3600,
+        )
+        session_id = f"claude_reauth_{uuid.uuid4().hex}"
+        now = self._clock().isoformat().replace("+00:00", "Z")
+        session: dict[str, Any] = {
+            "reauth_session_id": session_id,
+            "provider": _PROVIDER_NAME,
+            "provider_name": _PROVIDER_NAME,
+            "runtime": _RUNTIME,
+            "status": "capturing",
+            "started_at": now,
+            "updated_at": now,
+            "verification_uri": None,
+            "verification_uri_complete": None,
+            "user_code": None,
+            "poll_interval_seconds": poll_interval,
+            "max_wait_seconds": max_wait,
+            "credential_exchange": _reauth_credential_exchange_metadata(),
+            "readiness": None,
+        }
+        if reason:
+            session["reason"] = str(reason)
+        with self._reauth_lock:
+            self._reauth_sessions[session_id] = session
+
+        try:
+            process = self._popen(
+                [binary, "auth", "login"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=self._build_env(),
+                cwd="/tmp",
+                bufsize=1,
+            )
+        except FileNotFoundError as exc:
+            self._mark_reauth_failed(session_id, "CLAUDE_BINARY_NOT_FOUND", "Claude binary is not available.")
+            raise ClaudeProviderError(
+                "CLAUDE_BINARY_NOT_FOUND",
+                "Claude binary is not available inside the gateway container.",
+                status_code=503,
+                retryable=False,
+            ) from exc
+        except OSError as exc:
+            self._mark_reauth_failed(session_id, "CLAUDE_REAUTH_START_FAILED", type(exc).__name__)
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_START_FAILED",
+                "Claude auth login process could not be started.",
+                status_code=503,
+                retryable=True,
+                details={"error_type": type(exc).__name__, "errno": getattr(exc, "errno", None)},
+            ) from exc
+
+        captured = threading.Event()
+        for stream_name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+            if stream is None:
+                continue
+            threading.Thread(
+                target=self._read_reauth_stream,
+                args=(session_id, stream_name, stream, captured),
+                daemon=True,
+            ).start()
+
+        deadline = time.monotonic() + capture_timeout
+        while time.monotonic() < deadline:
+            if captured.is_set():
+                break
+            if process.poll() is not None:
+                break
+            time.sleep(0.1)
+
+        public = self.reauth_status(session_id)
+        if not public.get("verification_uri") and not public.get("verification_uri_complete"):
+            returncode = process.poll()
+            if returncode is None:
+                _terminate_process(process)
+                code = "CLAUDE_REAUTH_LOGIN_URL_TIMEOUT"
+                message = "Claude auth login did not emit a login URL before timeout."
+            else:
+                code = "CLAUDE_REAUTH_LOGIN_URL_UNAVAILABLE"
+                message = "Claude auth login exited before emitting a login URL."
+            self._mark_reauth_failed(session_id, code, message)
+            raise ClaudeProviderError(code, message, status_code=503, retryable=True)
+
+        self._update_reauth_session(
+            session_id,
+            status="pending",
+            updated_at=self._clock().isoformat().replace("+00:00", "Z"),
+        )
+        threading.Thread(
+            target=self._monitor_reauth_session,
+            args=(session_id, process, poll_interval, max_wait),
+            daemon=True,
+        ).start()
+        return self.reauth_status(session_id)
+
+    def reauth_status(self, session_id: str) -> dict[str, Any]:
+        clean_session_id = str(session_id or "").strip()
+        with self._reauth_lock:
+            session = dict(self._reauth_sessions.get(clean_session_id) or {})
+        if not session:
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_SESSION_NOT_FOUND",
+                "Claude provider reauth session was not found.",
+                status_code=404,
+                retryable=False,
+            )
+        return _reauth_public_payload(session)
+
+    def _read_reauth_stream(
+        self,
+        session_id: str,
+        _stream_name: str,
+        stream: Any,
+        captured: threading.Event,
+    ) -> None:
+        try:
+            for raw_line in iter(stream.readline, ""):
+                line = _coerce_output(raw_line).strip()
+                if not line:
+                    continue
+                fields = _extract_auth_fields(line)
+                if fields:
+                    fields["updated_at"] = self._clock().isoformat().replace("+00:00", "Z")
+                    self._update_reauth_session(session_id, **fields)
+                with self._reauth_lock:
+                    session = self._reauth_sessions.get(session_id) or {}
+                    if session.get("verification_uri") or session.get("verification_uri_complete"):
+                        captured.set()
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
+
+    def _monitor_reauth_session(
+        self,
+        session_id: str,
+        process: Any,
+        poll_interval_seconds: int,
+        max_wait_seconds: int,
+    ) -> None:
+        deadline = time.monotonic() + max_wait_seconds
+        while time.monotonic() < deadline:
+            readiness = self.readiness(auth_probe=True)
+            if readiness.get("ready") is True:
+                completed_at = self._clock().isoformat().replace("+00:00", "Z")
+                self._update_reauth_session(
+                    session_id,
+                    status="completed",
+                    updated_at=completed_at,
+                    completed_at=completed_at,
+                    readiness=readiness,
+                    error_code=None,
+                    message=None,
+                )
+                if process.poll() is None:
+                    _terminate_process(process)
+                return
+
+            returncode = process.poll()
+            if returncode is not None:
+                self._update_reauth_session(
+                    session_id,
+                    status="failed",
+                    updated_at=self._clock().isoformat().replace("+00:00", "Z"),
+                    readiness=readiness,
+                    error_code="CLAUDE_REAUTH_NOT_READY",
+                    message="Claude auth login exited but readiness auth probe is not ready.",
+                    returncode=returncode,
+                )
+                return
+            time.sleep(max(1, poll_interval_seconds))
+
+        if process.poll() is None:
+            _terminate_process(process)
+        self._update_reauth_session(
+            session_id,
+            status="timeout",
+            updated_at=self._clock().isoformat().replace("+00:00", "Z"),
+            error_code="CLAUDE_REAUTH_TIMEOUT",
+            message="Claude auth login did not complete before the reauth timeout.",
+        )
+
+    def _update_reauth_session(self, session_id: str, **fields: Any) -> None:
+        with self._reauth_lock:
+            session = self._reauth_sessions.get(session_id)
+            if session is None:
+                return
+            session.update({key: value for key, value in fields.items() if value is not None})
+
+    def _mark_reauth_failed(self, session_id: str, error_code: str, message: str) -> None:
+        self._update_reauth_session(
+            session_id,
+            status="failed",
+            updated_at=self._clock().isoformat().replace("+00:00", "Z"),
+            error_code=error_code,
+            message=message,
+        )
+
+    def _require_binary(self) -> str:
+        binary = _resolve_binary(self._environ)
+        if not binary:
+            raise ClaudeProviderError(
+                "CLAUDE_BINARY_NOT_FOUND",
+                "Claude binary is not available inside the gateway container.",
+                status_code=503,
+                retryable=False,
+            )
+        return binary
+
+    def _ensure_reauth_mount_ready(self) -> None:
+        mount_validation = self._mounts.validate_mounts().get(_PROVIDER_NAME)
+        if not mount_validation or not mount_validation.ready:
+            status = getattr(mount_validation, "status", "missing")
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_MOUNT_UNAVAILABLE",
+                "Claude reauth requires a ready service-user credential mount.",
+                status_code=503,
+                retryable=False,
+                details={"mount_status": status},
+            )
+        if getattr(mount_validation, "mount_mode", "") != "rw":
+            raise ClaudeProviderError(
+                "CLAUDE_REAUTH_MOUNT_READ_ONLY",
+                "Claude reauth requires a writable service-user credential mount.",
+                status_code=409,
+                retryable=False,
+                details={"mount_mode": getattr(mount_validation, "mount_mode", "unknown")},
+            )
+
+    def _build_env(self) -> dict[str, str]:
+        return {**os.environ, **self._environ, "CLAUDE_CONFIG_DIR": _resolve_config_dir(self._mounts)}
+
 
 def _mount_metadata(validation: Any) -> dict[str, Any]:
     if validation is None:
@@ -176,6 +496,10 @@ def _resolve_config_dir(mounts: AssistantCredentialMounts) -> str:
         if contract.provider == "claude":
             return contract.container_path
     return DEFAULT_CLAUDE_CONTAINER_CONFIG_DIR
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _auth_probe_degraded_reason(reason: Optional[str]) -> str:
@@ -234,6 +558,166 @@ def _normalize_output(raw: str) -> tuple[str, List[Dict[str, Any]]]:
             text_parts.append(line)
 
     return "\n".join(text_parts).strip(), events
+
+
+def _positive_int(value: int | None, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _extract_auth_fields(line: str) -> dict[str, Any]:
+    fields = _extract_auth_json(line)
+    fields.update(_extract_auth_text(line))
+    return {key: value for key, value in fields.items() if value}
+
+
+def _extract_auth_json(line: str) -> dict[str, Any]:
+    text = line.strip()
+    if not text.startswith("{"):
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, Mapping):
+        return {}
+    return {
+        "verification_uri": _first_mapping_value(
+            payload,
+            "verification_uri",
+            "verificationUri",
+            "verification_url",
+            "verificationUrl",
+            "login_url",
+            "loginUrl",
+            "url",
+        ),
+        "verification_uri_complete": _first_mapping_value(
+            payload,
+            "verification_uri_complete",
+            "verificationUriComplete",
+            "verification_url_complete",
+            "verificationUrlComplete",
+            "login_url_complete",
+            "loginUrlComplete",
+        ),
+        "user_code": _first_mapping_value(payload, "user_code", "userCode", "code"),
+        "expires_in": _first_mapping_value(payload, "expires_in", "expiresIn"),
+    }
+
+
+def _extract_auth_text(line: str) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    url_match = re.search(r"https?://[^\s)>\]\"']+", line)
+    if url_match:
+        url = url_match.group(0).rstrip(".,;")
+        key = "verification_uri_complete" if "code=" in url or "token=" in url else "verification_uri"
+        fields[key] = url
+    code_match = re.search(
+        r"(?:login\s*code|verification\s*code|user\s*code|code)\s*[:=]\s*([A-Z0-9][A-Z0-9-]{3,})",
+        line,
+        re.IGNORECASE,
+    )
+    if code_match is None:
+        code_match = re.search(
+            r"enter\s+(?:the\s+)?(?:code\s+)?([A-Z0-9][A-Z0-9-]{3,})",
+            line,
+            re.IGNORECASE,
+        )
+    if code_match:
+        fields["user_code"] = code_match.group(1).strip()
+    return fields
+
+
+def _first_mapping_value(payload: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _reauth_public_payload(session: Mapping[str, Any]) -> dict[str, Any]:
+    credential_exchange = session.get("credential_exchange") or _reauth_credential_exchange_metadata()
+    payload = {
+        "status": session.get("status"),
+        "reauth_session_id": session.get("reauth_session_id"),
+        "reauthSessionId": session.get("reauth_session_id"),
+        "provider": session.get("provider") or _PROVIDER_NAME,
+        "provider_name": session.get("provider_name") or _PROVIDER_NAME,
+        "providerName": session.get("provider_name") or _PROVIDER_NAME,
+        "runtime": session.get("runtime") or _RUNTIME,
+        "started_at": session.get("started_at"),
+        "startedAt": session.get("started_at"),
+        "updated_at": session.get("updated_at"),
+        "updatedAt": session.get("updated_at"),
+        "completed_at": session.get("completed_at"),
+        "completedAt": session.get("completed_at"),
+        "verification_uri": session.get("verification_uri"),
+        "verificationUri": session.get("verification_uri"),
+        "verification_uri_complete": session.get("verification_uri_complete"),
+        "verificationUriComplete": session.get("verification_uri_complete"),
+        "user_code": session.get("user_code"),
+        "userCode": session.get("user_code"),
+        "expires_in": session.get("expires_in"),
+        "expiresIn": session.get("expires_in"),
+        "poll_interval_seconds": session.get("poll_interval_seconds"),
+        "pollIntervalSeconds": session.get("poll_interval_seconds"),
+        "max_wait_seconds": session.get("max_wait_seconds"),
+        "maxWaitSeconds": session.get("max_wait_seconds"),
+        "credential_exchange": credential_exchange,
+        "credentialExchange": credential_exchange,
+        "readiness": session.get("readiness"),
+        "error_code": session.get("error_code"),
+        "errorCode": session.get("error_code"),
+        "message": session.get("message"),
+        "returncode": session.get("returncode"),
+    }
+    if session.get("reason"):
+        payload["reason"] = session.get("reason")
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def _reauth_credential_exchange_metadata() -> dict[str, Any]:
+    return {
+        "idp_exchange": "operator_browser",
+        "idpExchange": "operator_browser",
+        "bff_handles_credentials": False,
+        "bffHandlesCredentials": False,
+        "frontend_handles_credentials": False,
+        "frontendHandlesCredentials": False,
+        "provider_cli_writes_mount": True,
+        "providerCliWritesMount": True,
+        "returned_fields": ["verification_uri", "user_code"],
+    }
+
+
+def _terminate_process(process: Any) -> None:
+    terminate = getattr(process, "terminate", None)
+    wait = getattr(process, "wait", None)
+    kill = getattr(process, "kill", None)
+    try:
+        if callable(terminate):
+            terminate()
+        if callable(wait):
+            wait(timeout=3)
+    except Exception:
+        if callable(kill):
+            try:
+                kill()
+            except Exception:
+                return
+
+
+def _coerce_output(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if value is None:
+        return ""
+    return str(value)
 
 
 def invoke_claude(
