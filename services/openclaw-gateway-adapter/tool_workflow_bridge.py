@@ -48,7 +48,7 @@ _DEFAULT_OPERATOR_ROLE = "operator"
 _TOOL_SKILL_MODES = ("kernel_debug", "kernel_repair")
 _ASSISTANT_COMMAND_SKILL_MODES = ("kernel_observe", "kernel_debug", "kernel_repair")
 _ASSISTANT_SA_SD_GENERATE_SKILL_MODES = ("kernel_debug", "kernel_repair")
-_ASSISTANT_PROVIDER_REAUTH_SKILL_MODES = ("kernel_debug", "kernel_repair")
+_ASSISTANT_PROVIDER_REAUTH_SKILL_MODES = ("user",)
 _ASSISTANT_PROVIDER_REGISTER_SKILL_MODES = ("kernel_debug", "kernel_repair")
 _ASSISTANT_OPENCLAW_ASK_SKILL_MODES = ("kernel_debug", "kernel_repair")
 _ASSISTANT_READBACK_SKILL_MODES = ("kernel_observe", "kernel_debug", "kernel_repair")
@@ -509,7 +509,7 @@ def _tool_skill_descriptor(
             role="operator",
             confirm_policy={
                 "required": True,
-                "policy": "active_control_mode",
+                "policy": "operator_confirmed",
                 "note": (
                     "Starts provider browser auth through the service-user mount. "
                     "Credentials are exchanged only between the operator browser, IdP, and provider CLI."

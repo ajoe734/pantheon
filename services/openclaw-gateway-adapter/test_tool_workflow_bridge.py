@@ -546,7 +546,7 @@ class TestToolInvoke(unittest.TestCase):
             bridge.authorize_assistant_skill(
                 skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
                 operator_id="op1",
-                mode="kernel_debug",
+                mode="user",
                 operator_role="operator",
             )
 
@@ -555,7 +555,7 @@ class TestToolInvoke(unittest.TestCase):
         self.assertEqual(ctx.exception.details["policy_class"], "confirmation_required")
         self.assertEqual(audit.read()[0]["outcome"], "denied")
 
-    def test_provider_reauth_skill_allows_active_control_mode_confirmation(self):
+    def test_provider_reauth_skill_allows_operator_confirmation_in_user_mode(self):
         policy = ToolPolicy(allowed_tools=[ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
         audit = BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl"))
         bridge = ToolWorkflowBridge(policy=policy, audit_log=audit, trace_id_factory=lambda: "t")
@@ -563,13 +563,13 @@ class TestToolInvoke(unittest.TestCase):
         result = bridge.authorize_assistant_skill(
             skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
             operator_id="op1",
-            mode="kernel_debug",
+            mode="user",
             operator_role="operator",
-            control_mode={"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+            confirmed=True,
         )
 
         self.assertEqual(result["status"], "allowed")
-        self.assertEqual(result["confirmation_marker"], "active_control_mode")
+        self.assertEqual(result["confirmation_marker"], "operator_confirmed")
         entries = audit.read()
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["outcome"], "allowed")
@@ -856,8 +856,15 @@ class TestListEffectiveTools(unittest.TestCase):
         self.assertEqual(user_result["effective_skills"], [])
         self.assertEqual(viewer_result["effective_skills"], [])
 
-    def test_provider_reauth_skill_descriptor_is_kernel_control_gated(self):
+    def test_provider_reauth_skill_descriptor_is_user_mode_operator_confirmed(self):
         bridge, _ = _make_bridge(allowed_tools=[ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
+        user_result = bridge.list_effective_tools(
+            agent_id="management-ai",
+            operator_id="op1",
+            mode="user",
+            operator_role="operator",
+            upstream=FakeUpstream(),
+        )
         debug_result = bridge.list_effective_tools(
             agent_id="management-ai",
             operator_id="op1",
@@ -865,33 +872,24 @@ class TestListEffectiveTools(unittest.TestCase):
             operator_role="operator",
             upstream=FakeUpstream(),
         )
-        observe_result = bridge.list_effective_tools(
-            agent_id="management-ai",
-            operator_id="op1",
-            mode="kernel_observe",
-            operator_role="operator",
-            upstream=FakeUpstream(),
-        )
         viewer_result = bridge.list_effective_tools(
             agent_id="management-ai",
             operator_id="op1",
-            mode="kernel_debug",
+            mode="user",
             operator_role="viewer",
             upstream=FakeUpstream(),
         )
 
-        self.assertEqual(debug_result["effective_tools"], [ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
-        descriptor = debug_result["effective_skills"][0]
+        self.assertEqual(user_result["effective_tools"], [ASSISTANT_PROVIDER_REAUTH_TOOL_NAME])
+        descriptor = user_result["effective_skills"][0]
         self.assertEqual(descriptor["id"], ASSISTANT_PROVIDER_REAUTH_TOOL_NAME)
         self.assertEqual(descriptor["surface"], "assistant_command")
         self.assertEqual(descriptor["handler_ref"], "bff.route:POST /bff/assistant/provider/reauth")
         self.assertEqual(descriptor["result_surface"], "assistant_provider_reauth_device_flow")
         self.assertTrue(descriptor["confirm_policy"]["required"])
-        self.assertEqual(descriptor["confirm_policy"]["policy"], "active_control_mode")
-        self.assertIn("kernel_debug", descriptor["mode_gate"]["allowed_modes"])
-        self.assertIn("kernel_repair", descriptor["mode_gate"]["allowed_modes"])
-        self.assertNotIn("kernel_observe", descriptor["mode_gate"]["allowed_modes"])
-        self.assertEqual(observe_result["effective_skills"], [])
+        self.assertEqual(descriptor["confirm_policy"]["policy"], "operator_confirmed")
+        self.assertEqual(descriptor["mode_gate"]["allowed_modes"], ["user"])
+        self.assertEqual(debug_result["effective_skills"], [])
         self.assertEqual(viewer_result["effective_skills"], [])
 
     def test_provider_register_skill_descriptor_is_kernel_control_gated(self):

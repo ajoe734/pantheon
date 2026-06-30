@@ -448,15 +448,15 @@ class TestCapabilities(unittest.TestCase):
                 json={
                     "reason": "expired",
                     "captureTimeoutSeconds": 3,
-                    "mode": "kernel_debug",
+                    "mode": "user",
                     "operator_role": "operator",
-                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                    "confirmed": True,
                 },
                 headers={
                     "X-Operator-Id": "op-1",
                     "X-Trace-Id": "trace-reauth-1",
                     "X-Operator-Role": "operator",
-                    "X-Assistant-Mode": "kernel_debug",
+                    "X-Assistant-Mode": "user",
                 },
             )
 
@@ -488,9 +488,9 @@ class TestCapabilities(unittest.TestCase):
                 "/api/openclaw-adapter/assistant/providers/codex/reauth",
                 json={
                     "reason": "expired",
-                    "mode": "kernel_debug",
+                    "mode": "user",
                     "operator_role": "operator",
-                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                    "confirmed": True,
                 },
                 headers={"X-Operator-Id": "op-1", "X-Operator-Role": "operator"},
             )
@@ -559,15 +559,15 @@ class TestCapabilities(unittest.TestCase):
                 json={
                     "reason": "expired",
                     "captureTimeoutSeconds": 3,
-                    "mode": "kernel_debug",
+                    "mode": "user",
                     "operator_role": "operator",
-                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                    "confirmed": True,
                 },
                 headers={
                     "X-Operator-Id": "op-1",
                     "X-Trace-Id": "trace-claude-reauth-1",
                     "X-Operator-Role": "operator",
-                    "X-Assistant-Mode": "kernel_debug",
+                    "X-Assistant-Mode": "user",
                 },
             )
 
