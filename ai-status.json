@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-01T00:49:18Z",
+  "updated_at": "2026-07-01T04:56:00Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -98,12 +98,11 @@
       "current_task_ids": [
         "LOOP-AUTO-002",
         "LOOP-AUTO-RT-001",
-        "LOOP-AUTO-DEP-001",
-        "MGMT-GAP-002"
+        "LOOP-AUTO-DEP-001"
       ],
       "branch": "task/LSP-002-V2",
-      "next": "MGMT-GAP-003 dependency closed with hosted BFF proof; MGMT-GAP-002 frontend canonical read wiring can start.",
-      "last_update": "2026-07-01T00:49:18Z"
+      "next": "MGMT-GAP-002 closed by execute-plans PR #124/#126; continue remaining LOOP assignments.",
+      "last_update": "2026-07-01T04:56:00Z"
     },
     {
       "name": "Gemini",
@@ -121,8 +120,8 @@
         "MGMT-GAP-005"
       ],
       "branch": "feat/gemini-research-runtime",
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:52Z"
+      "next": "MGMT-GAP-003 is closed; Gemini can start studios/capabilities hardening. Make Formula Studio, Skill Sandbox, Tools/MCP/Skills either runtime-backed with job/command evidence and limits, or demote/disable them as non-production surfaces.",
+      "last_update": "2026-07-01T04:56:00Z"
     },
     {
       "name": "Codex",
@@ -139,8 +138,8 @@
         "MGMT-GAP-007"
       ],
       "branch": "task/ASST-OCGW-001",
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:54Z"
+      "next": "Dependencies MGMT-GAP-002 and MGMT-GAP-003 are closed. Start durable write truth: enumerate in-scope write CTAs, replace toast/local-only success with command receipt/audit or explicit disabled state, and prove dry-run/no-side-effect behavior.",
+      "last_update": "2026-07-01T04:56:00Z"
     },
     {
       "name": "Codex2",
@@ -211,8 +210,8 @@
         "MGMT-GAP-006"
       ],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:53Z",
+      "next": "Wait for MGMT-GAP-004 and MGMT-GAP-005. After they close, build hosted strict-live management harness covering visible nav, hidden aliases, endpoint usage, mock/write-success detection, JSON/Markdown evidence, and release-gate fail conditions.",
+      "last_update": "2026-07-01T04:56:00Z",
       "last_action_at": "2026-05-20T11:29:47Z",
       "last_action_note": "Manual ai-status sync by Claude: cleared ['LOVABLE-STRICT-PUBLISH', 'OSS-QUANTLIB-V2-001'] after push-auth failure."
     },
@@ -2628,7 +2627,7 @@
       "phase": "MGMT Console Production Gap / Batch 2 FE canonical reads",
       "owner": "Claude",
       "reviewer": "Codex",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "MGMT-GAP-003"
       ],
@@ -2641,8 +2640,8 @@
       "acceptance": [
         "hosted browser probe 捕捉每頁 intended endpoint; success/degraded 測試綠; 無 seed/mock 被顯示為 live truth"
       ],
-      "next": "Dependency MGMT-GAP-003 is done with hosted BFF contract proof; start FE canonical read wiring against typed management envelopes.",
-      "last_update": "2026-07-01T00:49:18Z",
+      "next": "Closed by execute-plans PR #124 and PR #126; dev deploy 28490060564 and FE-BFF gate 28490060533 passed at 41551e32432c7a7963716f9f197ee31f5fdd48a8.",
+      "last_update": "2026-07-01T04:56:00Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
@@ -2654,7 +2653,27 @@
       "fleet_lane": "frontend-bff-integration",
       "task_class": "execution",
       "auto_created_by": "dispatch_management_console_gap_2026-06-30",
-      "auto_generated": true
+      "auto_generated": true,
+      "terminal_outcome": "completed",
+      "review_file": "docs/04/pantheon_management_console_gap_2026-06-30/archive/MGMT-GAP-002-closeout-2026-07-01.md",
+      "review_notes_zh": [
+        "execute-plans PR #124 已合併 canonical management reads，PR #126 已補最終部署狀態。",
+        "dev FE deploy 28490060564 與 FE-BFF Integration Gate 28490060533 均為 success。",
+        "mock-mode 完整重盤點 70/70 management routes rendered；此任務只關閉 canonical read wiring，不關閉 durable writes 或 studios production depth。"
+      ],
+      "external_delivery": {
+        "repository_id": "execute_plans",
+        "repository_slug": "ajoe734/execute-plans",
+        "primary_pr": "https://github.com/ajoe734/execute-plans/pull/124",
+        "primary_merge_commit": "0f92b069a2523eaac8224629054dfd99db878538",
+        "status_pr": "https://github.com/ajoe734/execute-plans/pull/126",
+        "status_merge_commit": "41551e32432c7a7963716f9f197ee31f5fdd48a8",
+        "dev_fe_deploy_run": "28490060564",
+        "dev_fe_bff_integration_gate_run": "28490060533",
+        "hosted_deployment_commit": "41551e32432c7a7963716f9f197ee31f5fdd48a8",
+        "route_audit": "70/70 management routes rendered in mock-mode; 106 source route lines and 53 nav entries inventoried",
+        "archive_doc": "docs/04/pantheon_management_console_gap_2026-06-30/archive/MGMT-GAP-002-closeout-2026-07-01.md"
+      }
     },
     {
       "id": "MGMT-GAP-004",
@@ -2677,8 +2696,8 @@
       "acceptance": [
         "無 in-scope CTA 只靠 toast/local state 成功; dry-run/real-writes-off probe 證明無隱性 side effect; high-risk action 有 confirm + command/audit evidence"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:51Z",
+      "next": "Dependencies MGMT-GAP-002 and MGMT-GAP-003 are closed. Start durable write truth: enumerate in-scope write CTAs, replace toast/local-only success with command receipt/audit or explicit disabled state, and prove dry-run/no-side-effect behavior.",
+      "last_update": "2026-07-01T04:56:00Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
@@ -2712,8 +2731,8 @@
       "acceptance": [
         "hosted probe 無 mock trace/backtest 被標成 live success; runner contracts 有 tests/limits; capability actions 有 command/job id 或 disabled"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:52Z",
+      "next": "MGMT-GAP-003 is closed; Gemini can start studios/capabilities hardening. Make Formula Studio, Skill Sandbox, Tools/MCP/Skills either runtime-backed with job/command evidence and limits, or demote/disable them as non-production surfaces.",
+      "last_update": "2026-07-01T04:56:00Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
@@ -2750,8 +2769,8 @@
       "acceptance": [
         "probe 覆蓋所有 visible management nav + hidden aliases; 輸出 JSON/Markdown evidence; release gate 可 fail legacy render/missing endpoint/mock write success"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:53Z",
+      "next": "Wait for MGMT-GAP-004 and MGMT-GAP-005. After they close, build hosted strict-live management harness covering visible nav, hidden aliases, endpoint usage, mock/write-success detection, JSON/Markdown evidence, and release-gate fail conditions.",
+      "last_update": "2026-07-01T04:56:00Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
@@ -2784,8 +2803,8 @@
       "acceptance": [
         "所有 MGMT-GAP 任務 done 或 reviewed superseded; final archive 含 FE deploy/BFF/OpenAPI/hosted probe/PR SHA; closeout 清楚列 completion 或 blocker"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-06-30T13:54:54Z",
+      "next": "Wait for MGMT-GAP-006. Final closeout must prove all MGMT-GAP tasks are terminal or explicitly superseded with reviewer approval, and archive final hosted strict-live route/deploy/BFF/OpenAPI/PR SHA evidence.",
+      "last_update": "2026-07-01T04:56:00Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
