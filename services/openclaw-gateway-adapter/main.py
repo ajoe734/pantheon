@@ -749,6 +749,24 @@ class AssistantProviderReauthRequest(BaseModel):
         return self.max_wait_seconds if self.max_wait_seconds is not None else self.maxWaitSeconds
 
 
+class AssistantProviderReauthCodeRequest(BaseModel):
+    provider: str = "claude"
+    code: Optional[str] = None
+    authorization_code: Optional[str] = None
+    authorizationCode: Optional[str] = None
+    mode: Optional[str] = None
+    operator_role: Optional[str] = None
+    operatorRole: Optional[str] = None
+    confirmed: Optional[Any] = None
+    confirm_token: Optional[str] = None
+    confirmToken: Optional[str] = None
+    control_mode: Optional[Dict[str, Any]] = None
+    controlMode: Optional[Dict[str, Any]] = None
+
+    def auth_code(self) -> str:
+        return str(self.code or self.authorization_code or self.authorizationCode or "").strip()
+
+
 class AssistantProviderRegisterRequest(BaseModel):
     provider: str
     provider_name: Optional[str] = None
@@ -1062,6 +1080,76 @@ def get_assistant_provider_reauth_status(
             result = _CODEX_PROVIDER.reauth_status(session_id)
     except CodexProviderError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    except ClaudeProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    return JSONResponse(status_code=200, content={"status": "ok", "data": result})
+
+
+@app.post("/api/openclaw-adapter/assistant/providers/{provider}/reauth/{session_id}/code")
+def submit_assistant_provider_reauth_code(
+    provider: str,
+    session_id: str,
+    req: AssistantProviderReauthCodeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_operator_role: Optional[str] = Header(default=None, alias="X-Operator-Role"),
+    x_assistant_mode: Optional[str] = Header(default=None, alias="X-Assistant-Mode"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for provider reauth code submission.",
+            },
+        )
+    normalized = str(provider or req.provider or "").strip().lower()
+    if normalized not in {"claude", "claude_cli"}:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "provider_error",
+                "error_code": "PROVIDER_REAUTH_CODE_UNSUPPORTED",
+                "message": "Provider reauth code submission is currently supported only for Claude.",
+            },
+        )
+    code = req.auth_code()
+    if not code:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "provider_error",
+                "error_code": "CLAUDE_REAUTH_CODE_REQUIRED",
+                "message": "Claude provider reauth requires an authorization code.",
+            },
+        )
+    try:
+        _BRIDGE.authorize_assistant_skill(
+            skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
+            operator_id=x_operator_id.strip(),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            operator_role=req.operator_role or req.operatorRole or x_operator_role,
+            confirmed=req.confirmed is True,
+            confirm_token=req.confirm_token or req.confirmToken,
+            control_mode=req.control_mode or req.controlMode,
+            trace_id=x_trace_id,
+            session_id=session_id,
+            request_type="assistant_provider_reauth_code",
+            audit_extra={
+                "provider": normalized,
+                "session_id_hash": _audit_value_hash(session_id),
+                "code_hash": _audit_value_hash(code),
+            },
+        )
+    except BridgeError as exc:
+        return _bridge_error_response(exc)
+    try:
+        result = _CLAUDE_PROVIDER.submit_reauth_code(
+            session_id,
+            code=code,
+            operator_id=x_operator_id.strip(),
+        )
     except ClaudeProviderError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
     return JSONResponse(status_code=200, content={"status": "ok", "data": result})

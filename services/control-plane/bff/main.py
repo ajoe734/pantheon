@@ -53616,6 +53616,25 @@ def _assistant_provider_reauth_status(
         raise _openclaw_client_error(exc) from exc
 
 
+def _assistant_provider_reauth_code(
+    provider: str,
+    session_id: str,
+    code: str,
+    operator_id: str,
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        return OpenClawOpsClient().submit_assistant_provider_reauth_code(
+            provider=provider or "claude",
+            session_id=session_id,
+            code=code,
+            operator_id=operator_id or "management-ai",
+            trace_id=trace_id,
+        )
+    except OpenClawOpsClientError as exc:
+        raise _openclaw_client_error(exc) from exc
+
+
 def _include_governance_subrules_routes() -> None:
     from console_gap.permissions import create_permissions_router
     from console_gap.memory_governance import create_memory_governance_router
@@ -53666,6 +53685,7 @@ def _include_assistant_routes() -> None:
             provider_register=_assistant_provider_register,
             provider_reauth=_assistant_provider_reauth,
             provider_reauth_status=_assistant_provider_reauth_status,
+            provider_reauth_code=_assistant_provider_reauth_code,
         )
     )
 

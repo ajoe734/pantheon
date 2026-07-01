@@ -1417,13 +1417,6 @@
       },
       {
         "family": "unknown",
-        "key": "GET /bff/management/fleet",
-        "method": "GET",
-        "path": "/bff/management/fleet",
-        "status": "implemented"
-      },
-      {
-        "family": "unknown",
         "key": "GET /bff/management/governance-ledger",
         "method": "GET",
         "path": "/bff/management/governance-ledger",
@@ -3102,7 +3095,7 @@
   },
   "metadata": {
     "backend_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
-    "backend_snapshot_date": "2026-06-29",
+    "backend_snapshot_date": "2026-07-01",
     "frontend_manifest": "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
     "frontend_snapshot_date": "2026-06-28",
     "generator": "scripts/bff_route_diff.py",
@@ -3124,17 +3117,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 598,
-    "failure_count": 429,
+    "backend_routes": 599,
+    "failure_count": 428,
     "failures": {
-      "backend_missing_frontend": 423,
+      "backend_missing_frontend": 422,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 6
     },
-    "frontend_routes": 184,
-    "mode_failure_count": 429,
+    "frontend_routes": 186,
+    "mode_failure_count": 428,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

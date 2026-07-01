@@ -691,6 +691,48 @@ def test_openclaw_client_reads_claude_provider_reauth_status(monkeypatch) -> Non
     assert recorded["headers"]["X-operator-id"] == "operator-1"
 
 
+def test_openclaw_client_submits_claude_provider_reauth_code(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "claude_reauth_1",
+                    "provider": "claude",
+                    "status": "code_submitted",
+                    "code_submitted_at": "2026-07-01T00:00:00Z",
+                },
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).submit_assistant_provider_reauth_code(
+            provider="claude",
+            session_id="claude_reauth_1",
+            code="claude-oauth-code-123",
+            operator_id="operator-1",
+            trace_id="trace-claude-code-1",
+        )
+
+    assert result["data"]["status"] == "code_submitted"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/claude"
+        "/reauth/claude_reauth_1/code"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-claude-code-1"
+    assert recorded["body"] == {"provider": "claude", "code": "claude-oauth-code-123"}
+    assert recorded["timeout"] == 4.0
+
+
 def test_openclaw_client_registers_assistant_provider_metadata(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
     recorded: dict[str, Any] = {}
