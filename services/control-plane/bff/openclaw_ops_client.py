@@ -468,7 +468,11 @@ class OpenClawOpsClient:
         trace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         normalized = str(provider or "claude").strip().lower()
-        headers: Dict[str, str] = {"X-Operator-Id": operator_id}
+        headers: Dict[str, str] = {
+            "X-Operator-Id": operator_id,
+            "X-Assistant-Mode": "user",
+            "X-Operator-Role": "operator",
+        }
         if trace_id:
             headers["X-Trace-Id"] = trace_id
         return self._request(
@@ -477,7 +481,14 @@ class OpenClawOpsClient:
                 f"/api/openclaw-adapter/assistant/providers/{urllib.parse.quote(normalized)}"
                 f"/reauth/{urllib.parse.quote(session_id)}/code"
             ),
-            body={"provider": normalized, "code": code},
+            body={
+                "provider": normalized,
+                "code": code,
+                "mode": "user",
+                "operator_role": "operator",
+                "confirmed": True,
+                "control_mode": {"active": False, "mode": "user", "activation_id": None},
+            },
             headers=headers,
             expected_status={200},
             timeout_seconds=_assistant_reauth_timeout_seconds(),

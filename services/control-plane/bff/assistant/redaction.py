@@ -260,6 +260,8 @@ def _redact_sensitive_field(key: str, value: JsonValue, *, category: str, stats:
 
 def _category_for_key(key: str) -> str | None:
     normalized = key.strip().replace("-", "_").lower()
+    if normalized in {"requires_authorization_code", "requiresauthorizationcode"}:
+        return None
     for pattern, category in _SENSITIVE_KEY_PATTERNS:
         if pattern.search(normalized):
             return category

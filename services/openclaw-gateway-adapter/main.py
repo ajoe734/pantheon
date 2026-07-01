@@ -1008,7 +1008,7 @@ def start_assistant_provider_reauth(
         _BRIDGE.authorize_assistant_skill(
             skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
             operator_id=x_operator_id.strip(),
-            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode) or "user",
             operator_role=req.operator_role or req.operatorRole or x_operator_role,
             confirmed=req.confirmed is True,
             confirm_token=req.confirm_token or req.confirmToken,
@@ -1128,7 +1128,7 @@ def submit_assistant_provider_reauth_code(
         _BRIDGE.authorize_assistant_skill(
             skill_id=ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
             operator_id=x_operator_id.strip(),
-            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode),
+            mode=req.mode or x_assistant_mode or _mode_from_control_mode(req.control_mode or req.controlMode) or "user",
             operator_role=req.operator_role or req.operatorRole or x_operator_role,
             confirmed=req.confirmed is True,
             confirm_token=req.confirm_token or req.confirmToken,

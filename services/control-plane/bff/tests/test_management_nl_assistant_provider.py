@@ -729,7 +729,16 @@ def test_openclaw_client_submits_claude_provider_reauth_code(monkeypatch) -> Non
     )
     assert recorded["headers"]["X-operator-id"] == "operator-1"
     assert recorded["headers"]["X-trace-id"] == "trace-claude-code-1"
-    assert recorded["body"] == {"provider": "claude", "code": "claude-oauth-code-123"}
+    assert recorded["headers"]["X-assistant-mode"] == "user"
+    assert recorded["headers"]["X-operator-role"] == "operator"
+    assert recorded["body"] == {
+        "provider": "claude",
+        "code": "claude-oauth-code-123",
+        "mode": "user",
+        "operator_role": "operator",
+        "confirmed": True,
+        "control_mode": {"active": False, "mode": "user", "activation_id": None},
+    }
     assert recorded["timeout"] == 4.0
 
 
