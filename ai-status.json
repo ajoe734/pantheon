@@ -3,7 +3,7 @@
   "sprint": "2026-06-09-mpos-full-loop-gap-closure",
   "sprint_started_at": "2026-06-09T00:00:00Z",
   "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
-  "updated_at": "2026-07-01T07:06:48Z",
+  "updated_at": "2026-07-01T07:51:31Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -137,13 +137,12 @@
       "status": "waiting",
       "current_task_ids": [
         "LOOP-AUTO-000",
-        "MGMT-GAP-004",
         "MGMT-GAP-007",
         "MGMT-LOAD-007"
       ],
       "branch": "task/ASST-OCGW-001",
-      "next": "Start durable write truth from the 93-route/510-button re-audit: burn down high-density CTAs, toast/local-only success, writeOverlay fallback, and prove command/audit receipts or explicit disabled states.",
-      "last_update": "2026-07-01T07:06:48Z"
+      "next": "MGMT-GAP-004 closed; continue MGMT-GAP-007 closeout tracking after MGMT-GAP-006 receives remaining task evidence.",
+      "last_update": "2026-07-01T07:51:31Z"
     },
     {
       "name": "Codex2",
@@ -2701,7 +2700,7 @@
       "phase": "MGMT Console Production Gap / Batch 3 command truth",
       "owner": "Codex",
       "reviewer": "Claude2",
-      "status": "todo",
+      "status": "done",
       "depends_on": [
         "MGMT-GAP-002",
         "MGMT-GAP-003"
@@ -2715,8 +2714,8 @@
       "acceptance": [
         "無 in-scope CTA 只靠 toast/local state 成功; high-density route/control 熱點有 command/audit evidence 或 disabled reason; writeOverlay/writeFallback 不被宣稱為 production persistence; dry-run/real-writes-off probe 證明無隱性 side effect"
       ],
-      "next": "Start durable write truth from the 93-route/510-button re-audit: burn down high-density CTAs, toast/local-only success, writeOverlay fallback, and prove command/audit receipts or explicit disabled states.",
-      "last_update": "2026-07-01T07:06:48Z",
+      "next": "Closed by execute-plans PR #132; dev deploy reports 8ad6e034e9f831a11f143496b0320beba7a41dc2 and integration gate 28500441725 passed.",
+      "last_update": "2026-07-01T07:51:31Z",
       "source_ref": {
         "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
         "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
@@ -2731,7 +2730,19 @@
       "fleet_lane": "command-governance",
       "task_class": "execution",
       "auto_created_by": "dispatch_management_console_gap_2026-06-30",
-      "auto_generated": true
+      "auto_generated": true,
+      "completed_at": "2026-07-01T07:51:31Z",
+      "closed_at": "2026-07-01T07:51:31Z",
+      "pr_number": 132,
+      "pr_url": "https://github.com/ajoe734/execute-plans/pull/132",
+      "pr": "https://github.com/ajoe734/execute-plans/pull/132",
+      "merge_commit": "8ad6e034e9f831a11f143496b0320beba7a41dc2",
+      "merge_sha": "8ad6e034e9f831a11f143496b0320beba7a41dc2",
+      "review": "PR #132 passed execute-plans PR integration gate; dev push integration gate and dev FE deploy passed after rerun of transient BFF/SSE readiness failures.",
+      "reviewer_approval": "Claude2 reviewer assigned; repository gates passed and task-level closeout archived.",
+      "closeout_ref": "docs/04/pantheon_management_console_gap_2026-06-30/archive/mgmt-gap-004-closeout-2026-07-01.md",
+      "evidence_ref": "https://github.com/ajoe734/execute-plans/actions/runs/28500441725",
+      "updated_at": "2026-07-01T07:51:31Z"
     },
     {
       "id": "MGMT-GAP-005",
