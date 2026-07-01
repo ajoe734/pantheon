@@ -10,6 +10,7 @@
 | BFF checked | `pantheon-dev-bff`, `/healthz` live and ready, version `0.2.0` |
 | Supersedes | `docs/04/pantheon_bff_console_gap_2026-06-15/README.md` for management-console gap status |
 | Archive evidence | `archive/live-audit-2026-06-30.md` |
+| Re-audit addendum | `archive/full-reaudit-addendum-2026-07-01.md` |
 | Execution packet | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md` |
 
 ## 1. Purpose
@@ -67,6 +68,13 @@ Source and hosted evidence captured on 2026-06-30:
 
 Detailed evidence is archived in
 `docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md`.
+
+The 2026-07-01 full re-audit addendum is archived in
+`docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md`.
+It adds hosted authenticated detail-route evidence, live-id BFF availability,
+mock/unavailable flags, DTO honesty issues such as `status.undefined` and
+`NaN%`, and updated recommendations for which surfaces should be adjusted,
+hidden/deleted, or deeply developed.
 
 For execution artifacts, `frontend-checkout:...` means the active frontend
 source checkout audited at `/home/lupin/code/pantheon/.fe-ep`; it is not a
