@@ -161,7 +161,10 @@ Deletion should target duplicate render surfaces and non-production tools.
 |---|---|
 | `MGMT-GAP-004` | Enumerate every write-like CTA and replace toast/local success with governed command receipt, audit id, dry-run proof, or disabled state |
 | `MGMT-GAP-005` | Decide runtime-backed runner vs demotion for Formula Studio, Skill Sandbox, Tools, MCP, and Skills |
-| `MGMT-GAP-006` | Build a hosted, authenticated management harness that uses live ids, checks endpoint calls, detects mock/unavailable/`undefined`/`NaN`, and records JSON/Markdown evidence |
+| `MGMT-GAP-008` | Fix live-id detail DTO/render honesty for `status.undefined`, `risk.undefined`, blank h1/owner/update, `NaN%`, detail aliases, and empty capability seed-id leakage |
+| `MGMT-GAP-009` | Align `/bff/me`, tenant, roles, and management data reads so the session/RBAC contract is coherent and fail-closed |
+| `MGMT-GAP-010` | Land the load-gap follow-up as a bundle, shell-fanout, route-ready, and release-gate performance task |
+| `MGMT-GAP-006` | Build a hosted, authenticated management harness that uses live ids, checks endpoint calls, detects mock/unavailable/`undefined`/`NaN`, session/RBAC mismatch, load regressions, and records JSON/Markdown evidence |
 | `MGMT-GAP-007` | Track the full gap set to merged/deployed proof; do not close on local render success |
 | Load gap follow-up | Split bundle, defer shell reads, aggregate shell counts, remove duplicate jobs request, and harden BFF read concurrency |
 
@@ -195,6 +198,7 @@ The real production gap is this:
 - the acceptance harness must be authenticated, hosted, live-id based, and able
   to detect mock/unavailable/undefined/NaN/control-truth failures.
 
-This addendum does not supersede the existing `MGMT-GAP-*` task split. It
-sharpens it: `MGMT-GAP-004`, `MGMT-GAP-005`, and `MGMT-GAP-006` are now the
-main blockers to production-level closure.
+This addendum expands the existing `MGMT-GAP-*` task split where the evidence
+needs a named owner. `MGMT-GAP-004`, `MGMT-GAP-005`, `MGMT-GAP-008`,
+`MGMT-GAP-009`, `MGMT-GAP-010`, and then `MGMT-GAP-006` are now the main
+blockers to production-level closure.
