@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Claude
 - Reviewer: Codex
-- Next: Supervisor auto-started MGMT-LOAD-006 after successful dispatch.
+- Next: Supervisor re-dispatched MGMT-LOAD-006; task remains in progress.
 
 ## Summary
 把 route-load baseline 變成 release gate：bundle budget、route-ready milestones、startup request count、duplicate jobs detection、BFF fanout latency 全部可 fail gate 並輸出 JSON/Markdown artifact。
