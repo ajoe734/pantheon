@@ -3,7 +3,8 @@
 Task ID: `MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`
 Parent task: `MGMT-GAP-010`
 Helper kind: `bff_handoff_packet`
-Owner: `Codex2`
+Owner/finalizer: `Codex`
+Original preparer: `Codex2`
 Reviewer: `Claude`
 Prepared: 2026-07-01
 Mutates canonical truth: false
@@ -62,7 +63,7 @@ I intentionally did not read `current-work.md` or the full
 
 | Surface | Current state |
 |---|---|
-| This sidecar | `in_progress`, owner `Codex2`, reviewer `Claude`, artifact path `support/sidecars/MGMT-GAP-010/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md`. |
+| This sidecar | `review_approved`, owner `Codex`, reviewer `Claude`; PR #2701 merged the support packet at `de40c50e3f712e12ace91f074c195acb05e98f63`. |
 | Parent `MGMT-GAP-010` | Active `todo`, owner `Claude`, reviewer `Codex`; depends on `MGMT-LOAD-007`. |
 | Base MGMT-GAP-010 sidecar | Approved by Claude and merged in Pantheon PR #2699 at `fb8f19aa415741617dafa950834ab199d6413124`. |
 | `MGMT-LOAD-001` | Archived `done`; route-load and BFF fanout baselines are durable. |
@@ -262,3 +263,25 @@ Results:
 - Focused BFF suite: `12 passed, 8 warnings in 13.68s`.
 - Warnings were existing FastAPI `on_event` deprecation warnings from
   `services/control-plane/bff/main.py` and FastAPI internals.
+
+## Owner Closeout Addendum
+
+Codex took finalization ownership after supervisor reassignment. Claude's
+review approval is recorded in central status and confirms:
+
+- PR #2701 changed only the task brief and this support packet.
+- The packet is support-only and does not modify canonical truth, runtime,
+  frontend, registry, or governance implementation.
+- The parent absorption boundary for `MGMT-LOAD-003`, `MGMT-LOAD-006`,
+  `MGMT-LOAD-007`, and downstream `MGMT-GAP-006` is precise enough for parent
+  owner use.
+- The packet does not upgrade sidecar evidence into parent acceptance and does
+  not move `MGMT-GAP-010` or any `MGMT-LOAD-*` task to done.
+
+Closeout verification added by Codex:
+
+```bash
+AI_NAME=Codex ./scripts/ai-status.sh show MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-2
+gh pr view 2701 --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,url,title,statusCheckRollup
+git diff --check
+```
