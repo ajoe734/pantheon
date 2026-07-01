@@ -18,7 +18,7 @@ Supplemental evidence added after the second-pass route/control audit:
 | `MGMT-GAP-001` | frontend route/IA | Codex2 | Claude | Done | PR #120, deployed FE commit, hosted route probe |
 | `MGMT-GAP-002` | frontend BFF reads | Claude | Codex | Done | execute-plans PR #124/#126, deployed FE commit, endpoint capture |
 | `MGMT-GAP-003` | BFF DTO contracts | Claude2 | Codex | Done | Pantheon PR #2649, dev BFF deploy, OpenAPI/curl evidence |
-| `MGMT-GAP-004` | command truth | Codex | Claude2 | Todo | all in-scope CTAs return command/audit receipt or disabled state; second-pass hotspots and `toast.success`/`writeOverlay` scan burned down |
+| `MGMT-GAP-004` | command truth | Codex | Claude2 | Done | execute-plans PR #132, merge `8ad6e034e9f831a11f143496b0320beba7a41dc2`, dev FE deploy, integration gate, hosted deployment proof |
 | `MGMT-GAP-005` | studios/capabilities | Gemini | Claude | Todo | runner-backed traces/jobs or nav demotion/disable evidence; 10 mock-visible route findings resolved |
 | `MGMT-GAP-008` | detail render honesty | Claude | Codex | Todo | live-id detail probe with no undefined/blank/NaN/seed-id leak; direct-render detail aliases redirected/canonicalized |
 | `MGMT-GAP-009` | session/RBAC contract | Claude2 | Codex | Todo | `/bff/me`, provider auth, tenant, roles, and management reads agree for documented token/tenant |
@@ -32,7 +32,7 @@ Supplemental evidence added after the second-pass route/control audit:
 MGMT-GAP-001: done
 MGMT-GAP-002: done after MGMT-GAP-003
 MGMT-GAP-003: done
-MGMT-GAP-004: unblocked by MGMT-GAP-002, MGMT-GAP-003
+MGMT-GAP-004: done
 MGMT-GAP-005: unblocked by MGMT-GAP-003
 MGMT-GAP-008: unblocked by MGMT-GAP-002, MGMT-GAP-003
 MGMT-GAP-009: unblocked by MGMT-GAP-003

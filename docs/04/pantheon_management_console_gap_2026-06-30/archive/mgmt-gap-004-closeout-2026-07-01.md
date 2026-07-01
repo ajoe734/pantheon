@@ -4,10 +4,17 @@ Date: 2026-07-01
 
 ## Status
 
-MGMT-GAP-004 implementation is ready for PR review. This closeout records the
-frontend command-truth branch and the Pantheon BFF contract evidence used for
-review. It does not claim hosted deployment or final MGMT-GAP-007 release
-acceptance.
+MGMT-GAP-004 is closed at the task level.
+
+The frontend command-truth branch was merged to `ajoe734/execute-plans` `dev`,
+the Pantheon dev FE deployed the merged commit, `/deployment.json` reports that
+commit, the dev FE-BFF integration gate passed for the merged commit, and BFF
+health was verified after deploy.
+
+This does not close the full management-console production gap. `MGMT-GAP-006`
+must still build the hosted all-route production acceptance harness, and
+`MGMT-GAP-007` must still reconcile every remaining task into final production
+proof.
 
 ## Delivery Scope
 
@@ -16,6 +23,10 @@ Frontend repo: `ajoe734/execute-plans`
 Frontend branch: `task/mgmt-gap-004-command-receipts-2`
 
 Frontend branch head: `60151a1c8924a4708a2aac0f2cc5ff2da250b16a`
+
+Frontend PR: `https://github.com/ajoe734/execute-plans/pull/132`
+
+Frontend merge commit: `8ad6e034e9f831a11f143496b0320beba7a41dc2`
 
 Implemented frontend changes:
 
@@ -118,11 +129,65 @@ This proves:
 - Accepted runtime action commands are queryable through BFF audit projection
   by command reference and target entity.
 
+## Hosted Closeout Evidence
+
+execute-plans PR:
+
+- PR: `https://github.com/ajoe734/execute-plans/pull/132`
+- Branch: `task/mgmt-gap-004-command-receipts-2`
+- Branch head: `60151a1c8924a4708a2aac0f2cc5ff2da250b16a`
+- Merge commit on `dev`: `8ad6e034e9f831a11f143496b0320beba7a41dc2`
+- PR integration gate:
+  `https://github.com/ajoe734/execute-plans/actions/runs/28500266955`
+
+Merged `dev` evidence:
+
+- Dev FE-BFF integration gate:
+  `https://github.com/ajoe734/execute-plans/actions/runs/28500441725`
+- Passing job after rerun:
+  `https://github.com/ajoe734/execute-plans/actions/runs/28500441725/job/84480698924`
+- Dev FE deploy:
+  `https://github.com/ajoe734/execute-plans/actions/runs/28500441733`
+- Deployment proof:
+  `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json`
+- BFF health:
+  `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz`
+
+Observed deployment payload:
+
+```json
+{
+  "app": "execute-plans",
+  "environment": "pantheon-dev-fe",
+  "deployedAt": "20260701T071752Z",
+  "commit": "8ad6e034e9f831a11f143496b0320beba7a41dc2",
+  "sourceRef": "8ad6e034e9f831a11f143496b0320beba7a41dc2",
+  "sourceBranch": "dev",
+  "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "buildMode": {
+    "VITE_BFF_MODE": "live",
+    "VITE_BFF_FALLBACK": "strict",
+    "VITE_BFF_REAL_WRITES": "false"
+  }
+}
+```
+
+The first merged-dev integration gate attempt hit transient BFF/SSE readiness
+failures during release aggregation. The same target commit was rerun and passed
+all gate steps, including lint, unit/integration tests, build, contract drift,
+management persona validation, anonymous BFF route probe, authenticated BFF
+smoke, live dry-run write probe, management live deep validation, browser BFF
+probe, Playwright E2E, and release-gate aggregation.
+
 ## Residual Notes
 
-- Hosted FE deploy and strict-live browser proof remain for MGMT-GAP-006 and
-  MGMT-GAP-007 after the frontend PR merges and deploys.
+- The task-level command-truth slice is closed, but the all-route strict-live
+  production harness remains `MGMT-GAP-006`.
 - Studios and capability runtime depth remain MGMT-GAP-005 where command
   endpoints/runners are absent.
+- Detail DTO/render honesty remains `MGMT-GAP-008`.
+- Session/provider-auth/RBAC coherence remains `MGMT-GAP-009`.
+- Load/bundle/release-gate performance remains `MGMT-GAP-010`.
 - BFF FastAPI startup/shutdown deprecation warnings and `datetime.utcnow`
   warnings are pre-existing hygiene items outside this command-truth slice.

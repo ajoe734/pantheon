@@ -5,6 +5,7 @@ Reviewer: Claude2
 Batch: 3
 Fleet lane: command governance and frontend integration
 Depends on: `MGMT-GAP-002`, `MGMT-GAP-003`
+Status: done
 
 ## Problem
 
@@ -64,3 +65,25 @@ Each control must either:
 - Dry-run or real-writes-off probes prove no hidden side effect is created.
 - High-risk actions require confirmation and return command/audit evidence.
 - Tests cover command success, rejection, auth failure, and disabled state.
+
+## Closeout Evidence
+
+Closed by `ajoe734/execute-plans` PR #132:
+`https://github.com/ajoe734/execute-plans/pull/132`.
+
+| Item | Evidence |
+|---|---|
+| Branch head | `60151a1c8924a4708a2aac0f2cc5ff2da250b16a` |
+| Merge commit | `8ad6e034e9f831a11f143496b0320beba7a41dc2` |
+| PR integration gate | `https://github.com/ajoe734/execute-plans/actions/runs/28500266955` |
+| Dev integration gate | `https://github.com/ajoe734/execute-plans/actions/runs/28500441725` |
+| Passing dev gate job | `https://github.com/ajoe734/execute-plans/actions/runs/28500441725/job/84480698924` |
+| Dev FE deploy | `https://github.com/ajoe734/execute-plans/actions/runs/28500441733` |
+| Hosted deployment | `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json` |
+| BFF health | `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz` |
+| Archive | `docs/04/pantheon_management_console_gap_2026-06-30/archive/mgmt-gap-004-closeout-2026-07-01.md` |
+
+Task-level command receipt/write truth is done. Full management-console
+production closeout still waits for `MGMT-GAP-005`, `MGMT-GAP-008`,
+`MGMT-GAP-009`, `MGMT-GAP-010`, and then the hosted all-route harness in
+`MGMT-GAP-006`.
