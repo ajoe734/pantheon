@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from collections import deque
@@ -14660,6 +14661,7 @@ async def list_operator_alerts(
 
 
 _SHELL_SUMMARY_COUNT_CACHE: Dict[str, Any] = {}
+_SHELL_SUMMARY_COUNT_CACHE_LOCK = threading.Lock()
 _SHELL_PENDING_APPROVAL_STATES = {"pending", "in_review", "proposed", "under_review", "reviewed"}
 _SHELL_ACTIVE_INCIDENT_STATUSES = {"open", "in_progress"}
 _SHELL_ACTIVE_JOB_STATUSES = {"running", "in_progress", "queued"}
@@ -14737,6 +14739,14 @@ def _shell_summary_pending_approvals_count(snapshot_at: str) -> tuple[int, Dict[
 
 
 def _shell_summary_running_jobs_count(snapshot_at: str) -> tuple[int, Dict[str, Any]]:
+    surface_source = "bff_overlay" if _GOV_BFF_JOB_OVERLAY else None
+    surface = _dataset_surface_status(
+        "jobs",
+        snapshot_at=snapshot_at,
+        source=surface_source,
+    )
+    if surface.get("status") == "unavailable" and not _GOV_BFF_JOB_OVERLAY:
+        return 0, surface
     try:
         jobs = _list_bff_jobs()
     except Exception:
@@ -14745,12 +14755,6 @@ def _shell_summary_running_jobs_count(snapshot_at: str) -> tuple[int, Dict[str, 
             snapshot_at=snapshot_at,
             message="Job count source failed.",
         )
-    surface_source = "bff_overlay" if _GOV_BFF_JOB_OVERLAY else None
-    surface = _dataset_surface_status(
-        "jobs",
-        snapshot_at=snapshot_at,
-        source=surface_source,
-    )
     running = [
         job for job in jobs
         if str(job.get("status") or "").strip().lower() in _SHELL_ACTIVE_JOB_STATUSES
@@ -14860,77 +14864,78 @@ def _build_shell_summary_counts() -> Dict[str, Any]:
         "read_store_id": id(read_store),
         "read_surface_state": _read_surface_state(),
     }
-    cached = _SHELL_SUMMARY_COUNT_CACHE
-    if (
-        cached.get("expires_at", 0.0) > now
-        and cached.get("cache_key") == cache_key
-        and cached.get("counts")
-        and cached.get("surfaces")
-    ):
-        snapshot_at = str(cached["snapshot_at"])
+    with _SHELL_SUMMARY_COUNT_CACHE_LOCK:
+        cached = _SHELL_SUMMARY_COUNT_CACHE
+        if (
+            cached.get("expires_at", 0.0) > time.monotonic()
+            and cached.get("cache_key") == cache_key
+            and cached.get("counts")
+            and cached.get("surfaces")
+        ):
+            snapshot_at = str(cached["snapshot_at"])
+            return {
+                "counts": dict(cached["counts"]),
+                "surfaces": {
+                    key: _attach_shell_count_freshness(
+                        surface,
+                        computed_at=snapshot_at,
+                        ttl_seconds=ttl_seconds,
+                        cache_status="hit",
+                    )
+                    for key, surface in json.loads(json.dumps(cached["surfaces"])).items()
+                },
+                "snapshot_at": snapshot_at,
+            }
+
+        snapshot_at = utc_now()
+        pending_approvals, approvals_surface = _shell_summary_pending_approvals_count(snapshot_at)
+        open_alerts, alerts_surface = _shell_summary_open_alerts_count(snapshot_at)
+        running_jobs, jobs_surface = _shell_summary_running_jobs_count(snapshot_at)
+        source_surfaces = {
+            "pending_approvals": approvals_surface,
+            "open_alerts": alerts_surface,
+            "running_jobs": jobs_surface,
+        }
+        shell_surface = _aggregate_group_surface(
+            "shell_summary",
+            list(source_surfaces.values()),
+            snapshot_at=snapshot_at,
+            unavailable_message="Shell summary count sources unavailable.",
+            degraded_message="Shell summary count sources are degraded.",
+        )
+        shell_surface["source"] = "bff_composed"
+        surfaces = {
+            "shell_summary": shell_surface,
+            **source_surfaces,
+        }
+        counts = {
+            "pending_approvals": pending_approvals,
+            "open_alerts": open_alerts,
+            "running_jobs": running_jobs,
+        }
+        _SHELL_SUMMARY_COUNT_CACHE.clear()
+        _SHELL_SUMMARY_COUNT_CACHE.update(
+            {
+                "expires_at": time.monotonic() + ttl_seconds,
+                "cache_key": cache_key,
+                "snapshot_at": snapshot_at,
+                "counts": counts,
+                "surfaces": json.loads(json.dumps(surfaces)),
+            }
+        )
         return {
-            "counts": dict(cached["counts"]),
+            "counts": counts,
             "surfaces": {
                 key: _attach_shell_count_freshness(
                     surface,
                     computed_at=snapshot_at,
                     ttl_seconds=ttl_seconds,
-                    cache_status="hit",
+                    cache_status="miss",
                 )
-                for key, surface in json.loads(json.dumps(cached["surfaces"])).items()
+                for key, surface in surfaces.items()
             },
             "snapshot_at": snapshot_at,
         }
-
-    snapshot_at = utc_now()
-    pending_approvals, approvals_surface = _shell_summary_pending_approvals_count(snapshot_at)
-    open_alerts, alerts_surface = _shell_summary_open_alerts_count(snapshot_at)
-    running_jobs, jobs_surface = _shell_summary_running_jobs_count(snapshot_at)
-    source_surfaces = {
-        "pending_approvals": approvals_surface,
-        "open_alerts": alerts_surface,
-        "running_jobs": jobs_surface,
-    }
-    shell_surface = _aggregate_group_surface(
-        "shell_summary",
-        list(source_surfaces.values()),
-        snapshot_at=snapshot_at,
-        unavailable_message="Shell summary count sources unavailable.",
-        degraded_message="Shell summary count sources are degraded.",
-    )
-    shell_surface["source"] = "bff_composed"
-    surfaces = {
-        "shell_summary": shell_surface,
-        **source_surfaces,
-    }
-    counts = {
-        "pending_approvals": pending_approvals,
-        "open_alerts": open_alerts,
-        "running_jobs": running_jobs,
-    }
-    _SHELL_SUMMARY_COUNT_CACHE.clear()
-    _SHELL_SUMMARY_COUNT_CACHE.update(
-        {
-            "expires_at": now + ttl_seconds,
-            "cache_key": cache_key,
-            "snapshot_at": snapshot_at,
-            "counts": counts,
-            "surfaces": json.loads(json.dumps(surfaces)),
-        }
-    )
-    return {
-        "counts": counts,
-        "surfaces": {
-            key: _attach_shell_count_freshness(
-                surface,
-                computed_at=snapshot_at,
-                ttl_seconds=ttl_seconds,
-                cache_status="miss",
-            )
-            for key, surface in surfaces.items()
-        },
-        "snapshot_at": snapshot_at,
-    }
 
 
 def _shell_summary_session(identity: OperatorIdentity, *, checked_at: str) -> Dict[str, Any]:
@@ -14952,7 +14957,7 @@ def _shell_summary_session(identity: OperatorIdentity, *, checked_at: str) -> Di
 
 
 @app.get("/bff/management/shell-summary")
-async def bff_management_shell_summary(
+def bff_management_shell_summary(
     authorization: Optional[str] = Header(default=None),
     pantheon_session: Optional[str] = Cookie(default=None),
     x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
