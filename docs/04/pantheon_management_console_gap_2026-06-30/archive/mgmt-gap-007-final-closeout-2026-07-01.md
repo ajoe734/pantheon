@@ -4,11 +4,13 @@
 |---|---|
 | Task | `MGMT-GAP-007` |
 | Owner | Claude |
-| Reviewer | Codex |
+| Reviewer | Claude2 |
 | Depends on | `MGMT-GAP-006` (done) |
 | Scope doc | `docs/bff/execution-tasks/2026-06-30-management-console-production-gap/MGMT-GAP-007-production-closeout.md` |
 | Gap spec | `docs/04/pantheon_management_console_gap_2026-06-30/README.md` |
 | Verification date | 2026-07-01 |
+| Review | `review_approved` by Claude2: independently re-verified all 10 prerequisite terminal states, live FE/BFF/OpenAPI evidence, hosted acceptance harness gate/route/button counts against the archived JSON, authenticated live-id spot-check, and route-control re-audit reconciliation. Non-blocking note: OpenAPI 66-matched-path count recalculated to 64 (cosmetic, all 8 canonical endpoints present). |
+| Finalization | Task branch PR #2731 was `BEHIND` `origin/dev` at review time due to sidecar PRs #2730/#2732 merging first; updated via GitHub branch-update API (non-force), all required checks re-ran green, PR auto-merged into `dev` at `53131e9bc19fc82aca33b80b255c4389e4295deb`. |
 
 ## 1. Terminal Status Of Every `MGMT-GAP-*` Task
 
@@ -26,7 +28,7 @@ All ten prerequisite tasks are `done`. None remain `todo`, `in_progress`, or
 | `MGMT-GAP-008` | G7, G10 | Claude | Codex2 | done | execute-plans PR #133/#135 merged; deployed FE commit `47b8f418`; dev FE-BFF integration gate run `28515196527`; Pantheon PR #2669 merged. |
 | `MGMT-GAP-009` | G8 | Codex2 | Codex | done | Pantheon implementation PR #2660 and closeout PR #2672 merged into dev; focused BFF session/RBAC verification: 41 tests passing with isolated `BFF_DATA_DIR`. |
 | `MGMT-GAP-010` | G9 | Claude | Claude2 | done | Pantheon PR #2720 merged at `74eefdba1`; `node scripts/aggregate-release-gate.mjs` rerun with isolated `--out-dir` reproduced `release-load-gate-2026-07-01.json` byte-identical (excluding `generatedAt`); `pass:true`, zero failures, zero missing. |
-| `MGMT-GAP-007` | G6, G10 (closeout) | Claude | Codex | this task | This document; PR to follow. |
+| `MGMT-GAP-007` | G6, G10 (closeout) | Claude | Claude2 | done | This document; Pantheon PR #2731 merged into `dev` at `53131e9bc19fc82aca33b80b255c4389e4295deb`. |
 
 ## 2. Gap Matrix Resolution (G1-G10)
 
@@ -124,4 +126,7 @@ The Pantheon management console meets the production-level bar defined in
 - every finding in the 2026-07-01 route/control re-audit is fixed,
   superseded, or recorded as a named, owned, low-severity residual (§5-§6).
 
-No blocker remains open for `MGMT-GAP-007`.
+No blocker remains open for `MGMT-GAP-007`. Reviewer `Claude2` returned this task
+to owner `Claude` as `review_approved`; owner finalized and merged Pantheon PR
+#2731 into `dev` at `53131e9bc19fc82aca33b80b255c4389e4295deb`, and closed the
+task `done`.
