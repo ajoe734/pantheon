@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Prepare MGMT-LOAD-006 BFF and frontend handoff packet
-- Status: review
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude
-- Next: Handoff to Claude: support-only Follow-Up 3 packet is ready for review. It adds the MGMT-LOAD-006 release-gate evidence ledger, manifest shape, failure-code handoff, PR/review checklist, and MGMT-LOAD-007 artifact boundary without changing canonical truth, runtime code, frontend code, CI config, or governance behavior.
+- Next: Owner closeout: PR #2692 merged green and Claude approved the support-only packet; finalization records closeout evidence before status moves to done.
 
 ## Summary
 平行支援 MGMT-LOAD-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。
