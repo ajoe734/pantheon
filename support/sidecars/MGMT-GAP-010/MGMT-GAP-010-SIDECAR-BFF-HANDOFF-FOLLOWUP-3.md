@@ -6,6 +6,8 @@ Helper kind: `bff_handoff_packet`
 Owner: `Claude2`
 Reviewer: `Claude`
 Prepared: 2026-07-01
+Revised: 2026-07-01 (reopened by reviewer `Claude`: re-verify against
+`ai_status.py show`, not the worktree `ai-status.json` mirror)
 Mutates canonical truth: false
 
 ## Scope
@@ -29,8 +31,9 @@ handoff. Follow-Up 2 packaged the child-task ledger as of the point where
 closed out and `MGMT-LOAD-006` landed a real release-gate implementation. This
 follow-up's useful delta is: (1) recording that closeout, (2) flagging that the
 release gate currently reports `pass:false` for a specific, well-documented
-reason, not silently going green, and (3) reconciling the recurring gap between
-`ai-status.json` truth and the archived/doc evidence.
+reason, not silently going green, and (3) reconciling this worktree's
+`ai-status.json` mirror against the canonical live status store
+(`ai_status.py show` / `PANTHEON_STATUS_ROOT`) and the archived/doc evidence.
 
 ## Inputs Read
 
@@ -38,8 +41,10 @@ reason, not silently going green, and (3) reconciling the recurring gap between
 - `.orchestrator/task-briefs/mgmt_gap_010_sidecar_bff_handoff_followup_3.md`
 - `.orchestrator/skills/worker-anchor-commit.md`
 - `.orchestrator/skills/task-closeout-finalization.md`
-- `ai-status.json` (`MGMT-GAP-010`, `MGMT-GAP-006`, `MGMT-LOAD-001` through
-  `MGMT-LOAD-007`)
+- `python3 scripts/ai_status.py show <task-id>` for `MGMT-GAP-010`,
+  `MGMT-LOAD-001` through `MGMT-LOAD-007` against the canonical
+  `PANTHEON_STATUS_ROOT` (this revision's primary correction: the previous
+  revision read this worktree's local `ai-status.json` file directly instead)
 - `support/sidecars/MGMT-GAP-010/MGMT-GAP-010-SIDECAR-BFF-HANDOFF.md`
 - `support/sidecars/MGMT-GAP-010/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-REVIEW.md`
 - `support/sidecars/MGMT-GAP-010/MGMT-GAP-010-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md`
@@ -52,8 +57,8 @@ reason, not silently going green, and (3) reconciling the recurring gap between
 - `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-load-gate-2026-07-01.md`
 - `docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-load-gate-2026-07-01.json`
 - `git log` / `git show` on `79ecdce3f`, `eab27928b`, `154980a97`, `23d4297cc`,
-  `65ba4685b`, `edb7526bd`, `8315eb8a4`
-- `gh pr view` for PR `#2709`, `#2711`, `#2712` (`ajoe734/pantheon`)
+  `65ba4685b`, `edb7526bd`, `8315eb8a4`, `938d1259c`
+- `gh pr view` for PR `#2709`, `#2711`, `#2712`, `#2714` (`ajoe734/pantheon`)
 - `python3 -m pytest services/control-plane/bff/test_mgmt_load_002_shell_summary.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py scripts/test_aggregate_release_gate.py -q`
 - `git diff --check`
 
@@ -62,24 +67,35 @@ I intentionally did not read `current-work.md` or the full
 
 ## Current Coordination Snapshot
 
-| Surface | `ai-status.json` truth | Archived/doc/PR truth |
-|---|---|---|
-| This sidecar | new, `todo`, owner `Claude2`, reviewer `Claude` | n/a |
-| Follow-Up 2 sidecar | archived (owner finalized) | PR `#2701` merged at `de40c50e3f712e12ace91f074c195acb05e98f63` |
-| Parent `MGMT-GAP-010` | `todo`, owner `Gemini2`, reviewer `Codex` | Doc/archive evidence for 5 of 7 `MGMT-LOAD-*` children is closeout-complete; gate is real but non-passing (see below) |
-| `MGMT-LOAD-001` | `todo` (stale) | `done` per archive; baseline route-load + BFF fanout evidence |
-| `MGMT-LOAD-002` | `todo` (stale), owner `Claude2` | `done` per archive; shell-summary + canonical `/bff/jobs` merged |
-| `MGMT-LOAD-003` | `todo` (stale), owner `Claude` | Owner-closeout recorded 2026-07-01 by Codex2; execute-plans PR `#136` merged at `75a943ed3f...`; Pantheon PR `#2705` merged at `3f9c91f0c7...`; finalize-evidence commit `edb7526bd` merged via PR `#2709` at `8315eb8a4...` |
-| `MGMT-LOAD-004` | `todo` (stale) | `done` per archive; hosted route-split timing precedent |
-| `MGMT-LOAD-005` | `todo` (stale), owner `Gemini` | `done` per archive; local BFF read-isolation before/after evidence; hosted post-merge fanout rerun still deferred |
-| `MGMT-LOAD-006` | `todo` (stale), owner `Gemini2` | Release-gate script + tests landed via PR `#2711` (`79ecdce3f` -> merge `154980a97`); evidence refreshed via PR `#2712` (`23d4297cc` -> merge `65ba4685b`); real gate run reports **`overall: fail`, `pass: false`** |
-| `MGMT-LOAD-007` | `todo`, owner `Codex`, waits on `MGMT-LOAD-006` | Not yet started; correctly still blocked |
+**Correction (this revision):** the prior revision of this packet built the
+table below from this worktree's local `ai-status.json` file. That file is a
+generated per-worktree mirror, not the canonical live status store —
+`PANTHEON_STATUS_ROOT` (`/home/lupin/code/pantheon`) is canonical, and
+`python3 scripts/ai_status.py show <task-id>` reads through to it. Every row
+below was re-verified against `ai_status.py show <task-id>` run in this pass,
+not the raw worktree file.
 
-`ai-status.json` has not caught up with any of this doc/PR evidence because none
-of the recent `MGMT-LOAD-*` commits ran `scripts/ai-status.sh done` (or even
-`progress`) — they only edited task docs, archive files, and code. This is the
-same status-truth-lag pattern the base packet and Follow-Up 2 already flagged;
-it has not resolved itself and now spans more children.
+| Surface | Worktree `ai-status.json` mirror (stale, this copy only) | Live truth (`ai_status.py show`, PANTHEON_STATUS_ROOT) |
+|---|---|---|
+| This sidecar | new, `todo`, owner `Claude2`, reviewer `Claude` | n/a (this task) |
+| Follow-Up 2 sidecar | archived (owner finalized) | PR `#2701` merged at `de40c50e3f712e12ace91f074c195acb05e98f63` |
+| Parent `MGMT-GAP-010` | `todo`, owner `Gemini2`, reviewer `Codex` | `todo`, owner **`Claude`** (reassigned from `Gemini2` at `06:06:53Z`), reviewer `Codex`. `next` (`17:43:52Z`): `MGMT-LOAD-007` closeout PR `#2714` merged at `938d1259c9784b7a7f1a8728172484c0aa79962b`; parent gate still blocked for production-green pending a fresh hosted route-load + BFF-fanout probe with `result.pass=true`. |
+| `MGMT-LOAD-001` | `todo` (stale) | **archived `done`** at `10:31:39Z`; owner `Claude`, reviewer `Codex2`; baseline route-load + BFF fanout evidence |
+| `MGMT-LOAD-002` | `todo` (stale), owner `Claude2` | **archived `done`** at `10:41:12Z`; owner `Codex`, reviewer `Claude`; shell-summary + canonical `/bff/jobs` merged (PR `#2677`) |
+| `MGMT-LOAD-003` | `todo` (stale), owner `Claude` | **archived `done`** at `16:14:39Z`; owner `Codex2`, reviewer `Codex`; execute-plans PR `#136` merged at `75a943ed3f...`; Pantheon PR `#2705` merged at `3f9c91f0c7...`; finalize-evidence commit `edb7526bd` merged via PR `#2709` at `8315eb8a4...` |
+| `MGMT-LOAD-004` | `todo` (stale) | **archived `done`** at `11:43:45Z`; owner `Codex`, reviewer `Codex2`; hosted route-split timing precedent |
+| `MGMT-LOAD-005` | `todo` (stale), owner `Gemini` | **archived `done`** at `11:51:44Z`; owner `Claude`, reviewer `Codex2`; local BFF read-isolation before/after evidence; hosted post-merge fanout rerun still deferred to `MGMT-LOAD-007` |
+| `MGMT-LOAD-006` | `todo` (stale), owner `Gemini2` | **archived `done`** at `17:32:55Z`; owner `Claude`, reviewer `Codex`. Release-gate script + tests landed via PR `#2711` (`79ecdce3f` -> merge `154980a97`); evidence refreshed via PR `#2712` (`23d4297cc` -> merge `65ba4685b`); real gate run reports **`overall: fail`, `pass: false`** for the documented stale-baseline reason (see below) |
+| `MGMT-LOAD-007` | `todo`, owner `Codex`, waits on `MGMT-LOAD-006` | **status `review`**, owner `Codex`, reviewer `Claude`. Closeout artifact merged via PR `#2714` at `938d1259c9784b7a7f1a8728172484c0aa79962b` (`17:43:13Z`); `next` (`17:44:10Z`) asks reviewer `Claude` to confirm all `MGMT-LOAD` children are done, `MGMT-GAP-006` artifact paths are documented, and `MGMT-GAP-010` remains blocked for production-green pending the fresh hosted probe |
+
+`MGMT-LOAD-001` through `MGMT-LOAD-006` are already archived `done` in the
+canonical live store; every one of the transitions the previous revision of
+this packet asked the parent owner to (re-)run has already happened. The only
+thing actually stale is this worktree's local `ai-status.json` copy, which is
+a generated mirror that does not live-update outside its own task's status
+commands — this is expected worktree behavior, not a gap the parent owner
+needs to close. `MGMT-LOAD-007` has since moved from "not started" to
+`review`, awaiting reviewer `Claude`'s sign-off on its closeout PR `#2714`.
 
 ## What Changed Since Follow-Up 2
 
@@ -110,6 +126,14 @@ it has not resolved itself and now spans more children.
 4. **The real gate result is still `pass: false`, and the doc explains exactly
    why** — see next section. This is not a regression to flag; it is the gate
    correctly refusing to go green on stale evidence.
+5. **`MGMT-LOAD-007` moved from not-started to `review`.** Owner `Codex`
+   merged the load-closeout artifact via Pantheon PR `#2714`
+   (`938d1259c9784b7a7f1a8728172484c0aa79962b`, merged `2026-07-01T17:43:13Z`)
+   and handed off to reviewer `Claude`. Its `next` note asks the reviewer to
+   confirm all `MGMT-LOAD` children are done, `MGMT-GAP-006` has the exact
+   artifact paths, and `MGMT-GAP-010` stays blocked for production-green until
+   the fresh hosted probe lands. This sidecar does not perform that review —
+   it only records that the review is now the live pending step.
 
 ## Why `MGMT-LOAD-006` Is Not Green (and should not be forced green)
 
@@ -189,28 +213,35 @@ the same missing artifact: a fresh hosted probe run.
 | `MGMT-LOAD-003` | **Closed.** FE gating on route-primary-ready + idle merged (execute-plans `#136`, Pantheon `#2705`, `#2709`). Owner-finalized by Codex2. |
 | `MGMT-LOAD-004` | Hosted route-split timing precedent: first row/empty state p75 `931 ms`, p95 `1203 ms` on execute-plans commit `255e60414e0ca36e29c1b2e39f0543d23d2eea80`. |
 | `MGMT-LOAD-005` | BFF read-isolation implementation + local before/after proof; hosted post-merge fanout rerun still needed. |
-| `MGMT-LOAD-006` | **Gate implemented and tested** (`scripts/aggregate-release-gate.mjs`, 8 passing unit cases, wired to bundle-budget CI via execute-plans `#138`). Real run against currently available evidence reports `pass: false` for the specific, documented reason above — not a placeholder and not silently green. |
-| `MGMT-LOAD-007` | Must run the fresh hosted route-load + BFF-fanout probe (or obtain it from an operator with token access), re-run the gate against that fresh evidence, and only then archive final exact artifact paths, PR SHAs, deployed evidence, and residual risks for `MGMT-GAP-006`. |
+| `MGMT-LOAD-006` | **Gate implemented, tested, and archived `done`** (`scripts/aggregate-release-gate.mjs`, 8 passing unit cases, wired to bundle-budget CI via execute-plans `#138`). Real run against currently available evidence reports `pass: false` for the specific, documented reason above — not a placeholder and not silently green. |
+| `MGMT-LOAD-007` | **Closeout artifact merged, status `review`.** PR `#2714` (`938d1259c9784b7a7f1a8728172484c0aa79962b`) records the load-gap closeout and hands the review to `Claude`. The fresh hosted route-load + BFF-fanout probe (or sourcing it from an operator with token access) is still the documented residual before the gate can report `pass: true`. |
 
 ## Reconciliation Ask For The Parent Owner
 
-Before `MGMT-GAP-010` closes, the parent owner should:
+The prior revision of this ask assumed `ai-status.json` needed the parent
+owner to re-run closeout transitions for `MGMT-LOAD-001` through
+`MGMT-LOAD-005`. That assumption was wrong — `ai_status.py show` against the
+canonical `PANTHEON_STATUS_ROOT` confirms all six of `MGMT-LOAD-001` through
+`MGMT-LOAD-006` are already archived `done`, each with its own owner,
+reviewer, and delivery record. No re-closing is needed for those six. Before
+`MGMT-GAP-010` closes, the parent owner (`Claude`, per the live record) should
+instead:
 
-1. Run `AI_NAME=<owner> ./scripts/ai-status.sh progress|done` for
-   `MGMT-LOAD-001`, `MGMT-LOAD-002`, `MGMT-LOAD-003`, `MGMT-LOAD-004`, and
-   `MGMT-LOAD-005` so `ai-status.json` matches the archived `done` state each
-   already reached. This sidecar cannot do this itself — closeout status
-   transitions belong to each task's own owner, and this task's scope is a
-   support handoff packet, not the child tasks themselves.
-2. Confirm `MGMT-LOAD-006`'s two merged PRs (`#2711`, `#2712`) are reflected in
-   its own status record, with the `pass: false` reason preserved (not
-   silently marked passing).
-3. Ensure `MGMT-LOAD-007` sources the bearer-token-gated hosted probe rerun
-   before claiming the parent gate is green, per the explicit deferral already
-   recorded in `MGMT-LOAD-006`'s closeout doc.
-4. Hand `MGMT-GAP-006` the exact `release-load-gate-*`/`release-*` artifact
-   paths listed in `MGMT-LOAD-006`'s doc, once regenerated from a fresh hosted
-   run.
+1. Track `MGMT-LOAD-007` through its live `review` stage (reviewer `Claude`)
+   rather than treating it as not-started; its closeout PR `#2714` is already
+   merged.
+2. Ensure the fresh hosted route-load + BFF-fanout probe (bearer-token-gated,
+   deferred from `MGMT-LOAD-006` to `MGMT-LOAD-007`/an operator with access)
+   actually runs before treating `MGMT-GAP-010`'s gate as production-green —
+   this is exactly what `MGMT-GAP-010`'s own live `next` note already says is
+   still blocking it.
+3. Hand `MGMT-GAP-006` the exact `release-load-gate-*`/`release-*` artifact
+   paths listed in `MGMT-LOAD-006`'s doc, once regenerated from that fresh
+   hosted run.
+4. Treat this worktree's local `ai-status.json` mirror as informational only
+   when it disagrees with `ai_status.py show` — refresh or ignore the local
+   copy rather than asking any task owner to redo work that is already
+   archived done in the live store.
 
 ## Do Not Infer
 
@@ -221,9 +252,14 @@ Do not infer any of the following from this sidecar:
   or shell-fanout fixes are broken — the failure is against stale pre-fix
   baseline evidence, documented as such in `MGMT-LOAD-006`'s own closeout.
 - A fresh hosted probe exists yet. It does not; it is explicitly deferred.
-- `ai-status.json` being stale for `MGMT-LOAD-001` through `MGMT-LOAD-006`
-  means the underlying work is undone — the doc/PR evidence shows it is
-  merged; only the status-tracking step was skipped.
+- This worktree's local `ai-status.json` mirror showing `MGMT-LOAD-001`
+  through `MGMT-LOAD-007` as `todo` means the underlying work or status
+  tracking is undone. The live canonical store (`ai_status.py show` against
+  `PANTHEON_STATUS_ROOT`) confirms `MGMT-LOAD-001` through `MGMT-LOAD-006` are
+  archived `done` and `MGMT-LOAD-007` is in `review` with its closeout PR
+  already merged; only this worktree's generated mirror file is behind.
+- `MGMT-GAP-010`'s live owner is `Gemini2`. It is `Claude` per the live
+  record; `Gemini2` only appears in this worktree's stale mirror.
 - This packet moves `MGMT-GAP-010` or any `MGMT-LOAD-*` task to `done`.
 
 ## Reviewer Handoff
@@ -231,15 +267,18 @@ Do not infer any of the following from this sidecar:
 Claude should review this support packet for:
 
 1. Sidecar scope: support artifact only, no canonical/runtime/frontend changes.
-2. Ledger accuracy against the current status/archive/PR state (all cited
-   commit SHAs and PR numbers were checked with `git show`/`gh pr view` in this
-   pass).
+2. Ledger accuracy against the current **live** status/archive/PR state — this
+   revision replaces every `ai-status.json`-mirror-sourced claim with a value
+   re-checked via `ai_status.py show <task-id>` against `PANTHEON_STATUS_ROOT`,
+   per the reopen note in this task's brief. All cited commit SHAs and PR
+   numbers were also re-checked with `git show`/`gh pr view` in this pass.
 3. Whether the "why `MGMT-LOAD-006` is not green" explanation is precise
    enough to prevent the parent owner from misreading a documented,
    expected fail as a regression.
 4. Whether the reconciliation ask is scoped correctly (asking the parent/child
    owners to run status commands, not this sidecar performing those
-   transitions itself).
+   transitions itself) and no longer asks anyone to re-close tasks that are
+   already archived `done`.
 
 If approved, the parent owner can absorb this ledger into the main load-gap
 closeout path. This packet itself should not move `MGMT-GAP-010` or any
@@ -261,18 +300,29 @@ python3 -m pytest \
 gh pr view 2709 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit
 gh pr view 2711 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit
 gh pr view 2712 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit
+gh pr view 2714 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit
+for t in MGMT-GAP-010 MGMT-LOAD-001 MGMT-LOAD-002 MGMT-LOAD-003 MGMT-LOAD-004 \
+         MGMT-LOAD-005 MGMT-LOAD-006 MGMT-LOAD-007; do
+  python3 scripts/ai_status.py show "$t"
+done
 ```
 
 Results:
 
-- `git status --short`: clean before this packet was added.
+- `git status --short`: clean before this packet was updated.
 - Branch is up to date with `origin/dev` tip (`65ba4685b...`, matches the
   `MGMT-LOAD-006` PR `#2712` merge commit).
 - `git diff --check`: passed.
 - Focused suite: `20 passed, 8 warnings` (BFF shell-summary + read-concurrency
-  + release-gate unit tests).
-- PR `#2709`, `#2711`, `#2712`: all `MERGED` into `dev` at the SHAs cited
-  above.
+  + release-gate unit tests) — re-ran clean in this revision too.
+- PR `#2709`, `#2711`, `#2712`, `#2714`: all `MERGED` into `dev` at the SHAs
+  cited above (`#2714` at `938d1259c9784b7a7f1a8728172484c0aa79962b`,
+  merged `2026-07-01T17:43:13Z`).
+- `ai_status.py show` against `PANTHEON_STATUS_ROOT` (canonical, not this
+  worktree's `ai-status.json` file) for every row above: confirmed
+  `MGMT-LOAD-001` through `MGMT-LOAD-006` archived `done`; `MGMT-LOAD-007` in
+  `review`; `MGMT-GAP-010` owner `Claude`, status `todo`, blocked on the fresh
+  hosted probe.
 
 ## Not Changing
 
