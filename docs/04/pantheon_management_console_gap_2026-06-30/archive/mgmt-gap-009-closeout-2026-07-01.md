@@ -10,6 +10,8 @@ Reviewer: `Codex`
 - Implementation merge commit: `6304ee8e7fefe53b2cc975182ecb7e324d4872aa`
 - Implementation head commit: `0361f8e162992706eedd1ac03e1e717a4e300e9b`
 - Closeout PR: https://github.com/ajoe734/pantheon/pull/2672
+- Closeout branch refreshed from `origin/dev` at
+  `85d9380f3c1d59a37a858f93ed0e30799aa6085c` before final verification.
 
 ## Approved Scope
 
