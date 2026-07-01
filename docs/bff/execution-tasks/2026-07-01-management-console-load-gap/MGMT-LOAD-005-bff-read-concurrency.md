@@ -109,3 +109,19 @@ baseline, not validate the fix. The hosted post-merge fanout probe re-run is
 a residual item for `MGMT-LOAD-007`, which explicitly closes `MGMT-GAP-010`
 with "merged PR, deployed FE/BFF, hosted probe, and residual-risk evidence"
 per `INDEX.md`.
+
+## 2026-07-01 Owner Closeout
+
+PR #2682 already merged to `dev`; this task branch HEAD is confirmed an
+ancestor of `origin/dev` (no further code change required for this task).
+Owner re-verified the approved scope is still true in the worktree:
+
+```text
+python3 -m pytest services/control-plane/bff/test_mgmt_load_005_read_concurrency.py \
+  services/control-plane/bff/test_mgmt_load_002_shell_summary.py -q
+12 passed, 8 warnings
+```
+
+Residual hosted post-merge fanout probe remains explicitly deferred to
+`MGMT-LOAD-007` per reviewer note; not a blocker for this task's `done`
+transition.
