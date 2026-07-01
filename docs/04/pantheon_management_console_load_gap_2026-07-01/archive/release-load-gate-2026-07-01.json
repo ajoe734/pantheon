@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "taskId": "MGMT-LOAD-006",
-  "generatedAt": "2026-07-01T17:38:59.319Z",
+  "generatedAt": "2026-07-01T18:06:14.320Z",
   "auditDir": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive",
   "inputs": {
-    "routeTimingFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01.json",
-    "waterfallFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/request-waterfall-2026-07-01.json",
-    "bffFanoutFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01.json",
+    "routeTimingFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01-postfix.json",
+    "waterfallFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/request-waterfall-2026-07-01-postfix.json",
+    "bffFanoutFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01-postfix.json",
     "bundleFile": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-bundle-2026-07-01.json"
   },
   "budgets": {
@@ -110,68 +110,60 @@
         "label": "Route probe did not use `networkidle` as the readiness signal.",
         "status": "pass",
         "note": "usedNetworkidle:false",
-        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01.json"
+        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01-postfix.json"
       },
       {
         "label": "Route probe completed without error.",
         "status": "pass",
         "note": "no error",
-        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01.json"
+        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01-postfix.json"
       },
       {
         "label": "First row/empty-state visible <= 2500 ms.",
-        "status": "fail",
-        "note": "observed:4668 budget:2500",
-        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01.json"
+        "status": "pass",
+        "note": "observed:609 budget:2500",
+        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-timing-2026-07-01-postfix.json"
       }
     ],
     "3_startup_requests": [
       {
         "label": "Non-primary BFF startup requests <= 2.",
-        "status": "fail",
-        "note": "observed:5 budget:2 paths:/bff/me,/bff/approvals,/bff/alerts,/bff/jobs,/bff/jobs",
-        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/request-waterfall-2026-07-01.json"
+        "status": "pass",
+        "note": "observed:2 budget:2 paths:/bff/me,/bff/management/shell-summary",
+        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/request-waterfall-2026-07-01-postfix.json"
       },
       {
         "label": "Duplicate startup /bff/jobs requests <= 0.",
-        "status": "fail",
-        "note": "observed:2 duplicate:1 budget:0",
-        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/request-waterfall-2026-07-01.json"
+        "status": "pass",
+        "note": "observed:0 duplicate:0 budget:0",
+        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/request-waterfall-2026-07-01-postfix.json"
       }
     ],
     "4_bff_fanout": [
       {
         "label": "/health fanout p95 <= 200 ms.",
-        "status": "fail",
-        "note": "observed:1328 budget:200",
-        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01.json"
+        "status": "pass",
+        "note": "observed:134 budget:200",
+        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01-postfix.json"
       },
       {
         "label": "/bff/management/evidence fanout p95 <= 750 ms.",
-        "status": "fail",
-        "note": "observed:1423 budget:750",
-        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01.json"
+        "status": "pass",
+        "note": "observed:78 budget:750",
+        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01-postfix.json"
       },
       {
         "label": "/bff/management/shell-summary fanout p95 <= 200 ms.",
-        "status": "missing",
-        "note": "observed:n/a budget:200",
-        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01.json"
+        "status": "pass",
+        "note": "observed:78 budget:200",
+        "evidence": "docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-baseline-2026-07-01-postfix.json"
       }
     ]
   },
   "result": {
-    "pass": false,
-    "overall": "fail",
-    "failures": [
-      "First row/empty-state visible <= 2500 ms.",
-      "Non-primary BFF startup requests <= 2.",
-      "Duplicate startup /bff/jobs requests <= 0.",
-      "/health fanout p95 <= 200 ms.",
-      "/bff/management/evidence fanout p95 <= 750 ms."
-    ],
-    "missing": [
-      "/bff/management/shell-summary fanout p95 <= 200 ms."
-    ]
+    "pass": true,
+    "overall": "pass",
+    "failures": [],
+    "missing": []
   }
 }

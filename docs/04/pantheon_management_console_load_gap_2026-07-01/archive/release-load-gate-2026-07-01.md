@@ -1,8 +1,8 @@
 # MGMT-LOAD-006 Release Load Gate
 
-Generated: 2026-07-01T17:38:59.319Z
+Generated: 2026-07-01T18:06:14.320Z
 Audit dir: `docs/04/pantheon_management_console_load_gap_2026-07-01/archive`
-Overall: **fail** (pass=false)
+Overall: **pass** (pass=true)
 
 ## 0_dependencies
 
@@ -27,19 +27,19 @@ Overall: **fail** (pass=false)
 |---|---|---|
 | pass | Route probe did not use `networkidle` as the readiness signal. | usedNetworkidle:false |
 | pass | Route probe completed without error. | no error |
-| fail | First row/empty-state visible <= 2500 ms. | observed:4668 budget:2500 |
+| pass | First row/empty-state visible <= 2500 ms. | observed:609 budget:2500 |
 
 ## 3_startup_requests
 
 | Status | Check | Note |
 |---|---|---|
-| fail | Non-primary BFF startup requests <= 2. | observed:5 budget:2 paths:/bff/me,/bff/approvals,/bff/alerts,/bff/jobs,/bff/jobs |
-| fail | Duplicate startup /bff/jobs requests <= 0. | observed:2 duplicate:1 budget:0 |
+| pass | Non-primary BFF startup requests <= 2. | observed:2 budget:2 paths:/bff/me,/bff/management/shell-summary |
+| pass | Duplicate startup /bff/jobs requests <= 0. | observed:0 duplicate:0 budget:0 |
 
 ## 4_bff_fanout
 
 | Status | Check | Note |
 |---|---|---|
-| fail | /health fanout p95 <= 200 ms. | observed:1328 budget:200 |
-| fail | /bff/management/evidence fanout p95 <= 750 ms. | observed:1423 budget:750 |
-| missing | /bff/management/shell-summary fanout p95 <= 200 ms. | observed:n/a budget:200 |
+| pass | /health fanout p95 <= 200 ms. | observed:134 budget:200 |
+| pass | /bff/management/evidence fanout p95 <= 750 ms. | observed:78 budget:750 |
+| pass | /bff/management/shell-summary fanout p95 <= 200 ms. | observed:78 budget:200 |
