@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-001",
+  "archived_at": "2026-07-01T10:31:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-001",
+    "title": "Management load baseline and route-ready probes",
+    "summary_zh": "建立 /management/evidence hosted browser route-load baseline 與 BFF fanout baseline；readiness 改用 heading/row/API milestone，不用 networkidle 判定 SSE 頁面就緒。",
+    "phase": "MGMT Console Load Gap / Wave 0 baseline probes",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-001",
+      "MGMT-GAP-002"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_management_console_load_gap_2026-07-01",
+      "frontend-checkout:scripts",
+      "frontend-checkout:e2e",
+      "services/control-plane/bff"
+    ],
+    "acceptance": [
+      "route timing JSON + request waterfall + Markdown baseline archived; probe does not wait on networkidle; BFF fanout probe captures /health/evidence/alerts/approvals/jobs timings"
+    ],
+    "next": "Finalized MGMT-LOAD-001: Codex2-approved route-load and BFF fanout baseline (Pantheon PR #2661/#2664, execute-plans PR #130) merged into dev; closeout-sync PR #2674 merged after rebasing task/MGMT-LOAD-001 onto origin/dev (merge commit e88b78ba4, confirmed ancestor of origin/dev).",
+    "last_update": "2026-07-01T10:31:39Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+      "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_parent": "MGMT-GAP-010",
+    "helper_kind": "load_gap_execution_slice",
+    "wave": 0,
+    "fleet_lane": "release-probe-baseline",
+    "review_notes_zh": [
+      "MGMT-LOAD-001 review approved: Pantheon PR #2661/#2664 and execute-plans PR #130 merge commits verified as dev ancestors; route-load baseline uses domcontentloaded plus heading/API/row milestones, not networkidle; BFF fanout baseline covers /health, /bff/management/evidence, /bff/alerts, /bff/approvals, /bff/jobs. execute-plans integration-gate red item is existing F01 /bff/me live timeout; new MGMT-LOAD-001 e2e passed and the timeout is downstream load-gap evidence, not a blocker for this baseline task."
+    ],
+    "review_file": ".orchestrator/reviews/MGMT-LOAD-001-review-codex2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T10:31:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-001",
+      "git_clean_required": false,
+      "commit": "e88b78ba49640d2d25f92ce9ac1d3db62540a93e",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-LOAD-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4fdd52da81ae3a31ee1e6c8ced45b32250747dc6",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-001",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-LOAD-001 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-01T06:06:56Z",
+      "resolved_at": "2026-07-01T06:07:34Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Delivery already merged: pantheon PR #2661 (commit 4ba70598) and execute-plans PR #130 (commit 7cd6060) are both ancestors of their dev branches. Verified acceptance: route-timing/waterfall/Markdown archived under docs/04/pantheon_management_console_load_gap_2026-07-01/archive/; probe never uses networkidle (heading + API milestones); fanout probe covers /health, /bff/management/evidence, /bff/alerts, /bff/approvals, /bff/jobs. Status-note sync PR #2664 open with auto-merge. Please review.",
+      "status": "done",
+      "created_at": "2026-07-01T07:00:21Z",
+      "resolved_at": "2026-07-01T09:10:01Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Auto-reassigned review from Codex to Codex2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-01T09:10:01Z",
+      "resolved_at": "2026-07-01T10:23:07Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review approved by Codex2: route-load baseline and BFF fanout probes meet acceptance; owner Claude should finalize closeout to done.",
+      "status": "done",
+      "created_at": "2026-07-01T10:23:07Z",
+      "resolved_at": "2026-07-01T10:31:40Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-005",
+  "archived_at": "2026-07-01T10:30:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-005",
+    "title": "Studios and capabilities to production level",
+    "summary_zh": "Formula Studio/Skill Sandbox 接真 backtest/skill runner 或從一級 nav 降級；Tools/MCP/Skills create/import/publish/retire actions 全部 governed 或 disabled。",
+    "phase": "MGMT Console Production Gap / Batch 4 studios capabilities",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-003"
+    ],
+    "artifacts": [
+      "frontend-checkout:src/management/pages/studios",
+      "frontend-checkout:src/management/pages",
+      "services/control-plane/bff",
+      "docs/04/pantheon_management_console_gap_2026-06-30"
+    ],
+    "acceptance": [
+      "hosted probe 無 mock trace/backtest 被標成 live success; runner contracts 有 tests/limits; capability actions 有 command/job id 或 disabled"
+    ],
+    "next": "execute-plans PR #129 merged; Pantheon closeout evidence archived in PR #2675 / merge bb649d97026801bdde9ab8e7e54b3aaf5866ea20; capability studio actions fail closed without governed runner or command receipts.",
+    "last_update": "2026-07-01T10:30:14Z",
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+      "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+      "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+      "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "batch": 4,
+    "fleet_lane": "runtime-capability",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+    "auto_generated": true,
+    "review_file": "docs/04/pantheon_management_console_gap_2026-06-30/archive/mgmt-gap-005-closeout-2026-07-01.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T10:30:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-005",
+      "git_clean_required": false,
+      "commit": "be30ad7f70cab382e4cadb82177dca0effc1ff5e",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-GAP-005",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "bb649d97026801bdde9ab8e7e54b3aaf5866ea20",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-005",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned MGMT-GAP-005 away from unavailable lane Gemini (disabled, sidecar-only, or auth-down); owner Gemini -> Claude2.",
+      "status": "done",
+      "created_at": "2026-07-01T06:06:47Z",
+      "resolved_at": "2026-07-01T06:07:06Z"
+    },
+    {
+      "task_id": "MGMT-GAP-005",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Claude2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-07-01T06:07:06Z",
+      "resolved_at": "2026-07-01T06:07:40Z"
+    },
+    {
+      "task_id": "MGMT-GAP-005",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "execute-plans PR #129 merged into dev at 9f846697f03c89e72216749ee9b39d0a849e80a8. Implemented studios/capability command-truth gates in commit ad17ad05703c5495e630253acc8cd108d30cd92a plus no-op retrigger d7cda93a8f12f4237242d65e16644fbe531df513. Required GitHub gate run 28499187881 passed. Local focused test, lint, and build passed; local full npm run test showed unrelated 5s timeout flakes in PersonaFleetPage/EvidenceExplorerPage/Sentinel/WidgetRevisionDrawer while CI full test passed.",
+      "status": "done",
+      "created_at": "2026-07-01T07:01:52Z",
+      "resolved_at": "2026-07-01T08:08:59Z"
+    },
+    {
+      "task_id": "MGMT-GAP-005",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Chair reassigned review from Claude2 to Claude: Reviewer lane claude2 is dispatch-paused (quota_terminal, paused_at 07:48:54Z, hint reset 2026-07-01T17:00Z, ~9h away), blocking review. Claude is healthy, not the task owner (Codex2), and already carries governance-review context on the same MGMT-GAP batch.",
+      "status": "done",
+      "created_at": "2026-07-01T08:08:59Z",
+      "resolved_at": "2026-07-01T08:15:57Z"
+    },
+    {
+      "task_id": "MGMT-GAP-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed execute-plans PR #129 (commits ad17ad0/d7cda93, merged into execute-plans dev at 9f846697). Verified: FormulaStudio/SkillSandboxStudio no longer render FormulaBacktestChart/mock trace as live success -- replaced with explicit runner-unavailable EmptyState; FormulaBacktestChart.tsx deleted. Tool/Mcp/Skill detail+registry+secrets+prompt CTAs (test/activate/restrict/block/retire/rotate/publish/save/grant) converted from runActionSafe+HighRiskConfirm+toast.success to disabled NonProductionActionButton with governed-command-required tooltip; ToolSchemaPanel fake setTimeout/Math.random sandbox response removed. CapabilitiesLists create actions disabled via existing CreateBehavior=disabled wiring with named live-empty-registry EmptyState copy (verified ObjectListPage wires createBehavior.kind===disabled to a disabled Create button + tooltip). New contract test capabilitiesProductionTruth.test.ts asserts all of the above; independently re-ran it at origin/dev tip (8ad6e03) via vitest -> 3 passed. Required GitHub gate run 28499187881 (integration-gate) confirmed green. Scope check: runActionSafe/HighRiskConfirm remain intentionally untouched on out-of-scope surfaces (Strategy/Research/Deployment/etc). Acceptance criterion satisfied: no mock trace/backtest is marked live success, and every capability action is either command-backed or disabled. Approved and returned to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-07-01T08:15:57Z",
+      "resolved_at": "2026-07-01T10:30:15Z"
+    }
+  ],
+  "blockers": []
+}

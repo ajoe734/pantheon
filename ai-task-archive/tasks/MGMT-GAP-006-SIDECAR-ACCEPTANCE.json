@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-006-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-07-01T19:03:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-006-SIDECAR-ACCEPTANCE",
+    "title": "Prepare MGMT-GAP-006 acceptance packet and dependency map",
+    "summary_zh": "平行支援 MGMT-GAP-006，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "MGMT Console Production Gap / Batch 5 acceptance harness",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-001",
+      "MGMT-GAP-002",
+      "MGMT-GAP-004",
+      "MGMT-GAP-005",
+      "MGMT-GAP-008",
+      "MGMT-GAP-009",
+      "MGMT-GAP-010"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-GAP-006/MGMT-GAP-006-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Sidecar acceptance packet closeout refresh merged into dev via PR #2722 (merge 8f8e9b55b); dependency map confirms all seven hard deps (001/002/004/005/008/009/010) closed, acceptance checklist items 1/2/15 Met, remaining harness-build items correctly left to parent owner Claude. Support-only scope preserved.",
+    "last_update": "2026-07-01T19:03:40Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-GAP-006",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T19:03:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-006-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-006-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "ba55557137faf82f782c531c11b581b328c3bd3d",
+      "commit_subject": "MGMT-GAP-006-SIDECAR-ACCEPTANCE: acceptance packet closeout refresh",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "At closeout, refreshed the packet against current ai-status.json": "all four",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "MGMT-GAP-006-SIDECAR-ACCEPTANCE",
+        "Reviewer": "Claude",
+        "Verified": "confirmed via ai-status.json and ai-task-archive/tasks/*.json at"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-006-SIDECAR-ACCEPTANCE",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8f8e9b55b80d970b60a197e7d8116bd071874253",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-006-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Sidecar acceptance packet ready for review at support/sidecars/MGMT-GAP-006/MGMT-GAP-006-SIDECAR-ACCEPTANCE.md. Key finding: MGMT-GAP-006 is dependency-blocked on MGMT-GAP-005/008/009/010 (still todo), each supplying a precondition the harness must assert on. Recommend parent owner scaffold against the 3 closed deps (001/002/004) now and activate blocked assertions as deps land. Please verify scope stayed support-only.",
+      "status": "done",
+      "created_at": "2026-07-01T18:54:19Z",
+      "resolved_at": "2026-07-01T18:56:23Z"
+    },
+    {
+      "task_id": "MGMT-GAP-006-SIDECAR-ACCEPTANCE",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Reviewed: dependency map and acceptance checklist verified against ai-status.json (001/002/004 done; 005/008/009/010 todo matches depends_on); scope confirmed support-only (only support/sidecars/MGMT-GAP-006/ added, no canonical/frontend-checkout/release-gate files touched). Approved for Claude2 to hand off to parent owner Gemini2.",
+      "status": "done",
+      "created_at": "2026-07-01T18:56:23Z",
+      "resolved_at": "2026-07-01T19:03:41Z"
+    }
+  ],
+  "blockers": []
+}

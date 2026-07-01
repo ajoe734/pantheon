@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-006",
+  "archived_at": "2026-07-01T19:47:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-006",
+    "title": "Hosted management production acceptance harness",
+    "summary_zh": "建立 hosted management probe: visible nav、hidden aliases、canonical final paths、endpoint capture、strict-live no seed fallback、write CTA mock detection、console/CORS failures。",
+    "phase": "MGMT Console Production Gap / Batch 5 acceptance harness",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-001",
+      "MGMT-GAP-002",
+      "MGMT-GAP-004",
+      "MGMT-GAP-005",
+      "MGMT-GAP-008",
+      "MGMT-GAP-009",
+      "MGMT-GAP-010"
+    ],
+    "artifacts": [
+      "frontend-checkout:scripts",
+      "frontend-checkout:e2e",
+      "scripts/aggregate-release-gate.mjs",
+      "docs/04/pantheon_management_console_gap_2026-06-30/archive"
+    ],
+    "acceptance": [
+      "probe 覆蓋所有 visible management nav + hidden aliases; 輸出 JSON/Markdown evidence; release gate 可 fail legacy render/missing endpoint/mock write success"
+    ],
+    "next": "Finalized: hosted management production acceptance harness (execute-plans PR #140, evidence PR #2725) independently re-verified by Claude2 and merged into dev; closeout record (review file + task brief) merged via PR #2729. Residual follow-ups (3 entity live-id timeouts, write-CTA source-scan warn) noted for MGMT-GAP-007.",
+    "last_update": "2026-07-01T19:47:39Z",
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+      "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+      "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+      "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "batch": 5,
+    "fleet_lane": "integration-qa",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "審查通過：獨立驗證 execute-plans PR #140 (d28acd7) 已在 origin/dev、harness 邏輯與證據一致、Gate 8/7 pass-warn-fail 語意正確、eslint clean、hosted FE/BFF 現場抽查一致",
+      "後續追蹤：3 個 entity (strategies/personas/capital) live-id 解析 timeout，下次重跑可重驗；write-CTA source-scan 22/34 ungoverned 為既知 soft-gate 殘留項"
+    ],
+    "review_file": ".orchestrator/reviews/MGMT-GAP-006-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T19:47:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-006",
+      "git_clean_required": false,
+      "commit": "555f7e07f1e52c268f04f1ee4eea6a466bde02a6",
+      "commit_subject": "MGMT-GAP-006: record reviewer approval and task brief closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "closeout artifacts only (reviewer approval note and",
+        "Not changing": "harness implementation (ajoe734/execute-plans PR #140,",
+        "Composes with": "PR #2725's archived evidence under",
+        "Verified": "not run; closeout record commit only, no source changes.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "MGMT-GAP-006",
+        "Reviewer": "Claude2"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b2498fcf79b9262645d90edc4ec31c67f1c032fe",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-006",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-GAP-006 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-01T06:06:50Z",
+      "resolved_at": "2026-07-01T18:50:36Z"
+    },
+    {
+      "task_id": "MGMT-GAP-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Ready for review. Implementation: ajoe734/execute-plans PR #140 (merged into dev, commit 49bab98) adds scripts/accept-management-hosted-production.mjs + scripts/lib/management-routes.mjs (hosted nav/alias/endpoint/detail-honesty/session-RBAC/write-CTA harness) and wires it into scripts/aggregate-release-gate.mjs as Gate 8. Pantheon evidence-archive: ajoe734/pantheon PR #2725 (merged into dev, commit 7daeb566b, task branch HEAD confirmed ancestor of origin/dev) adds docs/04/pantheon_management_console_gap_2026-06-30/archive/{management-hosted-acceptance-2026-07-01.json,.md,mgmt-gap-006-closeout-2026-07-01.md}. Verified: hosted rerun against https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io (FE/BFF commit 2129b56cbf86) crawled 103 routes, overall=warn, result.pass=true (9/10 gate checks pass; 1 soft warn on the toast.success source-scan heuristic, documented as residual follow-up, does not block pass). Consumed docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-load-gate-2026-07-01.json result.pass=true per the MGMT-LOAD-006/007 handoff note. npx eslint clean. Reviewer was reassigned from Codex (both codex1/codex2 quota-paused, hint_blocked_until 2026-07-06) to you per the sidecar risk flag; please review scope/evidence and approve or request changes.",
+      "status": "done",
+      "created_at": "2026-07-01T19:30:01Z",
+      "resolved_at": "2026-07-01T19:43:51Z"
+    },
+    {
+      "task_id": "MGMT-GAP-006",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: independently re-verified execute-plans PR #140 delivery, harness logic, Gate 8/7 wiring, eslint, and a live hosted spot-check. Returned to owner (Claude) for finalization.",
+      "status": "done",
+      "created_at": "2026-07-01T19:43:51Z",
+      "resolved_at": "2026-07-01T19:47:40Z"
+    }
+  ],
+  "blockers": []
+}

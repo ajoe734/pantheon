@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-01T13:02:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-LOAD-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-LOAD-003，整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Load Gap / Wave 2 FE shell fanout",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-LOAD-003/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout packet merged via PR #2697; support-only handoff reviewed and archived for parent absorption.",
+    "last_update": "2026-07-01T13:02:49Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-LOAD-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Scope 確認: 只新增 support/sidecars/MGMT-LOAD-003/*.md + task brief, 未動 canonical truth/BFF runtime/route registry。",
+      "BFF contract 核對 services/control-plane/bff/main.py:14999-15131, /bff/management/shell-summary 回傳 data.counts.{pending_approvals,open_alerts,running_jobs}, data.session, data.transport, meta.surfaces 與封包描述一致, MGMT-LOAD-002 已 done 且合併 dev (PR #2677)。",
+      "重要落差: 封包的 Fresh Read-Only Frontend Snapshot 是在 execute-plans 的 task/MGMT-GAP-008-detail-honesty-followup 分支上讀的, 不是真正的 parent 實作分支。實際 origin/task/MGMT-LOAD-003 (commit f6b973d, b0f317a) 已經實作了 mgmtShellSummary path builder、TopBar/JobProgressDrawer 改用 shell-summary + idle-deferred fallback、shellSummary.ts helper、TopBar.test.tsx/JobProgressDrawer.test.tsx/shellSummary.test.ts,以及 e2e/23-management-shell-fanout.spec.ts。所以 Suggested Parent Implementation Recipe 基本上已經被 parent 分支超前完成,不是新 gap。",
+      "建議: parent owner (Claude) 之後 absorb 這份封包時,應以 Test And Proof Gates 段落做 coverage 檢查用途,而不要把 Suggested Parent Implementation Recipe 當成待辦重做; 封包本身有誠實揭露 branch 落差, 不構成封包本身的錯誤, 予以 approve。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T13:02:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-003-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "ac269a2558f632470febb381b184049487bb935b",
+      "commit_subject": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: record closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief review approval and closeout evidence in the MGMT-LOAD-003 support-only handoff packet.",
+        "Not changing": "L1 canonical truth, BFF runtime code, execute-plans frontend source, route registry behavior, governance policy, or MGMT-LOAD-003 parent implementation.",
+        "Composes with": "merged PR #2694, Claude review approval, and the owner done transition after this closeout PR merges.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- .orchestrator/task-briefs/mgmt_load_003_sidecar_bff_handoff_followup_3.md support/sidecars/MGMT-LOAD-003/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md; AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3; git merge-base --is-ancestor origin/task/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3 origin/dev"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8cf8eee48178e3efcbd8646f4ced1772783a403b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only MGMT-LOAD-003 followup-3 packet is committed and merged via PR #2694 (merge commit 31c4fe8a06a49edacb3b1aabe4456be0a87ea7de). Please review the packet at support/sidecars/MGMT-LOAD-003/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md for sidecar scope, BFF contract accuracy, and parent absorption usefulness.",
+      "status": "done",
+      "created_at": "2026-07-01T12:53:15Z",
+      "resolved_at": "2026-07-01T12:57:29Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar 範圍/BFF contract 正確; 標記 recipe 段落與 parent 實際分支已有落差(已提前實作), approve 並附詳細 review notes 供 parent absorption 參考。",
+      "status": "done",
+      "created_at": "2026-07-01T12:57:29Z",
+      "resolved_at": "2026-07-01T13:02:50Z"
+    }
+  ],
+  "blockers": []
+}

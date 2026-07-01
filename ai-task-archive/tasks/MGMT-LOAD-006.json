@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-006",
+  "archived_at": "2026-07-01T17:32:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-006",
+    "title": "Management load release gate",
+    "summary_zh": "把 route-load baseline 變成 release gate：bundle budget、route-ready milestones、startup request count、duplicate jobs detection、BFF fanout latency 全部可 fail gate 並輸出 JSON/Markdown artifact。",
+    "phase": "MGMT Console Load Gap / Wave 3 release gate",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002",
+      "MGMT-LOAD-003",
+      "MGMT-LOAD-004",
+      "MGMT-LOAD-005"
+    ],
+    "artifacts": [
+      "frontend-checkout:scripts",
+      "frontend-checkout:e2e",
+      "scripts/aggregate-release-gate.mjs",
+      "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-006-release-load-gate.md"
+    ],
+    "acceptance": [
+      "release gate fails on budget breach",
+      "duplicate startup /bff/jobs",
+      "networkidle-only readiness",
+      "excess non-primary startup requests",
+      "or BFF fanout latency regression; artifacts linked to MGMT-GAP-006 handoff"
+    ],
+    "next": "Finalized: verified pantheon PR #2711 (merged 2026-07-01T17:11:22Z) and #2712 (merged 2026-07-01T17:25:06Z) into dev, plus execute-plans PR #138 (merged into dev at cbd833c49edc) via gh pr view since frontend-checkout: artifact prefix bypasses the automated merged-PR gate. Re-ran python3 -m pytest scripts/test_aggregate_release_gate.py -q (8 passed) and node scripts/aggregate-release-gate.mjs against the archived pre-fix baseline (exit 1, fail-closed as expected — matches reviewer's documented result). No further code changes needed. Residual: MGMT-LOAD-007/operator fresh hosted route-load and BFF-fanout probe still needed to produce a pass:true manifest; current gate output is fail-closed against the known-stale archived baseline, not a false green.",
+    "last_update": "2026-07-01T17:32:55Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+      "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_parent": "MGMT-GAP-010",
+    "helper_kind": "load_gap_execution_slice",
+    "wave": 3,
+    "fleet_lane": "release-load-gate",
+    "review_notes_zh": [
+      "審查通過：scripts/aggregate-release-gate.mjs 對 bundle budget、route readiness、startup request count/duplicate jobs、BFF fanout latency 與 dependency terminal state 都 fail-closed。",
+      "驗證通過：python3 -m pytest scripts/test_aggregate_release_gate.py -q；node scripts/aggregate-release-gate.mjs --audit-dir docs/04/pantheon_management_console_load_gap_2026-07-01/archive --bundle-file docs/04/pantheon_management_console_load_gap_2026-07-01/archive/release-bundle-2026-07-01.json 預期 exit 1，原因為 archived pre-fix baseline。",
+      "PR 狀態：pantheon #2711/#2712 merged；execute-plans #138 merged at cbd833c49edc and integration-gate success。",
+      "殘餘風險可接受但不得誤解為 production green：fresh hosted route-load/BFF-fanout probe 需要 MGMT-LOAD-007/operator bearer-token run 後重新產生 pass:true manifest。"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-006-release-load-gate.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T17:32:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-006",
+      "git_clean_required": false,
+      "commit": "65ba4685badf07f533e100ad1c7e822a299762ea",
+      "commit_subject": "Merge pull request #2712 from ajoe734/task/MGMT-LOAD-006",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-LOAD-006": "refresh gate evidence after execute-plans PR #138 merge"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-006",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "65ba4685badf07f533e100ad1c7e822a299762ea",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-006",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-LOAD-006 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-01T06:07:02Z",
+      "resolved_at": "2026-07-01T16:15:02Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implemented management load release gate: scripts/aggregate-release-gate.mjs (dependency pass-eligibility, bundle budget, route-timing/readiness, startup-request waterfall with duplicate /bff/jobs detection, BFF fanout latency; JSON+MD, non-zero exit on fail), scripts/test_aggregate_release_gate.py (8 passing cases). Frontend bundle-size evidence + CI wiring in ajoe734/execute-plans PR #138 (open, pending review/merge). Pantheon PR https://github.com/ajoe734/pantheon/pull/2711 open with auto-merge. Ran the gate for real: archived release-load-gate-2026-07-01.json/.md (pass:false) under docs/04/pantheon_management_console_load_gap_2026-07-01/archive/ because the only archived route-timing/waterfall/fanout evidence predates the MGMT-LOAD-002/003/005 fixes; a fresh hosted probe re-run after execute-plans PR #138 merges is the documented next step (requires bearer-token access this worker does not have). Updated MGMT-LOAD-006 doc closeout evidence + residual risk, and MGMT-GAP-006 doc with the exact required artifact paths.",
+      "status": "done",
+      "created_at": "2026-07-01T16:55:20Z",
+      "resolved_at": "2026-07-01T16:59:29Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: execute-plans PR #138 records bundle_budget but the final FE release aggregator does not consume it; because the workflow step is continue-on-error, a bundle budget breach would be logged but would not fail CI/release gate. Add bundle_budget to execute-plans scripts/aggregate-release-gate.mjs Gate 1 or make the step hard-fail, then rerun PR #138 and the Pantheon MGMT-LOAD-006 checks. Pantheon script/tests otherwise reviewed: pytest 8 passed; CLI gate fail-closed with archived evidence.",
+      "status": "done",
+      "created_at": "2026-07-01T16:59:29Z",
+      "resolved_at": "2026-07-01T16:59:29Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Refreshed gate evidence after execute-plans PR #138 (bundle-budget-check.mjs + CI wiring) merged into execute-plans dev at cbd833c49edc; PR #2712 merged into pantheon dev. Bundle-budget gate now passes against merged evidence (gzip sizes unchanged from pre-merge run, only feCommit updated). Overall release-load-gate result remains pass:false because archived route-timing/startup-request/BFF-fanout evidence is still the MGMT-LOAD-001 pre-fix baseline -- a fresh hosted probe re-run is explicitly deferred to MGMT-LOAD-007/operator with bearer-token access, as documented in docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-006-release-load-gate.md Residual Risk. Please review scripts/aggregate-release-gate.mjs, scripts/test_aggregate_release_gate.py (8 passed), and the closeout doc.",
+      "status": "done",
+      "created_at": "2026-07-01T17:26:24Z",
+      "resolved_at": "2026-07-01T17:30:20Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after merged PR verification and focused local gate tests; owner should finalize done, preserving MGMT-LOAD-007/operator fresh hosted probe as residual next step.",
+      "status": "done",
+      "created_at": "2026-07-01T17:30:20Z",
+      "resolved_at": "2026-07-01T17:32:56Z"
+    }
+  ],
+  "blockers": []
+}

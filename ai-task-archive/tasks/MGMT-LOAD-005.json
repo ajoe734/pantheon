@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-005",
+  "archived_at": "2026-07-01T11:51:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-005",
+    "title": "BFF read concurrency isolation",
+    "summary_zh": "隔離 shell summary/Evidence/alerts/approvals/jobs 的同步 read aggregation；/health 不可被 management read fanout 卡住；慢路徑要 timeout/degraded 而不是拖住 unrelated routes。",
+    "phase": "MGMT Console Load Gap / Wave 2 BFF read concurrency",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-005-bff-read-concurrency.md"
+    ],
+    "acceptance": [
+      "/health p95 <= 200ms during shell-summary/Evidence fanout; Evidence p95 <= 750ms during fanout or blocker names exact read path; timeout/degraded behavior tested"
+    ],
+    "next": "Owner finalized: PR #2685 (closeout note) merged to dev, HEAD ed5e51169 confirmed ancestor of origin/dev; PR #2682 (read-concurrency isolation) previously merged; pytest test_mgmt_load_005_read_concurrency.py + test_mgmt_load_002_shell_summary.py -> 12 passed. Residual hosted post-merge fanout probe deferred to MGMT-LOAD-007 per reviewer note.",
+    "last_update": "2026-07-01T11:51:44Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+      "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_parent": "MGMT-GAP-010",
+    "helper_kind": "load_gap_execution_slice",
+    "wave": 2,
+    "fleet_lane": "bff-read-concurrency",
+    "review_notes_zh": [
+      "審查通過：PR #2682 已合併至 dev，讀取隔離實作符合 MGMT-LOAD-005 scope，/health 不依賴 management read aggregation，Evidence/alerts/approvals/jobs timeout 時回 explicit degraded envelope。",
+      "驗證：python3 -m pytest services/control-plane/bff/test_mgmt_load_005_read_concurrency.py services/control-plane/bff/test_mgmt_load_002_shell_summary.py -q -> 12 passed, 8 warnings。",
+      "剩餘追蹤：hosted dev BFF post-merge fanout probe 依 load-gap packet 留給 MGMT-LOAD-007，不阻塞本 task reviewer approval。"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-005-bff-read-concurrency.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T11:51:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-005",
+      "git_clean_required": false,
+      "commit": "ed5e51169b81b78c1932717e9fb62f8c5c1ce565",
+      "commit_subject": "MGMT-LOAD-005: record owner closeout verification",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "MGMT-LOAD-005 task doc closeout note only.",
+        "Not changing": "services/control-plane/bff read-concurrency behavior (already",
+        "Composes with": "merged PR #2682 (commit 40d82bc08) and reviewer approval",
+        "LLM-Agent": "Claude",
+        "Task-ID": "MGMT-LOAD-005",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m pytest services/control-plane/bff/test_mgmt_load_005_read_concurrency.py services/control-plane/bff/test_mgmt_load_002_shell_summary.py -q -> 12 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "15f43100d75357a112b69eb2747c4a0c60c63cc3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-005",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-LOAD-005 away from unavailable lane Gemini (disabled, sidecar-only, or auth-down); owner Gemini -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-01T06:06:59Z",
+      "resolved_at": "2026-07-01T10:42:04Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-005",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "PR #2682 open (auto-merge enabled) with the read-concurrency isolation fix (asyncio.to_thread offload + bounded asyncio.wait timeout + degraded envelopes for evidence/alerts/approvals/jobs; /health and shell-summary need no offload). 7/7 new contract tests pass (test_mgmt_load_005_read_concurrency.py); confirmed test_bff_management_delta_routes.py's one failure is pre-existing/unrelated (reproduces on d1390c5e3). Local before/after evidence: /health p95 189ms (after) vs 1629ms (before) under a synthetic 400ms concurrent slow-read fanout, matching the MGMT-LOAD-001 hosted baseline shape; see docs/04/pantheon_management_console_load_gap_2026-07-01/archive/bff-fanout-local-before-after-2026-07-01.md. Hosted dev BFF probe re-run deferred to MGMT-LOAD-007 (no dev BFF credential in this worker; dev BFF has no fix to validate pre-merge).",
+      "status": "done",
+      "created_at": "2026-07-01T11:30:59Z",
+      "resolved_at": "2026-07-01T11:42:53Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-005",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Chair reassigned review from Claude2 to Codex2: Claude2 reviewer lane has been quota-paused since 2026-07-01T10:59:31Z while MGMT-LOAD-005 remains in review after PR #2682 merged at 2026-07-01T11:31:13Z; Codex2 is unpaused and completed a successful review approval at 2026-07-01T11:39:11Z.",
+      "status": "done",
+      "created_at": "2026-07-01T11:42:53Z",
+      "resolved_at": "2026-07-01T11:46:16Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-005",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Codex2 review approved after PR #2682 merge and focused BFF read-concurrency validation; owner Claude should finalize closeout.",
+      "status": "done",
+      "created_at": "2026-07-01T11:46:16Z",
+      "resolved_at": "2026-07-01T11:51:45Z"
+    }
+  ],
+  "blockers": []
+}
