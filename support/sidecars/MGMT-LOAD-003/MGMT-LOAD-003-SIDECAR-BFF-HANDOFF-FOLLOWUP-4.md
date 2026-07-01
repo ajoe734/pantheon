@@ -272,3 +272,13 @@ Claude should review this packet as support material only:
    `origin/task/MGMT-LOAD-003` before absorbing them.
 4. Treat the residual acceptance risks as parent review checks, especially the
    total `nonPrimaryBeforeFirstRow <= 2` hard gate.
+
+## Closeout Review Note
+
+Reviewer approval confirmed this followup-4 packet stays within support-only
+sidecar scope. The BFF contract and parent-branch references were checked
+against `services/control-plane/bff/main.py` and execute-plans
+`origin/task/MGMT-LOAD-003` at `b0f317a`.
+
+The remaining request-budget and jobs-hydration concerns are parent
+`MGMT-LOAD-003` review checks, not open work for this sidecar.
