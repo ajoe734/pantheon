@@ -65,3 +65,28 @@ summary suitable for release gates.
   missing, or mock write success is detected.
 - Localhost CORS failures are not accepted as hosted evidence; the gate must run
   on the hosted FE origin or explicitly prove the same origin policy.
+
+## MGMT-LOAD-006 Handoff (load/release detectors)
+
+`MGMT-LOAD-006` implements the "load/release detectors from `MGMT-GAP-010`"
+named in Scope above as `scripts/aggregate-release-gate.mjs` (this repo,
+`ajoe734/pantheon`). Before this harness treats a management release as
+production-acceptable, it must require these exact artifact paths (all under
+`docs/04/pantheon_management_console_load_gap_2026-07-01/archive/`) and read
+`result.pass` from the manifest, not just its presence:
+
+- `release-load-gate-*.json` / `.md` — overall pass/fail manifest (dependency
+  pass-eligibility, bundle budget, route-timing/readiness, startup-request
+  duplicate/count, BFF fanout latency).
+- `release-route-timing-*.json`, `release-request-waterfall-*.json`,
+  `release-bff-fanout-*.json`, `release-bundle-*.json` — the underlying
+  evidence the manifest aggregated.
+
+As of the 2026-07-01 `MGMT-LOAD-006` closeout, the most recent
+`release-load-gate-*.json` reports `pass: false`: the archived
+route-timing/waterfall/fanout evidence is the MGMT-LOAD-001 pre-fix baseline
+and does not yet reflect the merged MGMT-LOAD-002/003/005 fixes. This harness
+must not treat that manifest as production-acceptance evidence until a fresh
+hosted probe run (`npm run probe:route-load && npm run probe:bff:fanout` in
+`execute-plans`, then re-run `scripts/aggregate-release-gate.mjs`) reports
+`pass: true`.
