@@ -16,12 +16,20 @@ That split is unsafe. A management session cannot be simultaneously rejected by
 the session surface and allowed to render privileged live data without an
 explicit, tested contract.
 
+The supplemental route/control crawl also found the cockpit and its legacy
+aliases showing LLM Provider Auth degraded text while localhost preview requests
+to hosted BFF assistant/provider endpoints were rejected by CORS. The CORS part
+is not hosted production proof, but it confirms the acceptance harness must
+classify provider-auth/session degraded states from the hosted FE origin.
+
 ## Scope
 
 Make management session bootstrap and management data reads coherent for the dev
 operator/integration-gate path:
 
 - `GET /bff/me`
+- LLM Provider Auth and assistant/provider auth status reads used by the
+  management cockpit
 - management list/detail BFF reads used by the console
 - frontend session bootstrap and auth degraded state
 - role-specific fail-closed pages such as human inbox actions that require
@@ -52,6 +60,8 @@ Required behavior:
   missing action role, and matching management read behavior.
 - Hosted browser probe with the documented dev gate token observes coherent
   session state and no privileged live-data render under session 403.
+- Hosted-origin probe records cockpit/provider-auth state without relying on
+  localhost CORS failures as evidence.
 - The harness records the exact token shape without leaking secret values:
   roles, tenant, MFA marker, and token hash only.
 - FE tests cover authenticated session, degraded unauthenticated state, and
